@@ -374,7 +374,7 @@ function FilterPanel({
   onClose: () => void;
 }) {
   return (
-    <div className="absolute left-0 top-11 z-40 grid w-[560px] grid-cols-2 gap-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:w-[92vw] max-[760px]:grid-cols-1" onMouseLeave={onClose}>
+    <div className="absolute right-0 top-11 z-40 grid w-[560px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:left-0 max-[760px]:right-auto max-[760px]:w-[92vw] max-[760px]:grid-cols-1" onMouseLeave={onClose}>
       {groups.map((g) => (
         <div key={g.key}>
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-n-500">{g.label}</div>
