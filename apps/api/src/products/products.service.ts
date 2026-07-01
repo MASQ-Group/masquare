@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
-import { CreateProductDto, MoneyDto, UpdateProductDto } from './dto/product.dto';
+import { BulkUpdateDto, CreateProductDto, MoneyDto, UpdateProductDto } from './dto/product.dto';
 
 export interface ProductQuery {
   q?: string;
@@ -26,11 +26,15 @@ const listInclude = {
   fulfilmentType: { select: { id: true, name: true, code: true } },
   category: { select: { id: true, name: true } },
   media: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' as const }, take: 1 },
+  aliases: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'asc' as const },
+    include: { fulfilmentType: { select: { id: true, name: true, code: true } } },
+  },
   attributes: {
     where: { deletedAt: null },
     include: { attribute: { select: { id: true, name: true, inputType: true } } },
   },
-  _count: { select: { aliases: true } },
 } satisfies Prisma.ProductInclude;
 
 const fullInclude = {
@@ -39,7 +43,11 @@ const fullInclude = {
   productType: { select: { id: true, name: true } },
   fulfilmentType: { select: { id: true, name: true, code: true } },
   category: { select: { id: true, name: true } },
-  aliases: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' as const } },
+  aliases: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'asc' as const },
+    include: { fulfilmentType: { select: { id: true, name: true, code: true } } },
+  },
   media: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' as const } },
   attributes: {
     where: { deletedAt: null },
@@ -96,7 +104,14 @@ export class ProductsService {
       packageWidthCm: num(p.packageWidthCm),
       packageHeightCm: num(p.packageHeightCm),
       volumetricWeightKg: volumetric(p.packageLengthCm, p.packageWidthCm, p.packageHeightCm),
-      aliases: p.aliases?.map((a: any) => ({ id: a.id, skuValue: a.skuValue, label: a.label })) ?? [],
+      aliases:
+        p.aliases?.map((a: any) => ({
+          id: a.id,
+          skuValue: a.skuValue,
+          label: a.label,
+          fulfilmentTypeId: a.fulfilmentTypeId,
+          fulfilmentType: a.fulfilmentType ?? null,
+        })) ?? [],
       media: p.media?.map((m: any) => ({ id: m.id, url: m.url, sortOrder: m.sortOrder })) ?? [],
       attributes:
         p.attributes?.map((a: any) => ({
@@ -257,7 +272,13 @@ export class ProductsService {
         createdById: actorId,
         updatedById: actorId,
         aliases: dto.aliases?.length
-          ? { create: dto.aliases.map((a) => ({ skuValue: a.skuValue.trim(), label: a.label })) }
+          ? {
+              create: dto.aliases.map((a) => ({
+                skuValue: a.skuValue.trim(),
+                label: a.label,
+                fulfilmentTypeId: a.fulfilmentTypeId ?? null,
+              })),
+            }
           : undefined,
         attributes: dto.attributes?.length
           ? { create: dto.attributes.map((a) => ({ attributeId: a.attributeId, value: a.value })) }
@@ -279,7 +300,12 @@ export class ProductsService {
         await tx.productSkuAlias.deleteMany({ where: { productId: id } });
         if (dto.aliases.length) {
           await tx.productSkuAlias.createMany({
-            data: dto.aliases.map((a) => ({ productId: id, skuValue: a.skuValue.trim(), label: a.label })),
+            data: dto.aliases.map((a) => ({
+              productId: id,
+              skuValue: a.skuValue.trim(),
+              label: a.label,
+              fulfilmentTypeId: a.fulfilmentTypeId ?? null,
+            })),
           });
         }
       }
@@ -304,6 +330,186 @@ export class ProductsService {
     await this.get(id);
     await this.prisma.product.update({ where: { id }, data: { deletedAt: new Date() } });
     return { ok: true };
+  }
+
+  // --- Bulk operations -----------------------------------------------------
+  async byIds(ids: string[]) {
+    const rows = await this.prisma.product.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      include: fullInclude,
+    });
+    return rows.map((r) => this.serialize(r));
+  }
+
+  async bulkDelete(ids: string[]) {
+    const res = await this.prisma.product.updateMany({
+      where: { id: { in: ids }, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    return { ok: true, count: res.count };
+  }
+
+  async bulkUpdate(dto: BulkUpdateDto, actorId?: string) {
+    const data: Prisma.ProductUpdateManyMutationInput = { updatedById: actorId };
+    let touched = false;
+    if (dto.productTypeId !== undefined) { (data as any).productTypeId = dto.productTypeId; touched = true; }
+    if (dto.categoryId !== undefined) { (data as any).categoryId = dto.categoryId; touched = true; }
+    if (touched) {
+      await this.prisma.product.updateMany({ where: { id: { in: dto.ids }, deletedAt: null }, data });
+    }
+    if (dto.attributes?.length) {
+      for (const pid of dto.ids) {
+        for (const a of dto.attributes) {
+          await this.prisma.productAttribute.upsert({
+            where: { productId_attributeId: { productId: pid, attributeId: a.attributeId } },
+            create: { productId: pid, attributeId: a.attributeId, value: a.value },
+            update: { value: a.value, deletedAt: null },
+          });
+        }
+      }
+    }
+    return { ok: true, count: dto.ids.length };
+  }
+
+  // --- Bulk import: validate then commit -----------------------------------
+  async importValidate(purpose: 'add' | 'edit', rows: Record<string, string>[]) {
+    const out: Array<{
+      index: number;
+      sku: string;
+      title: string;
+      status: string;
+      conflictOn: string[];
+      existingProductId: string | null;
+      existingSku: string | null;
+    }> = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const sku = (row.mainSku ?? row.sku ?? '').trim();
+      const ean = (row.ean ?? '').trim();
+      const upc = (row.upc ?? '').trim();
+
+      const bySku = sku
+        ? await this.prisma.product.findFirst({
+            where: {
+              deletedAt: null,
+              OR: [
+                { mainSku: { equals: sku, mode: 'insensitive' } },
+                { aliases: { some: { deletedAt: null, skuValue: { equals: sku, mode: 'insensitive' } } } },
+              ],
+            },
+            select: { id: true, mainSku: true },
+          })
+        : null;
+      const byEan = ean
+        ? await this.prisma.product.findFirst({ where: { deletedAt: null, ean: { equals: ean, mode: 'insensitive' } }, select: { id: true, mainSku: true } })
+        : null;
+      const byUpc = upc
+        ? await this.prisma.product.findFirst({ where: { deletedAt: null, upc: { equals: upc, mode: 'insensitive' } }, select: { id: true, mainSku: true } })
+        : null;
+
+      const matched = bySku ?? byEan ?? byUpc;
+      const conflictOn: string[] = [];
+      if (bySku) conflictOn.push('SKU');
+      if (byEan) conflictOn.push('EAN');
+      if (byUpc) conflictOn.push('UPC');
+
+      const status =
+        purpose === 'add' ? (matched ? 'conflict' : 'new') : matched ? 'match' : 'missing';
+
+      out.push({
+        index: i,
+        sku,
+        title: (row.title ?? '').trim(),
+        status,
+        conflictOn,
+        existingProductId: matched?.id ?? null,
+        existingSku: matched?.mainSku ?? null,
+      });
+    }
+    return { rows: out };
+  }
+
+  private async resolveNamed(kind: string, name?: string): Promise<string | null> {
+    const n = (name ?? '').trim();
+    if (!n) return null;
+    const insensitive = { equals: n, mode: 'insensitive' as const };
+    switch (kind) {
+      case 'brand': {
+        const e = await this.prisma.brand.findFirst({ where: { name: insensitive, deletedAt: null } });
+        return e?.id ?? (await this.prisma.brand.create({ data: { name: n } })).id;
+      }
+      case 'vendor': {
+        const e = await this.prisma.vendor.findFirst({ where: { name: insensitive, deletedAt: null } });
+        return e?.id ?? (await this.prisma.vendor.create({ data: { name: n } })).id;
+      }
+      case 'productType': {
+        const e = await this.prisma.productType.findFirst({ where: { name: insensitive, deletedAt: null } });
+        return e?.id ?? (await this.prisma.productType.create({ data: { name: n } })).id;
+      }
+      case 'fulfilmentType': {
+        const e = await this.prisma.fulfilmentType.findFirst({
+          where: { deletedAt: null, OR: [{ name: insensitive }, { code: insensitive }] },
+        });
+        return e?.id ?? (await this.prisma.fulfilmentType.create({ data: { name: n } })).id;
+      }
+      case 'category': {
+        const e = await this.prisma.productCategory.findFirst({ where: { name: insensitive, deletedAt: null } });
+        return e?.id ?? (await this.prisma.productCategory.create({ data: { name: n } })).id;
+      }
+      default:
+        return null;
+    }
+  }
+
+  private async rowToBody(row: Record<string, string>): Promise<CreateProductDto> {
+    const num = (k: string) => {
+      const v = row[k];
+      return v == null || String(v).trim() === '' ? null : Number(v);
+    };
+    return {
+      mainSku: (row.mainSku ?? row.sku ?? '').trim(),
+      title: (row.title ?? '').trim(),
+      brandId: await this.resolveNamed('brand', row.brand),
+      vendorId: await this.resolveNamed('vendor', row.vendor),
+      productTypeId: await this.resolveNamed('productType', row.productType),
+      fulfilmentTypeId: await this.resolveNamed('fulfilmentType', row.fulfilmentType),
+      categoryId: await this.resolveNamed('category', row.category),
+      ean: row.ean, upc: row.upc, vendorSku: row.vendorSku, manufacturerSku: row.manufacturerSku,
+      countryOfOrigin: row.countryOfOrigin, hsCode: row.hsCode,
+      purchaseCost: { amount: num('purchaseCost'), currency: 'EUR' },
+      map: { amount: num('map'), currency: 'EUR' },
+      msrp: { amount: num('msrp'), currency: 'EUR' },
+      productWeightKg: num('productWeightKg'),
+      packageWeightKg: num('packageWeightKg'),
+      packageLengthCm: num('packageLengthCm'),
+      packageWidthCm: num('packageWidthCm'),
+      packageHeightCm: num('packageHeightCm'),
+    } as CreateProductDto;
+  }
+
+  async importCommit(
+    items: { row: Record<string, string>; action: 'add' | 'edit' | 'skip'; productId?: string }[],
+    actorId?: string,
+  ) {
+    let created = 0, updated = 0, skipped = 0;
+    const errors: { sku: string; message: string }[] = [];
+    for (const item of items) {
+      if (item.action === 'skip') { skipped++; continue; }
+      try {
+        const body = await this.rowToBody(item.row);
+        if (!body.mainSku || !body.title) throw new Error('Main SKU and Title are required');
+        if (item.action === 'edit' && item.productId) {
+          await this.update(item.productId, body as UpdateProductDto, actorId);
+          updated++;
+        } else {
+          await this.create(body, actorId);
+          created++;
+        }
+      } catch (e: any) {
+        errors.push({ sku: (item.row.mainSku ?? item.row.sku ?? '').trim(), message: e?.message ?? 'Failed' });
+      }
+    }
+    return { created, updated, skipped, errors };
   }
 
   // --- Media ---------------------------------------------------------------

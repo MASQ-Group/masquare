@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Plus, Search } from 'lucide-react';
+import { Check, Plus, Search, X } from 'lucide-react';
 import { cn } from './cn';
 
 export interface ReferenceOption {
@@ -14,6 +14,8 @@ export interface SmartReferenceInputProps {
   /** Pull suggestions from the central store (drawn across modules). */
   fetchSuggestions: (query: string) => Promise<ReferenceOption[]>;
   onSelect: (option: ReferenceOption) => void;
+  /** Clear the current selection. If omitted, the clear affordance is hidden. */
+  onClear?: () => void;
   /** Create-on-confirm. If omitted, the create affordance is hidden. */
   onCreate?: (label: string) => Promise<ReferenceOption>;
   /** Confirmation message factory for create-on-confirm. */
@@ -28,6 +30,7 @@ export function SmartReferenceInput({
   placeholder = 'Search or create…',
   fetchSuggestions,
   onSelect,
+  onClear,
   onCreate,
   confirmCreate,
   disabled,
@@ -38,6 +41,7 @@ export function SmartReferenceInput({
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -86,6 +90,9 @@ export function SmartReferenceInput({
     }
   };
 
+  // Show the chosen value as solid text (not a placeholder) unless the user is editing.
+  const showSelected = !!value && !open && query.length === 0;
+
   return (
     <div ref={boxRef} className="relative">
       <div
@@ -95,20 +102,43 @@ export function SmartReferenceInput({
           disabled && 'opacity-60',
         )}
       >
-        <Search size={16} className="text-n-400" />
-        <input
-          className="h-full flex-1 bg-transparent text-[13.5px] text-n-800 outline-none placeholder:text-n-400"
-          placeholder={value ? value.label : placeholder}
-          value={query}
-          disabled={disabled}
-          onFocus={() => setOpen(true)}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setOpen(true);
-          }}
-        />
-        {value && !query && (
-          <span className="truncate text-[12px] text-n-500">{value.sub}</span>
+        {!showSelected && <Search size={16} className="flex-shrink-0 text-n-400" />}
+        {showSelected ? (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              setOpen(true);
+              queueMicrotask(() => inputRef.current?.focus());
+            }}
+            className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
+          >
+            <span className="truncate text-[13.5px] font-medium text-n-800">{value!.label}</span>
+            {value!.sub && <span className="mono truncate text-[12px] text-n-500">{value!.sub}</span>}
+          </button>
+        ) : (
+          <input
+            ref={inputRef}
+            className="h-full flex-1 bg-transparent text-[13.5px] text-n-800 outline-none placeholder:text-n-400"
+            placeholder={placeholder}
+            value={query}
+            disabled={disabled}
+            onFocus={() => setOpen(true)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setOpen(true);
+            }}
+          />
+        )}
+        {value && onClear && !disabled && (
+          <button
+            type="button"
+            title="Clear"
+            onClick={() => { onClear(); setQuery(''); setOpen(false); }}
+            className="grid h-5 w-5 flex-shrink-0 place-items-center rounded text-n-400 hover:bg-n-100 hover:text-n-700"
+          >
+            <X size={14} />
+          </button>
         )}
       </div>
 

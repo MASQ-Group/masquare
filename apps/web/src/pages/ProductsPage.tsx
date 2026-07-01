@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, Columns3, Filter, Grid, List, Package, Pencil, Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { Columns3, Download, Filter, Grid, List, Package, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell, BulkImport } from '@masquare/ui';
+import { downloadSheet } from '@masquare/ui';
 import {
   brandsApi, categoriesApi, fulfilmentTypesApi, productsApi, productTypesApi, vendorsApi,
   type Product, type ProductListParams,
@@ -10,6 +10,10 @@ import {
 import { useAuth } from '../lib/auth';
 import { formatMoney } from '../lib/format';
 import { ProductModal } from '../components/products/ProductModal';
+import { ExportModal } from '../components/products/ExportModal';
+import { BulkEditModal } from '../components/products/BulkEditModal';
+import { ProductImportModal } from '../components/products/ProductImportModal';
+import { EXPORT_COLUMNS } from '../components/products/columns';
 
 const SEARCH_FIELDS = [
   { key: '', label: 'All fields' },
@@ -48,7 +52,10 @@ export function ProductsPage() {
   const [page, setPage] = useState(1);
   const [cols, setCols] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<Product | null | undefined>(undefined);
-  const [importing, setImporting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [bulkEdit, setBulkEdit] = useState(false);
+  const [exportProducts, setExportProducts] = useState<Product[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [openMenu, setOpenMenu] = useState<'filters' | 'columns' | null>(null);
 
   // debounce search
@@ -107,6 +114,33 @@ export function ProductsPage() {
   }
   const clearAll = () => { setFilters(EMPTY); setQInput(''); setQ(''); setPage(1); };
 
+  const bulkDelete = useMutation({
+    mutationFn: () => productsApi.bulkDelete([...selected]),
+    onSuccess: (r: any) => { toast.success(`Removed ${r.count} products`); setSelected(new Set()); qc.invalidateQueries({ queryKey: ['products'] }); },
+    onError: () => toast.error('Bulk delete failed'),
+  });
+
+  const onExport = async () => {
+    if (selected.size === 0) {
+      downloadSheet('masquare-products-template', [EXPORT_COLUMNS.map((c) => c.label), EXPORT_COLUMNS.map((c) => c.sample)], 'xlsx');
+      toast.success('Template downloaded — fill it in, then Import');
+      return;
+    }
+    try {
+      const products = await productsApi.byIds([...selected]);
+      setExportProducts(products);
+    } catch { toast.error('Could not load selected products'); }
+  };
+
+  const allSelected = items.length > 0 && items.every((p) => selected.has(p.id));
+  const toggleAll = () => setSelected((prev) => {
+    const n = new Set(prev);
+    if (items.every((p) => n.has(p.id))) items.forEach((p) => n.delete(p.id));
+    else items.forEach((p) => n.add(p.id));
+    return n;
+  });
+  const toggleOne = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
   return (
     <div className="w-full">
       <div className="mb-5 flex items-start gap-4">
@@ -117,7 +151,8 @@ export function ProductsPage() {
             Master catalogue{user?.companies.length ? `, co-owned by ${user.companies.map((c) => c.officialName).join(' & ')}` : ''}.
           </p>
         </div>
-        <button className="btn btn-ghost" onClick={() => setImporting(true)}><Upload size={16} /> Import .xls / .csv</button>
+        <button className="btn btn-ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button>
+        <button className="btn btn-ghost" onClick={onExport}><Download size={16} /> Export</button>
         <button className="btn btn-primary" onClick={() => setEditing(null)}><Plus size={17} /> Add product</button>
       </div>
 
@@ -192,8 +227,20 @@ export function ProductsPage() {
         </div>
       )}
 
+      {/* Bulk action bar */}
+      {selected.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2">
+          <span className="text-[13px] font-semibold text-teal-800">{selected.size} selected</span>
+          <div className="mx-1 h-5 w-px bg-teal-200" />
+          <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:bg-n-50" onClick={() => setBulkEdit(true)}><SlidersHorizontal size={14} /> Bulk edit</button>
+          <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:bg-n-50" onClick={onExport}><Download size={14} /> Export selected</button>
+          <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-bd bg-n-0 px-2.5 text-[12.5px] font-medium text-danger hover:bg-danger-bg" onClick={() => { if (confirm(`Remove ${selected.size} products?`)) bulkDelete.mutate(); }}><Trash2 size={14} /> Delete</button>
+          <button className="ml-auto text-[12.5px] font-medium text-teal-700 hover:underline" onClick={() => setSelected(new Set())}>Clear selection</button>
+        </div>
+      )}
+
       {view === 'list' ? (
-        <ListView items={items} loading={isLoading} cols={cols} onEdit={setEditing} onDelete={(p) => confirm(`Remove ${p.mainSku}?`) && del.mutate(p.id)} />
+        <ListView items={items} loading={isLoading} cols={cols} selected={selected} allSelected={allSelected} onToggleAll={toggleAll} onToggleOne={toggleOne} onEdit={setEditing} onDelete={(p) => confirm(`Remove ${p.mainSku}?`) && del.mutate(p.id)} />
       ) : (
         <GridView items={items} loading={isLoading} onEdit={setEditing} />
       )}
@@ -211,34 +258,35 @@ export function ProductsPage() {
       {editing !== undefined && (
         <ProductModal product={editing} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); qc.invalidateQueries({ queryKey: ['products'] }); }} />
       )}
-      {importing && (
-        <ModalShell open title="Import products" primaryLabel="Close" onPrimary={() => setImporting(false)} onClose={() => setImporting(false)}>
-          <BulkImport
-            fields={[
-              { key: 'mainSku', label: 'Main SKU', required: true },
-              { key: 'title', label: 'Title', required: true },
-              { key: 'ean', label: 'EAN' },
-              { key: 'countryOfOrigin', label: 'Country' },
-            ]}
-            onCommit={async (rows) => { for (const r of rows) await productsApi.create(r); qc.invalidateQueries({ queryKey: ['products'] }); }}
-            onClose={() => setImporting(false)}
-          />
-        </ModalShell>
+      {importOpen && (
+        <ProductImportModal onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); qc.invalidateQueries({ queryKey: ['products'] }); }} />
+      )}
+      {exportProducts && <ExportModal products={exportProducts} onClose={() => setExportProducts(null)} />}
+      {bulkEdit && (
+        <BulkEditModal ids={[...selected]} onClose={() => setBulkEdit(false)} onDone={() => { setBulkEdit(false); setSelected(new Set()); qc.invalidateQueries({ queryKey: ['products'] }); }} />
       )}
     </div>
   );
 }
 
-function ListView({ items, loading, cols, onEdit, onDelete }: { items: Product[]; loading: boolean; cols: Set<string>; onEdit: (p: Product) => void; onDelete: (p: Product) => void }) {
+function ListView({ items, loading, cols, selected, allSelected, onToggleAll, onToggleOne, onEdit, onDelete }: {
+  items: Product[]; loading: boolean; cols: Set<string>;
+  selected: Set<string>; allSelected: boolean; onToggleAll: () => void; onToggleOne: (id: string) => void;
+  onEdit: (p: Product) => void; onDelete: (p: Product) => void;
+}) {
   const extra = OPTIONAL_COLUMNS.filter((c) => cols.has(c.key));
+  const span = 11 + extra.length;
   return (
     <div className="card overflow-hidden">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[920px] border-collapse">
+        <table className="w-full min-w-[980px] border-collapse">
           <thead>
             <tr>
-              {['', 'SKU', 'Product', 'Brand', 'Vendor', 'Fulfilment', 'Category', 'Attributes'].map((h) => (
-                <th key={h} className="border-b border-n-200 bg-n-25 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap">{h}</th>
+              <th className="border-b border-n-200 bg-n-25 px-3 py-3">
+                <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={allSelected} onChange={onToggleAll} title="Select all" />
+              </th>
+              {['', 'SKU', 'Aliases SKUs', 'Product', 'Brand', 'Vendor', 'Fulfilment', 'Category', 'Attributes'].map((h, i) => (
+                <th key={i} className="border-b border-n-200 bg-n-25 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap">{h}</th>
               ))}
               {extra.map((c) => <th key={c.key} className={`border-b border-n-200 bg-n-25 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap ${c.right ? 'text-right' : 'text-left'}`}>{c.label}</th>)}
               <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Purchase cost</th>
@@ -246,16 +294,31 @@ function ListView({ items, loading, cols, onEdit, onDelete }: { items: Product[]
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={10 + extra.length} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
-            {!loading && items.length === 0 && <tr><td colSpan={10 + extra.length} className="px-4 py-12 text-center text-[13px] text-n-500">No products match. Add your first product, or import a .csv.</td></tr>}
+            {loading && <tr><td colSpan={span} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
+            {!loading && items.length === 0 && <tr><td colSpan={span} className="px-4 py-12 text-center text-[13px] text-n-500">No products match. Add your first product, or import a .csv.</td></tr>}
             {items.map((p) => (
-              <tr key={p.id} className="cursor-pointer hover:bg-teal-50" onClick={() => onEdit(p)}>
+              <tr key={p.id} className={`cursor-pointer hover:bg-teal-50 ${selected.has(p.id) ? 'bg-teal-50/60' : ''}`} onClick={() => onEdit(p)}>
+                <td className="border-b border-n-100 px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={selected.has(p.id)} onChange={() => onToggleOne(p.id)} />
+                </td>
                 <td className="border-b border-n-100 px-4 py-2.5">
                   <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-md bg-n-100 text-n-400">
                     {p.featuredImage ? <img src={p.featuredImage} alt="" className="h-full w-full object-cover" /> : <Package size={18} />}
                   </div>
                 </td>
-                <td className="border-b border-n-100 px-4 py-2.5"><div className="mono font-medium text-n-800">{p.mainSku}</div>{p.aliasCount > 0 && <div className="mono text-[12px] text-n-500">+{p.aliasCount} alias{p.aliasCount > 1 ? 'es' : ''}</div>}</td>
+                <td className="border-b border-n-100 px-4 py-2.5"><div className="mono font-medium text-n-800">{p.mainSku}</div></td>
+                <td className="border-b border-n-100 px-4 py-2.5">
+                  <div className="flex flex-wrap gap-1">
+                    {p.aliases.length === 0 && <span className="text-n-300">—</span>}
+                    {p.aliases.slice(0, 4).map((a) => (
+                      <span key={a.id ?? a.skuValue} className="mono inline-flex items-center gap-1 rounded bg-n-100 px-1.5 py-0.5 text-[11px] text-n-600" title={a.label ?? undefined}>
+                        {a.skuValue}
+                        {a.fulfilmentType?.code && <span className="text-[9px] font-semibold text-teal-700">{a.fulfilmentType.code}</span>}
+                      </span>
+                    ))}
+                    {p.aliases.length > 4 && <span className="text-[11px] text-n-400">+{p.aliases.length - 4}</span>}
+                  </div>
+                </td>
                 <td className="border-b border-n-100 px-4 py-2.5"><div className="font-medium text-n-800">{p.title}</div>{p.productType && <div className="text-[12px] text-n-500">{p.productType.name}</div>}</td>
                 <td className="border-b border-n-100 px-4 py-2.5 text-[13.5px] text-n-700">{p.brand?.name ?? '—'}</td>
                 <td className="border-b border-n-100 px-4 py-2.5 text-[13.5px] text-n-700">{p.vendor?.name ?? '—'}</td>

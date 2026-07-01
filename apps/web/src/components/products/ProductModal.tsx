@@ -33,6 +33,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   const touch = () => setDirty(true);
 
   const { data: attributeLibrary = [] } = useQuery({ queryKey: ['attributes'], queryFn: () => attributesApi.list() });
+  const { data: ftypes = [] } = useQuery({ queryKey: ['fulfilment-types'], queryFn: () => fulfilmentTypesApi.list() });
 
   const [mainSku, setMainSku] = useState(product?.mainSku ?? '');
   const [title, setTitle] = useState(product?.title ?? '');
@@ -91,7 +92,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
         packageLengthCm: numOrNull(dims.packageLengthCm),
         packageWidthCm: numOrNull(dims.packageWidthCm),
         packageHeightCm: numOrNull(dims.packageHeightCm),
-        aliases: aliases.filter((a) => a.skuValue.trim()).map((a) => ({ skuValue: a.skuValue.trim(), label: a.label || undefined })),
+        aliases: aliases.filter((a) => a.skuValue.trim()).map((a) => ({ skuValue: a.skuValue.trim(), label: a.label || undefined, fulfilmentTypeId: a.fulfilmentTypeId || undefined })),
         attributes: attrs.filter((a) => a.attributeId && a.value.trim()),
       };
       if (product) await productsApi.update(product.id, body); else await productsApi.create(body);
@@ -174,16 +175,26 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
 
           {/* Aliases */}
           <div>
-            <label className="label">Alias SKUs <span className="font-normal text-n-400">(resolve to this product)</span></label>
+            <label className="label">Alias SKUs <span className="font-normal text-n-400">(alternate SKUs that resolve to this product)</span></label>
             <div className="flex flex-col gap-2">
+              {aliases.length > 0 && (
+                <div className="grid grid-cols-[1fr_150px_150px_36px] gap-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-n-500 max-[560px]:hidden">
+                  <span>SKU value</span><span>Fulfilment type</span><span>Label</span><span />
+                </div>
+              )}
               {aliases.map((a, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input className="input mono flex-1" placeholder="SKU value" value={a.skuValue} onChange={(e) => { setAliases((r) => r.map((x, idx) => idx === i ? { ...x, skuValue: e.target.value } : x)); touch(); }} />
-                  <input className="input w-32" placeholder="Label" value={a.label ?? ''} onChange={(e) => { setAliases((r) => r.map((x, idx) => idx === i ? { ...x, label: e.target.value } : x)); touch(); }} />
+                <div key={i} className="grid grid-cols-[1fr_150px_150px_36px] items-center gap-2 max-[560px]:grid-cols-1">
+                  <input className="input mono" placeholder="e.g. RE-S8540-FBA" value={a.skuValue} onChange={(e) => { setAliases((r) => r.map((x, idx) => idx === i ? { ...x, skuValue: e.target.value } : x)); touch(); }} />
+                  <select className="input" value={a.fulfilmentTypeId ?? ''} onChange={(e) => { setAliases((r) => r.map((x, idx) => idx === i ? { ...x, fulfilmentTypeId: e.target.value || null } : x)); touch(); }}>
+                    <option value="">— fulfilment —</option>
+                    {ftypes.map((f) => <option key={f.id} value={f.id}>{f.code ?? f.name}</option>)}
+                  </select>
+                  <input className="input" placeholder="optional tag" value={a.label ?? ''} onChange={(e) => { setAliases((r) => r.map((x, idx) => idx === i ? { ...x, label: e.target.value } : x)); touch(); }} />
                   <button className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" onClick={() => { setAliases((r) => r.filter((_, idx) => idx !== i)); touch(); }}><Trash2 size={15} /></button>
                 </div>
               ))}
-              <div><button className="btn btn-ghost" onClick={() => { setAliases((r) => [...r, { skuValue: '', label: '' }]); touch(); }}><Plus size={16} /> Add alias</button></div>
+              <div><button className="btn btn-ghost" onClick={() => { setAliases((r) => [...r, { skuValue: '', label: '', fulfilmentTypeId: null }]); touch(); }}><Plus size={16} /> Add alias</button></div>
+              <p className="text-[12px] text-n-400"><strong>Fulfilment type</strong> ties an alias to a channel (e.g. an FBA-specific SKU). <strong>Label</strong> is an optional free-text tag for your own reference.</p>
             </div>
           </div>
         </div>

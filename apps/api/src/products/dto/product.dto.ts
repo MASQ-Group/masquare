@@ -17,6 +17,7 @@ export class MoneyDto {
 export class SkuAliasDto {
   @IsString() @MinLength(1) skuValue!: string;
   @IsOptional() @IsString() label?: string;
+  @IsOptional() @IsUUID() fulfilmentTypeId?: string | null;
 }
 
 export class ProductAttributeDto {
@@ -65,4 +66,37 @@ export class UpdateProductDto extends CreateProductDto {
 
 export class ReorderMediaDto {
   @IsArray() @IsUUID('all', { each: true }) orderedIds!: string[];
+}
+
+// --- Bulk & import ---------------------------------------------------------
+export class BulkDeleteDto {
+  @IsArray() @IsUUID('all', { each: true }) ids!: string[];
+}
+
+export class BulkUpdateDto {
+  @IsArray() @IsUUID('all', { each: true }) ids!: string[];
+  @IsOptional() @IsUUID() productTypeId?: string | null;
+  @IsOptional() @IsUUID() categoryId?: string | null;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => ProductAttributeDto)
+  attributes?: ProductAttributeDto[];
+}
+
+export class ByIdsDto {
+  @IsArray() @IsUUID('all', { each: true }) ids!: string[];
+}
+
+export class ImportValidateDto {
+  @IsString() purpose!: 'add' | 'edit';
+  @IsArray() rows!: Record<string, string>[];
+}
+
+export class ImportCommitItemDto {
+  @IsOptional() row!: Record<string, string>;
+  @IsString() action!: 'add' | 'edit' | 'skip';
+  @IsOptional() @IsUUID() productId?: string;
+}
+
+export class ImportCommitDto {
+  @IsArray() @ValidateNested({ each: true }) @Type(() => ImportCommitItemDto)
+  items!: ImportCommitItemDto[];
 }

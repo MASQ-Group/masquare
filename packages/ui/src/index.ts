@@ -5,3 +5,4 @@ export { SmartReferenceInput } from './SmartReferenceInput';
 export type { SmartReferenceInputProps, ReferenceOption } from './SmartReferenceInput';
 export { BulkImport } from './BulkImport';
 export type { BulkImportProps, ImportField } from './BulkImport';
+export { downloadSheet, parseSheetFile } from './sheet';

@@ -5,7 +5,10 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ProductsService, type ProductQuery } from './products.service';
-import { CreateProductDto, ReorderMediaDto, UpdateProductDto } from './dto/product.dto';
+import {
+  BulkDeleteDto, BulkUpdateDto, ByIdsDto, CreateProductDto,
+  ImportCommitDto, ImportValidateDto, ReorderMediaDto, UpdateProductDto,
+} from './dto/product.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 
@@ -52,6 +55,32 @@ export class ProductsController {
   @Post()
   create(@Body() dto: CreateProductDto, @CurrentUser() user: AuthUser) {
     return this.products.create(dto, user.sub);
+  }
+
+  // --- Bulk & import (literal subpaths declared before ":id" routes) ---
+  @Post('by-ids')
+  byIds(@Body() dto: ByIdsDto) {
+    return this.products.byIds(dto.ids);
+  }
+
+  @Post('bulk/delete')
+  bulkDelete(@Body() dto: BulkDeleteDto) {
+    return this.products.bulkDelete(dto.ids);
+  }
+
+  @Post('bulk/update')
+  bulkUpdate(@Body() dto: BulkUpdateDto, @CurrentUser() user: AuthUser) {
+    return this.products.bulkUpdate(dto, user.sub);
+  }
+
+  @Post('import/validate')
+  importValidate(@Body() dto: ImportValidateDto) {
+    return this.products.importValidate(dto.purpose, dto.rows);
+  }
+
+  @Post('import/commit')
+  importCommit(@Body() dto: ImportCommitDto, @CurrentUser() user: AuthUser) {
+    return this.products.importCommit(dto.items, user.sub);
   }
 
   @Patch(':id')

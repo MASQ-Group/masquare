@@ -165,17 +165,17 @@ export function ModalShell({
           </button>
         </div>
 
-        {/* Resize handle */}
+        {/* Resize handle — drag to enlarge (bottom-right corner) */}
         {!expanded && (
           <div
             onMouseDown={onResizeStart}
-            className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize"
-            style={{
-              background:
-                'linear-gradient(135deg, transparent 0 50%, var(--n-300) 50% 60%, transparent 60% 70%, var(--n-300) 70% 80%, transparent 80%)',
-            }}
+            className="group/resize absolute bottom-0 right-0 flex h-6 w-6 cursor-nwse-resize items-end justify-end p-1"
             title="Drag to resize"
-          />
+          >
+            <svg viewBox="0 0 10 10" className="h-2.5 w-2.5 text-n-400 group-hover/resize:text-teal-500">
+              <path d="M9 1 L1 9 M9 5 L5 9" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+            </svg>
+          </div>
         )}
       </div>
     </div>

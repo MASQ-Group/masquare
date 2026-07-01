@@ -310,6 +310,7 @@ model FulfilmentType {
   deletedAt   DateTime? @map("deleted_at")
 
   products Product[]
+  aliases  ProductSkuAlias[]
 
   @@map("fulfilment_type")
 }
@@ -438,16 +439,18 @@ model Product {
 }
 
 model ProductSkuAlias {
-  id        String  @id @default(uuid()) @db.Uuid
-  productId String  @map("product_id") @db.Uuid
-  skuValue  String  @unique @map("sku_value")
-  label     String?
+  id               String  @id @default(uuid()) @db.Uuid
+  productId        String  @map("product_id") @db.Uuid
+  skuValue         String  @unique @map("sku_value")
+  label            String?
+  fulfilmentTypeId String? @map("fulfilment_type_id") @db.Uuid
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product        Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  fulfilmentType FulfilmentType? @relation(fields: [fulfilmentTypeId], references: [id], onDelete: SetNull)
 
   @@map("product_sku_alias")
 }

@@ -24,6 +24,7 @@ export function RefField({ value, placeholder, list, create, onChange, createNou
       placeholder={placeholder}
       fetchSuggestions={fetchSuggestions}
       onSelect={(o) => onChange({ id: o.id, name: o.label })}
+      onClear={() => onChange(null)}
       onCreate={
         create
           ? async (name) => {

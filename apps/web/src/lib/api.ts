@@ -211,7 +211,13 @@ export const settingsApi = {
 // ---- Module 3: Products ----
 export interface Money { amount: number | null; currency: string }
 export interface RefLite { id: string; name: string; code?: string | null }
-export interface ProductAlias { id?: string; skuValue: string; label?: string | null }
+export interface ProductAlias {
+  id?: string;
+  skuValue: string;
+  label?: string | null;
+  fulfilmentTypeId?: string | null;
+  fulfilmentType?: RefLite | null;
+}
 export interface ProductMediaItem { id: string; url: string; sortOrder: number }
 export interface ProductAttr {
   id?: string;
@@ -304,4 +310,22 @@ export const productsApi = {
     api.delete<Product>(`/products/${id}/media/${mediaId}`).then((r) => r.data),
   reorderMedia: (id: string, orderedIds: string[]) =>
     api.put<Product>(`/products/${id}/media/order`, { orderedIds }).then((r) => r.data),
+  byIds: (ids: string[]) => api.post<Product[]>('/products/by-ids', { ids }).then((r) => r.data),
+  bulkDelete: (ids: string[]) => api.post('/products/bulk/delete', { ids }).then((r) => r.data),
+  bulkUpdate: (body: { ids: string[]; productTypeId?: string; categoryId?: string; attributes?: { attributeId: string; value: string }[] }) =>
+    api.post('/products/bulk/update', body).then((r) => r.data),
+  importValidate: (purpose: 'add' | 'edit', rows: Record<string, string>[]) =>
+    api.post<{ rows: ImportRowResult[] }>('/products/import/validate', { purpose, rows }).then((r) => r.data),
+  importCommit: (items: { row: Record<string, string>; action: 'add' | 'edit' | 'skip'; productId?: string }[]) =>
+    api.post<{ created: number; updated: number; skipped: number; errors: { sku: string; message: string }[] }>('/products/import/commit', { items }).then((r) => r.data),
 };
+
+export interface ImportRowResult {
+  index: number;
+  sku: string;
+  title: string;
+  status: 'new' | 'conflict' | 'match' | 'missing';
+  conflictOn: string[];
+  existingProductId: string | null;
+  existingSku: string | null;
+}
