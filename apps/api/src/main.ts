@@ -3,11 +3,15 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { StorageService } from './storage/storage.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.setGlobalPrefix('api');
+
+  // Ensure the media bucket exists (no-op if storage is offline).
+  await app.get(StorageService).ensureBucket();
 
   app.useGlobalPipes(
     new ValidationPipe({

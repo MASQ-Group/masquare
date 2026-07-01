@@ -7,6 +7,7 @@ import { CompaniesPage } from './pages/CompaniesPage';
 import { UsersPage } from './pages/UsersPage';
 import { ModulesPage } from './pages/ModulesPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ProductsPage } from './pages/ProductsPage';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -41,6 +42,7 @@ export function App() {
         }
       >
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/products" element={<ProductsPage />} />
         <Route path="/companies" element={<RequireAdmin><CompaniesPage /></RequireAdmin>} />
         <Route path="/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
         <Route path="/modules" element={<RequireAdmin><ModulesPage /></RequireAdmin>} />

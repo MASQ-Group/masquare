@@ -6,6 +6,15 @@ export function initials(name: string): string {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
+const CURRENCY_SYMBOL: Record<string, string> = { EUR: '€', USD: '$', GBP: '£' };
+
+/** Money as a right-aligned mono string, e.g. €50.00. Null amount renders as "—". */
+export function formatMoney(money?: { amount: number | null; currency: string } | null): string {
+  if (!money || money.amount == null) return '—';
+  const symbol = CURRENCY_SYMBOL[money.currency] ?? `${money.currency} `;
+  return `${symbol}${money.amount.toFixed(2)}`;
+}
+
 /** dd/mm/yyyy — the platform default (Global Settings will make this configurable). */
 export function formatDate(value: string | Date): string {
   const d = typeof value === 'string' ? new Date(value) : value;

@@ -32,7 +32,7 @@ interface NavDef {
 }
 
 const OPERATIONS: NavDef[] = [
-  { label: 'Products', icon: Package, badge: 'M3', disabled: true },
+  { to: '/products', label: 'Products', icon: Package },
   { label: 'Inventory', icon: Boxes, badge: 'soon', disabled: true },
   { label: 'Warehouses', icon: Warehouse, badge: 'soon', disabled: true },
   { label: 'Integrations', icon: Plug, badge: 'soon', disabled: true },

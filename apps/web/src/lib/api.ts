@@ -207,3 +207,101 @@ export const settingsApi = {
   get: () => api.get<PlatformSettings>('/settings').then((r) => r.data),
   update: (body: Partial<PlatformSettings>) => api.put<PlatformSettings>('/settings', body).then((r) => r.data),
 };
+
+// ---- Module 3: Products ----
+export interface Money { amount: number | null; currency: string }
+export interface RefLite { id: string; name: string; code?: string | null }
+export interface ProductAlias { id?: string; skuValue: string; label?: string | null }
+export interface ProductMediaItem { id: string; url: string; sortOrder: number }
+export interface ProductAttr {
+  id?: string;
+  attributeId: string;
+  value: string;
+  attributeName?: string;
+  inputType?: 'predefined' | 'free_text';
+}
+export interface Product {
+  id: string;
+  mainSku: string;
+  title: string;
+  brandId: string | null;
+  vendorId: string | null;
+  productTypeId: string | null;
+  fulfilmentTypeId: string | null;
+  categoryId: string | null;
+  brand: RefLite | null;
+  vendor: RefLite | null;
+  productType: RefLite | null;
+  fulfilmentType: RefLite | null;
+  category: RefLite | null;
+  ean: string | null;
+  upc: string | null;
+  vendorSku: string | null;
+  manufacturerSku: string | null;
+  countryOfOrigin: string | null;
+  hsCode: string | null;
+  purchaseCost: Money;
+  map: Money;
+  msrp: Money;
+  productWeightKg: number | null;
+  packageWeightKg: number | null;
+  packageLengthCm: number | null;
+  packageWidthCm: number | null;
+  packageHeightCm: number | null;
+  volumetricWeightKg: number | null;
+  aliases: ProductAlias[];
+  media: ProductMediaItem[];
+  attributes: ProductAttr[];
+  companyIds: string[];
+  aliasCount: number;
+  featuredImage: string | null;
+}
+export interface ProductListResponse {
+  items: Product[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+export interface ProductListParams {
+  q?: string;
+  field?: string;
+  vendorId?: string[];
+  brandId?: string[];
+  fulfilmentTypeId?: string[];
+  productTypeId?: string[];
+  categoryId?: string[];
+  country?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export const productsApi = {
+  list: (params: ProductListParams) =>
+    api
+      .get<ProductListResponse>('/products', {
+        params,
+        paramsSerializer: (p) => {
+          const sp = new URLSearchParams();
+          for (const [k, v] of Object.entries(p)) {
+            if (v == null || v === '') continue;
+            if (Array.isArray(v)) v.forEach((x) => sp.append(k, String(x)));
+            else sp.append(k, String(v));
+          }
+          return sp.toString();
+        },
+      })
+      .then((r) => r.data),
+  get: (id: string) => api.get<Product>(`/products/${id}`).then((r) => r.data),
+  create: (body: any) => api.post<Product>('/products', body).then((r) => r.data),
+  update: (id: string, body: any) => api.patch<Product>(`/products/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/products/${id}`).then((r) => r.data),
+  uploadMedia: (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post<Product>(`/products/${id}/media`, fd).then((r) => r.data);
+  },
+  deleteMedia: (id: string, mediaId: string) =>
+    api.delete<Product>(`/products/${id}/media/${mediaId}`).then((r) => r.data),
+  reorderMedia: (id: string, orderedIds: string[]) =>
+    api.put<Product>(`/products/${id}/media/order`, { orderedIds }).then((r) => r.data),
+};

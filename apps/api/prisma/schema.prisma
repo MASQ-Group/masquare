@@ -47,6 +47,7 @@ model Company {
   companyModules    CompanyModule[]
   moduleSharings    ModuleSharing[]
   userCompanyAccess UserCompanyAccess[]
+  productCompanies  ProductCompany[]
 
   @@map("company")
 }
@@ -242,6 +243,7 @@ model Vendor {
   deletedAt   DateTime? @map("deleted_at")
 
   contacts VendorContact[]
+  products Product[]
 
   @@map("vendor")
 }
@@ -275,6 +277,8 @@ model Brand {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
+  products Product[]
+
   @@map("brand")
 }
 
@@ -287,6 +291,8 @@ model ProductType {
   createdById String?   @map("created_by") @db.Uuid
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
+
+  products Product[]
 
   @@map("product_type")
 }
@@ -302,6 +308,8 @@ model FulfilmentType {
   createdById String?   @map("created_by") @db.Uuid
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
+
+  products Product[]
 
   @@map("fulfilment_type")
 }
@@ -320,6 +328,7 @@ model ProductCategory {
 
   parent   ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
   children ProductCategory[] @relation("CategoryTree")
+  products Product[]
 
   @@map("product_category")
 }
@@ -335,7 +344,8 @@ model Attribute {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  values AttributeValue[]
+  values            AttributeValue[]
+  productAttributes ProductAttribute[]
 
   @@map("attribute")
 }
@@ -364,4 +374,127 @@ model PlatformSettings {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("platform_settings")
+}
+
+// ===========================================================================
+// Module 3 — Products: master record, aliases, media, attribute assignments,
+// and the co-ownership link to companies (product_company, named in M1 §3).
+// Money is stored as amount (Decimal) + currency_code (default EUR).
+// Volumetric weight is NOT stored — it's derived on read from dimensions.
+// ===========================================================================
+
+model Product {
+  id    String @id @default(uuid()) @db.Uuid
+  mainSku String @unique @map("main_sku")
+  title String
+
+  brandId          String? @map("brand_id") @db.Uuid
+  vendorId         String? @map("vendor_id") @db.Uuid
+  productTypeId    String? @map("product_type_id") @db.Uuid
+  fulfilmentTypeId String? @map("fulfilment_type_id") @db.Uuid
+  categoryId       String? @map("category_id") @db.Uuid
+
+  // Identifiers & origin
+  ean             String?
+  upc             String?
+  vendorSku       String? @map("vendor_sku")
+  manufacturerSku String? @map("manufacturer_sku")
+  countryOfOrigin String? @map("country_of_origin")
+  hsCode          String? @map("hs_code")
+
+  // Cost & pricing (amount + currency)
+  purchaseCostAmount   Decimal? @map("purchase_cost_amount") @db.Decimal(14, 4)
+  purchaseCostCurrency String   @default("EUR") @map("purchase_cost_currency")
+  mapAmount            Decimal? @map("map_amount") @db.Decimal(14, 4)
+  mapCurrency          String   @default("EUR") @map("map_currency")
+  msrpAmount           Decimal? @map("msrp_amount") @db.Decimal(14, 4)
+  msrpCurrency         String   @default("EUR") @map("msrp_currency")
+
+  // Package & logistics (metric base units: kg, cm)
+  productWeightKg Decimal? @map("product_weight_kg") @db.Decimal(10, 3)
+  packageWeightKg Decimal? @map("package_weight_kg") @db.Decimal(10, 3)
+  packageLengthCm Decimal? @map("package_length_cm") @db.Decimal(10, 2)
+  packageWidthCm  Decimal? @map("package_width_cm") @db.Decimal(10, 2)
+  packageHeightCm Decimal? @map("package_height_cm") @db.Decimal(10, 2)
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  brand         Brand?          @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  vendor        Vendor?         @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  productType   ProductType?    @relation(fields: [productTypeId], references: [id], onDelete: SetNull)
+  fulfilmentType FulfilmentType? @relation(fields: [fulfilmentTypeId], references: [id], onDelete: SetNull)
+  category      ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  aliases    ProductSkuAlias[]
+  media      ProductMedia[]
+  attributes ProductAttribute[]
+  companies  ProductCompany[]
+
+  @@map("product")
+}
+
+model ProductSkuAlias {
+  id        String  @id @default(uuid()) @db.Uuid
+  productId String  @map("product_id") @db.Uuid
+  skuValue  String  @unique @map("sku_value")
+  label     String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_sku_alias")
+}
+
+model ProductMedia {
+  id        String @id @default(uuid()) @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  url       String
+  sortOrder Int    @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_media")
+}
+
+// The real product↔attribute assignment (distinct from the M2 `attribute` library).
+model ProductAttribute {
+  id          String @id @default(uuid()) @db.Uuid
+  productId   String @map("product_id") @db.Uuid
+  attributeId String @map("attribute_id") @db.Uuid
+  value       String
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  attribute Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, attributeId])
+  @@map("product_attribute")
+}
+
+model ProductCompany {
+  id        String @id @default(uuid()) @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, companyId])
+  @@map("product_company")
 }

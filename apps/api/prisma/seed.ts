@@ -123,6 +123,9 @@ async function main() {
   // 6. Global Settings reference data (Module 2) — platform-global.
   await seedReferenceData();
 
+  // 7. Sample product catalogue (Module 3), co-owned by both companies.
+  await seedProducts(companyIds);
+
   // eslint-disable-next-line no-console
   console.log(
     [
@@ -131,6 +134,7 @@ async function main() {
       `  Companies : ${ama.officialName}, ${nk.officialName}`,
       `  Modules   : ${MODULES.length} in catalogue; Products shared across both companies`,
       '  Global settings: vendors, brands, product/fulfilment types, category tree, attributes',
+      '  Products  : 10 sample products with aliases + attributes, co-owned by both companies',
       '  Admin login:',
       `    email    : ${adminEmail}`,
       `    password : ${adminPassword}`,
@@ -215,6 +219,65 @@ async function seedReferenceData() {
   // Platform settings singleton
   const settings = await prisma.platformSettings.findFirst();
   if (!settings) await prisma.platformSettings.create({ data: {} });
+}
+
+async function seedProducts(companyIds: string[]) {
+  // Resolve reference ids by natural key.
+  const brands = new Map((await prisma.brand.findMany()).map((b) => [b.name, b.id]));
+  const vendors = new Map((await prisma.vendor.findMany()).map((v) => [v.name, v.id]));
+  const types = new Map((await prisma.productType.findMany()).map((t) => [t.name, t.id]));
+  const fts = new Map((await prisma.fulfilmentType.findMany()).map((f) => [f.code ?? f.name, f.id]));
+  const cats = new Map((await prisma.productCategory.findMany()).map((c) => [c.name, c.id]));
+  const attrs = new Map((await prisma.attribute.findMany()).map((a) => [a.name, a.id]));
+
+  type Spec = {
+    sku: string; title: string; brand: string; vendor: string; type: string; ft: string;
+    cat: string; cost: number; aliases?: string[]; attrs?: [string, string][];
+  };
+  const specs: Spec[] = [
+    { sku: 'RE-S8540', title: 'Remington S8540 Keratin Protect Straightener', brand: 'Remington', vendor: 'THETACO Traders Ltd', type: 'Hair Straightener', ft: 'FBA', cat: 'Straighteners', cost: 50.0, aliases: ['RE-S8540-FBA'], attrs: [['Voltage', '220–240V']] },
+    { sku: 'BA-9000', title: 'BaByliss 9000 Cordless Straightener', brand: 'BaByliss', vendor: 'THETACO Traders Ltd', type: 'Hair Straightener', ft: 'FBM', cat: 'Straighteners', cost: 72.4, attrs: [['Voltage', '100–240V']] },
+    { sku: 'PH-BT7240', title: 'Philips Series 7000 Beard Trimmer', brand: 'Philips', vendor: 'Aegean Wholesale Ltd', type: 'Trimmer', ft: 'FBA', cat: 'Shaving', cost: 38.15, aliases: ['PH-BT7240-FBA', 'NK-BT7240'], attrs: [['Voltage', '100–240V'], ['Plug Type', 'EU']] },
+    { sku: 'BR-S9-4200', title: 'Braun Series 9 Electric Shaver 4200', brand: 'Braun', vendor: 'THETACO Traders Ltd', type: 'Shaver', ft: 'FBM', cat: 'Shaving', cost: 144.9, attrs: [['Plug Type', 'EU']] },
+    { sku: 'DY-HD08', title: 'Dyson Supersonic Hair Dryer HD08', brand: 'Dyson', vendor: 'Aegean Wholesale Ltd', type: 'Hair Dryer', ft: 'FBA', cat: 'Dryers', cost: 289.0, aliases: ['DY-HD08-EU'], attrs: [['Voltage', '220–240V'], ['Plug Type', 'EU']] },
+    { sku: 'RE-D3190', title: 'Remington D3190 Hair Dryer', brand: 'Remington', vendor: 'THETACO Traders Ltd', type: 'Hair Dryer', ft: 'FBM', cat: 'Dryers', cost: 28.5, attrs: [['Voltage', '220–240V']] },
+    { sku: 'PH-S5588', title: 'Philips Shaver Series 5000', brand: 'Philips', vendor: 'Aegean Wholesale Ltd', type: 'Shaver', ft: 'FBA', cat: 'Shaving', cost: 89.0, attrs: [['Plug Type', 'UK']] },
+    { sku: 'BA-ST495E', title: 'BaByliss Smooth Finish Straightener', brand: 'BaByliss', vendor: 'THETACO Traders Ltd', type: 'Hair Straightener', ft: 'FBA', cat: 'Straighteners', cost: 41.2 },
+    { sku: 'BR-MGK7', title: 'Braun MGK7 Multi Grooming Kit', brand: 'Braun', vendor: 'Aegean Wholesale Ltd', type: 'Trimmer', ft: 'FBM', cat: 'Shaving', cost: 55.75, attrs: [['Voltage', '100–240V']] },
+    { sku: 'DY-AB14', title: 'Dyson Airwrap Complete', brand: 'Dyson', vendor: 'THETACO Traders Ltd', type: 'Hair Dryer', ft: 'FBA', cat: 'Dryers', cost: 399.0, aliases: ['DY-AB14-FBA'], attrs: [['Plug Type', 'UK']] },
+  ];
+
+  for (const s of specs) {
+    const exists = await prisma.product.findUnique({ where: { mainSku: s.sku } });
+    if (exists) continue;
+    await prisma.product.create({
+      data: {
+        mainSku: s.sku,
+        title: s.title,
+        brandId: brands.get(s.brand) ?? null,
+        vendorId: vendors.get(s.vendor) ?? null,
+        productTypeId: types.get(s.type) ?? null,
+        fulfilmentTypeId: fts.get(s.ft) ?? null,
+        categoryId: cats.get(s.cat) ?? null,
+        countryOfOrigin: 'CN',
+        purchaseCostAmount: s.cost,
+        purchaseCostCurrency: 'EUR',
+        packageLengthCm: 20,
+        packageWidthCm: 12,
+        packageHeightCm: 6,
+        productWeightKg: 0.5,
+        aliases: s.aliases?.length ? { create: s.aliases.map((skuValue) => ({ skuValue })) } : undefined,
+        attributes: s.attrs?.length
+          ? {
+              create: s.attrs
+                .filter(([name]) => attrs.has(name))
+                .map(([name, value]) => ({ attributeId: attrs.get(name)!, value })),
+            }
+          : undefined,
+        companies: { create: companyIds.map((companyId) => ({ companyId })) },
+      },
+    });
+  }
 }
 
 main()
