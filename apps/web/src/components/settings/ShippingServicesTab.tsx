@@ -103,9 +103,21 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
     }
   };
 
+  // A country belongs to at most one zone per service.
+  const assignedElsewhere = (zoneIdx: number) => {
+    const s = new Set<string>();
+    zones.forEach((z, idx) => { if (idx !== zoneIdx) z.countryIds.forEach((id) => s.add(id)); });
+    return s;
+  };
+  const assignedAny = () => new Set(zones.flatMap((z) => z.countryIds));
+
   const addGroupToZone = (i: number, key: string) => {
     if (!key) return;
-    const ids = groupIds(key);
+    const base = key === '__REMAINING__'
+      ? countries.filter((c) => !assignedAny().has(c.id)).map((c) => c.id)
+      : groupIds(key);
+    const other = assignedElsewhere(i);
+    const ids = base.filter((id) => !other.has(id)); // skip countries already in another zone
     setZones((r) => r.map((x, idx) => (idx === i ? { ...x, countryIds: [...new Set([...x.countryIds, ...ids])] } : x)));
     touch();
   };
@@ -113,8 +125,10 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
   const onZonesFile = async (file: File) => {
     const { rows } = await parseSheetFile(file);
     const map = new Map<string, Set<string>>();
-    zones.forEach((z) => map.set(z.name, new Set(z.countryIds)));
+    const owner = new Map<string, string>(); // countryId -> zoneName (enforces single-zone membership)
+    zones.forEach((z) => { map.set(z.name, new Set(z.countryIds)); z.countryIds.forEach((id) => owner.set(id, z.name)); });
     let unresolved = 0;
+    let dupes = 0;
     for (const row of rows) {
       const zoneName = (row['Zone Name'] ?? row['Zone'] ?? '').trim();
       if (!zoneName) continue;
@@ -122,13 +136,17 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
       const set = map.get(zoneName)!;
       for (const tok of (row['Countries'] ?? '').split(/[;,|]/)) {
         const id = resolveCountry(tok);
-        if (id) set.add(id);
-        else if (tok.trim()) unresolved++;
+        if (!id) { if (tok.trim()) unresolved++; continue; }
+        const existingOwner = owner.get(id);
+        if (existingOwner && existingOwner !== zoneName) { dupes++; continue; }
+        set.add(id);
+        owner.set(id, zoneName);
       }
     }
     setZones([...map.entries()].map(([name, ids]) => ({ name, countryIds: [...ids] })));
     touch();
-    toast.success(`Imported ${map.size} zones${unresolved ? ` (${unresolved} unrecognised countries skipped)` : ''}`);
+    const skipped = [unresolved ? `${unresolved} unrecognised` : '', dupes ? `${dupes} already in another zone` : ''].filter(Boolean).join(', ');
+    toast.success(`Imported ${map.size} zones${skipped ? ` (${skipped} skipped)` : ''}`);
   };
   const downloadZonesTemplate = () =>
     downloadSheet('shipping-zones-template', [['Zone Name', 'Countries'], ['Zone 1', 'GB; DE; FR'], ['Zone 2', 'US; CA']], 'xlsx');
@@ -196,10 +214,11 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
               <label className="label">Countries in this zone</label>
               <div className="flex gap-2 max-[560px]:flex-col">
                 <div className="flex-1">
-                  <CountrySelect value={null} placeholder="Add a country…" onChange={(id) => { if (id) { setZones((r) => r.map((x, idx) => idx === i && !x.countryIds.includes(id) ? { ...x, countryIds: [...x.countryIds, id] } : x)); touch(); } }} />
+                  <CountrySelect value={null} placeholder="Add a country…" excludeIds={new Set([...assignedElsewhere(i), ...z.countryIds])} onChange={(id) => { if (id) { setZones((r) => r.map((x, idx) => idx === i && !x.countryIds.includes(id) ? { ...x, countryIds: [...x.countryIds, id] } : x)); touch(); } }} />
                 </div>
-                <select className="input w-56 max-[560px]:w-full" value="" onChange={(e) => { addGroupToZone(i, e.target.value); e.currentTarget.value = ''; }}>
+                <select className="input w-60 max-[560px]:w-full" value="" onChange={(e) => { addGroupToZone(i, e.target.value); e.currentTarget.value = ''; }}>
                   <option value="">Add all from…</option>
+                  <option value="__REMAINING__">All remaining countries</option>
                   <option value="EU">European Union (EU)</option>
                   {CONTINENTS.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
