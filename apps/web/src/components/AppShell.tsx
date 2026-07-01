@@ -12,6 +12,7 @@ import {
   Plug,
   Search,
   Settings,
+  SlidersHorizontal,
   Users,
   Warehouse,
   type LucideIcon,
@@ -43,7 +44,7 @@ const ADMIN: NavDef[] = [
   { to: '/companies', label: 'Companies', icon: Building2, adminOnly: true },
   { to: '/users', label: 'Users & roles', icon: Users, adminOnly: true },
   { to: '/modules', label: 'Modules & sharing', icon: Settings, adminOnly: true },
-  { label: 'Global settings', icon: Settings, badge: 'M2', disabled: true },
+  { to: '/settings', label: 'Global settings', icon: SlidersHorizontal },
 ];
 
 export function AppShell() {

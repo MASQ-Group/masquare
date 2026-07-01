@@ -192,3 +192,176 @@ model UserModuleAccess {
 
 // product_company (Module 3) — the co-ownership link for shared Products — is defined
 // with the Product entity in Module 3. Named in M1 §3 for completeness; not created yet.
+
+// ===========================================================================
+// Module 2 — Global Settings: platform-global product reference data.
+// (Note: the M2 spec's ERD labels the attribute library "product_attribute";
+//  we name it `attribute`/`attribute_value` here so it doesn't collide with the
+//  M3 product↔attribute assignment join, which is the real `product_attribute`.)
+// ===========================================================================
+
+enum ContactType {
+  person
+  department
+}
+
+enum AttributeInputType {
+  predefined
+  free_text
+}
+
+enum MeasurementSystem {
+  metric
+  imperial
+}
+
+enum DateFormat {
+  ddmmyyyy // dd/mm/yyyy (default)
+  mmddyyyy // mm/dd/yyyy
+  yyyymmdd // yyyy-mm-dd
+}
+
+model Vendor {
+  id                String  @id @default(uuid()) @db.Uuid
+  name              String
+  vatNumber         String? @map("vat_number")
+  addressLine1      String? @map("address_line1")
+  addressLine2      String? @map("address_line2")
+  addressCity       String? @map("address_city")
+  addressRegion     String? @map("address_region")
+  addressPostalCode String? @map("address_postal_code")
+  addressCountry    String? @map("address_country")
+  phone             String?
+  email             String?
+  website           String?
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  contacts VendorContact[]
+
+  @@map("vendor")
+}
+
+model VendorContact {
+  id           String       @id @default(uuid()) @db.Uuid
+  vendorId     String       @map("vendor_id") @db.Uuid
+  contactName  String?      @map("contact_name")
+  contactPhone String?      @map("contact_phone")
+  contactEmail String?      @map("contact_email")
+  contactType  ContactType? @map("contact_type")
+  contactRole  String?      @map("contact_role")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@map("vendor_contact")
+}
+
+model Brand {
+  id      String  @id @default(uuid()) @db.Uuid
+  name    String
+  website String?
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  @@map("brand")
+}
+
+model ProductType {
+  id   String @id @default(uuid()) @db.Uuid
+  name String
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  @@map("product_type")
+}
+
+model FulfilmentType {
+  id     String  @id @default(uuid()) @db.Uuid
+  name   String
+  code   String?
+  active Boolean @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  @@map("fulfilment_type")
+}
+
+model ProductCategory {
+  id        String  @id @default(uuid()) @db.Uuid
+  name      String
+  parentId  String? @map("parent_id") @db.Uuid
+  sortOrder Int     @default(0) @map("sort_order")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  parent   ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children ProductCategory[] @relation("CategoryTree")
+
+  @@map("product_category")
+}
+
+model Attribute {
+  id        String             @id @default(uuid()) @db.Uuid
+  name      String
+  inputType AttributeInputType @map("input_type")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  values AttributeValue[]
+
+  @@map("attribute")
+}
+
+model AttributeValue {
+  id          String @id @default(uuid()) @db.Uuid
+  attributeId String @map("attribute_id") @db.Uuid
+  value       String
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  attribute Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  @@map("attribute_value")
+}
+
+// Singleton row holding platform-wide format defaults (§9).
+model PlatformSettings {
+  id                String            @id @default(uuid()) @db.Uuid
+  measurementSystem MeasurementSystem @default(metric) @map("measurement_system")
+  dateFormat        DateFormat        @default(ddmmyyyy) @map("date_format")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_settings")
+}

@@ -53,7 +53,7 @@ export function DashboardPage() {
         <h2 className="mb-3 text-[15px] font-semibold text-n-900">Your modules</h2>
         <div className="grid grid-cols-4 gap-3 max-[1100px]:grid-cols-2 max-[760px]:grid-cols-1">
           {(user?.modules ?? []).map((m) => {
-            const live = m.status === 'core';
+            const live = m.status === 'core' || m.status === 'module-2';
             return (
               <div key={m.key} className="card flex items-center justify-between p-4">
                 <div>

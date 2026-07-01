@@ -130,3 +130,80 @@ export const modulesApi = {
   setParticipants: (key: string, companyIds: string[]) =>
     api.put<ModuleCatalogItem[]>(`/modules/${key}/participants`, { companyIds }).then((r) => r.data),
 };
+
+// ---- Module 2: Global Settings ----
+export interface VendorContact {
+  id?: string;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  contactType?: 'person' | 'department' | null;
+  contactRole?: string | null;
+}
+export interface Vendor {
+  id: string;
+  name: string;
+  vatNumber?: string | null;
+  addressLine1?: string | null;
+  addressCity?: string | null;
+  addressCountry?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
+  contacts: VendorContact[];
+}
+export interface Brand { id: string; name: string; website?: string | null }
+export interface ProductType { id: string; name: string }
+export interface FulfilmentType { id: string; name: string; code?: string | null; active: boolean }
+export interface Category { id: string; name: string; parentId: string | null; sortOrder: number }
+export interface AttributeValue { id: string; value: string }
+export interface Attribute {
+  id: string;
+  name: string;
+  inputType: 'predefined' | 'free_text';
+  values: AttributeValue[];
+}
+export interface PlatformSettings {
+  id: string;
+  measurementSystem: 'metric' | 'imperial';
+  dateFormat: 'ddmmyyyy' | 'mmddyyyy' | 'yyyymmdd';
+}
+
+const crud = <T,>(path: string) => ({
+  list: (q?: string) => api.get<T[]>(path, { params: q ? { q } : undefined }).then((r) => r.data),
+  create: (body: Partial<T>) => api.post<T>(path, body).then((r) => r.data),
+  update: (id: string, body: Partial<T>) => api.patch<T>(`${path}/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`${path}/${id}`).then((r) => r.data),
+});
+
+export const vendorsApi = crud<Vendor>('/vendors');
+export const brandsApi = crud<Brand>('/brands');
+export const productTypesApi = crud<ProductType>('/product-types');
+export const fulfilmentTypesApi = crud<FulfilmentType>('/fulfilment-types');
+
+export const categoriesApi = {
+  list: () => api.get<Category[]>('/categories').then((r) => r.data),
+  create: (body: { name: string; parentId?: string | null }) =>
+    api.post<Category>('/categories', body).then((r) => r.data),
+  update: (id: string, body: { name?: string }) =>
+    api.patch<Category>(`/categories/${id}`, body).then((r) => r.data),
+  move: (id: string, body: { parentId: string | null; sortOrder?: number }) =>
+    api.put<Category>(`/categories/${id}/move`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/categories/${id}`).then((r) => r.data),
+};
+
+export const attributesApi = {
+  list: (q?: string) => api.get<Attribute[]>('/attributes', { params: q ? { q } : undefined }).then((r) => r.data),
+  create: (body: { name: string; inputType: 'predefined' | 'free_text'; values?: string[] }) =>
+    api.post<Attribute>('/attributes', body).then((r) => r.data),
+  update: (id: string, body: { name?: string; inputType?: 'predefined' | 'free_text'; values?: string[] }) =>
+    api.patch<Attribute>(`/attributes/${id}`, body).then((r) => r.data),
+  addValue: (id: string, value: string) =>
+    api.post<AttributeValue>(`/attributes/${id}/values`, { value }).then((r) => r.data),
+  remove: (id: string) => api.delete(`/attributes/${id}`).then((r) => r.data),
+};
+
+export const settingsApi = {
+  get: () => api.get<PlatformSettings>('/settings').then((r) => r.data),
+  update: (body: Partial<PlatformSettings>) => api.put<PlatformSettings>('/settings', body).then((r) => r.data),
+};

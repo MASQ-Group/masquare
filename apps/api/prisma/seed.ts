@@ -120,6 +120,9 @@ async function main() {
     });
   }
 
+  // 6. Global Settings reference data (Module 2) — platform-global.
+  await seedReferenceData();
+
   // eslint-disable-next-line no-console
   console.log(
     [
@@ -127,12 +130,91 @@ async function main() {
       'maSquare seed complete.',
       `  Companies : ${ama.officialName}, ${nk.officialName}`,
       `  Modules   : ${MODULES.length} in catalogue; Products shared across both companies`,
+      '  Global settings: vendors, brands, product/fulfilment types, category tree, attributes',
       '  Admin login:',
       `    email    : ${adminEmail}`,
       `    password : ${adminPassword}`,
       '',
     ].join('\n'),
   );
+}
+
+async function seedReferenceData() {
+  // Fulfilment types
+  for (const ft of [
+    { name: 'Fulfilled by Amazon', code: 'FBA' },
+    { name: 'Fulfilled by Merchant', code: 'FBM' },
+  ]) {
+    const exists = await prisma.fulfilmentType.findFirst({ where: { code: ft.code, deletedAt: null } });
+    if (!exists) await prisma.fulfilmentType.create({ data: { ...ft, active: true } });
+  }
+
+  // Vendors (with a contact each)
+  for (const v of [
+    { name: 'THETACO Traders Ltd', addressCountry: 'CY', contact: 'Sales' },
+    { name: 'Aegean Wholesale Ltd', addressCountry: 'GR', contact: 'Accounts' },
+  ]) {
+    const exists = await prisma.vendor.findFirst({ where: { name: v.name, deletedAt: null } });
+    if (!exists) {
+      await prisma.vendor.create({
+        data: {
+          name: v.name,
+          addressCountry: v.addressCountry,
+          contacts: { create: [{ contactName: v.contact, contactType: 'department', contactRole: v.contact }] },
+        },
+      });
+    }
+  }
+
+  // Brands
+  for (const name of ['Remington', 'BaByliss', 'Philips', 'Braun', 'Dyson']) {
+    const exists = await prisma.brand.findFirst({ where: { name, deletedAt: null } });
+    if (!exists) await prisma.brand.create({ data: { name } });
+  }
+
+  // Product types
+  for (const name of ['Hair Straightener', 'Shaver', 'Trimmer', 'Hair Dryer']) {
+    const exists = await prisma.productType.findFirst({ where: { name, deletedAt: null } });
+    if (!exists) await prisma.productType.create({ data: { name } });
+  }
+
+  // Category tree: Personal Care > Hair > { Straighteners, Dryers } ; Personal Care > Shaving
+  const findOrCreateCategory = async (name: string, parentId: string | null) => {
+    const existing = await prisma.productCategory.findFirst({ where: { name, parentId, deletedAt: null } });
+    if (existing) return existing;
+    return prisma.productCategory.create({ data: { name, parentId } });
+  };
+  const personalCare = await findOrCreateCategory('Personal Care', null);
+  const hair = await findOrCreateCategory('Hair', personalCare.id);
+  await findOrCreateCategory('Straighteners', hair.id);
+  await findOrCreateCategory('Dryers', hair.id);
+  await findOrCreateCategory('Shaving', personalCare.id);
+
+  // Attributes: one predefined, one free-text
+  const plug = await prisma.attribute.findFirst({ where: { name: 'Plug Type', deletedAt: null } });
+  if (!plug) {
+    await prisma.attribute.create({
+      data: {
+        name: 'Plug Type',
+        inputType: 'predefined',
+        values: { create: [{ value: 'UK' }, { value: 'EU' }, { value: 'US' }] },
+      },
+    });
+  }
+  const voltage = await prisma.attribute.findFirst({ where: { name: 'Voltage', deletedAt: null } });
+  if (!voltage) {
+    await prisma.attribute.create({
+      data: {
+        name: 'Voltage',
+        inputType: 'free_text',
+        values: { create: [{ value: '220–240V' }, { value: '100–240V' }] },
+      },
+    });
+  }
+
+  // Platform settings singleton
+  const settings = await prisma.platformSettings.findFirst();
+  if (!settings) await prisma.platformSettings.create({ data: {} });
 }
 
 main()

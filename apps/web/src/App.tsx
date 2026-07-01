@@ -6,6 +6,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { CompaniesPage } from './pages/CompaniesPage';
 import { UsersPage } from './pages/UsersPage';
 import { ModulesPage } from './pages/ModulesPage';
+import { SettingsPage } from './pages/SettingsPage';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -43,6 +44,7 @@ export function App() {
         <Route path="/companies" element={<RequireAdmin><CompaniesPage /></RequireAdmin>} />
         <Route path="/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
         <Route path="/modules" element={<RequireAdmin><ModulesPage /></RequireAdmin>} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
