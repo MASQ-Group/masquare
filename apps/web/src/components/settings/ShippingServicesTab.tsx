@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, X } from 'lucide-react';
+import { Download, Plus, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { ModalShell, downloadSheet, parseSheetFile } from '@masquare/ui';
 import { countriesApi, shippingServicesApi, type ShippingService } from '../../lib/api';
 import { CountrySelect } from '../common/CountrySelect';
 import { AddButton, RefTable, SectionHeader } from './shared';
@@ -58,6 +58,18 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
   const touch = () => setDirty(true);
   const { data: countries = [] } = useQuery({ queryKey: ['countries'], queryFn: () => countriesApi.list() });
   const countryName = (id: string) => countries.find((c) => c.id === id)?.name ?? id;
+  const zonesFileRef = useRef<HTMLInputElement>(null);
+  const ratesFileRef = useRef<HTMLInputElement>(null);
+
+  const CONTINENTS = useMemo(() => [...new Set(countries.map((c) => c.continent))].sort(), [countries]);
+  const groupIds = (key: string): string[] =>
+    key === 'EU' ? countries.filter((c) => c.euVatZone).map((c) => c.id) : countries.filter((c) => c.continent === key).map((c) => c.id);
+  const resolveCountry = (token: string): string | null => {
+    const t = token.trim();
+    if (!t) return null;
+    const c = countries.find((x) => x.isoCode.toLowerCase() === t.toLowerCase() || x.name.toLowerCase() === t.toLowerCase());
+    return c?.id ?? null;
+  };
 
   const [name, setName] = useState(service?.name ?? '');
   const [alias, setAlias] = useState(service?.alias ?? '');
@@ -91,6 +103,60 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
     }
   };
 
+  const addGroupToZone = (i: number, key: string) => {
+    if (!key) return;
+    const ids = groupIds(key);
+    setZones((r) => r.map((x, idx) => (idx === i ? { ...x, countryIds: [...new Set([...x.countryIds, ...ids])] } : x)));
+    touch();
+  };
+
+  const onZonesFile = async (file: File) => {
+    const { rows } = await parseSheetFile(file);
+    const map = new Map<string, Set<string>>();
+    zones.forEach((z) => map.set(z.name, new Set(z.countryIds)));
+    let unresolved = 0;
+    for (const row of rows) {
+      const zoneName = (row['Zone Name'] ?? row['Zone'] ?? '').trim();
+      if (!zoneName) continue;
+      if (!map.has(zoneName)) map.set(zoneName, new Set());
+      const set = map.get(zoneName)!;
+      for (const tok of (row['Countries'] ?? '').split(/[;,|]/)) {
+        const id = resolveCountry(tok);
+        if (id) set.add(id);
+        else if (tok.trim()) unresolved++;
+      }
+    }
+    setZones([...map.entries()].map(([name, ids]) => ({ name, countryIds: [...ids] })));
+    touch();
+    toast.success(`Imported ${map.size} zones${unresolved ? ` (${unresolved} unrecognised countries skipped)` : ''}`);
+  };
+  const downloadZonesTemplate = () =>
+    downloadSheet('shipping-zones-template', [['Zone Name', 'Countries'], ['Zone 1', 'GB; DE; FR'], ['Zone 2', 'US; CA']], 'xlsx');
+
+  const onRatesFile = async (file: File) => {
+    const { rows } = await parseSheetFile(file);
+    const existing = new Set(zones.map((z) => z.name));
+    const added: ZoneForm[] = [];
+    const parsed: RateForm[] = [];
+    for (const row of rows) {
+      const zoneName = (row['Zone Name'] ?? row['Zone'] ?? '').trim();
+      if (!zoneName) continue;
+      if (!existing.has(zoneName)) { existing.add(zoneName); added.push({ name: zoneName, countryIds: [] }); }
+      parsed.push({
+        zoneName,
+        fromWeightKg: (row['From Weight (kg)'] ?? row['From Weight'] ?? row['From'] ?? '').trim(),
+        toWeightKg: (row['To Weight (kg)'] ?? row['To Weight'] ?? row['To'] ?? '').trim(),
+        chargeEur: (row['Shipping Charge (EUR)'] ?? row['Shipping Charge'] ?? row['Charge'] ?? '').trim(),
+      });
+    }
+    if (added.length) setZones((r) => [...r, ...added]);
+    setRates((r) => [...r, ...parsed]);
+    touch();
+    toast.success(`Imported ${parsed.length} weight ranges`);
+  };
+  const downloadRatesTemplate = () =>
+    downloadSheet('shipping-rates-template', [['Zone Name', 'From Weight (kg)', 'To Weight (kg)', 'Shipping Charge (EUR)'], ['Zone 1', '0', '2', '3.50'], ['Zone 1', '2', '5', '5.90'], ['Zone 2', '0', '2', '7.90']], 'xlsx');
+
   return (
     <ModalShell open title={service ? 'Edit shipping service' : 'New shipping service'} subtitle={service?.name}
       tabs={TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
@@ -115,6 +181,12 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
 
       {tab === 'zones' && (
         <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn btn-ghost" onClick={downloadZonesTemplate}><Download size={16} /> Template</button>
+            <button className="btn btn-ghost" onClick={() => zonesFileRef.current?.click()}><Upload size={16} /> Import zones</button>
+            <input ref={zonesFileRef} type="file" accept=".csv,.xls,.xlsx" className="hidden" onChange={(e) => { if (e.target.files?.[0]) onZonesFile(e.target.files[0]); e.currentTarget.value = ''; }} />
+            <span className="text-[12px] text-n-400">Columns: Zone Name · Countries (ISO codes or names, separated by ;)</span>
+          </div>
           {zones.map((z, i) => (
             <div key={i} className="rounded-lg border border-n-200 p-3">
               <div className="mb-2 flex items-center gap-2">
@@ -122,8 +194,20 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
                 <button className="grid h-9 w-9 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" onClick={() => { setZones((r) => r.filter((_, idx) => idx !== i)); touch(); }}><Trash2 size={15} /></button>
               </div>
               <label className="label">Countries in this zone</label>
-              <CountrySelect value={null} placeholder="Add a country…" onChange={(id) => { if (id) { setZones((r) => r.map((x, idx) => idx === i && !x.countryIds.includes(id) ? { ...x, countryIds: [...x.countryIds, id] } : x)); touch(); } }} />
+              <div className="flex gap-2 max-[560px]:flex-col">
+                <div className="flex-1">
+                  <CountrySelect value={null} placeholder="Add a country…" onChange={(id) => { if (id) { setZones((r) => r.map((x, idx) => idx === i && !x.countryIds.includes(id) ? { ...x, countryIds: [...x.countryIds, id] } : x)); touch(); } }} />
+                </div>
+                <select className="input w-56 max-[560px]:w-full" value="" onChange={(e) => { addGroupToZone(i, e.target.value); e.currentTarget.value = ''; }}>
+                  <option value="">Add all from…</option>
+                  <option value="EU">European Union (EU)</option>
+                  {CONTINENTS.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
               <div className="mt-2 flex flex-wrap gap-1.5">
+                {z.countryIds.length > 0 && (
+                  <button className="text-[11px] font-medium text-n-400 hover:text-danger" onClick={() => { setZones((r) => r.map((x, idx) => idx === i ? { ...x, countryIds: [] } : x)); touch(); }}>Clear all ·</button>
+                )}
                 {z.countryIds.map((cid) => (
                   <span key={cid} className="inline-flex items-center gap-1 rounded-pill border border-teal-100 bg-teal-50 px-2.5 py-0.5 text-[12px] text-teal-800">
                     {countryName(cid)}
@@ -139,7 +223,12 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
 
       {tab === 'rates' && (
         <div className="flex flex-col gap-3">
-          <p className="text-[12px] text-n-400">Define weight ranges (kg) and their charge (€) per zone.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn btn-ghost" onClick={downloadRatesTemplate}><Download size={16} /> Template</button>
+            <button className="btn btn-ghost" onClick={() => ratesFileRef.current?.click()}><Upload size={16} /> Import ranges</button>
+            <input ref={ratesFileRef} type="file" accept=".csv,.xls,.xlsx" className="hidden" onChange={(e) => { if (e.target.files?.[0]) onRatesFile(e.target.files[0]); e.currentTarget.value = ''; }} />
+          </div>
+          <p className="text-[12px] text-n-400">Define weight ranges (kg) and their charge (€) per zone. Import columns: Zone Name · From Weight (kg) · To Weight (kg) · Shipping Charge (EUR).</p>
           <div className="grid grid-cols-[1fr_100px_100px_110px_36px] gap-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-n-500 max-[560px]:hidden">
             <span>Zone</span><span>From (kg)</span><span>To (kg)</span><span>Charge (€)</span><span />
           </div>
