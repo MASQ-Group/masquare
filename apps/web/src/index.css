@@ -1,0 +1,68 @@
+@import '@masquare/config/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    font-family: var(--font-sans);
+    color: var(--n-800);
+    background: var(--n-50);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  *:focus-visible {
+    outline: 2px solid var(--teal-400);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation-duration: 0.001ms !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* The "data in mono" rule — every machine-assigned value. */
+  .mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  .btn {
+    @apply inline-flex h-10 items-center gap-2 rounded-md px-4 text-[13.5px] font-semibold transition-colors whitespace-nowrap;
+  }
+  .btn-primary {
+    @apply bg-primary text-white shadow-xs hover:bg-primary-hover;
+  }
+  .btn-ghost {
+    @apply border border-n-200 bg-n-0 text-n-700 hover:bg-n-50;
+  }
+  .btn-accent {
+    @apply bg-accent text-white;
+  }
+  .input {
+    @apply h-10 w-full rounded-md border border-n-200 bg-n-0 px-3 text-[13.5px] text-n-800 outline-none placeholder:text-n-400 focus:border-teal-400 focus:ring-[3px] focus:ring-teal-50;
+  }
+  .label {
+    @apply mb-1.5 block text-[13px] font-medium text-n-700;
+  }
+  .card {
+    @apply rounded-lg border border-n-200 bg-n-0 shadow-sm;
+  }
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.09em] text-n-500;
+  }
+  .tag {
+    @apply inline-flex items-center rounded-pill px-2.5 py-0.5 text-[11.5px] font-semibold;
+  }
+}

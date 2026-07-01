@@ -1,0 +1,27 @@
+{
+  "name": "masquare",
+  "version": "0.1.0",
+  "private": true,
+  "description": "maSquare — multi-company back-office operations platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run start:dev -w @masquare/api",
+    "dev:web": "npm run dev -w @masquare/web",
+    "build": "npm run build -w @masquare/config -w @masquare/ui -w @masquare/api -w @masquare/web",
+    "db:generate": "npm run db:generate -w @masquare/api",
+    "db:migrate": "npm run db:migrate -w @masquare/api",
+    "db:seed": "npm run db:seed -w @masquare/api",
+    "db:reset": "npm run db:reset -w @masquare/api",
+    "lint": "echo \"(lint not configured yet)\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

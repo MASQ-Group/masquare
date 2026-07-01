@@ -1,0 +1,50 @@
+{
+  "name": "@masquare/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "start": "dotenv -e ../../.env -- nest start",
+    "start:dev": "dotenv -e ../../.env -- nest start --watch",
+    "start:prod": "dotenv -e ../../.env -- node dist/main.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "dotenv -e ../../.env -- prisma migrate dev",
+    "db:migrate:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
+    "db:reset": "dotenv -e ../../.env -- prisma migrate reset --force",
+    "db:seed": "dotenv -e ../../.env -- prisma db seed"
+  },
+  "prisma": {
+    "seed": "ts-node -r tsconfig-paths/register prisma/seed.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.700.0",
+    "@nestjs/common": "^10.4.15",
+    "@nestjs/config": "^3.3.0",
+    "@nestjs/core": "^10.4.15",
+    "@nestjs/jwt": "^10.2.0",
+    "@nestjs/passport": "^10.0.3",
+    "@nestjs/platform-express": "^10.4.15",
+    "@nestjs/swagger": "^8.1.0",
+    "@prisma/client": "^6.1.0",
+    "bcryptjs": "^2.4.3",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.4.9",
+    "@nestjs/schematics": "^10.2.3",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "@types/passport-jwt": "^4.0.1",
+    "dotenv-cli": "^8.0.0",
+    "prisma": "^6.1.0",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.7.2"
+  }
+}

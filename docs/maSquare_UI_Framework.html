@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>maSquare — UI/UX Framework</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* Brand — Teal (primary) */
+    --teal-50:#E7F6F4; --teal-100:#C3EAE6; --teal-200:#8FD8D1; --teal-300:#57C3BA;
+    --teal-400:#2BB0A6; --teal-500:#14A79D; --teal-600:#0F857D; --teal-700:#0B645E;
+    --teal-800:#084742; --teal-900:#05302C;
+    /* Brand — Green (secondary / positive) */
+    --green-50:#F2F8E6; --green-100:#E0EFC4; --green-200:#C8E298; --green-300:#AFD56B;
+    --green-400:#9DCE52; --green-500:#8DC73F; --green-600:#71A22F; --green-700:#557A23;
+    --green-800:#3B5518; --green-900:#28390F;
+    /* Brand — Orange (accent) */
+    --orange-50:#FEEEE8; --orange-100:#FCD3C4; --orange-200:#FAB39C; --orange-300:#F78D6B;
+    --orange-400:#F47248; --orange-500:#F1592A; --orange-600:#D43F13; --orange-700:#A22F0E;
+    --orange-800:#70210A; --orange-900:#471506;
+    /* Neutral — cool slate */
+    --n-0:#FFFFFF; --n-25:#FBFCFD; --n-50:#F6F8FA; --n-100:#EDF1F4; --n-200:#DDE3E9;
+    --n-300:#C3CCD4; --n-400:#97A4AF; --n-500:#6B7884; --n-600:#4D5963; --n-700:#374049;
+    --n-800:#232A31; --n-900:#141A1F; --n-950:#0C1014;
+    /* Semantic */
+    --success:#71A22F; --success-bg:#F2F8E6; --success-bd:#C8E298;
+    --warning:#B7791F; --warning-bg:#FBF1DC; --warning-bd:#EBCF93;
+    --danger:#C8372E;  --danger-bg:#FCEBE9;  --danger-bd:#F2C0BB;
+    --info:#0F857D;    --info-bg:#E7F6F4;    --info-bd:#8FD8D1;
+
+    --primary:var(--teal-500); --primary-hover:var(--teal-600); --accent:var(--orange-500);
+
+    /* Type */
+    --font-sans:'Inter',system-ui,-apple-system,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,monospace;
+
+    /* Radii */
+    --r-sm:6px; --r-md:8px; --r-lg:12px; --r-xl:16px; --r-pill:999px;
+
+    /* Shadows */
+    --sh-xs:0 1px 2px rgba(16,24,40,.05);
+    --sh-sm:0 1px 3px rgba(16,24,40,.08),0 1px 2px rgba(16,24,40,.04);
+    --sh-md:0 4px 14px rgba(16,24,40,.08);
+    --sh-lg:0 16px 40px rgba(16,24,40,.16);
+
+    --sidebar-w:248px; --rail-w:68px; --topbar-h:60px;
+  }
+
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; }
+  body {
+    font-family:var(--font-sans); color:var(--n-800); background:var(--n-50);
+    font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  .mono { font-family:var(--font-mono); font-variant-numeric:tabular-nums; letter-spacing:-.01em; }
+  button { font-family:inherit; cursor:pointer; border:none; background:none; }
+
+  /* ---------- App frame ---------- */
+  .app { display:grid; grid-template-columns:var(--sidebar-w) 1fr; height:100vh; }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar {
+    background:var(--n-900); color:var(--n-300); display:flex; flex-direction:column;
+    border-right:1px solid var(--n-950); overflow:hidden;
+  }
+  .brand {
+    display:flex; align-items:center; gap:10px; padding:0 18px; height:var(--topbar-h);
+    border-bottom:1px solid rgba(255,255,255,.06); flex-shrink:0;
+  }
+  .brand-mark {
+    width:30px; height:30px; border-radius:8px; flex-shrink:0;
+    background:linear-gradient(135deg,var(--teal-400),var(--teal-600));
+    display:grid; place-items:center; color:#fff; font-weight:700; font-size:15px;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
+  }
+  .brand-name { color:#fff; font-weight:600; font-size:15px; letter-spacing:-.01em; }
+  .brand-name span { color:var(--green-400); }
+
+  .company-switch {
+    margin:14px 12px 6px; padding:10px 12px; border-radius:var(--r-md); cursor:pointer;
+    background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.07);
+    display:flex; align-items:center; gap:10px; transition:background .15s;
+  }
+  .company-switch:hover { background:rgba(255,255,255,.07); }
+  .company-avatar {
+    width:28px; height:28px; border-radius:7px; background:var(--teal-600); color:#fff;
+    display:grid; place-items:center; font-size:11px; font-weight:700; flex-shrink:0;
+  }
+  .company-meta { flex:1; min-width:0; }
+  .company-label { font-size:9px; text-transform:uppercase; letter-spacing:.08em; color:var(--n-500); }
+  .company-name { font-size:13px; font-weight:600; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .nav-section { padding:10px 12px 4px; }
+  .nav-heading { font-size:10px; text-transform:uppercase; letter-spacing:.09em; color:var(--n-600); padding:8px 12px 6px; }
+  .nav-item {
+    display:flex; align-items:center; gap:12px; padding:9px 12px; border-radius:var(--r-md);
+    color:var(--n-300); font-size:13.5px; font-weight:500; position:relative; transition:.15s;
+    width:100%; text-align:left;
+  }
+  .nav-item svg { width:18px; height:18px; flex-shrink:0; opacity:.8; }
+  .nav-item:hover { background:rgba(255,255,255,.06); color:#fff; }
+  .nav-item.active { background:rgba(20,167,157,.16); color:#fff; }
+  .nav-item.active::before {
+    content:""; position:absolute; left:-12px; top:6px; bottom:6px; width:3px;
+    border-radius:0 3px 3px 0; background:var(--teal-400);
+  }
+  .nav-item .badge {
+    margin-left:auto; font-family:var(--font-mono); font-size:11px; padding:1px 7px;
+    border-radius:var(--r-pill); background:rgba(255,255,255,.08); color:var(--n-300);
+  }
+  .nav-spacer { flex:1; }
+  .nav-bottom { padding:8px 12px 12px; border-top:1px solid rgba(255,255,255,.06); }
+  .user-chip {
+    display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:var(--r-md);
+    cursor:pointer; transition:.15s;
+  }
+  .user-chip:hover { background:rgba(255,255,255,.06); }
+  .user-avatar {
+    width:30px; height:30px; border-radius:50%; flex-shrink:0;
+    background:linear-gradient(135deg,var(--orange-400),var(--orange-600));
+    display:grid; place-items:center; color:#fff; font-size:12px; font-weight:600;
+  }
+  .user-name { font-size:13px; font-weight:600; color:#fff; }
+  .user-role { font-size:11px; color:var(--n-500); }
+
+  /* ---------- Main ---------- */
+  .main { display:flex; flex-direction:column; min-width:0; background:var(--n-50); }
+
+  .topbar {
+    height:var(--topbar-h); flex-shrink:0; background:var(--n-0); border-bottom:1px solid var(--n-200);
+    display:flex; align-items:center; gap:16px; padding:0 20px; position:relative; z-index:40;
+  }
+  .icon-btn {
+    width:38px; height:38px; border-radius:var(--r-md); display:grid; place-items:center;
+    color:var(--n-600); transition:.15s; flex-shrink:0;
+  }
+  .icon-btn:hover { background:var(--n-100); color:var(--n-800); }
+  .icon-btn svg { width:19px; height:19px; }
+  .hamburger { display:none; }
+
+  /* Global search */
+  .search-wrap { flex:1; max-width:620px; position:relative; }
+  .search-bar {
+    display:flex; align-items:center; height:40px; background:var(--n-50);
+    border:1px solid var(--n-200); border-radius:var(--r-md); transition:.15s; overflow:hidden;
+  }
+  .search-bar:focus-within { background:#fff; border-color:var(--teal-400); box-shadow:0 0 0 3px var(--teal-50); }
+  .scope {
+    display:flex; align-items:center; gap:6px; padding:0 12px; height:100%; cursor:pointer;
+    font-size:12.5px; font-weight:600; color:var(--n-700); border-right:1px solid var(--n-200);
+    white-space:nowrap; background:var(--n-100); transition:.15s;
+  }
+  .scope:hover { background:var(--n-200); }
+  .scope svg { width:14px; height:14px; opacity:.7; }
+  .search-input { flex:1; border:none; outline:none; background:none; padding:0 12px; font-size:13.5px; color:var(--n-800); height:100%; }
+  .search-input::placeholder { color:var(--n-400); }
+  .search-kbd {
+    margin-right:10px; font-family:var(--font-mono); font-size:11px; color:var(--n-400);
+    border:1px solid var(--n-200); border-radius:4px; padding:1px 6px; background:#fff;
+  }
+  .search-panel {
+    position:absolute; top:48px; left:0; right:0; background:#fff; border:1px solid var(--n-200);
+    border-radius:var(--r-lg); box-shadow:var(--sh-lg); padding:8px; display:none;
+  }
+  .search-panel.open { display:block; }
+  .res-group-label {
+    font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:var(--n-500);
+    padding:10px 12px 6px; font-weight:600;
+  }
+  .res {
+    display:flex; align-items:center; gap:12px; padding:9px 12px; border-radius:var(--r-md); cursor:pointer;
+  }
+  .res:hover { background:var(--teal-50); }
+  .res-thumb { width:30px; height:30px; border-radius:6px; background:var(--n-100); display:grid; place-items:center; color:var(--n-500); flex-shrink:0; }
+  .res-thumb svg { width:16px; height:16px; }
+  .res-main { flex:1; min-width:0; }
+  .res-title { font-size:13.5px; font-weight:500; color:var(--n-800); }
+  .res-sub { font-size:12px; color:var(--n-500); }
+  .res-tag { font-size:11px; font-weight:600; color:var(--teal-700); background:var(--teal-50); padding:2px 8px; border-radius:var(--r-pill); }
+
+  .topbar-actions { display:flex; align-items:center; gap:6px; margin-left:auto; }
+
+  .content { flex:1; overflow:auto; padding:28px 32px; }
+  .content-inner { width:100%; }
+
+  /* Page header */
+  .page-head { display:flex; align-items:flex-start; gap:16px; margin-bottom:22px; }
+  .eyebrow { font-size:11px; text-transform:uppercase; letter-spacing:.09em; color:var(--n-500); font-weight:600; margin-bottom:6px; }
+  .page-title { font-size:24px; font-weight:600; letter-spacing:-.02em; color:var(--n-900); }
+  .page-sub { font-size:13.5px; color:var(--n-500); margin-top:4px; }
+
+  .btn {
+    display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 16px; border-radius:var(--r-md);
+    font-size:13.5px; font-weight:600; transition:.15s; white-space:nowrap;
+  }
+  .btn svg { width:17px; height:17px; }
+  .btn-primary { background:var(--primary); color:#fff; box-shadow:var(--sh-xs); }
+  .btn-primary:hover { background:var(--primary-hover); }
+  .btn-ghost { background:#fff; color:var(--n-700); border:1px solid var(--n-200); }
+  .btn-ghost:hover { background:var(--n-50); border-color:var(--n-300); }
+
+  /* Toolbar */
+  .toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+  .tb-search {
+    display:flex; align-items:center; gap:8px; height:38px; padding:0 12px; min-width:240px;
+    background:#fff; border:1px solid var(--n-200); border-radius:var(--r-md); color:var(--n-400);
+  }
+  .tb-search svg { width:16px; height:16px; }
+  .tb-search input { border:none; outline:none; flex:1; font-size:13px; font-family:inherit; color:var(--n-800); }
+  .chip {
+    display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 10px 0 12px; border-radius:var(--r-pill);
+    background:var(--teal-50); color:var(--teal-800); font-size:12.5px; font-weight:500; border:1px solid var(--teal-100);
+  }
+  .chip .x { width:16px; height:16px; border-radius:50%; display:grid; place-items:center; color:var(--teal-600); }
+  .chip .x:hover { background:var(--teal-100); }
+  .filter-btn {
+    display:inline-flex; align-items:center; gap:7px; height:38px; padding:0 12px; border-radius:var(--r-md);
+    background:#fff; border:1px solid var(--n-200); font-size:13px; font-weight:500; color:var(--n-700);
+  }
+  .filter-btn svg { width:15px; height:15px; opacity:.6; }
+  .filter-btn:hover { border-color:var(--n-300); }
+  .seg {
+    display:inline-flex; background:var(--n-100); border-radius:var(--r-md); padding:3px; gap:2px; margin-left:auto;
+  }
+  .seg button { width:34px; height:32px; border-radius:6px; display:grid; place-items:center; color:var(--n-500); }
+  .seg button.active { background:#fff; color:var(--teal-700); box-shadow:var(--sh-xs); }
+  .seg button svg { width:16px; height:16px; }
+
+  /* Table */
+  .card { background:#fff; border:1px solid var(--n-200); border-radius:var(--r-lg); box-shadow:var(--sh-sm); overflow:hidden; }
+  .table-scroll { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; min-width:920px; }
+  thead th {
+    text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--n-500);
+    font-weight:600; padding:12px 16px; border-bottom:1px solid var(--n-200); background:var(--n-25); white-space:nowrap;
+  }
+  thead th.filterable { cursor:pointer; }
+  thead th .th-in { display:inline-flex; align-items:center; gap:6px; }
+  thead th .th-in svg { width:13px; height:13px; opacity:.5; }
+  tbody td { padding:12px 16px; border-bottom:1px solid var(--n-100); font-size:13.5px; vertical-align:middle; }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr:hover { background:var(--teal-50); }
+  .cell-thumb { width:40px; height:40px; border-radius:8px; background:var(--n-100); display:grid; place-items:center; color:var(--n-400); }
+  .cell-thumb svg { width:18px; height:18px; }
+  .cell-title { font-weight:500; color:var(--n-800); }
+  .cell-sub { font-size:12px; color:var(--n-500); }
+  .price { font-weight:500; color:var(--n-800); }
+  .tag {
+    display:inline-flex; align-items:center; font-size:11.5px; font-weight:600; padding:3px 9px; border-radius:var(--r-pill);
+  }
+  .tag-fba { background:var(--info-bg); color:var(--info); border:1px solid var(--info-bd); }
+  .tag-fbm { background:var(--n-100); color:var(--n-600); border:1px solid var(--n-200); }
+  .attr-chips { display:flex; gap:5px; flex-wrap:wrap; }
+  .attr { font-family:var(--font-mono); font-size:11px; background:var(--n-100); color:var(--n-600); padding:2px 7px; border-radius:5px; }
+
+  .table-foot { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-top:1px solid var(--n-200); }
+  .table-foot .muted { font-size:13px; color:var(--n-500); }
+  .pager { display:flex; gap:4px; }
+  .pager button { width:32px; height:32px; border-radius:var(--r-sm); display:grid; place-items:center; font-size:13px; color:var(--n-600); border:1px solid var(--n-200); background:#fff; font-family:var(--font-mono); }
+  .pager button.active { background:var(--teal-500); color:#fff; border-color:var(--teal-500); }
+
+  /* ---------- Design language screen ---------- */
+  .screen { display:none; }
+  .screen.active { display:block; }
+  .dl-grid { display:grid; gap:20px; }
+  .panel { background:#fff; border:1px solid var(--n-200); border-radius:var(--r-lg); box-shadow:var(--sh-sm); padding:24px; }
+  .panel h3 { font-size:15px; font-weight:600; color:var(--n-900); margin-bottom:4px; }
+  .panel .ph-sub { font-size:13px; color:var(--n-500); margin-bottom:18px; }
+  .swatches { display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px; }
+  .sw { border-radius:var(--r-md); overflow:hidden; border:1px solid var(--n-200); }
+  .sw .chip-color { height:56px; }
+  .sw .sw-meta { padding:8px 10px; }
+  .sw .sw-name { font-size:12px; font-weight:600; color:var(--n-800); }
+  .sw .sw-hex { font-family:var(--font-mono); font-size:11px; color:var(--n-500); }
+  .ramp { display:flex; border-radius:var(--r-md); overflow:hidden; border:1px solid var(--n-200); margin-bottom:14px; }
+  .ramp div { flex:1; height:44px; display:grid; place-items:end center; padding-bottom:4px; font-family:var(--font-mono); font-size:9px; }
+  .ramp-label { font-size:12px; font-weight:600; color:var(--n-700); margin-bottom:6px; display:flex; gap:8px; align-items:center; }
+  .ramp-dot { width:10px; height:10px; border-radius:50%; }
+
+  .specimen { border-top:1px solid var(--n-100); padding-top:14px; margin-top:14px; }
+  .specimen:first-child { border-top:none; padding-top:0; margin-top:0; }
+  .specimen .lbl { font-size:11px; color:var(--n-400); font-family:var(--font-mono); margin-bottom:6px; }
+  .demo-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+
+  .two-col { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width:1100px) {
+    .app { grid-template-columns:var(--rail-w) 1fr; }
+    .sidebar { --collapsed:1; }
+    .brand-name,.company-meta,.nav-heading,.nav-item span.label,.nav-item .badge,.user-name,.user-role { display:none; }
+    .brand { justify-content:center; padding:0; }
+    .company-switch { justify-content:center; padding:10px; }
+    .nav-item { justify-content:center; padding:11px; }
+    .nav-item.active::before { left:0; }
+    .user-chip { justify-content:center; }
+    .two-col { grid-template-columns:1fr; }
+  }
+  @media (max-width:760px) {
+    .app { grid-template-columns:1fr; }
+    .sidebar { position:fixed; left:0; top:0; bottom:0; width:var(--sidebar-w); z-index:60; transform:translateX(-100%); transition:transform .2s; }
+    .sidebar.open { transform:none; }
+    .sidebar .brand-name,.sidebar .company-meta,.sidebar .nav-heading,.sidebar .nav-item span.label,.sidebar .nav-item .badge,.sidebar .user-name,.sidebar .user-role { display:revert; }
+    .sidebar .brand { justify-content:flex-start; padding:0 18px; }
+    .sidebar .nav-item { justify-content:flex-start; padding:9px 12px; }
+    .sidebar .company-switch { justify-content:flex-start; padding:10px 12px; }
+    .hamburger { display:grid; }
+    .scope span { display:none; }
+    .scope { padding:0 10px; }
+    .search-kbd { display:none; }
+    .content { padding:18px 16px; }
+    .page-head { flex-direction:column; }
+    .seg { margin-left:0; }
+  }
+  .scrim { display:none; position:fixed; inset:0; background:rgba(12,16,20,.5); z-index:55; }
+  .scrim.open { display:block; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">m</div>
+      <div class="brand-name">ma<span>Square</span></div>
+    </div>
+
+    <div class="company-switch">
+      <div class="company-avatar">AM</div>
+      <div class="company-meta">
+        <div class="company-label">Active company</div>
+        <div class="company-name">A.M.A. MASQUARE LTD</div>
+      </div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;color:var(--n-500)"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-heading">Operations</div>
+      <button class="nav-item active" onclick="showScreen('products',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10m0-10l8-4M4 7v10l8 4"/></svg>
+        <span class="label">Products</span><span class="badge">2,481</span>
+      </button>
+      <button class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 001 1h12a1 1 0 001-1V8M10 12h4"/></svg>
+        <span class="label">Inventory</span><span class="badge">soon</span>
+      </button>
+      <button class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/></svg>
+        <span class="label">Warehouses</span><span class="badge">soon</span>
+      </button>
+      <button class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg>
+        <span class="label">Integrations</span><span class="badge">soon</span>
+      </button>
+      <button class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+        <span class="label">Analytics</span><span class="badge">soon</span>
+      </button>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-heading">Administration</div>
+      <button class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+        <span class="label">Companies</span>
+      </button>
+      <button class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-8 0v2M12 11a4 4 0 100-8 4 4 0 000 8z"/></svg>
+        <span class="label">Users &amp; roles</span>
+      </button>
+      <button class="nav-item" onclick="showScreen('design',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="6.5" cy="12" r="2.5"/><circle cx="17" cy="14" r="2.5"/><path d="M12 22a10 10 0 110-20"/></svg>
+        <span class="label">Design language</span>
+      </button>
+      <button class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-2.7.7 1.6 1.6 0 01-3.2 0 1.6 1.6 0 00-2.7-.7l-.1.1a2 2 0 11-2.8-2.8l.1-.1A1.6 1.6 0 004.6 15a1.6 1.6 0 01-1-1.5 1.6 1.6 0 011-1.5 1.6 1.6 0 00.7-2.7l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 002.7-.7 1.6 1.6 0 013.2 0 1.6 1.6 0 002.7.7l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8 1.6 1.6 0 011 1.5 1.6 1.6 0 01-1 1.5z"/></svg>
+        <span class="label">Global settings</span>
+      </button>
+    </div>
+
+    <div class="nav-spacer"></div>
+    <div class="nav-bottom">
+      <div class="user-chip">
+        <div class="user-avatar">CY</div>
+        <div style="flex:1;min-width:0">
+          <div class="user-name">CyRIC IoT</div>
+          <div class="user-role">Administrator</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn hamburger" onclick="toggleSidebar()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+
+      <div class="search-wrap">
+        <div class="search-bar">
+          <div class="scope" onclick="toggleSearch(event)">
+            <span>All modules</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <input class="search-input" placeholder="Search the platform — SKU, product, vendor, company…" onfocus="openSearch()" oninput="openSearch()" value="straight" />
+          <span class="search-kbd">⌘K</span>
+        </div>
+        <div class="search-panel" id="searchPanel">
+          <div class="res-group-label">Products</div>
+          <div class="res">
+            <div class="res-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>
+            <div class="res-main">
+              <div class="res-title">Remington S8540 Keratin Protect Straightener</div>
+              <div class="res-sub mono">RE-S8540 · Remington · Hair Straightener</div>
+            </div>
+            <span class="res-tag">Product</span>
+          </div>
+          <div class="res">
+            <div class="res-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>
+            <div class="res-main">
+              <div class="res-title">BaByliss 9000 Cordless Straightener</div>
+              <div class="res-sub mono">BA-9000 · BaByliss · Hair Straightener</div>
+            </div>
+            <span class="res-tag">Product</span>
+          </div>
+          <div class="res-group-label">Vendors</div>
+          <div class="res">
+            <div class="res-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-3"/></svg></div>
+            <div class="res-main">
+              <div class="res-title">THETACO Traders Ltd</div>
+              <div class="res-sub">Vendor · 312 products supplied</div>
+            </div>
+            <span class="res-tag">Vendor</span>
+          </div>
+          <div class="res-group-label">Companies</div>
+          <div class="res">
+            <div class="res-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></div>
+            <div class="res-main">
+              <div class="res-title">N.K. MULTITRADE CORPORATION LTD</div>
+              <div class="res-sub mono">CY10402024X · IT00441109998</div>
+            </div>
+            <span class="res-tag">Company</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <button class="icon-btn" title="Help">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17"/></svg>
+        </button>
+        <button class="icon-btn" title="Notifications">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="content">
+      <!-- ======= PRODUCTS SCREEN ======= -->
+      <div class="screen active" id="screen-products">
+        <div class="content-inner">
+          <div class="page-head">
+            <div style="flex:1">
+              <div class="eyebrow">Products module</div>
+              <h1 class="page-title">All products</h1>
+              <div class="page-sub">Master catalogue, co-owned by A.M.A. MASQUARE &amp; N.K. MULTITRADE</div>
+            </div>
+            <button class="btn btn-ghost">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+              Import .xls / .csv
+            </button>
+            <button class="btn btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add product
+            </button>
+          </div>
+
+          <div class="toolbar">
+            <div class="tb-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input placeholder="Search SKU, title, attributes…" />
+            </div>
+            <button class="filter-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              Filters
+            </button>
+            <span class="chip">Brand: Remington <span class="x">✕</span></span>
+            <span class="chip">Fulfilment: FBA <span class="x">✕</span></span>
+            <button class="filter-btn" style="color:var(--orange-600);border-color:var(--orange-200)">Clear all</button>
+            <div class="seg">
+              <button class="active" title="List view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3" y2="6"/><line x1="3" y1="12" x2="3" y2="12"/><line x1="3" y1="18" x2="3" y2="18"/></svg></button>
+              <button title="Grid view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>SKU</th>
+                    <th>Product</th>
+                    <th class="filterable"><span class="th-in">Brand <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span></th>
+                    <th class="filterable"><span class="th-in">Vendor <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span></th>
+                    <th class="filterable"><span class="th-in">Fulfilment <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span></th>
+                    <th>Attributes</th>
+                    <th style="text-align:right">Purchase cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><div class="cell-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></div></td>
+                    <td><div class="mono cell-title">RE-S8540</div><div class="cell-sub mono">+1 alias</div></td>
+                    <td><div class="cell-title">Remington S8540 Keratin Protect Straightener</div><div class="cell-sub">Hair Straightener</div></td>
+                    <td>Remington</td>
+                    <td>THETACO Traders Ltd</td>
+                    <td><span class="tag tag-fba">FBA</span></td>
+                    <td><div class="attr-chips"><span class="attr">220–240V</span><span class="attr">Ceramic</span></div></td>
+                    <td style="text-align:right"><span class="price mono">€50.00</span></td>
+                  </tr>
+                  <tr>
+                    <td><div class="cell-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></div></td>
+                    <td><div class="mono cell-title">BA-9000</div></td>
+                    <td><div class="cell-title">BaByliss 9000 Cordless Straightener</div><div class="cell-sub">Hair Straightener</div></td>
+                    <td>BaByliss</td>
+                    <td>THETACO Traders Ltd</td>
+                    <td><span class="tag tag-fbm">FBM</span></td>
+                    <td><div class="attr-chips"><span class="attr">Cordless</span><span class="attr">Titanium</span></div></td>
+                    <td style="text-align:right"><span class="price mono">€72.40</span></td>
+                  </tr>
+                  <tr>
+                    <td><div class="cell-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></div></td>
+                    <td><div class="mono cell-title">PH-BT7240</div><div class="cell-sub mono">+2 aliases</div></td>
+                    <td><div class="cell-title">Philips Series 7000 Beard Trimmer</div><div class="cell-sub">Trimmer</div></td>
+                    <td>Philips</td>
+                    <td>Aegean Wholesale Ltd</td>
+                    <td><span class="tag tag-fba">FBA</span></td>
+                    <td><div class="attr-chips"><span class="attr">100–240V</span><span class="attr">USB-C</span></div></td>
+                    <td style="text-align:right"><span class="price mono">€38.15</span></td>
+                  </tr>
+                  <tr>
+                    <td><div class="cell-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></div></td>
+                    <td><div class="mono cell-title">BR-S9-4200</div></td>
+                    <td><div class="cell-title">Braun Series 9 Electric Shaver 4200</div><div class="cell-sub">Shaver</div></td>
+                    <td>Braun</td>
+                    <td>THETACO Traders Ltd</td>
+                    <td><span class="tag tag-fbm">FBM</span></td>
+                    <td><div class="attr-chips"><span class="attr">Wet &amp; Dry</span></div></td>
+                    <td style="text-align:right"><span class="price mono">€144.90</span></td>
+                  </tr>
+                  <tr>
+                    <td><div class="cell-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></div></td>
+                    <td><div class="mono cell-title">DY-HD08</div><div class="cell-sub mono">+1 alias</div></td>
+                    <td><div class="cell-title">Dyson Supersonic Hair Dryer HD08</div><div class="cell-sub">Hair Dryer</div></td>
+                    <td>Dyson</td>
+                    <td>Aegean Wholesale Ltd</td>
+                    <td><span class="tag tag-fba">FBA</span></td>
+                    <td><div class="attr-chips"><span class="attr">220–240V</span><span class="attr">EU plug</span></div></td>
+                    <td style="text-align:right"><span class="price mono">€289.00</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-foot">
+              <span class="muted">Showing <span class="mono">1–5</span> of <span class="mono">2,481</span> products</span>
+              <div class="pager">
+                <button>‹</button><button class="active">1</button><button>2</button><button>3</button><button>…</button><button>497</button><button>›</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======= DESIGN LANGUAGE SCREEN ======= -->
+      <div class="screen" id="screen-design">
+        <div class="content-inner">
+          <div class="page-head">
+            <div style="flex:1">
+              <div class="eyebrow">Foundation</div>
+              <h1 class="page-title">Design language</h1>
+              <div class="page-sub">Brand tokens, type system, and core components — the single source of truth for every module</div>
+            </div>
+          </div>
+
+          <div class="dl-grid">
+            <div class="panel">
+              <h3>Brand palette</h3>
+              <div class="ph-sub">Teal leads as the primary. Green signals positive state. Orange is the accent — never an error colour.</div>
+              <div class="swatches">
+                <div class="sw"><div class="chip-color" style="background:var(--teal-500)"></div><div class="sw-meta"><div class="sw-name">Primary · Teal</div><div class="sw-hex">#14A79D</div></div></div>
+                <div class="sw"><div class="chip-color" style="background:var(--green-500)"></div><div class="sw-meta"><div class="sw-name">Secondary · Green</div><div class="sw-hex">#8DC73F</div></div></div>
+                <div class="sw"><div class="chip-color" style="background:var(--orange-500)"></div><div class="sw-meta"><div class="sw-name">Accent · Orange</div><div class="sw-hex">#F1592A</div></div></div>
+              </div>
+            </div>
+
+            <div class="two-col">
+              <div class="panel">
+                <h3>Tonal ramps</h3>
+                <div class="ph-sub">Each brand colour carries a 50–900 ramp for fills, states, and text.</div>
+                <div class="ramp-label"><span class="ramp-dot" style="background:var(--teal-500)"></span>Teal</div>
+                <div class="ramp">
+                  <div style="background:var(--teal-50)"></div><div style="background:var(--teal-100)"></div><div style="background:var(--teal-200)"></div><div style="background:var(--teal-300)"></div><div style="background:var(--teal-400)"></div><div style="background:var(--teal-500);color:#fff">500</div><div style="background:var(--teal-600);color:#fff"></div><div style="background:var(--teal-700);color:#fff"></div><div style="background:var(--teal-800);color:#fff"></div><div style="background:var(--teal-900);color:#fff"></div>
+                </div>
+                <div class="ramp-label"><span class="ramp-dot" style="background:var(--green-500)"></span>Green</div>
+                <div class="ramp">
+                  <div style="background:var(--green-50)"></div><div style="background:var(--green-100)"></div><div style="background:var(--green-200)"></div><div style="background:var(--green-300)"></div><div style="background:var(--green-400)"></div><div style="background:var(--green-500)">500</div><div style="background:var(--green-600);color:#fff"></div><div style="background:var(--green-700);color:#fff"></div><div style="background:var(--green-800);color:#fff"></div><div style="background:var(--green-900);color:#fff"></div>
+                </div>
+                <div class="ramp-label"><span class="ramp-dot" style="background:var(--orange-500)"></span>Orange</div>
+                <div class="ramp">
+                  <div style="background:var(--orange-50)"></div><div style="background:var(--orange-100)"></div><div style="background:var(--orange-200)"></div><div style="background:var(--orange-300)"></div><div style="background:var(--orange-400)"></div><div style="background:var(--orange-500);color:#fff">500</div><div style="background:var(--orange-600);color:#fff"></div><div style="background:var(--orange-700);color:#fff"></div><div style="background:var(--orange-800);color:#fff"></div><div style="background:var(--orange-900);color:#fff"></div>
+                </div>
+                <div class="ramp-label"><span class="ramp-dot" style="background:var(--n-400)"></span>Neutral slate</div>
+                <div class="ramp">
+                  <div style="background:var(--n-25)"></div><div style="background:var(--n-50)"></div><div style="background:var(--n-100)"></div><div style="background:var(--n-200)"></div><div style="background:var(--n-300)"></div><div style="background:var(--n-400)"></div><div style="background:var(--n-500);color:#fff"></div><div style="background:var(--n-600);color:#fff"></div><div style="background:var(--n-700);color:#fff"></div><div style="background:var(--n-900);color:#fff"></div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <h3>Semantic colours</h3>
+                <div class="ph-sub">Distinct from brand so meaning is never ambiguous.</div>
+                <div class="demo-row" style="flex-direction:column;align-items:stretch;gap:10px">
+                  <div class="tag" style="background:var(--success-bg);color:var(--success);border:1px solid var(--success-bd);justify-content:center;padding:8px">Success — In stock · synced</div>
+                  <div class="tag" style="background:var(--warning-bg);color:var(--warning);border:1px solid var(--warning-bd);justify-content:center;padding:8px">Warning — Low stock · review needed</div>
+                  <div class="tag" style="background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger-bd);justify-content:center;padding:8px">Danger — Sync failed · listing suppressed</div>
+                  <div class="tag" style="background:var(--info-bg);color:var(--info);border:1px solid var(--info-bd);justify-content:center;padding:8px">Info — Scheduled for next pull</div>
+                </div>
+                <h3 style="margin-top:22px">Buttons</h3>
+                <div class="demo-row" style="margin-top:12px">
+                  <button class="btn btn-primary">Create product</button>
+                  <button class="btn btn-ghost">Cancel</button>
+                  <button class="btn" style="background:var(--accent);color:#fff">Publish listing</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <h3>Type system</h3>
+              <div class="ph-sub">Inter for everything a person reads. JetBrains Mono, tabular, for every value a machine assigns — SKUs, codes, money, quantities, dates.</div>
+              <div class="specimen">
+                <div class="lbl">Inter · Page title · 24/600</div>
+                <div style="font-size:24px;font-weight:600;letter-spacing:-.02em;color:var(--n-900)">All products</div>
+              </div>
+              <div class="specimen">
+                <div class="lbl">Inter · Section · 18/600</div>
+                <div style="font-size:18px;font-weight:600;color:var(--n-900)">Package &amp; logistics</div>
+              </div>
+              <div class="specimen">
+                <div class="lbl">Inter · Body · 14/400</div>
+                <div style="font-size:14px;color:var(--n-700);max-width:560px">Each product is held as a single master record. Alternative SKUs are aliases that resolve back to the same product without their own cost or attributes.</div>
+              </div>
+              <div class="specimen">
+                <div class="lbl">JetBrains Mono · Data · tabular-nums</div>
+                <div class="mono" style="font-size:15px;color:var(--n-800);display:flex;gap:24px;flex-wrap:wrap">
+                  <span>RE-S8540</span><span>5011832070159</span><span>8000.01.02</span><span>CY10156304C</span><span>€289.00</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="scrim" id="scrim" onclick="toggleSidebar()"></div>
+
+<script>
+  function showScreen(name, el){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    document.getElementById('screen-'+name).classList.add('active');
+    document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+    if(el) el.classList.add('active');
+    if(window.innerWidth<=760) closeSidebar();
+    document.querySelector('.content').scrollTop=0;
+  }
+  const panel=document.getElementById('searchPanel');
+  function openSearch(){ panel.classList.add('open'); }
+  function toggleSearch(e){ e.stopPropagation(); panel.classList.toggle('open'); }
+  document.addEventListener('click',e=>{ if(!e.target.closest('.search-wrap')) panel.classList.remove('open'); });
+  function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('open'); document.getElementById('scrim').classList.toggle('open'); }
+  function closeSidebar(){ document.getElementById('sidebar').classList.remove('open'); document.getElementById('scrim').classList.remove('open'); }
+  document.addEventListener('keydown',e=>{ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){ e.preventDefault(); document.querySelector('.search-input').focus(); openSearch(); }});
+</script>
+</body>
+</html>

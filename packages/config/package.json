@@ -1,0 +1,13 @@
+{
+  "name": "@masquare/config",
+  "version": "0.1.0",
+  "private": true,
+  "main": "tailwind-preset.cjs",
+  "exports": {
+    "./tailwind-preset": "./tailwind-preset.cjs",
+    "./tokens.css": "./tokens.css"
+  },
+  "scripts": {
+    "build": "echo \"(no build step for config)\""
+  }
+}

@@ -1,0 +1,194 @@
+// maSquare — Module 1 (Foundation) data model.
+// Conventions (Module 1 §7): UUID keys; audit columns created_at/updated_at/
+// created_by/updated_by; soft-delete via deleted_at. created_by/updated_by hold the
+// acting user's id (kept as plain UUIDs, not relations, to avoid a tangle of User
+// back-relations). Link tables carry timestamps + soft-delete.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  active
+  disabled
+}
+
+// ---------------------------------------------------------------------------
+// Companies
+// ---------------------------------------------------------------------------
+model Company {
+  id                 String   @id @default(uuid()) @db.Uuid
+  officialName       String   @map("official_name")
+  registrationNumber String?  @map("registration_number")
+  addressLine1       String?  @map("address_line1")
+  addressLine2       String?  @map("address_line2")
+  addressCity        String?  @map("address_city")
+  addressRegion      String?  @map("address_region")
+  addressPostalCode  String?  @map("address_postal_code")
+  addressCountry     String?  @map("address_country")
+  email              String?
+  website            String?
+  phoneLandline      String?  @map("phone_landline")
+  phoneMobile        String?  @map("phone_mobile")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  vatRegistrations  CompanyVatRegistration[]
+  contactPersons    CompanyContactPerson[]
+  companyModules    CompanyModule[]
+  moduleSharings    ModuleSharing[]
+  userCompanyAccess UserCompanyAccess[]
+
+  @@map("company")
+}
+
+model CompanyVatRegistration {
+  id        String @id @default(uuid()) @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+  country   String
+  vatNumber String @map("vat_number")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("company_vat_registration")
+}
+
+model CompanyContactPerson {
+  id        String  @id @default(uuid()) @db.Uuid
+  companyId String  @map("company_id") @db.Uuid
+  name      String
+  surname   String?
+  email     String?
+  phone     String?
+  role      String?
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("company_contact_person")
+}
+
+// ---------------------------------------------------------------------------
+// Modules catalogue, enablement & sharing
+// ---------------------------------------------------------------------------
+model Module {
+  id        String  @id @default(uuid()) @db.Uuid
+  key       String  @unique
+  name      String
+  status    String? // e.g. "core", "module-2", "future"
+  isCore    Boolean @default(false) @map("is_core")
+  shareable Boolean @default(false)
+  sortOrder Int     @default(0) @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyModules   CompanyModule[]
+  moduleSharings   ModuleSharing[]
+  userModuleAccess UserModuleAccess[]
+
+  @@map("module")
+}
+
+model CompanyModule {
+  id        String  @id @default(uuid()) @db.Uuid
+  companyId String  @map("company_id") @db.Uuid
+  moduleId  String  @map("module_id") @db.Uuid
+  enabled   Boolean @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  module  Module  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, moduleId])
+  @@map("company_module")
+}
+
+model ModuleSharing {
+  id        String @id @default(uuid()) @db.Uuid
+  moduleId  String @map("module_id") @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  module  Module  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([moduleId, companyId])
+  @@map("module_sharing")
+}
+
+// ---------------------------------------------------------------------------
+// Users & access grants
+// ---------------------------------------------------------------------------
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  fullName     String     @map("full_name")
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  status       UserStatus @default(active)
+  isAdmin      Boolean    @default(false) @map("is_admin")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  companyAccess UserCompanyAccess[]
+  moduleAccess  UserModuleAccess[]
+
+  @@map("user")
+}
+
+model UserCompanyAccess {
+  id        String @id @default(uuid()) @db.Uuid
+  userId    String @map("user_id") @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+  @@map("user_company_access")
+}
+
+model UserModuleAccess {
+  id       String @id @default(uuid()) @db.Uuid
+  userId   String @map("user_id") @db.Uuid
+  moduleId String @map("module_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, moduleId])
+  @@map("user_module_access")
+}
+
+// product_company (Module 3) — the co-ownership link for shared Products — is defined
+// with the Product entity in Module 3. Named in M1 §3 for completeness; not created yet.

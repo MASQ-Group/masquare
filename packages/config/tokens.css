@@ -1,0 +1,43 @@
+/* maSquare design tokens — the single source of truth from docs/DESIGN.md.
+   Imported once by the web app (and any consumer of the design system). */
+:root {
+  /* Brand — Teal (primary) */
+  --teal-50:#E7F6F4; --teal-100:#C3EAE6; --teal-200:#8FD8D1; --teal-300:#57C3BA;
+  --teal-400:#2BB0A6; --teal-500:#14A79D; --teal-600:#0F857D; --teal-700:#0B645E;
+  --teal-800:#084742; --teal-900:#05302C;
+  /* Brand — Green (positive) */
+  --green-50:#F2F8E6; --green-100:#E0EFC4; --green-200:#C8E298; --green-300:#AFD56B;
+  --green-400:#9DCE52; --green-500:#8DC73F; --green-600:#71A22F; --green-700:#557A23;
+  --green-800:#3B5518; --green-900:#28390F;
+  /* Brand — Orange (accent) */
+  --orange-50:#FEEEE8; --orange-100:#FCD3C4; --orange-200:#FAB39C; --orange-300:#F78D6B;
+  --orange-400:#F47248; --orange-500:#F1592A; --orange-600:#D43F13; --orange-700:#A22F0E;
+  --orange-800:#70210A; --orange-900:#471506;
+  /* Neutral — cool slate */
+  --n-0:#FFFFFF; --n-25:#FBFCFD; --n-50:#F6F8FA; --n-100:#EDF1F4; --n-200:#DDE3E9;
+  --n-300:#C3CCD4; --n-400:#97A4AF; --n-500:#6B7884; --n-600:#4D5963; --n-700:#374049;
+  --n-800:#232A31; --n-900:#141A1F; --n-950:#0C1014;
+  /* Semantic — kept distinct from brand */
+  --success:#71A22F; --success-bg:#F2F8E6; --success-bd:#C8E298;
+  --warning:#B7791F; --warning-bg:#FBF1DC; --warning-bd:#EBCF93;
+  --danger:#C8372E;  --danger-bg:#FCEBE9;  --danger-bd:#F2C0BB;
+  --info:#0F857D;    --info-bg:#E7F6F4;    --info-bd:#8FD8D1;
+
+  --primary:var(--teal-500); --primary-hover:var(--teal-600); --accent:var(--orange-500);
+
+  /* Type */
+  --font-sans:'Inter',system-ui,-apple-system,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,monospace;
+
+  /* Radii */
+  --r-sm:6px; --r-md:8px; --r-lg:12px; --r-xl:16px; --r-pill:999px;
+
+  /* Shadows */
+  --sh-xs:0 1px 2px rgba(16,24,40,.05);
+  --sh-sm:0 1px 3px rgba(16,24,40,.08),0 1px 2px rgba(16,24,40,.04);
+  --sh-md:0 4px 14px rgba(16,24,40,.08);
+  --sh-lg:0 16px 40px rgba(16,24,40,.16);
+
+  /* Shell metrics */
+  --sidebar-w:248px; --rail-w:68px; --topbar-h:60px;
+}
