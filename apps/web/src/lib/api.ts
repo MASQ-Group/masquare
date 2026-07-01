@@ -329,3 +329,67 @@ export interface ImportRowResult {
   existingProductId: string | null;
   existingSku: string | null;
 }
+
+// ---- Global Data: Countries, Shipping Services, Sales Channels ----
+export interface CountryZoneMapping { shippingServiceId: string; zoneId: string; zoneName: string | null }
+export interface Country {
+  id: string;
+  name: string;
+  isoCode: string;
+  continent: string;
+  euVatZone: boolean;
+  vatRate: number;
+  defaultShippingServiceId: string | null;
+  defaultShippingService: { id: string; name: string } | null;
+  shippingZones: CountryZoneMapping[];
+}
+export interface ShippingRate { id?: string; fromWeightKg: number; toWeightKg: number; chargeEur: number }
+export interface ShippingZone {
+  id?: string;
+  name: string;
+  countryIds: string[];
+  countries?: { id: string; name: string; isoCode: string }[];
+  rates?: ShippingRate[];
+}
+export interface ShippingService {
+  id: string;
+  name: string;
+  alias: string | null;
+  calcMethod: 'actual_weight' | 'volumetric_weight';
+  zones: ShippingZone[];
+}
+export interface SalesChannel {
+  id: string;
+  name: string;
+  description: string | null;
+  nativeCountryId: string | null;
+  nativeCurrency: string | null;
+  email: string | null;
+  website: string | null;
+  contactName: string | null;
+  nativeCountry: { id: string; name: string; isoCode: string } | null;
+}
+
+export const countriesApi = {
+  list: (q?: string) => api.get<Country[]>('/countries', { params: q ? { q } : undefined }).then((r) => r.data),
+  create: (body: Partial<Country>) => api.post<Country>('/countries', body).then((r) => r.data),
+  update: (id: string, body: Partial<Country>) => api.patch<Country>(`/countries/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/countries/${id}`).then((r) => r.data),
+  setZone: (id: string, shippingServiceId: string, zoneId: string | null) =>
+    api.put<Country>(`/countries/${id}/shipping-zone`, { shippingServiceId, zoneId }).then((r) => r.data),
+};
+
+export const shippingServicesApi = {
+  list: () => api.get<ShippingService[]>('/shipping-services').then((r) => r.data),
+  get: (id: string) => api.get<ShippingService>(`/shipping-services/${id}`).then((r) => r.data),
+  create: (body: any) => api.post<ShippingService>('/shipping-services', body).then((r) => r.data),
+  update: (id: string, body: any) => api.patch<ShippingService>(`/shipping-services/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/shipping-services/${id}`).then((r) => r.data),
+};
+
+export const salesChannelsApi = {
+  list: (q?: string) => api.get<SalesChannel[]>('/sales-channels', { params: q ? { q } : undefined }).then((r) => r.data),
+  create: (body: Partial<SalesChannel>) => api.post<SalesChannel>('/sales-channels', body).then((r) => r.data),
+  update: (id: string, body: Partial<SalesChannel>) => api.patch<SalesChannel>(`/sales-channels/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/sales-channels/${id}`).then((r) => r.data),
+};

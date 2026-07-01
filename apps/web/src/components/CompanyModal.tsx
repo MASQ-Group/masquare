@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
 import { companiesApi, type Company } from '../lib/api';
+import { CountrySelect } from './common/CountrySelect';
 
 interface Props {
   company: Company | null; // null = create
@@ -101,8 +102,8 @@ export function CompanyModal({ company, onClose, onSaved }: Props) {
           <Field label="Registration number">
             <input className="input mono" value={form.registrationNumber} onChange={(e) => set({ registrationNumber: e.target.value })} />
           </Field>
-          <Field label="Country (ISO)">
-            <input className="input mono" value={form.addressCountry} onChange={(e) => set({ addressCountry: e.target.value })} placeholder="CY" />
+          <Field label="Country">
+            <CountrySelect value={form.addressCountry || null} valueKind="code" onChange={(v) => set({ addressCountry: v ?? '' })} />
           </Field>
           <Field label="Address line 1" className="col-span-2">
             <input className="input" value={form.addressLine1} onChange={(e) => set({ addressLine1: e.target.value })} />

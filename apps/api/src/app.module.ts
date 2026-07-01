@@ -6,6 +6,7 @@ import { UsersModule } from './users/users.module';
 import { CompaniesModule } from './companies/companies.module';
 import { ModulesModule } from './modules-catalog/modules.module';
 import { GlobalSettingsModule } from './global-settings/global-settings.module';
+import { GlobalDataModule } from './global-data/global-data.module';
 import { ProductsModule } from './products/products.module';
 import { StorageModule } from './storage/storage.module';
 
@@ -19,6 +20,7 @@ import { StorageModule } from './storage/storage.module';
     CompaniesModule,
     ModulesModule,
     GlobalSettingsModule,
+    GlobalDataModule,
     ProductsModule,
   ],
 })

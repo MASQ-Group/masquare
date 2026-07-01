@@ -4,6 +4,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
 import { vendorsApi, type Vendor, type VendorContact } from '../../lib/api';
+import { CountrySelect } from '../common/CountrySelect';
 import { AddButton, ImportButton, RefTable, SectionHeader } from './shared';
 
 export function VendorsSection() {
@@ -96,7 +97,7 @@ function VendorModal({ vendor, onClose, onSaved }: { vendor: Vendor | null; onCl
         <div className="grid grid-cols-2 gap-4 max-[560px]:grid-cols-1">
           <div className="col-span-2"><label className="label">Name *</label><input className="input" value={form.name} onChange={(e) => set({ name: e.target.value })} /></div>
           <div><label className="label">VAT number</label><input className="input mono" value={form.vatNumber} onChange={(e) => set({ vatNumber: e.target.value })} /></div>
-          <div><label className="label">Country</label><input className="input mono" value={form.addressCountry} onChange={(e) => set({ addressCountry: e.target.value })} placeholder="CY" /></div>
+          <div><label className="label">Country</label><CountrySelect value={form.addressCountry || null} valueKind="code" onChange={(v) => set({ addressCountry: v ?? '' })} /></div>
           <div><label className="label">City</label><input className="input" value={form.addressCity} onChange={(e) => set({ addressCity: e.target.value })} /></div>
           <div><label className="label">Phone</label><input className="input mono" value={form.phone} onChange={(e) => set({ phone: e.target.value })} /></div>
           <div><label className="label">Email</label><input className="input" value={form.email} onChange={(e) => set({ email: e.target.value })} /></div>

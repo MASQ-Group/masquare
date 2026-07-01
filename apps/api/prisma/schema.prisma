@@ -501,3 +501,132 @@ model ProductCompany {
   @@unique([productId, companyId])
   @@map("product_company")
 }
+
+// ===========================================================================
+// Global Data: Countries, Shipping Services, Sales Channels.
+// Currencies are handled as ISO 4217 3-letter codes (stored as strings; a static
+// list backs the dropdowns) — no table needed.
+// ===========================================================================
+
+model Country {
+  id                       String   @id @default(uuid()) @db.Uuid
+  name                     String   // ISO official name
+  isoCode                  String   @unique @map("iso_code") // 2-char alpha-2
+  continent                String
+  euVatZone                Boolean  @default(false) @map("eu_vat_zone")
+  vatRate                  Decimal  @default(0) @map("vat_rate") @db.Decimal(5, 2)
+  defaultShippingServiceId String?  @map("default_shipping_service_id") @db.Uuid
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  defaultShippingService ShippingService?      @relation("CountryDefaultService", fields: [defaultShippingServiceId], references: [id], onDelete: SetNull)
+  zoneMemberships        ShippingZoneCountry[]
+  shippingZoneMappings   CountryShippingZone[]
+  salesChannels          SalesChannel[]
+
+  @@map("country")
+}
+
+model ShippingService {
+  id         String @id @default(uuid()) @db.Uuid
+  name       String
+  alias      String?
+  calcMethod String @map("calc_method") // 'actual_weight' | 'volumetric_weight'
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  zones               ShippingZone[]
+  defaultForCountries Country[]             @relation("CountryDefaultService")
+  countryMappings     CountryShippingZone[]
+
+  @@map("shipping_service")
+}
+
+model ShippingZone {
+  id                String @id @default(uuid()) @db.Uuid
+  shippingServiceId String @map("shipping_service_id") @db.Uuid
+  name              String
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  service         ShippingService       @relation(fields: [shippingServiceId], references: [id], onDelete: Cascade)
+  countries       ShippingZoneCountry[]
+  rates           ShippingRate[]
+  countryMappings CountryShippingZone[]
+
+  @@map("shipping_zone")
+}
+
+model ShippingZoneCountry {
+  id        String @id @default(uuid()) @db.Uuid
+  zoneId    String @map("zone_id") @db.Uuid
+  countryId String @map("country_id") @db.Uuid
+
+  zone    ShippingZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  country Country      @relation(fields: [countryId], references: [id], onDelete: Cascade)
+
+  @@unique([zoneId, countryId])
+  @@map("shipping_zone_country")
+}
+
+model ShippingRate {
+  id           String  @id @default(uuid()) @db.Uuid
+  zoneId       String  @map("zone_id") @db.Uuid
+  fromWeightKg Decimal @map("from_weight_kg") @db.Decimal(10, 3)
+  toWeightKg   Decimal @map("to_weight_kg") @db.Decimal(10, 3)
+  chargeEur    Decimal @map("charge_eur") @db.Decimal(12, 2)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  zone ShippingZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@map("shipping_rate")
+}
+
+// Which zone of a shipping service applies to a country (the Countries custom columns).
+model CountryShippingZone {
+  id                String @id @default(uuid()) @db.Uuid
+  countryId         String @map("country_id") @db.Uuid
+  shippingServiceId String @map("shipping_service_id") @db.Uuid
+  zoneId            String @map("zone_id") @db.Uuid
+
+  country Country         @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  service ShippingService @relation(fields: [shippingServiceId], references: [id], onDelete: Cascade)
+  zone    ShippingZone    @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@unique([countryId, shippingServiceId])
+  @@map("country_shipping_zone")
+}
+
+model SalesChannel {
+  id              String  @id @default(uuid()) @db.Uuid
+  name            String
+  description     String?
+  nativeCountryId String? @map("native_country_id") @db.Uuid
+  nativeCurrency  String? @map("native_currency") // ISO 4217 3-letter
+  email           String?
+  website         String?
+  contactName     String? @map("contact_name")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  nativeCountry Country? @relation(fields: [nativeCountryId], references: [id], onDelete: SetNull)
+
+  @@map("sales_channel")
+}

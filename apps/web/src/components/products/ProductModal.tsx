@@ -9,6 +9,7 @@ import {
   type Product, type ProductAlias, type ProductMediaItem, type RefLite,
 } from '../../lib/api';
 import { RefField } from './RefField';
+import { CountrySelect } from '../common/CountrySelect';
 
 interface Props {
   product: Product | null; // null = create
@@ -237,9 +238,11 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
 
       {tab === 'identifiers' && (
         <div className="grid grid-cols-2 gap-4 max-[560px]:grid-cols-1">
-          {([['ean', 'EAN'], ['upc', 'UPC'], ['vendorSku', 'Vendor SKU'], ['manufacturerSku', 'Manufacturer SKU'], ['countryOfOrigin', 'Country of origin'], ['hsCode', 'HS code']] as const).map(([key, label]) => (
+          {([['ean', 'EAN'], ['upc', 'UPC'], ['vendorSku', 'Vendor SKU'], ['manufacturerSku', 'Manufacturer SKU']] as const).map(([key, label]) => (
             <div key={key}><label className="label">{label}</label><input className="input mono" value={(ident as any)[key]} onChange={(e) => { setIdent((s) => ({ ...s, [key]: e.target.value })); touch(); }} /></div>
           ))}
+          <div><label className="label">Country of origin</label><CountrySelect value={ident.countryOfOrigin || null} valueKind="code" onChange={(v) => { setIdent((s) => ({ ...s, countryOfOrigin: v ?? '' })); touch(); }} /></div>
+          <div><label className="label">HS code</label><input className="input mono" value={ident.hsCode} onChange={(e) => { setIdent((s) => ({ ...s, hsCode: e.target.value })); touch(); }} /></div>
         </div>
       )}
 

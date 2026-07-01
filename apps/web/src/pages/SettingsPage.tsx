@@ -1,11 +1,22 @@
 import { useState } from 'react';
 import { GeneralTab } from '../components/settings/GeneralTab';
+import { CountriesTab } from '../components/settings/CountriesTab';
+import { SalesChannelsTab } from '../components/settings/SalesChannelsTab';
+import { ShippingServicesTab } from '../components/settings/ShippingServicesTab';
 import { VendorsSection } from '../components/settings/VendorsSection';
 import { BrandsSection, ProductTypesSection, FulfilmentTypesSection } from '../components/settings/SimpleSections';
 import { CategoriesSection } from '../components/settings/CategoriesSection';
 import { AttributesSection } from '../components/settings/AttributesSection';
 
-type TopTab = 'general' | 'products';
+type TopTab = 'general' | 'countries' | 'products' | 'sales-channels' | 'shipping-services';
+
+const TOP_TABS: [TopTab, string][] = [
+  ['general', 'General'],
+  ['countries', 'Countries'],
+  ['products', 'Products'],
+  ['sales-channels', 'Sales Channels'],
+  ['shipping-services', 'Shipping Services'],
+];
 
 const PRODUCT_SECTIONS = [
   { key: 'vendors', label: 'Vendors', Component: VendorsSection },
@@ -27,16 +38,16 @@ export function SettingsPage() {
       <div className="mb-5">
         <div className="eyebrow mb-1.5">Administration</div>
         <h1 className="text-[24px] font-semibold tracking-tight text-n-900">Global settings</h1>
-        <p className="mt-1 text-[13.5px] text-n-500">Platform format defaults and the shared product reference library.</p>
+        <p className="mt-1 text-[13.5px] text-n-500">Platform format defaults and the shared reference libraries.</p>
       </div>
 
       {/* Top tabs */}
-      <div className="mb-6 flex gap-1 border-b border-n-200">
-        {([['general', 'General'], ['products', 'Products']] as [TopTab, string][]).map(([key, label]) => (
+      <div className="mb-6 flex gap-1 overflow-x-auto border-b border-n-200">
+        {TOP_TABS.map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTop(key)}
-            className={`relative px-4 py-2.5 text-[14px] font-medium transition-colors ${
+            className={`relative whitespace-nowrap px-4 py-2.5 text-[14px] font-medium transition-colors ${
               top === key
                 ? 'text-teal-700 after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:bg-teal-500'
                 : 'text-n-500 hover:text-n-800'
@@ -48,10 +59,12 @@ export function SettingsPage() {
       </div>
 
       {top === 'general' && <GeneralTab />}
+      {top === 'countries' && <CountriesTab />}
+      {top === 'sales-channels' && <SalesChannelsTab />}
+      {top === 'shipping-services' && <ShippingServicesTab />}
 
       {top === 'products' && (
         <div className="flex gap-6 max-[900px]:flex-col">
-          {/* Section nav */}
           <nav className="flex w-52 flex-shrink-0 flex-col gap-0.5 max-[900px]:w-full max-[900px]:flex-row max-[900px]:overflow-x-auto">
             {PRODUCT_SECTIONS.map((s) => (
               <button

@@ -5,6 +5,7 @@
  * Modules 2-3 — intentionally not seeded in this slice. */
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { COUNTRIES } from './countries.data';
 
 const prisma = new PrismaClient();
 
@@ -122,6 +123,7 @@ async function main() {
 
   // 6. Global Settings reference data (Module 2) — platform-global.
   await seedReferenceData();
+  await seedCountries();
 
   // 7. Sample product catalogue (Module 3), co-owned by both companies.
   await seedProducts(companyIds);
@@ -134,6 +136,7 @@ async function main() {
       `  Companies : ${ama.officialName}, ${nk.officialName}`,
       `  Modules   : ${MODULES.length} in catalogue; Products shared across both companies`,
       '  Global settings: vendors, brands, product/fulfilment types, category tree, attributes',
+      `  Countries : ${COUNTRIES.length} preloaded (EU VAT flags + rates)`,
       '  Products  : 10 sample products with aliases + attributes, co-owned by both companies',
       '  Admin login:',
       `    email    : ${adminEmail}`,
@@ -219,6 +222,16 @@ async function seedReferenceData() {
   // Platform settings singleton
   const settings = await prisma.platformSettings.findFirst();
   if (!settings) await prisma.platformSettings.create({ data: {} });
+}
+
+async function seedCountries() {
+  for (const c of COUNTRIES) {
+    await prisma.country.upsert({
+      where: { isoCode: c.isoCode },
+      create: c,
+      update: { name: c.name, continent: c.continent, euVatZone: c.euVatZone, vatRate: c.vatRate },
+    });
+  }
 }
 
 async function seedProducts(companyIds: string[]) {
