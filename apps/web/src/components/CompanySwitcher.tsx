@@ -31,12 +31,12 @@ export function CompanySwitcher() {
           {current ? initials(current.officialName) : '–'}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[9px] uppercase tracking-[0.08em] text-n-500">Active company</div>
+          <div className="text-[9px] uppercase tracking-[0.08em] text-n-400">Active company</div>
           <div className="truncate text-[13px] font-semibold text-white">
             {current?.officialName ?? 'No company'}
           </div>
         </div>
-        <ChevronDown size={16} className="text-n-500" />
+        <ChevronDown size={16} className="text-n-300" />
       </button>
 
       {open && companies.length > 0 && (

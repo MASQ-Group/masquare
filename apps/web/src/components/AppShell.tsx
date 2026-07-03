@@ -80,7 +80,7 @@ export function AppShell() {
               <Icon size={18} />
               <span className="flex-1">{item.label}</span>
               {item.badge && (
-                <span className="rounded-pill bg-white/[0.06] px-2 py-0.5 font-mono text-[11px] text-n-500">
+                <span className="rounded-pill bg-white/[0.08] px-2 py-0.5 font-mono text-[11px] text-n-300">
                   {item.badge}
                 </span>
               )}
@@ -135,13 +135,13 @@ export function AppShell() {
         <CompanySwitcher />
 
         <div className="px-3 pb-1 pt-2.5">
-          <div className="px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-n-600">
+          <div className="px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-n-400">
             Operations
           </div>
           {renderNav(OPERATIONS)}
         </div>
         <div className="px-3 pb-1 pt-2.5">
-          <div className="px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-n-600">
+          <div className="px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-n-400">
             Administration
           </div>
           {renderNav(ADMIN)}
@@ -162,7 +162,7 @@ export function AppShell() {
             </div>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[13px] font-semibold text-white">{user?.fullName}</div>
-              <div className="text-[11px] text-n-500">{user?.isAdmin ? 'Administrator' : 'Member'}</div>
+              <div className="text-[11px] text-n-400">{user?.isAdmin ? 'Administrator' : 'Member'}</div>
             </div>
           </button>
         </div>

@@ -9,7 +9,7 @@ import { CurrencySelect } from '../common/CurrencySelect';
 import { AddButton, RefTable, SectionHeader } from './shared';
 import { SalesChannelImportModal } from './SalesChannelImportModal';
 
-const EXPORT_HEADERS = ['Name', 'Description', 'Native Country', 'Native Currency', 'Email', 'Website', 'Contact Name'];
+const EXPORT_HEADERS = ['Name', 'Description', 'Native Country', 'Native Currency', 'General Sales Fee (%)', 'Email', 'Website', 'Contact Name'];
 
 export function SalesChannelsTab() {
   const qc = useQueryClient();
@@ -28,7 +28,7 @@ export function SalesChannelsTab() {
   const exportSelected = () => {
     const chosen = data.filter((c) => selected.has(c.id));
     if (chosen.length === 0) return;
-    const rows = chosen.map((c) => [c.name, c.description ?? '', c.nativeCountry?.name ?? '', c.nativeCurrency ?? '', c.email ?? '', c.website ?? '', c.contactName ?? '']);
+    const rows = chosen.map((c) => [c.name, c.description ?? '', c.nativeCountry?.name ?? '', c.nativeCurrency ?? '', c.generalSalesFeePct ?? '', c.email ?? '', c.website ?? '', c.contactName ?? '']);
     downloadSheet(`sales-channels-${chosen.length}`, [EXPORT_HEADERS, ...rows], 'xlsx');
     toast.success(`Exported ${chosen.length} sales channels`);
   };
@@ -44,8 +44,8 @@ export function SalesChannelsTab() {
   const downloadTemplate = () =>
     downloadSheet('sales-channels-template', [
       ['Name', 'Description', 'Native Country', 'Native Currency', 'Email', 'Website', 'Contact Name'],
-      ['Amazon UK', 'Amazon United Kingdom', 'United Kingdom', 'GBP', 'seller@example.com', 'https://amazon.co.uk', 'Marketplace Team'],
-      ['eBay DE', 'eBay Germany', 'Germany', 'EUR', 'seller@example.de', 'https://ebay.de', 'Sales'],
+      ['Amazon UK', 'Amazon United Kingdom', 'United Kingdom', 'GBP', '15', 'seller@example.com', 'https://amazon.co.uk', 'Marketplace Team'],
+      ['eBay DE', 'eBay Germany', 'Germany', 'EUR', '11', 'seller@example.de', 'https://ebay.de', 'Sales'],
     ], 'xlsx');
 
   return (
@@ -76,6 +76,7 @@ export function SalesChannelsTab() {
           { key: 'description', header: 'Description', render: (r) => r.description ?? '—' },
           { key: 'country', header: 'Native country', render: (r) => r.nativeCountry?.name ?? '—' },
           { key: 'currency', header: 'Currency', className: 'mono', render: (r) => r.nativeCurrency ?? '—' },
+          { key: 'fee', header: 'Sales fee', className: 'mono', render: (r) => (r.generalSalesFeePct != null ? `${r.generalSalesFeePct}%` : '—') },
           { key: 'email', header: 'Email', render: (r) => r.email ?? '—' },
         ]}
         onEdit={setEditing}
@@ -100,6 +101,7 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
     description: channel?.description ?? '',
     nativeCountryId: channel?.nativeCountryId ?? null as string | null,
     nativeCurrency: channel?.nativeCurrency ?? null as string | null,
+    generalSalesFeePct: channel?.generalSalesFeePct?.toString() ?? '',
     email: channel?.email ?? '',
     website: channel?.website ?? '',
     contactName: channel?.contactName ?? '',
@@ -111,7 +113,14 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
     if (!canSave) { toast.error('Name is required'); return; }
     setBusy(true);
     try {
-      const body = { ...form, description: form.description || undefined, email: form.email || undefined, website: form.website || undefined, contactName: form.contactName || undefined };
+      const body = {
+        ...form,
+        description: form.description || undefined,
+        generalSalesFeePct: form.generalSalesFeePct.trim() === '' ? null : Number(form.generalSalesFeePct),
+        email: form.email || undefined,
+        website: form.website || undefined,
+        contactName: form.contactName || undefined,
+      };
       if (channel) await salesChannelsApi.update(channel.id, body as any); else await salesChannelsApi.create(body as any);
       toast.success('Saved');
       onSaved();
@@ -130,6 +139,7 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
         <div><label className="label">Description</label><input className="input" value={form.description} onChange={(e) => set({ description: e.target.value })} placeholder="Amazon United Kingdom" /></div>
         <div><label className="label">Native country</label><CountrySelect value={form.nativeCountryId} onChange={(v) => set({ nativeCountryId: v })} /></div>
         <div><label className="label">Native currency</label><CurrencySelect value={form.nativeCurrency} onChange={(v) => set({ nativeCurrency: v })} /></div>
+        <div><label className="label">General Sales Fee (%)</label><input className="input mono" inputMode="decimal" value={form.generalSalesFeePct} onChange={(e) => set({ generalSalesFeePct: e.target.value })} placeholder="15" /></div>
         <div><label className="label">Email</label><input className="input" value={form.email} onChange={(e) => set({ email: e.target.value })} /></div>
         <div><label className="label">Website</label><input className="input" value={form.website} onChange={(e) => set({ website: e.target.value })} /></div>
         <div className="col-span-2"><label className="label">Contact name</label><input className="input" value={form.contactName} onChange={(e) => set({ contactName: e.target.value })} /></div>

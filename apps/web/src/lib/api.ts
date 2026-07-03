@@ -364,6 +364,7 @@ export interface SalesChannel {
   description: string | null;
   nativeCountryId: string | null;
   nativeCurrency: string | null;
+  generalSalesFeePct: number | null;
   email: string | null;
   website: string | null;
   contactName: string | null;

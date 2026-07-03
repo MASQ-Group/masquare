@@ -615,10 +615,11 @@ model SalesChannel {
   name            String
   description     String?
   nativeCountryId String? @map("native_country_id") @db.Uuid
-  nativeCurrency  String? @map("native_currency") // ISO 4217 3-letter
-  email           String?
-  website         String?
-  contactName     String? @map("contact_name")
+  nativeCurrency     String? @map("native_currency") // ISO 4217 3-letter
+  generalSalesFeePct Float?  @map("general_sales_fee_pct") // % fee charged per sale
+  email              String?
+  website            String?
+  contactName        String? @map("contact_name")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
