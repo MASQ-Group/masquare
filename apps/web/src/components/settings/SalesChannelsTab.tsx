@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
-import { salesChannelsApi, type SalesChannel } from '../../lib/api';
+import { countriesApi, salesChannelsApi, type SalesChannel } from '../../lib/api';
 import { CountrySelect } from '../common/CountrySelect';
 import { CurrencySelect } from '../common/CurrencySelect';
 import { AddButton, ImportButton, RefTable, SectionHeader } from './shared';
@@ -11,15 +11,38 @@ export function SalesChannelsTab() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<SalesChannel | null | undefined>(undefined);
   const { data = [], isLoading } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
+  const { data: countries = [] } = useQuery({ queryKey: ['countries'], queryFn: () => countriesApi.list() });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['sales-channels'] });
   const del = useMutation({ mutationFn: (id: string) => salesChannelsApi.remove(id), onSuccess: () => { toast.success('Removed'); invalidate(); } });
+
+  // Resolve a country cell (ISO code or official name) to its id for import.
+  const resolveCountryId = (token?: string) => {
+    const t = (token ?? '').trim();
+    if (!t) return null;
+    const c = countries.find((x) => x.isoCode.toLowerCase() === t.toLowerCase() || x.name.toLowerCase() === t.toLowerCase());
+    return c?.id ?? null;
+  };
 
   return (
     <div>
       <SectionHeader title="Sales Channels" description="Marketplaces and channels the companies sell on, with their native country and currency.">
         <ImportButton title="Import sales channels"
-          fields={[{ key: 'name', label: 'Name', required: true }, { key: 'description', label: 'Description' }, { key: 'nativeCurrency', label: 'Native Currency' }, { key: 'email', label: 'Email' }]}
-          onCommit={async (rows) => { for (const r of rows) await salesChannelsApi.create(r as any); invalidate(); }} />
+          fields={[
+            { key: 'name', label: 'Name', required: true },
+            { key: 'description', label: 'Description' },
+            { key: 'nativeCountry', label: 'Native Country' },
+            { key: 'nativeCurrency', label: 'Native Currency' },
+            { key: 'email', label: 'Email' },
+            { key: 'website', label: 'Website' },
+            { key: 'contactName', label: 'Contact Name' },
+          ]}
+          onCommit={async (rows) => {
+            for (const r of rows) {
+              const { nativeCountry, ...rest } = r;
+              await salesChannelsApi.create({ ...rest, nativeCountryId: resolveCountryId(nativeCountry) } as any);
+            }
+            invalidate();
+          }} />
         <AddButton label="Add sales channel" onClick={() => setEditing(null)} />
       </SectionHeader>
       <RefTable<SalesChannel>
