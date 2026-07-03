@@ -19,7 +19,7 @@ const include = {
   items: {
     where: { deletedAt: null },
     orderBy: { createdAt: 'asc' as const },
-    include: { product: { select: { packageWeightKg: true, packageLengthCm: true, packageWidthCm: true, packageHeightCm: true } } },
+    include: { product: { select: { packageWeightKg: true, productWeightKg: true, packageLengthCm: true, packageWidthCm: true, packageHeightCm: true } } },
   },
   unlockRequests: { where: { status: 'pending' }, orderBy: { createdAt: 'desc' as const } },
 } satisfies Prisma.SalesTransactionInclude;
@@ -64,7 +64,8 @@ export class SalesTransactionsService {
         if (!p) continue;
         let unit: number | null = null;
         if (method === 'actual_weight') {
-          unit = p.packageWeightKg != null ? Number(p.packageWeightKg) : null;
+          // Prefer the package weight; fall back to the product weight if not set.
+          unit = p.packageWeightKg != null ? Number(p.packageWeightKg) : p.productWeightKg != null ? Number(p.productWeightKg) : null;
         } else if (p.packageLengthCm != null && p.packageWidthCm != null && p.packageHeightCm != null) {
           unit = (Number(p.packageLengthCm) * Number(p.packageWidthCm) * Number(p.packageHeightCm)) / 5000;
         }
@@ -160,7 +161,8 @@ export class SalesTransactionsService {
   }
 
   private async resolveShippingService(explicit: string | null | undefined, countryId: string | null) {
-    if (explicit !== undefined) return explicit;
+    if (explicit) return explicit; // an explicit service was chosen
+    // Otherwise fall back to the destination country's default shipping service.
     if (!countryId) return null;
     const c = await this.prisma.country.findUnique({ where: { id: countryId }, select: { defaultShippingServiceId: true } });
     return c?.defaultShippingServiceId ?? null;
@@ -257,6 +259,8 @@ export class SalesTransactionsService {
     // Submitting re-locks it (unless the actor is an admin, who always retains access).
     const unlockedForEdit = nextStatus === 'submitted' ? false : existing.unlockedForEdit;
     const exchangeRate = await this.fetchExchangeRate(currency, dto.date ?? existing.date.toISOString());
+    const destCountryId = dto.destinationCountryId === undefined ? existing.destinationCountryId : dto.destinationCountryId;
+    const resolvedServiceId = await this.resolveShippingService(dto.shippingServiceId, destCountryId);
 
     await this.prisma.$transaction(async (tx) => {
       if (dto.items) {
@@ -272,7 +276,7 @@ export class SalesTransactionsService {
           transactionRef: dto.transactionRef,
           salesChannelId: dto.salesChannelId,
           destinationCountryId: dto.destinationCountryId,
-          shippingServiceId: dto.shippingServiceId,
+          shippingServiceId: resolvedServiceId,
           currency,
           feeCurrency,
           exchangeRate,
