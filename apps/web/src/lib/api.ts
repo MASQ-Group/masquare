@@ -420,11 +420,15 @@ export interface SalesTransaction {
   companyId: string | null;
   currency: string | null;
   feeCurrency: string | null;
+  status: 'draft' | 'submitted';
+  unlockedForEdit: boolean;
+  hasPendingUnlock: boolean;
   items: SalesTransactionItem[];
   itemCount: number;
   totals: { quantity: number; netSales: number; vat: number; shipping: number; shippingVat: number; fee: number };
 }
 export interface SalesTransactionListResponse { items: SalesTransaction[]; total: number; page: number; pageSize: number }
+export interface UnlockRequest { id: string; transactionId: string; transactionRef: string; requestedBy: string; createdAt: string }
 
 export const salesTransactionsApi = {
   list: (params: { q?: string; companyId?: string; salesChannelId?: string; page?: number; pageSize?: number }) =>
@@ -433,4 +437,7 @@ export const salesTransactionsApi = {
   create: (body: any) => api.post<SalesTransaction>('/sales-transactions', body).then((r) => r.data),
   update: (id: string, body: any) => api.patch<SalesTransaction>(`/sales-transactions/${id}`, body).then((r) => r.data),
   remove: (id: string) => api.delete(`/sales-transactions/${id}`).then((r) => r.data),
+  requestUnlock: (id: string) => api.post(`/sales-transactions/${id}/unlock-request`, {}).then((r) => r.data),
+  listUnlockRequests: () => api.get<UnlockRequest[]>('/sales-transactions/unlock-requests').then((r) => r.data),
+  decideUnlock: (requestId: string, grant: boolean) => api.post(`/sales-transactions/unlock-requests/${requestId}/decide`, { grant }).then((r) => r.data),
 };

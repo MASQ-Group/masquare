@@ -19,6 +19,10 @@ export interface ModalShellProps {
   primaryLabel: string;
   onPrimary: () => void;
   primaryDisabled?: boolean;
+  /** Optional secondary action rendered between Cancel and the primary CTA. */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
+  secondaryDisabled?: boolean;
   busy?: boolean;
   onClose: () => void;
   children: ReactNode;
@@ -37,6 +41,9 @@ export function ModalShell({
   primaryLabel,
   onPrimary,
   primaryDisabled,
+  secondaryLabel,
+  onSecondary,
+  secondaryDisabled,
   busy,
   onClose,
   children,
@@ -155,6 +162,16 @@ export function ModalShell({
           >
             Cancel
           </button>
+          {secondaryLabel && onSecondary && (
+            <button
+              type="button"
+              onClick={onSecondary}
+              disabled={secondaryDisabled || busy}
+              className="inline-flex h-10 items-center rounded-md border border-n-200 bg-n-0 px-4 text-[13.5px] font-semibold text-n-700 hover:bg-n-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {secondaryLabel}
+            </button>
+          )}
           <button
             type="button"
             onClick={onPrimary}

@@ -31,7 +31,9 @@ const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s));
 const today = () => new Date().toISOString().slice(0, 10);
 
 export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) {
-  const { activeCompanyId } = useAuth();
+  const { activeCompanyId, user } = useAuth();
+  const isAdmin = !!user?.isAdmin;
+  const locked = !!transaction && transaction.status === 'submitted' && !transaction.unlockedForEdit && !isAdmin;
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const touch = () => setDirty(true);
@@ -57,12 +59,12 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
   const setItem = (i: number, patch: Partial<ItemForm>) => { setItems((r) => r.map((x, idx) => (idx === i ? { ...x, ...patch } : x))); touch(); };
   const canSave = useMemo(() => transactionRef.trim() && items.some((i) => i.sku.trim()), [transactionRef, items]);
 
-  const save = async () => {
+  const saveWith = async (status: 'draft' | 'submitted') => {
     if (!canSave) { toast.error('Transaction ID and at least one SKU are required'); return; }
     setBusy(true);
     try {
       const body = {
-        date, transactionRef,
+        date, transactionRef, status,
         salesChannelId: channel?.id ?? null,
         destinationCountryId,
         companyId: activeCompanyId,
@@ -77,10 +79,24 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
         })),
       };
       if (transaction) await salesTransactionsApi.update(transaction.id, body); else await salesTransactionsApi.create(body);
-      toast.success(transaction ? 'Transaction updated' : 'Transaction registered');
+      toast.success(status === 'submitted' ? 'Transaction submitted' : 'Draft saved');
       onSaved();
     } catch (e: any) {
       toast.error(e?.response?.data?.message ?? 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const requestUnlock = async () => {
+    if (!transaction) return;
+    setBusy(true);
+    try {
+      const res: any = await salesTransactionsApi.requestUnlock(transaction.id);
+      toast.success(res?.alreadyRequested ? 'An unlock request is already pending' : 'Unlock request sent to an admin');
+      onClose();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message ?? 'Could not send request');
     } finally {
       setBusy(false);
     }
@@ -90,8 +106,25 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
 
   return (
     <ModalShell open title={transaction ? 'Edit sales transaction' : 'Register sales transaction'} subtitle={transaction?.transactionRef}
-      dirty={dirty} primaryLabel={transaction ? 'Save changes' : 'Register transaction'} onPrimary={save} primaryDisabled={!canSave} busy={busy} onClose={onClose}>
-      <div className="flex flex-col gap-5">
+      dirty={locked ? false : dirty}
+      primaryLabel={locked ? 'Request unlock' : 'Submit'}
+      onPrimary={locked ? requestUnlock : () => saveWith('submitted')}
+      primaryDisabled={locked ? false : !canSave}
+      secondaryLabel={locked ? undefined : 'Save as draft'}
+      onSecondary={locked ? undefined : () => saveWith('draft')}
+      secondaryDisabled={!canSave}
+      busy={busy} onClose={onClose}>
+      {locked && (
+        <div className="mb-4 rounded-md border border-warning-bd bg-warning-bg px-3 py-2.5 text-[13px] text-warning">
+          This transaction is <strong>submitted and locked</strong>. Request an unlock from an admin to edit it.
+        </div>
+      )}
+      {!locked && transaction?.status === 'submitted' && (
+        <div className="mb-4 rounded-md border border-info-bd bg-info-bg px-3 py-2 text-[12.5px] text-info">
+          Submitted transaction — saving as submitted re-locks it for non-admins.
+        </div>
+      )}
+      <fieldset disabled={locked} className="flex flex-col gap-5 border-0 p-0">
         {/* Header */}
         <div className="grid grid-cols-2 gap-4 max-[560px]:grid-cols-1">
           <div><label className="label">Date</label><input type="date" className="input mono" value={date} onChange={(e) => { setDate(e.target.value); touch(); }} /></div>
@@ -112,8 +145,8 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
           <div className="flex flex-col gap-3">
             {items.map((it, i) => (
               <div key={i} className="rounded-lg border border-n-200 p-3">
-                <div className="mb-2 flex items-center gap-2">
-                  <span className="text-[12px] font-semibold text-n-500">SKU {i + 1}</span>
+                <div className="mb-3 flex items-center gap-2 border-b border-n-200 pb-2">
+                  <span className="text-[13px] font-semibold text-n-800">SKU {i + 1}</span>
                   {items.length > 1 && (
                     <button className="ml-auto grid h-7 w-7 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" onClick={() => { setItems((r) => r.filter((_, idx) => idx !== i)); touch(); }}><Trash2 size={14} /></button>
                   )}
@@ -135,7 +168,7 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
             <div><button className="btn btn-ghost" onClick={() => { setItems((r) => [...r, emptyItem()]); touch(); }}><Plus size={16} /> Add another SKU</button></div>
           </div>
         </div>
-      </div>
+      </fieldset>
     </ModalShell>
   );
 }

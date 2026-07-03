@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize, IsArray, IsDateString, IsInt, IsNumber, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested,
+  ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested,
 } from 'class-validator';
 
 export class SalesTransactionItemDto {
@@ -21,9 +21,14 @@ export class CreateSalesTransactionDto {
   @IsOptional() @IsUUID() salesChannelId?: string | null;
   @IsOptional() @IsUUID() destinationCountryId?: string | null;
   @IsOptional() @IsUUID() companyId?: string | null;
+  @IsOptional() @IsIn(['draft', 'submitted']) status?: 'draft' | 'submitted';
 
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => SalesTransactionItemDto)
   items!: SalesTransactionItemDto[];
+}
+
+export class DecideUnlockDto {
+  @IsBoolean() grant!: boolean;
 }
 
 export class UpdateSalesTransactionDto extends CreateSalesTransactionDto {
