@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { Download } from 'lucide-react';
+import { ModalShell, downloadSheet } from '@masquare/ui';
 import { countriesApi, salesChannelsApi, type SalesChannel } from '../../lib/api';
 import { CountrySelect } from '../common/CountrySelect';
 import { CurrencySelect } from '../common/CurrencySelect';
@@ -23,9 +24,17 @@ export function SalesChannelsTab() {
     return c?.id ?? null;
   };
 
+  const downloadTemplate = () =>
+    downloadSheet('sales-channels-template', [
+      ['Name', 'Description', 'Native Country', 'Native Currency', 'Email', 'Website', 'Contact Name'],
+      ['Amazon UK', 'Amazon United Kingdom', 'United Kingdom', 'GBP', 'seller@example.com', 'https://amazon.co.uk', 'Marketplace Team'],
+      ['eBay DE', 'eBay Germany', 'Germany', 'EUR', 'seller@example.de', 'https://ebay.de', 'Sales'],
+    ], 'xlsx');
+
   return (
     <div>
       <SectionHeader title="Sales Channels" description="Marketplaces and channels the companies sell on, with their native country and currency.">
+        <button className="btn btn-ghost" onClick={downloadTemplate}><Download size={16} /> Template</button>
         <ImportButton title="Import sales channels"
           fields={[
             { key: 'name', label: 'Name', required: true },
