@@ -9,7 +9,7 @@ import { CurrencySelect } from '../common/CurrencySelect';
 import { AddButton, RefTable, SectionHeader } from './shared';
 import { SalesChannelImportModal } from './SalesChannelImportModal';
 
-const EXPORT_HEADERS = ['Name', 'Description', 'Native Country', 'Native Currency', 'General Sales Fee (%)', 'Email', 'Website', 'Contact Name'];
+const EXPORT_HEADERS = ['Name', 'Description', 'Native Country', 'Native Currency', 'General Sales Fee (%)', 'Fee In Native Currency', 'Fee Currency', 'Email', 'Website', 'Contact Name'];
 
 export function SalesChannelsTab() {
   const qc = useQueryClient();
@@ -28,7 +28,7 @@ export function SalesChannelsTab() {
   const exportSelected = () => {
     const chosen = data.filter((c) => selected.has(c.id));
     if (chosen.length === 0) return;
-    const rows = chosen.map((c) => [c.name, c.description ?? '', c.nativeCountry?.name ?? '', c.nativeCurrency ?? '', c.generalSalesFeePct ?? '', c.email ?? '', c.website ?? '', c.contactName ?? '']);
+    const rows = chosen.map((c) => [c.name, c.description ?? '', c.nativeCountry?.name ?? '', c.nativeCurrency ?? '', c.generalSalesFeePct ?? '', c.feeChargedInNativeCurrency ? 'Yes' : 'No', c.feeCurrency ?? '', c.email ?? '', c.website ?? '', c.contactName ?? '']);
     downloadSheet(`sales-channels-${chosen.length}`, [EXPORT_HEADERS, ...rows], 'xlsx');
     toast.success(`Exported ${chosen.length} sales channels`);
   };
@@ -44,8 +44,8 @@ export function SalesChannelsTab() {
   const downloadTemplate = () =>
     downloadSheet('sales-channels-template', [
       ['Name', 'Description', 'Native Country', 'Native Currency', 'Email', 'Website', 'Contact Name'],
-      ['Amazon UK', 'Amazon United Kingdom', 'United Kingdom', 'GBP', '15', 'seller@example.com', 'https://amazon.co.uk', 'Marketplace Team'],
-      ['eBay DE', 'eBay Germany', 'Germany', 'EUR', '11', 'seller@example.de', 'https://ebay.de', 'Sales'],
+      ['Amazon UK', 'Amazon United Kingdom', 'United Kingdom', 'GBP', '15', 'Yes', '', 'seller@example.com', 'https://amazon.co.uk', 'Marketplace Team'],
+      ['eBay DE', 'eBay Germany', 'Germany', 'EUR', '11', 'No', 'USD', 'seller@example.de', 'https://ebay.de', 'Sales'],
     ], 'xlsx');
 
   return (
@@ -102,6 +102,8 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
     nativeCountryId: channel?.nativeCountryId ?? null as string | null,
     nativeCurrency: channel?.nativeCurrency ?? null as string | null,
     generalSalesFeePct: channel?.generalSalesFeePct?.toString() ?? '',
+    feeChargedInNativeCurrency: channel?.feeChargedInNativeCurrency ?? true,
+    feeCurrency: channel?.feeCurrency ?? null as string | null,
     email: channel?.email ?? '',
     website: channel?.website ?? '',
     contactName: channel?.contactName ?? '',
@@ -117,6 +119,8 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
         ...form,
         description: form.description || undefined,
         generalSalesFeePct: form.generalSalesFeePct.trim() === '' ? null : Number(form.generalSalesFeePct),
+        feeChargedInNativeCurrency: form.feeChargedInNativeCurrency,
+        feeCurrency: form.feeChargedInNativeCurrency ? null : form.feeCurrency,
         email: form.email || undefined,
         website: form.website || undefined,
         contactName: form.contactName || undefined,
@@ -140,6 +144,18 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
         <div><label className="label">Native country</label><CountrySelect value={form.nativeCountryId} onChange={(v) => set({ nativeCountryId: v })} /></div>
         <div><label className="label">Native currency</label><CurrencySelect value={form.nativeCurrency} onChange={(v) => set({ nativeCurrency: v })} /></div>
         <div><label className="label">General Sales Fee (%)</label><input className="input mono" inputMode="decimal" value={form.generalSalesFeePct} onChange={(e) => set({ generalSalesFeePct: e.target.value })} placeholder="15" /></div>
+        <div className="col-span-2 flex flex-col gap-2 rounded-md border border-n-200 bg-n-25 p-3">
+          <label className="flex cursor-pointer items-center gap-2.5">
+            <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={form.feeChargedInNativeCurrency} onChange={(e) => set({ feeChargedInNativeCurrency: e.target.checked })} />
+            <span className="text-[13.5px] text-n-700">Sales fees are charged in the channel's native currency</span>
+          </label>
+          {!form.feeChargedInNativeCurrency && (
+            <div className="max-w-xs pl-6">
+              <label className="label">Fee currency</label>
+              <CurrencySelect value={form.feeCurrency} onChange={(v) => set({ feeCurrency: v })} />
+            </div>
+          )}
+        </div>
         <div><label className="label">Email</label><input className="input" value={form.email} onChange={(e) => set({ email: e.target.value })} /></div>
         <div><label className="label">Website</label><input className="input" value={form.website} onChange={(e) => set({ website: e.target.value })} /></div>
         <div className="col-span-2"><label className="label">Contact name</label><input className="input" value={form.contactName} onChange={(e) => set({ contactName: e.target.value })} /></div>

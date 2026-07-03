@@ -48,6 +48,7 @@ model Company {
   moduleSharings    ModuleSharing[]
   userCompanyAccess UserCompanyAccess[]
   productCompanies  ProductCompany[]
+  salesTransactions SalesTransaction[]
 
   @@map("company")
 }
@@ -430,10 +431,11 @@ model Product {
   fulfilmentType FulfilmentType? @relation(fields: [fulfilmentTypeId], references: [id], onDelete: SetNull)
   category      ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
-  aliases    ProductSkuAlias[]
-  media      ProductMedia[]
-  attributes ProductAttribute[]
-  companies  ProductCompany[]
+  aliases              ProductSkuAlias[]
+  media                ProductMedia[]
+  attributes           ProductAttribute[]
+  companies            ProductCompany[]
+  salesTransactionItems SalesTransactionItem[]
 
   @@map("product")
 }
@@ -527,6 +529,7 @@ model Country {
   zoneMemberships        ShippingZoneCountry[]
   shippingZoneMappings   CountryShippingZone[]
   salesChannels          SalesChannel[]
+  salesTransactions      SalesTransaction[]
 
   @@map("country")
 }
@@ -617,6 +620,10 @@ model SalesChannel {
   nativeCountryId String? @map("native_country_id") @db.Uuid
   nativeCurrency     String? @map("native_currency") // ISO 4217 3-letter
   generalSalesFeePct Float?  @map("general_sales_fee_pct") // % fee charged per sale
+  // Whether the sales fees are charged in the channel's native currency; if not,
+  // feeCurrency holds the explicit currency the fees are charged in.
+  feeChargedInNativeCurrency Boolean @default(true) @map("fee_charged_in_native_currency")
+  feeCurrency                String? @map("fee_currency")
   email              String?
   website            String?
   contactName        String? @map("contact_name")
@@ -627,7 +634,62 @@ model SalesChannel {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  nativeCountry Country? @relation(fields: [nativeCountryId], references: [id], onDelete: SetNull)
+  nativeCountry     Country?           @relation(fields: [nativeCountryId], references: [id], onDelete: SetNull)
+  salesTransactions SalesTransaction[]
 
   @@map("sales_channel")
+}
+
+// ===========================================================================
+// Sales Transactions module — registers sales across all sales channels.
+// Header + line items (one per SKU). Amounts stored in the sales channel's
+// native currency, except the sales fee which uses the channel's fee currency
+// (both snapshotted on the header at registration time).
+// ===========================================================================
+
+model SalesTransaction {
+  id                   String   @id @default(uuid()) @db.Uuid
+  date                 DateTime
+  transactionRef       String   @map("transaction_ref") // the user's "Transaction ID"
+  salesChannelId       String?  @map("sales_channel_id") @db.Uuid
+  destinationCountryId String?  @map("destination_country_id") @db.Uuid
+  companyId            String?  @map("company_id") @db.Uuid
+  currency             String? // native currency snapshot (net/vat/shipping amounts)
+  feeCurrency          String?  @map("fee_currency") // fee currency snapshot
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  salesChannel       SalesChannel? @relation(fields: [salesChannelId], references: [id], onDelete: SetNull)
+  destinationCountry Country?      @relation(fields: [destinationCountryId], references: [id], onDelete: SetNull)
+  company            Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  items              SalesTransactionItem[]
+
+  @@map("sales_transaction")
+}
+
+model SalesTransactionItem {
+  id            String @id @default(uuid()) @db.Uuid
+  transactionId String @map("transaction_id") @db.Uuid
+  productId     String? @map("product_id") @db.Uuid
+  sku           String
+  quantity      Int    @default(1)
+
+  netSalesAmount             Float? @map("net_sales_amount")
+  vatAmount                  Float? @map("vat_amount")
+  shippingAmount             Float? @map("shipping_amount")
+  shippingAmountVat          Float? @map("shipping_amount_vat")
+  salesChannelSalesFeeAmount Float? @map("sales_channel_sales_fee_amount")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  transaction SalesTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  product     Product?         @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@map("sales_transaction_item")
 }

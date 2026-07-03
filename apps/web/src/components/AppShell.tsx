@@ -10,6 +10,7 @@ import {
   Menu,
   Package,
   Plug,
+  Receipt,
   Search,
   Settings,
   SlidersHorizontal,
@@ -33,6 +34,7 @@ interface NavDef {
 
 const OPERATIONS: NavDef[] = [
   { to: '/products', label: 'Products', icon: Package },
+  { to: '/sales-transactions', label: 'Sales Transactions', icon: Receipt },
   { label: 'Inventory', icon: Boxes, badge: 'soon', disabled: true },
   { label: 'Warehouses', icon: Warehouse, badge: 'soon', disabled: true },
   { label: 'Integrations', icon: Plug, badge: 'soon', disabled: true },

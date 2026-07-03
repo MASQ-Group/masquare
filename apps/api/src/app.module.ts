@@ -8,6 +8,7 @@ import { ModulesModule } from './modules-catalog/modules.module';
 import { GlobalSettingsModule } from './global-settings/global-settings.module';
 import { GlobalDataModule } from './global-data/global-data.module';
 import { ProductsModule } from './products/products.module';
+import { SalesTransactionsModule } from './sales-transactions/sales-transactions.module';
 import { StorageModule } from './storage/storage.module';
 
 @Module({
@@ -22,6 +23,7 @@ import { StorageModule } from './storage/storage.module';
     GlobalSettingsModule,
     GlobalDataModule,
     ProductsModule,
+    SalesTransactionsModule,
   ],
 })
 export class AppModule {}

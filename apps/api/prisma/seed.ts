@@ -14,6 +14,7 @@ const MODULES = [
   { key: 'users', name: 'Users & Permissions', status: 'core', isCore: true, shareable: false },
   { key: 'global_settings', name: 'Global Settings', status: 'module-2', isCore: false, shareable: false },
   { key: 'products', name: 'Products', status: 'module-3', isCore: false, shareable: true },
+  { key: 'sales_transactions', name: 'Sales Transactions', status: 'module-4', isCore: false, shareable: false },
   { key: 'inventory', name: 'Inventory & Warehouses', status: 'future', isCore: false, shareable: false },
   { key: 'integrations', name: 'Marketplace Integrations', status: 'future', isCore: false, shareable: false },
   { key: 'tax_finance', name: 'Tax & Financial', status: 'future', isCore: false, shareable: false },
@@ -84,7 +85,7 @@ async function main() {
   const companyIds = [ama.id, nk.id];
 
   // 3. Enable core + Products + Global Settings for both companies
-  const enabledKeys = ['companies', 'users', 'global_settings', 'products'];
+  const enabledKeys = ['companies', 'users', 'global_settings', 'products', 'sales_transactions'];
   for (const companyId of companyIds) {
     for (const key of enabledKeys) {
       await prisma.companyModule.upsert({

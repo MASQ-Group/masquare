@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
 
 export class CreateSalesChannelDto {
   @IsString() @MinLength(1) name!: string;
@@ -6,6 +6,8 @@ export class CreateSalesChannelDto {
   @IsOptional() @IsUUID() nativeCountryId?: string | null;
   @IsOptional() @IsString() nativeCurrency?: string;
   @IsOptional() @IsNumber() generalSalesFeePct?: number | null;
+  @IsOptional() @IsBoolean() feeChargedInNativeCurrency?: boolean;
+  @IsOptional() @IsString() feeCurrency?: string | null;
   @IsOptional() @IsString() email?: string;
   @IsOptional() @IsString() website?: string;
   @IsOptional() @IsString() contactName?: string;

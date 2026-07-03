@@ -365,6 +365,8 @@ export interface SalesChannel {
   nativeCountryId: string | null;
   nativeCurrency: string | null;
   generalSalesFeePct: number | null;
+  feeChargedInNativeCurrency: boolean;
+  feeCurrency: string | null;
   email: string | null;
   website: string | null;
   contactName: string | null;
@@ -393,4 +395,42 @@ export const salesChannelsApi = {
   create: (body: Partial<SalesChannel>) => api.post<SalesChannel>('/sales-channels', body).then((r) => r.data),
   update: (id: string, body: Partial<SalesChannel>) => api.patch<SalesChannel>(`/sales-channels/${id}`, body).then((r) => r.data),
   remove: (id: string) => api.delete(`/sales-channels/${id}`).then((r) => r.data),
+};
+
+// ---- Sales Transactions ----
+export interface SalesTransactionItem {
+  id?: string;
+  productId?: string | null;
+  sku: string;
+  quantity: number;
+  netSalesAmount?: number | null;
+  vatAmount?: number | null;
+  shippingAmount?: number | null;
+  shippingAmountVat?: number | null;
+  salesChannelSalesFeeAmount?: number | null;
+}
+export interface SalesTransaction {
+  id: string;
+  date: string;
+  transactionRef: string;
+  salesChannelId: string | null;
+  salesChannel: { id: string; name: string } | null;
+  destinationCountryId: string | null;
+  destinationCountry: { id: string; name: string; isoCode: string } | null;
+  companyId: string | null;
+  currency: string | null;
+  feeCurrency: string | null;
+  items: SalesTransactionItem[];
+  itemCount: number;
+  totals: { quantity: number; netSales: number; vat: number; shipping: number; shippingVat: number; fee: number };
+}
+export interface SalesTransactionListResponse { items: SalesTransaction[]; total: number; page: number; pageSize: number }
+
+export const salesTransactionsApi = {
+  list: (params: { q?: string; companyId?: string; salesChannelId?: string; page?: number; pageSize?: number }) =>
+    api.get<SalesTransactionListResponse>('/sales-transactions', { params }).then((r) => r.data),
+  get: (id: string) => api.get<SalesTransaction>(`/sales-transactions/${id}`).then((r) => r.data),
+  create: (body: any) => api.post<SalesTransaction>('/sales-transactions', body).then((r) => r.data),
+  update: (id: string, body: any) => api.patch<SalesTransaction>(`/sales-transactions/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/sales-transactions/${id}`).then((r) => r.data),
 };
