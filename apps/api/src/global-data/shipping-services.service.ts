@@ -63,13 +63,13 @@ export class ShippingServicesService {
         });
       }
     }
-    for (const r of dto.rates ?? []) {
+    // Batch-insert rates in one statement (handles thousands of rows efficiently).
+    const rateData = (dto.rates ?? []).map((r) => {
       const zoneId = zoneIdByName.get(r.zoneName);
       if (!zoneId) throw new BadRequestException(`Rate references unknown zone "${r.zoneName}"`);
-      await tx.shippingRate.create({
-        data: { zoneId, fromWeightKg: r.fromWeightKg, toWeightKg: r.toWeightKg, chargeEur: r.chargeEur },
-      });
-    }
+      return { zoneId, fromWeightKg: r.fromWeightKg, toWeightKg: r.toWeightKg, chargeEur: r.chargeEur };
+    });
+    if (rateData.length) await tx.shippingRate.createMany({ data: rateData });
   }
 
   async create(dto: CreateShippingServiceDto, actorId?: string) {
@@ -79,7 +79,7 @@ export class ShippingServicesService {
       });
       await this.writeZonesAndRates(tx, service.id, dto);
       return service.id;
-    });
+    }, { timeout: 30000, maxWait: 15000 });
     return this.get(id);
   }
 
@@ -92,7 +92,7 @@ export class ShippingServicesService {
         data: { name: dto.name, alias: dto.alias, calcMethod: dto.calcMethod, updatedById: actorId },
       });
       await this.writeZonesAndRates(tx, id, dto);
-    });
+    }, { timeout: 30000, maxWait: 15000 });
     return this.get(id);
   }
 
