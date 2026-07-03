@@ -62,12 +62,18 @@ export class SalesTransactionsService {
       for (const it of items) {
         const p = it.product;
         if (!p) continue;
-        let unit: number | null = null;
+        // Actual package weight (fall back to product weight if the package weight is unset).
+        const actual = p.packageWeightKg != null ? Number(p.packageWeightKg) : p.productWeightKg != null ? Number(p.productWeightKg) : null;
+        // Volumetric weight = (L × W × H) / 5000.
+        const vol = p.packageLengthCm != null && p.packageWidthCm != null && p.packageHeightCm != null
+          ? (Number(p.packageLengthCm) * Number(p.packageWidthCm) * Number(p.packageHeightCm)) / 5000
+          : null;
+        let unit: number | null;
         if (method === 'actual_weight') {
-          // Prefer the package weight; fall back to the product weight if not set.
-          unit = p.packageWeightKg != null ? Number(p.packageWeightKg) : p.productWeightKg != null ? Number(p.productWeightKg) : null;
-        } else if (p.packageLengthCm != null && p.packageWidthCm != null && p.packageHeightCm != null) {
-          unit = (Number(p.packageLengthCm) * Number(p.packageWidthCm) * Number(p.packageHeightCm)) / 5000;
+          unit = actual;
+        } else {
+          // Volumetric services charge on the greater of volumetric and actual weight.
+          unit = vol != null && actual != null ? Math.max(vol, actual) : vol ?? actual;
         }
         if (unit != null) { w += unit * (it.quantity ?? 1); any = true; }
       }
