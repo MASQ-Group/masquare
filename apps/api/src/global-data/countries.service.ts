@@ -57,14 +57,14 @@ export class CountriesService {
         createdById: actorId,
         updatedById: actorId,
       },
-      include,
     });
-    return this.serialize(row);
+    if (dto.defaultShippingServiceId) await this.syncDefaultServiceZone(row.id, dto.defaultShippingServiceId);
+    return this.serialize(await this.prisma.country.findUnique({ where: { id: row.id }, include }));
   }
 
   async update(id: string, dto: UpdateCountryDto, actorId?: string) {
     await this.getRaw(id);
-    const row = await this.prisma.country.update({
+    await this.prisma.country.update({
       where: { id },
       data: {
         name: dto.name,
@@ -75,9 +75,25 @@ export class CountriesService {
         defaultShippingServiceId: dto.defaultShippingServiceId,
         updatedById: actorId,
       },
-      include,
     });
-    return this.serialize(row);
+    // When a default shipping service is set, auto-fill that service's zone column by
+    // correlating the country with the zone it belongs to (Countries §Default Shipping).
+    if (dto.defaultShippingServiceId) await this.syncDefaultServiceZone(id, dto.defaultShippingServiceId);
+    return this.serialize(await this.prisma.country.findUnique({ where: { id }, include }));
+  }
+
+  /** Find which zone of `serviceId` contains this country and record the mapping. */
+  private async syncDefaultServiceZone(countryId: string, serviceId: string) {
+    const membership = await this.prisma.shippingZoneCountry.findFirst({
+      where: { countryId, zone: { shippingServiceId: serviceId, deletedAt: null } },
+      select: { zoneId: true },
+    });
+    if (!membership) return; // country isn't in any zone of this service — nothing to fill
+    await this.prisma.countryShippingZone.upsert({
+      where: { countryId_shippingServiceId: { countryId, shippingServiceId: serviceId } },
+      create: { countryId, shippingServiceId: serviceId, zoneId: membership.zoneId },
+      update: { zoneId: membership.zoneId },
+    });
   }
 
   async remove(id: string) {

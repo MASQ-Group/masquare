@@ -98,6 +98,10 @@ export class ShippingServicesService {
 
   async remove(id: string) {
     await this.get(id);
+    // Clean up references so no country points at a removed service (soft-delete
+    // doesn't fire the FK cascades).
+    await this.prisma.countryShippingZone.deleteMany({ where: { shippingServiceId: id } });
+    await this.prisma.country.updateMany({ where: { defaultShippingServiceId: id }, data: { defaultShippingServiceId: null } });
     await this.prisma.shippingService.update({ where: { id }, data: { deletedAt: new Date() } });
     return { ok: true };
   }

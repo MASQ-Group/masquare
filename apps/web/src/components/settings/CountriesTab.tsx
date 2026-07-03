@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { Download, Pencil, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { ModalShell, downloadSheet } from '@masquare/ui';
 import { countriesApi, shippingServicesApi, type Country, type ShippingService } from '../../lib/api';
 import { AddButton, SectionHeader } from './shared';
+import { CountryImportModal } from './CountryImportModal';
+
+const EXPORT_HEADERS = ['Country Name', 'ISO Code', 'Continent', 'EU VAT Zone', 'VAT Rate', 'Default Shipping Service'];
 
 export function CountriesTab() {
   const qc = useQueryClient();
@@ -12,6 +15,8 @@ export function CountriesTab() {
   const [editing, setEditing] = useState<Country | null | undefined>(undefined);
   const [serviceCols, setServiceCols] = useState<string[]>([]);
   const [addColOpen, setAddColOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [importOpen, setImportOpen] = useState(false);
 
   const { data: countries = [], isLoading } = useQuery({ queryKey: ['countries'], queryFn: () => countriesApi.list() });
   const { data: services = [] } = useQuery({ queryKey: ['shipping-services'], queryFn: () => shippingServicesApi.list() });
@@ -30,7 +35,11 @@ export function CountriesTab() {
 
   const setDefault = useMutation({
     mutationFn: ({ id, serviceId }: { id: string; serviceId: string | null }) => countriesApi.update(id, { defaultShippingServiceId: serviceId }),
-    onSuccess: patchCountry,
+    onSuccess: (updated, variables) => {
+      patchCountry(updated);
+      // Reveal the chosen service's column so its auto-correlated zone is visible.
+      if (variables.serviceId) setServiceCols((cols) => (cols.includes(variables.serviceId!) ? cols : [...cols, variables.serviceId!]));
+    },
   });
   const setZone = useMutation({
     mutationFn: ({ id, serviceId, zoneId }: { id: string; serviceId: string; zoneId: string | null }) => countriesApi.setZone(id, serviceId, zoneId),
@@ -48,9 +57,24 @@ export function CountriesTab() {
   const serviceById = (id: string) => services.find((s) => s.id === id);
   const availableToAdd = services.filter((s) => !serviceCols.includes(s.id));
 
+  const allSelected = filtered.length > 0 && filtered.every((c) => selected.has(c.id));
+  const toggleAll = () => setSelected((prev) => { const n = new Set(prev); if (filtered.every((c) => n.has(c.id))) filtered.forEach((c) => n.delete(c.id)); else filtered.forEach((c) => n.add(c.id)); return n; });
+  const toggleOne = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const exportSelected = () => {
+    const chosen = countries.filter((c) => selected.has(c.id));
+    if (!chosen.length) return;
+    const rows = chosen.map((c) => [c.name, c.isoCode, c.continent, c.euVatZone ? 'Yes' : 'No', c.vatRate, c.defaultShippingService?.name ?? '']);
+    downloadSheet(`countries-${chosen.length}`, [EXPORT_HEADERS, ...rows], 'xlsx');
+    toast.success(`Exported ${chosen.length} countries`);
+  };
+  const downloadTemplate = () =>
+    downloadSheet('countries-template', [EXPORT_HEADERS, ['Example Country', 'XX', 'Europe', 'Yes', '20', 'Cyprus Postal Service'], ['Another Country', 'YY', 'Asia', 'No', '0', '']], 'xlsx');
+
   return (
     <div>
       <SectionHeader title="Countries" description="All world countries with EU VAT status, VAT rate, and default shipping service. Add shipping-service columns to map each country to a zone.">
+        <button className="btn btn-ghost" onClick={downloadTemplate}><Download size={16} /> Template</button>
+        <button className="btn btn-ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button>
         <AddButton label="Add country" onClick={() => setEditing(null)} />
       </SectionHeader>
 
@@ -59,11 +83,24 @@ export function CountriesTab() {
         <input className="h-full flex-1 text-[13px] outline-none" placeholder="Search country or ISO code…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
 
+      {selected.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2">
+          <span className="text-[13px] font-semibold text-teal-800">{selected.size} selected</span>
+          <div className="mx-1 h-5 w-px bg-teal-200" />
+          <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:bg-n-50" onClick={exportSelected}><Download size={14} /> Export selected</button>
+          <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-bd bg-n-0 px-2.5 text-[12.5px] font-medium text-danger hover:bg-danger-bg" onClick={() => { if (confirm(`Remove ${selected.size} countries?`)) { [...selected].forEach((id) => del.mutate(id)); setSelected(new Set()); } }}><Trash2 size={14} /> Delete</button>
+          <button className="ml-auto text-[12.5px] font-medium text-teal-700 hover:underline" onClick={() => setSelected(new Set())}>Clear selection</button>
+        </div>
+      )}
+
       <div className="card overflow-hidden">
         <div className="max-h-[60vh] overflow-auto">
           <table className="w-full min-w-[900px] border-collapse">
             <thead className="sticky top-0 z-10">
               <tr>
+                <th className="border-b border-n-200 bg-n-25 px-3 py-3">
+                  <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={allSelected} onChange={toggleAll} title="Select all" />
+                </th>
                 {['Country', 'ISO', 'Continent', 'EU VAT', 'VAT %', 'Default shipping'].map((h) => (
                   <th key={h} className="border-b border-n-200 bg-n-25 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap">{h}</th>
                 ))}
@@ -95,9 +132,12 @@ export function CountriesTab() {
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={7 + serviceCols.length} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
+              {isLoading && <tr><td colSpan={8 + serviceCols.length} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
               {filtered.map((c) => (
-                <tr key={c.id} className="hover:bg-teal-50">
+                <tr key={c.id} className={`hover:bg-teal-50 ${selected.has(c.id) ? 'bg-teal-50/60' : ''}`}>
+                  <td className="border-b border-n-100 px-3 py-2">
+                    <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={selected.has(c.id)} onChange={() => toggleOne(c.id)} />
+                  </td>
                   <td className="border-b border-n-100 px-4 py-2 text-[13.5px] font-medium text-n-800">{c.name}</td>
                   <td className="mono border-b border-n-100 px-4 py-2 text-[13px] text-n-700">{c.isoCode}</td>
                   <td className="border-b border-n-100 px-4 py-2 text-[13px] text-n-600">{c.continent}</td>
@@ -141,6 +181,9 @@ export function CountriesTab() {
 
       {editing !== undefined && (
         <CountryModal country={editing} services={services} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); qc.invalidateQueries({ queryKey: ['countries'] }); }} />
+      )}
+      {importOpen && (
+        <CountryImportModal countries={countries} services={services} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); setSelected(new Set()); qc.invalidateQueries({ queryKey: ['countries'] }); }} />
       )}
     </div>
   );
