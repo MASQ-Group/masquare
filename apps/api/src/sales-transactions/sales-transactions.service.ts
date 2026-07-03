@@ -166,24 +166,40 @@ export class SalesTransactionsService {
     return c?.defaultShippingServiceId ?? null;
   }
 
-  /** channel currency -> EUR at the transaction date, from the free Frankfurter (ECB) API. */
-  private async fetchExchangeRate(currency: string | null, date: string): Promise<number | null> {
-    if (!currency) return null;
-    if (currency.toUpperCase() === 'EUR') return 1;
+  // USD-pegged currencies the ECB (Frankfurter) doesn't publish — derived via USD.
+  private static readonly USD_PEG: Record<string, number> = { AED: 3.6725, SAR: 3.75 };
+
+  /** Raw currency -> EUR from the free Frankfurter (ECB) API for a given date. */
+  private async frankfurterRate(currency: string, date: string): Promise<number | null> {
     try {
       const today = new Date().toISOString().slice(0, 10);
       const d = date.slice(0, 10);
       const endpoint = d > today ? 'latest' : d;
-      const res = await fetch(`https://api.frankfurter.app/${endpoint}?from=${currency.toUpperCase()}&to=EUR`, {
+      const res = await fetch(`https://api.frankfurter.app/${endpoint}?from=${currency}&to=EUR`, {
         signal: AbortSignal.timeout(4000),
       });
       if (!res.ok) return null;
       const json: any = await res.json();
       const rate = json?.rates?.EUR;
-      return typeof rate === 'number' ? round(rate, 6) : null;
+      return typeof rate === 'number' ? rate : null;
     } catch {
       return null;
     }
+  }
+
+  /** channel currency -> EUR at the transaction date. ECB currencies come from
+   *  Frankfurter directly; USD-pegged ones (AED, SAR) are derived from USD. */
+  private async fetchExchangeRate(currency: string | null, date: string): Promise<number | null> {
+    if (!currency) return null;
+    const cur = currency.toUpperCase();
+    if (cur === 'EUR') return 1;
+    const peg = SalesTransactionsService.USD_PEG[cur];
+    if (peg) {
+      const usdEur = await this.frankfurterRate('USD', date);
+      return usdEur != null ? round(usdEur / peg, 6) : null;
+    }
+    const rate = await this.frankfurterRate(cur, date);
+    return rate != null ? round(rate, 6) : null;
   }
 
   /** Snapshot the currencies from the sales channel at registration time. */
