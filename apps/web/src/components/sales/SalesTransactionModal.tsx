@@ -187,13 +187,14 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
           <label className="label">SKUs in this transaction</label>
           <div className="flex flex-col gap-3">
             {items.map((it, i) => (
-              <div key={i} className="rounded-lg border border-n-200 p-3">
-                <div className="mb-3 flex items-center gap-2 border-b border-n-200 pb-2">
+              <div key={i} className="overflow-hidden rounded-lg border border-n-200">
+                <div className="flex items-center gap-2 border-b border-n-200 bg-n-50 px-3 py-2">
                   <span className="text-[13px] font-semibold text-n-800">SKU {i + 1}</span>
                   {items.length > 1 && (
                     <button className="ml-auto grid h-7 w-7 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" onClick={() => { setItems((r) => r.filter((_, idx) => idx !== i)); touch(); }}><Trash2 size={14} /></button>
                   )}
                 </div>
+                <div className="p-3">
                 <div className="grid grid-cols-4 gap-3 max-[700px]:grid-cols-2 max-[420px]:grid-cols-1">
                   <div className="col-span-3 max-[700px]:col-span-2 max-[420px]:col-span-1">
                     <label className="label">SKU</label>
@@ -205,6 +206,7 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
                   <AmountField label="Shipping" ccy={nativeCcy} value={it.shippingAmount} onChange={(v) => setItem(i, { shippingAmount: v })} />
                   <AmountField label="Shipping VAT" ccy={nativeCcy} value={it.shippingAmountVat} onChange={(v) => setItem(i, { shippingAmountVat: v })} />
                   <AmountField label="Sales fee" ccy={feeCcy} value={it.salesChannelSalesFeeAmount} onChange={(v) => setItem(i, { salesChannelSalesFeeAmount: v })} />
+                </div>
                 </div>
               </div>
             ))}
