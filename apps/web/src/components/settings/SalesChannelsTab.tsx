@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Download } from 'lucide-react';
+import { Download, Trash2, Upload } from 'lucide-react';
 import { ModalShell, downloadSheet } from '@masquare/ui';
 import { countriesApi, salesChannelsApi, type SalesChannel } from '../../lib/api';
 import { CountrySelect } from '../common/CountrySelect';
 import { CurrencySelect } from '../common/CurrencySelect';
-import { AddButton, ImportButton, RefTable, SectionHeader } from './shared';
+import { AddButton, RefTable, SectionHeader } from './shared';
+import { SalesChannelImportModal } from './SalesChannelImportModal';
+
+const EXPORT_HEADERS = ['Name', 'Description', 'Native Country', 'Native Currency', 'Email', 'Website', 'Contact Name'];
 
 export function SalesChannelsTab() {
   const qc = useQueryClient();
@@ -15,6 +18,20 @@ export function SalesChannelsTab() {
   const { data: countries = [] } = useQuery({ queryKey: ['countries'], queryFn: () => countriesApi.list() });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['sales-channels'] });
   const del = useMutation({ mutationFn: (id: string) => salesChannelsApi.remove(id), onSuccess: () => { toast.success('Removed'); invalidate(); } });
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [importOpen, setImportOpen] = useState(false);
+
+  const allSelected = data.length > 0 && data.every((c) => selected.has(c.id));
+  const toggleAll = () => setSelected((prev) => { const n = new Set(prev); if (data.every((c) => n.has(c.id))) data.forEach((c) => n.delete(c.id)); else data.forEach((c) => n.add(c.id)); return n; });
+  const toggleOne = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const exportSelected = () => {
+    const chosen = data.filter((c) => selected.has(c.id));
+    if (chosen.length === 0) return;
+    const rows = chosen.map((c) => [c.name, c.description ?? '', c.nativeCountry?.name ?? '', c.nativeCurrency ?? '', c.email ?? '', c.website ?? '', c.contactName ?? '']);
+    downloadSheet(`sales-channels-${chosen.length}`, [EXPORT_HEADERS, ...rows], 'xlsx');
+    toast.success(`Exported ${chosen.length} sales channels`);
+  };
 
   // Resolve a country cell (ISO code or official name) to its id for import.
   const resolveCountryId = (token?: string) => {
@@ -35,29 +52,25 @@ export function SalesChannelsTab() {
     <div>
       <SectionHeader title="Sales Channels" description="Marketplaces and channels the companies sell on, with their native country and currency.">
         <button className="btn btn-ghost" onClick={downloadTemplate}><Download size={16} /> Template</button>
-        <ImportButton title="Import sales channels"
-          fields={[
-            { key: 'name', label: 'Name', required: true },
-            { key: 'description', label: 'Description' },
-            { key: 'nativeCountry', label: 'Native Country' },
-            { key: 'nativeCurrency', label: 'Native Currency' },
-            { key: 'email', label: 'Email' },
-            { key: 'website', label: 'Website' },
-            { key: 'contactName', label: 'Contact Name' },
-          ]}
-          onCommit={async (rows) => {
-            for (const r of rows) {
-              const { nativeCountry, ...rest } = r;
-              await salesChannelsApi.create({ ...rest, nativeCountryId: resolveCountryId(nativeCountry) } as any);
-            }
-            invalidate();
-          }} />
+        <button className="btn btn-ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button>
         <AddButton label="Add sales channel" onClick={() => setEditing(null)} />
       </SectionHeader>
+
+      {selected.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2">
+          <span className="text-[13px] font-semibold text-teal-800">{selected.size} selected</span>
+          <div className="mx-1 h-5 w-px bg-teal-200" />
+          <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:bg-n-50" onClick={exportSelected}><Download size={14} /> Export selected</button>
+          <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-bd bg-n-0 px-2.5 text-[12.5px] font-medium text-danger hover:bg-danger-bg" onClick={() => { if (confirm(`Remove ${selected.size} sales channels?`)) { [...selected].forEach((id) => del.mutate(id)); setSelected(new Set()); } }}><Trash2 size={14} /> Delete</button>
+          <button className="ml-auto text-[12.5px] font-medium text-teal-700 hover:underline" onClick={() => setSelected(new Set())}>Clear selection</button>
+        </div>
+      )}
+
       <RefTable<SalesChannel>
         loading={isLoading}
         empty="No sales channels yet."
         rows={data}
+        selection={{ selected, toggleOne, toggleAll, allSelected }}
         columns={[
           { key: 'name', header: 'Name', render: (r) => <span className="font-medium text-n-800">{r.name}</span> },
           { key: 'description', header: 'Description', render: (r) => r.description ?? '—' },
@@ -70,6 +83,9 @@ export function SalesChannelsTab() {
       />
       {editing !== undefined && (
         <SalesChannelModal channel={editing} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); invalidate(); }} />
+      )}
+      {importOpen && (
+        <SalesChannelImportModal channels={data} resolveCountryId={resolveCountryId} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); setSelected(new Set()); invalidate(); }} />
       )}
     </div>
   );

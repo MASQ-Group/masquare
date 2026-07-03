@@ -30,6 +30,13 @@ export interface Column<T> {
   render: (row: T) => React.ReactNode;
 }
 
+export interface RefTableSelection {
+  selected: Set<string>;
+  toggleOne: (id: string) => void;
+  toggleAll: () => void;
+  allSelected: boolean;
+}
+
 export function RefTable<T extends { id: string }>({
   columns,
   rows,
@@ -37,6 +44,7 @@ export function RefTable<T extends { id: string }>({
   empty,
   onEdit,
   onDelete,
+  selection,
 }: {
   columns: Column<T>[];
   rows: T[];
@@ -44,13 +52,20 @@ export function RefTable<T extends { id: string }>({
   empty: string;
   onEdit: (row: T) => void;
   onDelete: (row: T) => void;
+  selection?: RefTableSelection;
 }) {
+  const span = columns.length + 1 + (selection ? 1 : 0);
   return (
     <div className="card overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[560px] border-collapse">
           <thead>
             <tr>
+              {selection && (
+                <th className="border-b border-n-200 bg-n-25 px-3 py-3">
+                  <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={selection.allSelected} onChange={selection.toggleAll} title="Select all" />
+                </th>
+              )}
               {columns.map((c) => (
                 <th
                   key={c.key}
@@ -64,13 +79,18 @@ export function RefTable<T extends { id: string }>({
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={columns.length + 1} className="px-4 py-8 text-center text-[13px] text-n-500">Loading…</td></tr>
+              <tr><td colSpan={span} className="px-4 py-8 text-center text-[13px] text-n-500">Loading…</td></tr>
             )}
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={columns.length + 1} className="px-4 py-10 text-center text-[13px] text-n-500">{empty}</td></tr>
+              <tr><td colSpan={span} className="px-4 py-10 text-center text-[13px] text-n-500">{empty}</td></tr>
             )}
             {rows.map((row) => (
               <tr key={row.id} className="hover:bg-teal-50">
+                {selection && (
+                  <td className="border-b border-n-100 px-3 py-3">
+                    <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={selection.selected.has(row.id)} onChange={() => selection.toggleOne(row.id)} />
+                  </td>
+                )}
                 {columns.map((c) => (
                   <td key={c.key} className={`border-b border-n-100 px-4 py-3 text-[13.5px] text-n-700 ${c.className ?? ''}`}>
                     {c.render(row)}
