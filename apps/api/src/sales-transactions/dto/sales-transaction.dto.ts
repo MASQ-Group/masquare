@@ -20,6 +20,7 @@ export class CreateSalesTransactionDto {
   @IsString() @MinLength(1) transactionRef!: string;
   @IsOptional() @IsUUID() salesChannelId?: string | null;
   @IsOptional() @IsUUID() destinationCountryId?: string | null;
+  @IsOptional() @IsUUID() shippingServiceId?: string | null;
   @IsOptional() @IsUUID() companyId?: string | null;
   @IsOptional() @IsIn(['draft', 'submitted']) status?: 'draft' | 'submitted';
 

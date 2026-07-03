@@ -549,6 +549,7 @@ model ShippingService {
   zones               ShippingZone[]
   defaultForCountries Country[]             @relation("CountryDefaultService")
   countryMappings     CountryShippingZone[]
+  salesTransactions   SalesTransaction[]    @relation("TxShippingService")
 
   @@map("shipping_service")
 }
@@ -660,6 +661,10 @@ model SalesTransaction {
   // an unlock granted). unlockedForEdit re-opens a submitted transaction to non-admins.
   status          String  @default("draft") // draft | submitted
   unlockedForEdit Boolean @default(false) @map("unlocked_for_edit")
+  // Chosen shipping service (defaults to the destination country's default; editable).
+  shippingServiceId String? @map("shipping_service_id") @db.Uuid
+  // Snapshot: channel currency -> EUR exchange rate at the transaction date.
+  exchangeRate Float? @map("exchange_rate")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -667,9 +672,10 @@ model SalesTransaction {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  salesChannel       SalesChannel? @relation(fields: [salesChannelId], references: [id], onDelete: SetNull)
-  destinationCountry Country?      @relation(fields: [destinationCountryId], references: [id], onDelete: SetNull)
-  company            Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  salesChannel       SalesChannel?    @relation(fields: [salesChannelId], references: [id], onDelete: SetNull)
+  destinationCountry Country?         @relation(fields: [destinationCountryId], references: [id], onDelete: SetNull)
+  company            Company?         @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  shippingService    ShippingService? @relation("TxShippingService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
   items              SalesTransactionItem[]
   unlockRequests     SalesTransactionUnlockRequest[]
 

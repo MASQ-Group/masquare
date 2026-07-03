@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
-import { salesChannelsApi, salesTransactionsApi, type RefLite, type SalesTransaction } from '../../lib/api';
+import { countriesApi, salesChannelsApi, salesTransactionsApi, shippingServicesApi, type RefLite, type SalesTransaction } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { RefField } from '../products/RefField';
 import { CountrySelect } from '../common/CountrySelect';
@@ -38,11 +38,15 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
   const [busy, setBusy] = useState(false);
   const touch = () => setDirty(true);
   const { data: channels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
+  const { data: services = [] } = useQuery({ queryKey: ['shipping-services'], queryFn: () => shippingServicesApi.list() });
+  const { data: countries = [] } = useQuery({ queryKey: ['countries'], queryFn: () => countriesApi.list() });
 
   const [date, setDate] = useState(transaction ? transaction.date.slice(0, 10) : today());
   const [channel, setChannel] = useState<RefLite | null>(transaction?.salesChannel ?? null);
   const [transactionRef, setTransactionRef] = useState(transaction?.transactionRef ?? '');
   const [destinationCountryId, setDestinationCountryId] = useState<string | null>(transaction?.destinationCountryId ?? null);
+  const [shippingServiceId, setShippingServiceId] = useState<string | null>(transaction?.shippingServiceId ?? null);
+  const [serviceOverridden, setServiceOverridden] = useState(!!transaction);
   const [items, setItems] = useState<ItemForm[]>(
     transaction?.items.map((i) => ({
       productId: i.productId ?? null, sku: i.sku, quantity: String(i.quantity),
@@ -59,6 +63,22 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
   const setItem = (i: number, patch: Partial<ItemForm>) => { setItems((r) => r.map((x, idx) => (idx === i ? { ...x, ...patch } : x))); touch(); };
   const canSave = useMemo(() => transactionRef.trim() && items.some((i) => i.sku.trim()), [transactionRef, items]);
 
+  // When the destination changes, default the shipping service to that country's default
+  // (unless the user has picked one explicitly).
+  const handleDestination = (v: string | null) => {
+    setDestinationCountryId(v);
+    touch();
+    if (!serviceOverridden) setShippingServiceId(countries.find((c) => c.id === v)?.defaultShippingServiceId ?? null);
+  };
+
+  // Live-computed calculated fields (server recomputes the rest on save).
+  const liveSalesFeePct = useMemo(() => {
+    const base = items.reduce((s, i) => s + (Number(i.netSalesAmount) || 0) + (Number(i.vatAmount) || 0) + (Number(i.shippingAmount) || 0) + (Number(i.shippingAmountVat) || 0), 0);
+    const fee = items.reduce((s, i) => s + (Number(i.salesChannelSalesFeeAmount) || 0), 0);
+    return base > 0 ? (fee / base) * 100 : null;
+  }, [items]);
+  const liveVatPct = useMemo(() => countries.find((c) => c.id === destinationCountryId)?.vatRate ?? null, [countries, destinationCountryId]);
+
   const saveWith = async (status: 'draft' | 'submitted') => {
     if (!canSave) { toast.error('Transaction ID and at least one SKU are required'); return; }
     setBusy(true);
@@ -67,6 +87,7 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
         date, transactionRef, status,
         salesChannelId: channel?.id ?? null,
         destinationCountryId,
+        shippingServiceId,
         companyId: activeCompanyId,
         items: items.filter((i) => i.sku.trim()).map((i) => ({
           productId: i.productId, sku: i.sku,
@@ -130,7 +151,14 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
           <div><label className="label">Date</label><input type="date" className="input mono" value={date} onChange={(e) => { setDate(e.target.value); touch(); }} /></div>
           <div><label className="label">Sales channel</label><RefField value={channel} placeholder="Sales channel…" list={(q) => salesChannelsApi.list(q)} onChange={(v) => { setChannel(v); touch(); }} /></div>
           <div><label className="label">Transaction ID</label><input className="input mono" value={transactionRef} onChange={(e) => { setTransactionRef(e.target.value); touch(); }} placeholder="e.g. 402-1234567-1234567" /></div>
-          <div><label className="label">Destination country</label><CountrySelect value={destinationCountryId} onChange={(v) => { setDestinationCountryId(v); touch(); }} /></div>
+          <div><label className="label">Destination country</label><CountrySelect value={destinationCountryId} onChange={handleDestination} /></div>
+          <div className="col-span-2 max-w-[calc(50%-0.5rem)] max-[560px]:max-w-none">
+            <label className="label">Default shipping service <span className="font-normal text-n-400">(from destination — editable)</span></label>
+            <select className="input" value={shippingServiceId ?? ''} onChange={(e) => { setShippingServiceId(e.target.value || null); setServiceOverridden(true); touch(); }}>
+              <option value="">—</option>
+              {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
         </div>
 
         {selected && (
@@ -138,6 +166,21 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
             Amounts in <strong className="mono">{ccy(nativeCcy)}</strong> (channel currency); sales fee in <strong className="mono">{ccy(feeCcy)}</strong>.
           </p>
         )}
+
+        {/* Calculated fields */}
+        <div className="rounded-lg border border-n-200 bg-n-25 p-3">
+          <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-n-500">Calculated</div>
+          <div className="grid grid-cols-3 gap-3 max-[560px]:grid-cols-2">
+            <Calc label="Sales Fee %" value={liveSalesFeePct != null ? `${liveSalesFeePct.toFixed(2)}%` : '—'} />
+            <Calc label="Destination VAT %" value={liveVatPct != null ? `${liveVatPct}%` : '—'} />
+            <Calc label={`Exchange rate (${ccy(nativeCcy)}→EUR)`} value={transaction?.exchangeRate != null ? String(transaction.exchangeRate) : '—'} />
+            <Calc label="Package weight (kg)" value={transaction?.overallPackageWeight != null ? String(transaction.overallPackageWeight) : '—'} />
+            <Calc label="Est. shipping cost" value={transaction?.estimatedShippingCost != null ? `€${transaction.estimatedShippingCost.toFixed(2)}` : '—'} />
+          </div>
+          <p className="mt-2 text-[11px] text-n-400">
+            {transaction ? 'Exchange rate, package weight and shipping cost refresh on save.' : 'Exchange rate, package weight and shipping cost are calculated when you save.'}
+          </p>
+        </div>
 
         {/* Items */}
         <div>
@@ -170,6 +213,15 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
         </div>
       </fieldset>
     </ModalShell>
+  );
+}
+
+function Calc({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] text-n-500">{label}</div>
+      <div className="mono text-[14px] font-semibold text-n-800">{value}</div>
+    </div>
   );
 }
 

@@ -14,18 +14,24 @@ export interface TxQuery {
 
 const include = {
   salesChannel: { select: { id: true, name: true } },
-  destinationCountry: { select: { id: true, name: true, isoCode: true } },
-  items: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' as const } },
+  destinationCountry: { select: { id: true, name: true, isoCode: true, vatRate: true, defaultShippingServiceId: true } },
+  shippingService: { select: { id: true, name: true, calcMethod: true } },
+  items: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'asc' as const },
+    include: { product: { select: { packageWeightKg: true, packageLengthCm: true, packageWidthCm: true, packageHeightCm: true } } },
+  },
   unlockRequests: { where: { status: 'pending' }, orderBy: { createdAt: 'desc' as const } },
 } satisfies Prisma.SalesTransactionInclude;
 
-const n = (v: number | null | undefined) => Number(v ?? 0);
+const n = (v: any) => Number(v ?? 0);
+const round = (v: number, d: number) => Number(v.toFixed(d));
 
 @Injectable()
 export class SalesTransactionsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private serialize(t: any) {
+  private serialize(t: any, serviceMap: Map<string, any>) {
     const items = t.items ?? [];
     const totals = items.reduce(
       (acc: any, it: any) => ({
@@ -38,6 +44,44 @@ export class SalesTransactionsService {
       }),
       { quantity: 0, netSales: 0, vat: 0, shipping: 0, shippingVat: 0, fee: 0 },
     );
+
+    // --- Calculated fields ---
+    // Sales Fee % = total fee / total (net + vat + shipping + shipping vat).
+    const feeBase = items.reduce((s: number, it: any) => s + n(it.netSalesAmount) + n(it.vatAmount) + n(it.shippingAmount) + n(it.shippingAmountVat), 0);
+    const salesFeePct = feeBase > 0 ? round((totals.fee / feeBase) * 100, 2) : null;
+
+    // Destination country VAT % (from Global Settings → Countries).
+    const destinationCountryVatPct = t.destinationCountry ? Number(t.destinationCountry.vatRate) : null;
+
+    // Overall package weight: sum of per-SKU weight × quantity, by the service's cost basis.
+    const method: string | null = t.shippingService?.calcMethod ?? null;
+    let overallPackageWeight: number | null = null;
+    if (method) {
+      let w = 0;
+      let any = false;
+      for (const it of items) {
+        const p = it.product;
+        if (!p) continue;
+        let unit: number | null = null;
+        if (method === 'actual_weight') {
+          unit = p.packageWeightKg != null ? Number(p.packageWeightKg) : null;
+        } else if (p.packageLengthCm != null && p.packageWidthCm != null && p.packageHeightCm != null) {
+          unit = (Number(p.packageLengthCm) * Number(p.packageWidthCm) * Number(p.packageHeightCm)) / 5000;
+        }
+        if (unit != null) { w += unit * (it.quantity ?? 1); any = true; }
+      }
+      overallPackageWeight = any ? round(w, 3) : null;
+    }
+
+    // Estimated shipping cost: zone of the service the destination belongs to → weight range → charge.
+    let estimatedShippingCost: number | null = null;
+    const svc = t.shippingServiceId ? serviceMap.get(t.shippingServiceId) : null;
+    if (svc && t.destinationCountryId && overallPackageWeight != null) {
+      const zone = (svc.zones ?? []).find((z: any) => (z.countries ?? []).some((c: any) => c.countryId === t.destinationCountryId));
+      const rate = zone?.rates?.find((r: any) => overallPackageWeight! >= Number(r.fromWeightKg) && overallPackageWeight! <= Number(r.toWeightKg));
+      if (rate) estimatedShippingCost = Number(rate.chargeEur);
+    }
+
     return {
       id: t.id,
       date: t.date,
@@ -45,13 +89,20 @@ export class SalesTransactionsService {
       salesChannelId: t.salesChannelId,
       salesChannel: t.salesChannel ?? null,
       destinationCountryId: t.destinationCountryId,
-      destinationCountry: t.destinationCountry ?? null,
+      destinationCountry: t.destinationCountry ? { id: t.destinationCountry.id, name: t.destinationCountry.name, isoCode: t.destinationCountry.isoCode } : null,
+      shippingServiceId: t.shippingServiceId,
+      shippingService: t.shippingService ? { id: t.shippingService.id, name: t.shippingService.name } : null,
       companyId: t.companyId,
       currency: t.currency,
       feeCurrency: t.feeCurrency,
+      exchangeRate: t.exchangeRate,
       status: t.status,
       unlockedForEdit: t.unlockedForEdit,
       hasPendingUnlock: (t.unlockRequests ?? []).length > 0,
+      salesFeePct,
+      destinationCountryVatPct,
+      overallPackageWeight,
+      estimatedShippingCost,
       items: items.map((it: any) => ({
         id: it.id,
         productId: it.productId,
@@ -88,13 +139,51 @@ export class SalesTransactionsService {
       this.prisma.salesTransaction.count({ where }),
       this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
     ]);
-    return { items: rows.map((r) => this.serialize(r)), total, page, pageSize };
+    const serviceMap = await this.buildServiceMap();
+    return { items: rows.map((r) => this.serialize(r, serviceMap)), total, page, pageSize };
   }
 
   async get(id: string) {
     const t = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null }, include });
     if (!t) throw new NotFoundException('Sales transaction not found');
-    return this.serialize(t);
+    const serviceMap = await this.buildServiceMap();
+    return this.serialize(t, serviceMap);
+  }
+
+  /** Shipping services with zones (countries + rates) for shipping-cost estimation. */
+  private async buildServiceMap() {
+    const services = await this.prisma.shippingService.findMany({
+      where: { deletedAt: null },
+      include: { zones: { where: { deletedAt: null }, include: { countries: true, rates: { where: { deletedAt: null } } } } },
+    });
+    return new Map<string, any>(services.map((s) => [s.id, s]));
+  }
+
+  private async resolveShippingService(explicit: string | null | undefined, countryId: string | null) {
+    if (explicit !== undefined) return explicit;
+    if (!countryId) return null;
+    const c = await this.prisma.country.findUnique({ where: { id: countryId }, select: { defaultShippingServiceId: true } });
+    return c?.defaultShippingServiceId ?? null;
+  }
+
+  /** channel currency -> EUR at the transaction date, from the free Frankfurter (ECB) API. */
+  private async fetchExchangeRate(currency: string | null, date: string): Promise<number | null> {
+    if (!currency) return null;
+    if (currency.toUpperCase() === 'EUR') return 1;
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const d = date.slice(0, 10);
+      const endpoint = d > today ? 'latest' : d;
+      const res = await fetch(`https://api.frankfurter.app/${endpoint}?from=${currency.toUpperCase()}&to=EUR`, {
+        signal: AbortSignal.timeout(4000),
+      });
+      if (!res.ok) return null;
+      const json: any = await res.json();
+      const rate = json?.rates?.EUR;
+      return typeof rate === 'number' ? round(rate, 6) : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Snapshot the currencies from the sales channel at registration time. */
@@ -110,24 +199,27 @@ export class SalesTransactionsService {
 
   async create(dto: CreateSalesTransactionDto, actorId?: string) {
     const { currency, feeCurrency } = await this.currenciesFor(dto.salesChannelId);
+    const shippingServiceId = await this.resolveShippingService(dto.shippingServiceId, dto.destinationCountryId ?? null);
+    const exchangeRate = await this.fetchExchangeRate(currency, dto.date);
     const t = await this.prisma.salesTransaction.create({
       data: {
         date: new Date(dto.date),
         transactionRef: dto.transactionRef,
         salesChannelId: dto.salesChannelId ?? null,
         destinationCountryId: dto.destinationCountryId ?? null,
+        shippingServiceId,
         companyId: dto.companyId ?? null,
         currency,
         feeCurrency,
+        exchangeRate,
         status: dto.status ?? 'draft',
         unlockedForEdit: false,
         createdById: actorId,
         updatedById: actorId,
         items: { create: dto.items.map((i) => ({ ...i, productId: i.productId ?? null })) },
       },
-      include,
     });
-    return this.serialize(t);
+    return this.get(t.id);
   }
 
   /** A submitted transaction is locked: only admins edit it, unless it's been unlocked. */
@@ -148,31 +240,33 @@ export class SalesTransactionsService {
     const nextStatus = dto.status ?? existing.status;
     // Submitting re-locks it (unless the actor is an admin, who always retains access).
     const unlockedForEdit = nextStatus === 'submitted' ? false : existing.unlockedForEdit;
+    const exchangeRate = await this.fetchExchangeRate(currency, dto.date ?? existing.date.toISOString());
 
-    const t = await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       if (dto.items) {
         await tx.salesTransactionItem.deleteMany({ where: { transactionId: id } });
         await tx.salesTransactionItem.createMany({
           data: dto.items.map((i) => ({ ...i, transactionId: id, productId: i.productId ?? null })),
         });
       }
-      return tx.salesTransaction.update({
+      await tx.salesTransaction.update({
         where: { id },
         data: {
           date: dto.date ? new Date(dto.date) : undefined,
           transactionRef: dto.transactionRef,
           salesChannelId: dto.salesChannelId,
           destinationCountryId: dto.destinationCountryId,
+          shippingServiceId: dto.shippingServiceId,
           currency,
           feeCurrency,
+          exchangeRate,
           status: nextStatus,
           unlockedForEdit,
           updatedById: user.sub,
         },
-        include,
       });
     });
-    return this.serialize(t);
+    return this.get(id);
   }
 
   async remove(id: string, user: AuthUser) {

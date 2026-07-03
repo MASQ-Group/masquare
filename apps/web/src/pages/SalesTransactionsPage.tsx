@@ -81,12 +81,14 @@ export function SalesTransactionsPage() {
                 ))}
                 <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Net sales</th>
                 <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Sales fee</th>
+                <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Fee %</th>
+                <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Est. ship</th>
                 <th className="border-b border-n-200 bg-n-25" />
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={10} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
-              {!isLoading && items.length === 0 && <tr><td colSpan={10} className="px-4 py-12 text-center text-[13px] text-n-500">No transactions yet. Register your first sale.</td></tr>}
+              {isLoading && <tr><td colSpan={12} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
+              {!isLoading && items.length === 0 && <tr><td colSpan={12} className="px-4 py-12 text-center text-[13px] text-n-500">No transactions yet. Register your first sale.</td></tr>}
               {items.map((t) => (
                 <tr key={t.id} className="cursor-pointer hover:bg-teal-50" onClick={() => setEditing(t)}>
                   <td className="mono border-b border-n-100 px-4 py-2.5 text-[13px] text-n-700">{formatDate(t.date)}</td>
@@ -111,6 +113,8 @@ export function SalesTransactionsPage() {
                   <td className="mono border-b border-n-100 px-4 py-2.5 text-[13px] text-n-700">{t.totals.quantity}</td>
                   <td className="mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] font-medium text-n-800">{formatMoney({ amount: t.totals.netSales, currency: t.currency ?? 'EUR' })}</td>
                   <td className="mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] text-n-700">{formatMoney({ amount: t.totals.fee, currency: t.feeCurrency ?? t.currency ?? 'EUR' })}</td>
+                  <td className="mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] text-n-700">{t.salesFeePct != null ? `${t.salesFeePct}%` : '—'}</td>
+                  <td className="mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] text-n-700">{t.estimatedShippingCost != null ? `€${t.estimatedShippingCost.toFixed(2)}` : '—'}</td>
                   <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-1">
                       <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" onClick={() => setEditing(t)}><Pencil size={15} /></button>
