@@ -9,6 +9,7 @@ export interface TxQuery {
   companyId?: string;
   salesChannelId?: string;
   status?: string;
+  profitTierId?: string;
   sortBy?: 'date' | 'profit' | 'profitPct';
   sortDir?: 'asc' | 'desc';
   page?: number;
@@ -174,19 +175,27 @@ export class SalesTransactionsService {
     const dir = query.sortDir === 'asc' ? 1 : -1;
     const sortBy = query.sortBy === 'profit' || query.sortBy === 'profitPct' ? query.sortBy : 'date';
 
-    // Profit / profit % are computed fields, so sorting by them happens in memory
-    // over the whole filtered set before paginating.
-    if (sortBy !== 'date') {
-      const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: 'desc' } });
+    // Profit / profit % are computed fields, so sorting or filtering by them happens
+    // in memory over the whole filtered set before paginating.
+    if (sortBy !== 'date' || query.profitTierId) {
+      const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: query.sortDir === 'asc' ? 'asc' : 'desc' } });
       const serviceMap = await this.buildServiceMap();
-      const all = rows.map((r) => this.serialize(r, serviceMap));
-      all.sort((a: any, b: any) => {
-        const av = a[sortBy]; const bv = b[sortBy];
-        if (av == null && bv == null) return 0;
-        if (av == null) return 1; // nulls last regardless of direction
-        if (bv == null) return -1;
-        return (av - bv) * dir;
-      });
+      let all = rows.map((r) => this.serialize(r, serviceMap));
+      if (query.profitTierId) {
+        const tier = await this.prisma.profitTier.findUnique({ where: { id: query.profitTierId } });
+        if (tier) {
+          all = all.filter((t: any) => t.profitPct != null && t.profitPct >= Number(tier.fromPct) && t.profitPct <= Number(tier.toPct));
+        }
+      }
+      if (sortBy !== 'date') {
+        all.sort((a: any, b: any) => {
+          const av = a[sortBy]; const bv = b[sortBy];
+          if (av == null && bv == null) return 0;
+          if (av == null) return 1; // nulls last regardless of direction
+          if (bv == null) return -1;
+          return (av - bv) * dir;
+        });
+      }
       return { items: all.slice((page - 1) * pageSize, page * pageSize), total: all.length, page, pageSize };
     }
 

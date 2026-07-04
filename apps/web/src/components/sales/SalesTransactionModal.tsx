@@ -228,9 +228,9 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
             <Calc label="Package weight (kg)" value={transaction?.overallPackageWeight != null ? String(transaction.overallPackageWeight) : '—'} />
             <Calc label="Est. shipping cost" value={transaction?.estimatedShippingCost != null ? `€${transaction.estimatedShippingCost.toFixed(2)}` : '—'} />
             <Calc label="Profit (€)" value={transaction?.profit != null ? `€${transaction.profit.toFixed(2)}` : '—'}
-              color={transaction?.profit != null ? (transaction.profit >= 0 ? 'var(--green-500)' : 'var(--danger)') : undefined} />
+              color={transaction?.profit != null ? (transaction.profit >= 0 ? '#14A79D' : 'var(--danger)') : undefined} />
             <Calc label="Profit (%)" value={transaction?.profitPct != null ? `${transaction.profitPct.toFixed(2)}%` : '—'}
-              color={transaction?.profitPct != null ? (transaction.profitPct >= 0 ? 'var(--green-500)' : 'var(--danger)') : undefined} />
+              color={transaction?.profitPct != null ? (transaction.profitPct >= 0 ? '#14A79D' : 'var(--danger)') : undefined} />
           </div>
           <p className="mt-2 text-[11px] text-n-400">
             {transaction ? 'Exchange rate, package weight and shipping cost refresh on save.' : 'Exchange rate, package weight and shipping cost are calculated when you save.'}

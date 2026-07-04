@@ -7,6 +7,7 @@ import { profitTiersApi, salesChannelsApi, salesTransactionsApi, type ProfitTier
 import { useAuth } from '../lib/auth';
 import { formatDate, formatMoney } from '../lib/format';
 import { SalesTransactionModal } from '../components/sales/SalesTransactionModal';
+import { SalesTransactionSummaryModal } from '../components/sales/SalesTransactionSummaryModal';
 
 type ColKey =
   | 'date' | 'ref' | 'status' | 'channel' | 'destination' | 'skus' | 'qty'
@@ -45,6 +46,7 @@ export function SalesTransactionsPage() {
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<SalesTransaction | null | undefined>(undefined);
+  const [viewing, setViewing] = useState<SalesTransaction | undefined>(undefined);
   const [reqOpen, setReqOpen] = useState(false);
 
   // view controls
@@ -52,6 +54,7 @@ export function SalesTransactionsPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [filterChannel, setFilterChannel] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterTier, setFilterTier] = useState('');
   const [eurOnly, setEurOnly] = useState(false);
   const [cols, setCols] = useState<Set<ColKey>>(new Set(STANDARD_COLS));
   const [colsOpen, setColsOpen] = useState(false);
@@ -69,7 +72,7 @@ export function SalesTransactionsPage() {
 
   useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
 
-  const params = { q: q || undefined, companyId: activeCompanyId || undefined, salesChannelId: filterChannel || undefined, status: filterStatus || undefined, sortBy, sortDir, page, pageSize: 50 };
+  const params = { q: q || undefined, companyId: activeCompanyId || undefined, salesChannelId: filterChannel || undefined, status: filterStatus || undefined, profitTierId: filterTier || undefined, sortBy, sortDir, page, pageSize: 50 };
   const { data, isLoading } = useQuery({ queryKey: ['sales-transactions', params], queryFn: () => salesTransactionsApi.list(params) });
   const del = useMutation({
     mutationFn: (id: string) => salesTransactionsApi.remove(id),
@@ -128,7 +131,7 @@ export function SalesTransactionsPage() {
       case 'salesFee': return feeCell(t);
       case 'feePct': return t.salesFeePct != null ? `${t.salesFeePct}%` : '—';
       case 'estShip': return t.estimatedShippingCost != null ? money(t.estimatedShippingCost, 'EUR') : '—';
-      case 'profit': return t.profit != null ? <span className="font-medium" style={{ color: t.profit >= 0 ? 'var(--green-500)' : 'var(--danger)' }}>{money(t.profit, 'EUR')}</span> : '—';
+      case 'profit': return t.profit != null ? <span className="font-medium" style={{ color: t.profit >= 0 ? '#14A79D' : 'var(--danger)' }}>{money(t.profit, 'EUR')}</span> : '—';
       case 'profitPct': return profitPctChip(t);
       case 'vatPct': return t.destinationCountryVatPct != null ? `${t.destinationCountryVatPct}%` : '—';
       case 'weight': return t.overallPackageWeight != null ? t.overallPackageWeight : '—';
@@ -167,6 +170,14 @@ export function SalesTransactionsPage() {
           <option value="draft">Draft</option>
           <option value="submitted">Submitted</option>
         </select>
+        {profitTiers.length > 0 && (
+          <select className="h-[38px] rounded-md border border-n-200 bg-n-0 px-2 text-[13px] text-n-700" value={filterTier} onChange={(e) => { setFilterTier(e.target.value); setPage(1); }}>
+            <option value="">All profit tiers</option>
+            {profitTiers.map((t) => (
+              <option key={t.id} value={t.id}>{t.name || `Tier ${t.sortOrder + 1}`} ({t.fromPct}% – {t.toPct}%)</option>
+            ))}
+          </select>
+        )}
         <label className="inline-flex h-[38px] cursor-pointer items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700">
           <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={eurOnly} onChange={(e) => setEurOnly(e.target.checked)} />
           Show in EUR
@@ -223,7 +234,7 @@ export function SalesTransactionsPage() {
               {isLoading && <tr><td colSpan={visible.length + 1} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
               {!isLoading && items.length === 0 && <tr><td colSpan={visible.length + 1} className="px-4 py-12 text-center text-[13px] text-n-500">No transactions match. Register your first sale.</td></tr>}
               {items.map((t) => (
-                <tr key={t.id} className="cursor-pointer hover:bg-teal-50" onClick={() => setEditing(t)}>
+                <tr key={t.id} className="cursor-pointer hover:bg-teal-50" onClick={() => setViewing(t)}>
                   {visible.map((c) => <td key={c.key} className={cellClass(c.key, c.right)}>{renderCell(c.key, t)}</td>)}
                   <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-1">
@@ -247,6 +258,13 @@ export function SalesTransactionsPage() {
         </div>
       </div>
 
+      {viewing !== undefined && editing === undefined && (
+        <SalesTransactionSummaryModal
+          transaction={viewing}
+          onClose={() => setViewing(undefined)}
+          onEdit={() => { setEditing(viewing); setViewing(undefined); }}
+        />
+      )}
       {editing !== undefined && (
         <SalesTransactionModal transaction={editing} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }} />
       )}

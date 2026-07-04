@@ -24,6 +24,8 @@ export interface ModalShellProps {
   onSecondary?: () => void;
   secondaryDisabled?: boolean;
   busy?: boolean;
+  /** Starting size before the user resizes (defaults to 720×560). */
+  initialSize?: { w: number; h: number };
   onClose: () => void;
   children: ReactNode;
 }
@@ -45,11 +47,12 @@ export function ModalShell({
   onSecondary,
   secondaryDisabled,
   busy,
+  initialSize,
   onClose,
   children,
 }: ModalShellProps) {
   const [expanded, setExpanded] = useState(false);
-  const [size, setSize] = useState<{ w: number; h: number }>({ w: 720, h: 560 });
+  const [size, setSize] = useState<{ w: number; h: number }>(initialSize ?? { w: 720, h: 560 });
   const dragState = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
   const attemptClose = useCallback(() => {
