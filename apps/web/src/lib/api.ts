@@ -402,6 +402,18 @@ export const salesChannelsApi = {
   remove: (id: string) => api.delete(`/sales-channels/${id}`).then((r) => r.data),
 };
 
+// ---- Global search (top-bar command palette) ----
+export type SearchScope =
+  | 'all' | 'products' | 'sales-transactions' | 'sales-channels'
+  | 'countries' | 'shipping-services' | 'companies' | 'users';
+export interface SearchHit { id: string; label: string; sub?: string | null }
+export interface SearchResponse { groups: { module: SearchScope; items: SearchHit[] }[] }
+
+export const searchApi = {
+  global: (q: string, scope: SearchScope = 'all') =>
+    api.get<SearchResponse>('/search', { params: { q, scope } }).then((r) => r.data),
+};
+
 // ---- Profit tiers (colour bands for the Profit % chip) ----
 export interface ProfitTier {
   id: string;

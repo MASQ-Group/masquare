@@ -9,6 +9,7 @@ import { GlobalSettingsModule } from './global-settings/global-settings.module';
 import { GlobalDataModule } from './global-data/global-data.module';
 import { ProductsModule } from './products/products.module';
 import { SalesTransactionsModule } from './sales-transactions/sales-transactions.module';
+import { SearchModule } from './search/search.module';
 import { StorageModule } from './storage/storage.module';
 
 @Module({
@@ -24,6 +25,7 @@ import { StorageModule } from './storage/storage.module';
     GlobalDataModule,
     ProductsModule,
     SalesTransactionsModule,
+    SearchModule,
   ],
 })
 export class AppModule {}

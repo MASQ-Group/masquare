@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { GeneralTab } from '../components/settings/GeneralTab';
 import { CountriesTab } from '../components/settings/CountriesTab';
 import { SalesChannelsTab } from '../components/settings/SalesChannelsTab';
@@ -29,9 +30,15 @@ const PRODUCT_SECTIONS = [
   { key: 'attributes', label: 'Attributes', Component: AttributesSection },
 ] as const;
 
+const isTopTab = (v: string | null): v is TopTab => TOP_TABS.some(([key]) => key === v);
+
 export function SettingsPage() {
-  const [top, setTop] = useState<TopTab>('products');
+  const [searchParams] = useSearchParams();
+  const urlTab = searchParams.get('tab');
+  const [top, setTop] = useState<TopTab>(isTopTab(urlTab) ? urlTab : 'products');
   const [section, setSection] = useState<string>('vendors');
+  // Deep link from the global search: /settings?tab=… selects (and re-selects) the tab.
+  useEffect(() => { if (isTopTab(urlTab)) setTop(urlTab); }, [urlTab]);
 
   const ActiveSection = PRODUCT_SECTIONS.find((s) => s.key === section)?.Component ?? VendorsSection;
 

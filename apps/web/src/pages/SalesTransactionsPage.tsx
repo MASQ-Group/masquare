@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Columns3, Lock, Pencil, Plus, Search, Trash2, Unlock } from 'lucide-react';
 import { toast } from 'sonner';
@@ -42,9 +43,13 @@ export function SalesTransactionsPage() {
   const qc = useQueryClient();
   const { activeCompanyId, user } = useAuth();
   const isAdmin = !!user?.isAdmin;
-  const [qInput, setQInput] = useState('');
-  const [q, setQ] = useState('');
+  const [searchParams] = useSearchParams();
+  const urlQ = searchParams.get('q') ?? '';
+  const [qInput, setQInput] = useState(urlQ);
+  const [q, setQ] = useState(urlQ);
   const [page, setPage] = useState(1);
+  // Deep link from the global search: /sales-transactions?q=… applies (and re-applies) the search.
+  useEffect(() => { if (urlQ) { setQInput(urlQ); setQ(urlQ); setPage(1); } }, [urlQ]);
   const [editing, setEditing] = useState<SalesTransaction | null | undefined>(undefined);
   const [viewing, setViewing] = useState<SalesTransaction | undefined>(undefined);
   const [reqOpen, setReqOpen] = useState(false);

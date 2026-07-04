@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Columns3, Download, Filter, Grid, List, Package, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -45,8 +46,12 @@ export function ProductsPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const [view, setView] = useState<'list' | 'grid'>('list');
-  const [qInput, setQInput] = useState('');
-  const [q, setQ] = useState('');
+  const [searchParams] = useSearchParams();
+  const urlQ = searchParams.get('q') ?? '';
+  const [qInput, setQInput] = useState(urlQ);
+  const [q, setQ] = useState(urlQ);
+  // Deep link from the global search: /products?q=… applies (and re-applies) the search.
+  useEffect(() => { if (urlQ) { setQInput(urlQ); setQ(urlQ); setPage(1); } }, [urlQ]);
   const [field, setField] = useState('');
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [page, setPage] = useState(1);
