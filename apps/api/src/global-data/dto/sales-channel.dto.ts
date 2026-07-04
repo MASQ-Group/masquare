@@ -8,6 +8,11 @@ export class CreateSalesChannelDto {
   @IsOptional() @IsNumber() generalSalesFeePct?: number | null;
   @IsOptional() @IsBoolean() feeChargedInNativeCurrency?: boolean;
   @IsOptional() @IsString() feeCurrency?: string | null;
+  @IsOptional() @IsBoolean() vatThresholdEnabled?: boolean;
+  @IsOptional() @IsNumber() vatThresholdAmount?: number | null;
+  @IsOptional() @IsString() vatThresholdCurrency?: string | null;
+  @IsOptional() @IsNumber() vatBelowThresholdPct?: number | null;
+  @IsOptional() @IsNumber() vatAboveThresholdPct?: number | null;
   @IsOptional() @IsString() email?: string;
   @IsOptional() @IsString() website?: string;
   @IsOptional() @IsString() contactName?: string;

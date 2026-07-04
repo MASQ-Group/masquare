@@ -128,6 +128,7 @@ export class SalesTransactionsService {
       hasPendingUnlock: (t.unlockRequests ?? []).length > 0,
       salesFeePct,
       destinationCountryVatPct,
+      vatOverridden: t.vatOverridden,
       overallPackageWeight,
       estimatedShippingCost,
       profit,
@@ -238,23 +239,42 @@ export class SalesTransactionsService {
     return rate != null ? round(rate, 6) : null;
   }
 
-  /** Snapshot the currencies from the sales channel at registration time. */
-  private async currenciesFor(salesChannelId?: string | null) {
-    if (!salesChannelId) return { currency: null, feeCurrency: null };
-    const c = await this.prisma.salesChannel.findUnique({ where: { id: salesChannelId } });
-    if (!c) return { currency: null, feeCurrency: null };
-    return {
-      currency: c.nativeCurrency ?? null,
-      feeCurrency: c.feeChargedInNativeCurrency ? c.nativeCurrency ?? null : c.feeCurrency ?? null,
-    };
+  /** Sales channel row plus its native/fee currencies (snapshotted on the transaction). */
+  private async channelInfo(salesChannelId?: string | null) {
+    const channel = salesChannelId ? await this.prisma.salesChannel.findUnique({ where: { id: salesChannelId } }) : null;
+    const currency = channel?.nativeCurrency ?? null;
+    const feeCurrency = channel ? (channel.feeChargedInNativeCurrency ? channel.nativeCurrency ?? null : channel.feeCurrency ?? null) : null;
+    return { channel, currency, feeCurrency };
+  }
+
+  /** Marketplace VAT threshold rule (e.g. UK £135): the applicable VAT % or null if off. */
+  private channelVatPct(channel: any, overallValue: number): number | null {
+    if (!channel?.vatThresholdEnabled || channel.vatThresholdAmount == null) return null;
+    return overallValue <= Number(channel.vatThresholdAmount)
+      ? channel.vatBelowThresholdPct ?? null
+      : channel.vatAboveThresholdPct ?? null;
+  }
+
+  /** Destination VAT %: user override → channel threshold rule → country rate. */
+  private async resolveDestinationVat(
+    dto: { vatOverridden?: boolean; destinationVatPct?: number | null },
+    channel: any,
+    overallValue: number,
+    destCountryId: string | null,
+  ): Promise<{ pct: number | null; overridden: boolean }> {
+    if (dto.vatOverridden && dto.destinationVatPct != null) return { pct: dto.destinationVatPct, overridden: true };
+    const ruleVat = this.channelVatPct(channel, overallValue);
+    if (ruleVat != null) return { pct: ruleVat, overridden: false };
+    return { pct: await this.countryVatRate(destCountryId), overridden: false };
   }
 
   async create(dto: CreateSalesTransactionDto, actorId?: string) {
-    const { currency, feeCurrency } = await this.currenciesFor(dto.salesChannelId);
+    const { channel, currency, feeCurrency } = await this.channelInfo(dto.salesChannelId);
     const shippingServiceId = await this.resolveShippingService(dto.shippingServiceId, dto.destinationCountryId ?? null);
     const exchangeRate = await this.fetchExchangeRate(currency, dto.date);
     const feeExchangeRate = feeCurrency && feeCurrency !== currency ? await this.fetchExchangeRate(feeCurrency, dto.date) : exchangeRate;
-    const destinationVatPct = dto.destinationVatPct ?? (await this.countryVatRate(dto.destinationCountryId ?? null));
+    const overall = (dto.items ?? []).reduce((s, i) => s + n(i.netSalesAmount) + n(i.vatAmount) + n(i.shippingAmount) + n(i.shippingAmountVat), 0);
+    const { pct: destinationVatPct, overridden: vatOverridden } = await this.resolveDestinationVat(dto, channel, overall, dto.destinationCountryId ?? null);
     const t = await this.prisma.salesTransaction.create({
       data: {
         date: new Date(dto.date),
@@ -268,6 +288,7 @@ export class SalesTransactionsService {
         exchangeRate,
         feeExchangeRate,
         destinationVatPct,
+        vatOverridden,
         status: dto.status ?? 'draft',
         unlockedForEdit: false,
         createdById: actorId,
@@ -287,12 +308,12 @@ export class SalesTransactionsService {
   }
 
   async update(id: string, dto: UpdateSalesTransactionDto, user: AuthUser) {
-    const existing = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null } });
+    const existing = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null }, include: { items: { where: { deletedAt: null } } } });
     if (!existing) throw new NotFoundException('Sales transaction not found');
     this.assertCanEdit(existing, user);
 
     const channelId = dto.salesChannelId === undefined ? existing.salesChannelId : dto.salesChannelId;
-    const { currency, feeCurrency } = await this.currenciesFor(channelId);
+    const { channel, currency, feeCurrency } = await this.channelInfo(channelId);
     const nextStatus = dto.status ?? existing.status;
     // Submitting re-locks it (unless the actor is an admin, who always retains access).
     const unlockedForEdit = nextStatus === 'submitted' ? false : existing.unlockedForEdit;
@@ -301,7 +322,8 @@ export class SalesTransactionsService {
     const feeExchangeRate = feeCurrency && feeCurrency !== currency ? await this.fetchExchangeRate(feeCurrency, txDate) : exchangeRate;
     const destCountryId = dto.destinationCountryId === undefined ? existing.destinationCountryId : dto.destinationCountryId;
     const resolvedServiceId = await this.resolveShippingService(dto.shippingServiceId, destCountryId);
-    const destinationVatPct = dto.destinationVatPct ?? (await this.countryVatRate(destCountryId));
+    const overall = (dto.items ?? existing.items).reduce((s: number, i: any) => s + n(i.netSalesAmount) + n(i.vatAmount) + n(i.shippingAmount) + n(i.shippingAmountVat), 0);
+    const { pct: destinationVatPct, overridden: vatOverridden } = await this.resolveDestinationVat(dto, channel, overall, destCountryId);
 
     await this.prisma.$transaction(async (tx) => {
       if (dto.items) {
@@ -323,6 +345,7 @@ export class SalesTransactionsService {
           exchangeRate,
           feeExchangeRate,
           destinationVatPct,
+          vatOverridden,
           status: nextStatus,
           unlockedForEdit,
           updatedById: user.sub,

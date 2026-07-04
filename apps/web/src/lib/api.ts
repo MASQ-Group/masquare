@@ -367,6 +367,11 @@ export interface SalesChannel {
   generalSalesFeePct: number | null;
   feeChargedInNativeCurrency: boolean;
   feeCurrency: string | null;
+  vatThresholdEnabled: boolean;
+  vatThresholdAmount: number | null;
+  vatThresholdCurrency: string | null;
+  vatBelowThresholdPct: number | null;
+  vatAboveThresholdPct: number | null;
   email: string | null;
   website: string | null;
   contactName: string | null;
@@ -429,6 +434,7 @@ export interface SalesTransaction {
   hasPendingUnlock: boolean;
   salesFeePct: number | null;
   destinationCountryVatPct: number | null;
+  vatOverridden: boolean;
   overallPackageWeight: number | null;
   estimatedShippingCost: number | null;
   profit: number | null;

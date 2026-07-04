@@ -625,6 +625,13 @@ model SalesChannel {
   // feeCurrency holds the explicit currency the fees are charged in.
   feeChargedInNativeCurrency Boolean @default(true) @map("fee_charged_in_native_currency")
   feeCurrency                String? @map("fee_currency")
+  // Marketplace-collected VAT threshold rule (e.g. UK £135): below/equal the threshold the
+  // channel collects VAT at belowPct; above it VAT is import VAT (abovePct, usually 0).
+  vatThresholdEnabled  Boolean @default(false) @map("vat_threshold_enabled")
+  vatThresholdAmount   Float?  @map("vat_threshold_amount")
+  vatThresholdCurrency String? @map("vat_threshold_currency")
+  vatBelowThresholdPct Float?  @map("vat_below_threshold_pct")
+  vatAboveThresholdPct Float?  @map("vat_above_threshold_pct")
   email              String?
   website            String?
   contactName        String? @map("contact_name")
@@ -667,8 +674,10 @@ model SalesTransaction {
   exchangeRate Float? @map("exchange_rate")
   // Snapshot: fee currency -> EUR rate (same as exchangeRate when fee is in native currency).
   feeExchangeRate Float? @map("fee_exchange_rate")
-  // Destination VAT %: defaults from the country but is editable per transaction.
-  destinationVatPct Float? @map("destination_vat_pct")
+  // Destination VAT %: auto-derived (channel threshold rule or country rate) unless the
+  // user overrides it (vatOverridden = true keeps the manual value on re-save).
+  destinationVatPct Float?  @map("destination_vat_pct")
+  vatOverridden     Boolean @default(false) @map("vat_overridden")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")

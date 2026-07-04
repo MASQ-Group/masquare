@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -48,7 +48,7 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
   const [shippingServiceId, setShippingServiceId] = useState<string | null>(transaction?.shippingServiceId ?? null);
   const [serviceOverridden, setServiceOverridden] = useState(!!transaction);
   const [destinationVatPct, setDestinationVatPct] = useState<string>(transaction?.destinationCountryVatPct != null ? String(transaction.destinationCountryVatPct) : '');
-  const [vatOverridden, setVatOverridden] = useState(!!transaction);
+  const [vatOverridden, setVatOverridden] = useState(transaction?.vatOverridden ?? false);
   const [items, setItems] = useState<ItemForm[]>(
     transaction?.items.map((i) => ({
       productId: i.productId ?? null, sku: i.sku, quantity: String(i.quantity),
@@ -72,7 +72,6 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
     touch();
     const c = countries.find((x) => x.id === v);
     if (!serviceOverridden) setShippingServiceId(c?.defaultShippingServiceId ?? null);
-    if (!vatOverridden) setDestinationVatPct(c && c.vatRate != null ? String(c.vatRate) : '');
   };
 
   // Live-computed calculated field (server recomputes the rest on save).
@@ -81,6 +80,32 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
     const fee = items.reduce((s, i) => s + (Number(i.salesChannelSalesFeeAmount) || 0), 0);
     return base > 0 ? (fee / base) * 100 : null;
   }, [items]);
+
+  // Order value = net + VAT + shipping + shipping VAT, in the channel's native currency.
+  const overallValue = useMemo(() =>
+    items.reduce((s, i) => s + (Number(i.netSalesAmount) || 0) + (Number(i.vatAmount) || 0) + (Number(i.shippingAmount) || 0) + (Number(i.shippingAmountVat) || 0), 0),
+    [items],
+  );
+
+  // The destination VAT % the server will apply when not overridden: the channel's
+  // threshold rule (e.g. UK £135) if enabled, otherwise the destination country's rate.
+  const ruleVat = useMemo(() => {
+    if (selected?.vatThresholdEnabled && selected.vatThresholdAmount != null) {
+      return overallValue <= selected.vatThresholdAmount
+        ? selected.vatBelowThresholdPct ?? null
+        : selected.vatAboveThresholdPct ?? null;
+    }
+    return null;
+  }, [selected, overallValue]);
+  const effectiveVat = useMemo(() => {
+    if (ruleVat != null) return ruleVat;
+    return countries.find((c) => c.id === destinationCountryId)?.vatRate ?? null;
+  }, [ruleVat, countries, destinationCountryId]);
+
+  // Keep the VAT field in sync with the auto-computed rate unless the user overrode it.
+  useEffect(() => {
+    if (!vatOverridden) setDestinationVatPct(effectiveVat != null ? String(effectiveVat) : '');
+  }, [effectiveVat, vatOverridden]);
 
   const saveWith = async (status: 'draft' | 'submitted') => {
     if (!canSave) { toast.error('Transaction ID and at least one SKU are required'); return; }
@@ -91,7 +116,8 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
         salesChannelId: channel?.id ?? null,
         destinationCountryId,
         shippingServiceId,
-        destinationVatPct: destinationVatPct.trim() === '' ? null : Number(destinationVatPct),
+        vatOverridden,
+        destinationVatPct: vatOverridden ? (destinationVatPct.trim() === '' ? null : Number(destinationVatPct)) : null,
         companyId: activeCompanyId,
         items: items.filter((i) => i.sku.trim()).map((i) => ({
           productId: i.productId, sku: i.sku,
@@ -164,8 +190,26 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
             </select>
           </div>
           <div>
-            <label className="label">Destination VAT % <span className="font-normal text-n-400">(from country — editable)</span></label>
+            <label className="label">
+              Destination VAT %{' '}
+              <span className="font-normal text-n-400">
+                {vatOverridden ? '(overridden' : ruleVat != null ? '(marketplace rule' : '(from country'}
+                {' — editable)'}
+              </span>
+            </label>
             <input className="input mono" inputMode="decimal" value={destinationVatPct} onChange={(e) => { setDestinationVatPct(e.target.value); setVatOverridden(true); touch(); }} placeholder="0" />
+            {ruleVat != null && !vatOverridden && (
+              <p className="mt-1 text-[11px] text-n-400">
+                {selected?.vatThresholdCurrency ?? ''} threshold {selected?.vatThresholdAmount}: order value{' '}
+                {overallValue <= (selected?.vatThresholdAmount ?? 0) ? '≤' : '>'} threshold → {ruleVat}%.
+              </p>
+            )}
+            {vatOverridden && (
+              <button type="button" className="mt-1 text-[11px] text-[var(--teal-600)] hover:underline"
+                onClick={() => { setVatOverridden(false); touch(); }}>
+                Reset to auto
+              </button>
+            )}
           </div>
         </div>
 

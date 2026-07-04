@@ -104,11 +104,33 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
     generalSalesFeePct: channel?.generalSalesFeePct?.toString() ?? '',
     feeChargedInNativeCurrency: channel?.feeChargedInNativeCurrency ?? true,
     feeCurrency: channel?.feeCurrency ?? null as string | null,
+    vatThresholdEnabled: channel?.vatThresholdEnabled ?? false,
+    vatThresholdAmount: channel?.vatThresholdAmount?.toString() ?? '',
+    vatThresholdCurrency: channel?.vatThresholdCurrency ?? null as string | null,
+    vatBelowThresholdPct: channel?.vatBelowThresholdPct?.toString() ?? '',
+    vatAboveThresholdPct: channel?.vatAboveThresholdPct?.toString() ?? '',
     email: channel?.email ?? '',
     website: channel?.website ?? '',
     contactName: channel?.contactName ?? '',
   });
   const set = (patch: Partial<typeof form>) => { setForm((f) => ({ ...f, ...patch })); touch(); };
+  const { data: allCountries = [] } = useQuery({ queryKey: ['countries'], queryFn: () => countriesApi.list() });
+  const onNativeCountry = (v: string | null) => {
+    const iso = allCountries.find((c) => c.id === v)?.isoCode;
+    setForm((f) => {
+      const next = { ...f, nativeCountryId: v };
+      // UK native country → default the £135 marketplace VAT rule (editable afterwards).
+      if (iso === 'GB' && !f.vatThresholdEnabled) {
+        next.vatThresholdEnabled = true;
+        if (!f.vatThresholdAmount) next.vatThresholdAmount = '135';
+        if (!f.vatThresholdCurrency) next.vatThresholdCurrency = 'GBP';
+        if (!f.vatBelowThresholdPct) next.vatBelowThresholdPct = '20';
+        if (!f.vatAboveThresholdPct) next.vatAboveThresholdPct = '0';
+      }
+      return next;
+    });
+    touch();
+  };
   const canSave = form.name.trim().length > 0;
 
   const save = async () => {
@@ -121,6 +143,11 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
         generalSalesFeePct: form.generalSalesFeePct.trim() === '' ? null : Number(form.generalSalesFeePct),
         feeChargedInNativeCurrency: form.feeChargedInNativeCurrency,
         feeCurrency: form.feeChargedInNativeCurrency ? null : form.feeCurrency,
+        vatThresholdEnabled: form.vatThresholdEnabled,
+        vatThresholdAmount: form.vatThresholdEnabled && form.vatThresholdAmount.trim() !== '' ? Number(form.vatThresholdAmount) : null,
+        vatThresholdCurrency: form.vatThresholdEnabled ? form.vatThresholdCurrency : null,
+        vatBelowThresholdPct: form.vatThresholdEnabled && form.vatBelowThresholdPct.trim() !== '' ? Number(form.vatBelowThresholdPct) : null,
+        vatAboveThresholdPct: form.vatThresholdEnabled && form.vatAboveThresholdPct.trim() !== '' ? Number(form.vatAboveThresholdPct) : null,
         email: form.email || undefined,
         website: form.website || undefined,
         contactName: form.contactName || undefined,
@@ -141,7 +168,7 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
       <div className="grid grid-cols-2 gap-4 max-[560px]:grid-cols-1">
         <div><label className="label">Name *</label><input className="input" value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Amazon UK" /></div>
         <div><label className="label">Description</label><input className="input" value={form.description} onChange={(e) => set({ description: e.target.value })} placeholder="Amazon United Kingdom" /></div>
-        <div><label className="label">Native country</label><CountrySelect value={form.nativeCountryId} onChange={(v) => set({ nativeCountryId: v })} /></div>
+        <div><label className="label">Native country</label><CountrySelect value={form.nativeCountryId} onChange={onNativeCountry} /></div>
         <div><label className="label">Native currency</label><CurrencySelect value={form.nativeCurrency} onChange={(v) => set({ nativeCurrency: v })} /></div>
         <div><label className="label">General Sales Fee (%)</label><input className="input mono" inputMode="decimal" value={form.generalSalesFeePct} onChange={(e) => set({ generalSalesFeePct: e.target.value })} placeholder="15" /></div>
         <div className="col-span-2 flex flex-col gap-2 rounded-md border border-n-200 bg-n-25 p-3">
@@ -155,6 +182,21 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
               <CurrencySelect value={form.feeCurrency} onChange={(v) => set({ feeCurrency: v })} />
             </div>
           )}
+        </div>
+        <div className="col-span-2 flex flex-col gap-3 rounded-md border border-n-200 bg-n-25 p-3">
+          <label className="flex cursor-pointer items-center gap-2.5">
+            <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={form.vatThresholdEnabled} onChange={(e) => set({ vatThresholdEnabled: e.target.checked })} />
+            <span className="text-[13.5px] text-n-700">Marketplace collects VAT below a value threshold (e.g. UK £135)</span>
+          </label>
+          {form.vatThresholdEnabled && (
+            <div className="grid grid-cols-4 gap-3 pl-6 max-[560px]:grid-cols-2">
+              <div><label className="label">Threshold amount</label><input className="input mono" inputMode="decimal" value={form.vatThresholdAmount} onChange={(e) => set({ vatThresholdAmount: e.target.value })} placeholder="135" /></div>
+              <div><label className="label">Threshold currency</label><CurrencySelect value={form.vatThresholdCurrency} onChange={(v) => set({ vatThresholdCurrency: v })} /></div>
+              <div><label className="label">VAT % ≤ threshold</label><input className="input mono" inputMode="decimal" value={form.vatBelowThresholdPct} onChange={(e) => set({ vatBelowThresholdPct: e.target.value })} placeholder="20" /></div>
+              <div><label className="label">VAT % &gt; threshold</label><input className="input mono" inputMode="decimal" value={form.vatAboveThresholdPct} onChange={(e) => set({ vatAboveThresholdPct: e.target.value })} placeholder="0" /></div>
+            </div>
+          )}
+          <p className="text-[11px] text-n-400">When on, a transaction's destination VAT % is set automatically: order value (net + VAT + shipping + shipping VAT) ≤ threshold uses the first rate; above it uses the second.</p>
         </div>
         <div><label className="label">Email</label><input className="input" value={form.email} onChange={(e) => set({ email: e.target.value })} /></div>
         <div><label className="label">Website</label><input className="input" value={form.website} onChange={(e) => set({ website: e.target.value })} /></div>

@@ -23,6 +23,7 @@ export class CreateSalesTransactionDto {
   @IsOptional() @IsUUID() shippingServiceId?: string | null;
   @IsOptional() @IsUUID() companyId?: string | null;
   @IsOptional() @IsNumber() destinationVatPct?: number | null;
+  @IsOptional() @IsBoolean() vatOverridden?: boolean;
   @IsOptional() @IsIn(['draft', 'submitted']) status?: 'draft' | 'submitted';
 
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => SalesTransactionItemDto)
