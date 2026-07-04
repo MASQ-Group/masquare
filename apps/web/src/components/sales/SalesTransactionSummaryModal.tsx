@@ -49,6 +49,14 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit }
               {t.hasPendingUnlock && <span className="ml-1.5 text-[10px] font-medium text-orange-600">unlock pending</span>}
             </div>
           </div>
+          <div>
+            <div className="text-[11px] text-n-500">Fulfilment</div>
+            <div className="mt-0.5">
+              <span className={`tag ${(FULFILMENT[t.fulfilmentStatus] ?? FULFILMENT.pending).cls}`}>
+                {(FULFILMENT[t.fulfilmentStatus] ?? FULFILMENT.pending).label}
+              </span>
+            </div>
+          </div>
           <Fact label="Sales channel" value={t.salesChannel?.name ?? '—'} />
           <Fact label="Destination" value={t.destinationCountry?.name ?? '—'} />
           <Fact label="Shipping service" value={t.shippingService?.name ?? '—'} />
@@ -100,7 +108,22 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit }
             <Fact label="Sales fee %" value={t.salesFeePct != null ? `${t.salesFeePct}%` : '—'} mono />
             <Fact label={`Destination VAT %${t.vatOverridden ? ' (overridden)' : ''}`} value={t.destinationCountryVatPct != null ? `${t.destinationCountryVatPct}%` : '—'} mono />
             <Fact label="Package weight (kg)" value={t.overallPackageWeight != null ? String(t.overallPackageWeight) : '—'} mono />
-            <Fact label="Est. shipping cost" value={t.estimatedShippingCost != null ? `€${t.estimatedShippingCost.toFixed(2)}` : '—'} mono />
+            <div className="min-w-0">
+              <div className="text-[11px] text-n-500">
+                Shipping cost {t.shippingCostSource === 'actual'
+                  ? <span className="font-semibold text-teal-700">· actual</span>
+                  : <span className="text-n-400">· estimated</span>}
+              </div>
+              <div className="mono truncate text-[13.5px] font-medium text-n-800">
+                {t.shippingCostSource === 'actual'
+                  ? (t.actualShippingCost != null ? `€${t.actualShippingCost.toFixed(2)}` : '—')
+                  : (t.estimatedShippingCost != null ? `€${t.estimatedShippingCost.toFixed(2)}` : '—')}
+              </div>
+              {t.shippingCostSource === 'actual' && t.estimatedShippingCost != null && (
+                <div className="text-[10.5px] text-n-400">est. was €{t.estimatedShippingCost.toFixed(2)}</div>
+              )}
+            </div>
+            <Fact label="Duty / import" value={t.dutyImportCost ? `€${t.dutyImportCost.toFixed(2)}` : '—'} mono />
             <div>
               <div className="text-[11px] text-n-500">Profit (€)</div>
               <div className="mono text-[15px] font-semibold" style={{ color: t.profit != null ? (t.profit >= 0 ? PROFIT_GREEN : 'var(--danger)') : undefined }}>
@@ -120,10 +143,53 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit }
             {tier?.name && <Fact label="Profit tier" value={tier.name} />}
           </div>
         </div>
+
+        {/* Shipments */}
+        {t.shipments.length > 0 && (
+          <div>
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-n-500">Shipments</div>
+            <div className="overflow-hidden rounded-lg border border-n-200">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] border-collapse text-[12.5px]">
+                  <thead>
+                    <tr>
+                      {['Date', 'Type', 'Service', 'Tracking', 'Cost (€)', 'Borne by', 'Duty (€)'].map((h, i) => (
+                        <th key={h} className={`border-b border-n-200 bg-n-25 px-3 py-2 text-[10.5px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap ${i >= 4 && i !== 5 ? 'text-right' : 'text-left'}`}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {t.shipments.map((s) => (
+                      <tr key={s.id}>
+                        <td className="mono border-b border-n-100 px-3 py-1.5 text-n-700">{formatDate(s.shipmentDate)}</td>
+                        <td className="border-b border-n-100 px-3 py-1.5">
+                          {s.type === 'outbound'
+                            ? <span className="tag border border-teal-100 bg-teal-50 text-teal-700">Outbound</span>
+                            : <span className="tag border border-orange-100 bg-orange-50 text-orange-700">Inbound</span>}
+                        </td>
+                        <td className="border-b border-n-100 px-3 py-1.5 text-n-700">{s.shippingService?.name ?? '—'}</td>
+                        <td className="mono border-b border-n-100 px-3 py-1.5 text-n-700">{s.trackingNumber ?? '—'}</td>
+                        <td className="mono border-b border-n-100 px-3 py-1.5 text-right text-n-700">{s.shippingCostEur != null ? `€${s.shippingCostEur.toFixed(2)}` : '—'}</td>
+                        <td className="border-b border-n-100 px-3 py-1.5 text-n-700">{s.costBorneBy === 'company' ? 'Company' : 'Customer'}</td>
+                        <td className="mono border-b border-n-100 px-3 py-1.5 text-right text-n-700">{s.dutyImportEur ? `€${s.dutyImportEur.toFixed(2)}` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </ModalShell>
   );
 }
+
+const FULFILMENT: Record<string, { label: string; cls: string }> = {
+  pending: { label: 'Pending shipment', cls: 'border border-orange-100 bg-orange-50 text-orange-700' },
+  shipped: { label: 'Shipped', cls: 'border border-teal-100 bg-teal-50 text-teal-700' },
+  cancelled: { label: 'Cancelled', cls: 'border border-n-200 bg-n-100 text-n-600' },
+};
 
 function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (

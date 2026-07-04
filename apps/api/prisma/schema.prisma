@@ -550,6 +550,7 @@ model ShippingService {
   defaultForCountries Country[]             @relation("CountryDefaultService")
   countryMappings     CountryShippingZone[]
   salesTransactions   SalesTransaction[]    @relation("TxShippingService")
+  shipments           Shipment[]            @relation("ShipmentShippingService")
 
   @@map("shipping_service")
 }
@@ -727,6 +728,9 @@ model SalesTransaction {
   // user overrides it (vatOverridden = true keeps the manual value on re-save).
   destinationVatPct Float?  @map("destination_vat_pct")
   vatOverridden     Boolean @default(false) @map("vat_overridden")
+  // Fulfilment lifecycle (operations): pending until an outbound shipment is recorded
+  // and the order is marked fully shipped. 'cancelled' is used by the returns layer.
+  fulfilmentStatus String @default("pending") @map("fulfilment_status") // pending | shipped | cancelled
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -740,8 +744,37 @@ model SalesTransaction {
   shippingService    ShippingService? @relation("TxShippingService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
   items              SalesTransactionItem[]
   unlockRequests     SalesTransactionUnlockRequest[]
+  shipments          Shipment[]
 
   @@map("sales_transaction")
+}
+
+// A physical shipment for a sales transaction (operations records actuals here).
+// Outbound = to the customer; inbound = a return/receipt. The actual outbound
+// shipping cost overrides the transaction's calculated estimate; duty and any
+// company-borne return shipping are added as extra costs in the profit calc.
+model Shipment {
+  id                String   @id @default(uuid()) @db.Uuid
+  transactionId     String   @map("transaction_id") @db.Uuid
+  type              String   @default("outbound") // outbound | inbound
+  shipmentDate      DateTime @map("shipment_date")
+  shippingServiceId String?  @map("shipping_service_id") @db.Uuid
+  trackingNumber    String?  @map("tracking_number")
+  shippingCostEur   Float?   @map("shipping_cost_eur") // actual shipping cost, exc VAT, in EUR
+  costBorneBy       String   @default("company") @map("cost_borne_by") // company | customer
+  dutyImportEur     Float?   @map("duty_import_eur") // duty / import charges, in EUR
+  comments          String?
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  transaction     SalesTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  shippingService ShippingService? @relation("ShipmentShippingService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
+
+  @@index([transactionId])
+  @@map("shipment")
 }
 
 model SalesTransactionUnlockRequest {

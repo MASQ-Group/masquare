@@ -502,6 +502,12 @@ export interface SalesTransaction {
   vatOverridden: boolean;
   overallPackageWeight: number | null;
   estimatedShippingCost: number | null;
+  actualShippingCost: number | null;
+  shippingCostSource: 'actual' | 'estimated';
+  returnShippingCost: number;
+  dutyImportCost: number;
+  fulfilmentStatus: 'pending' | 'shipped' | 'cancelled';
+  shipments: TransactionShipment[];
   profit: number | null;
   profitPct: number | null;
   items: SalesTransactionItem[];
@@ -510,6 +516,73 @@ export interface SalesTransaction {
 }
 export interface SalesTransactionListResponse { items: SalesTransaction[]; total: number; page: number; pageSize: number }
 export interface UnlockRequest { id: string; transactionId: string; transactionRef: string; requestedBy: string; createdAt: string }
+
+// ---- Shipments (operations: actual shipping cost + duty per transaction) ----
+export type ShipmentType = 'outbound' | 'inbound';
+export type CostBorneBy = 'company' | 'customer';
+
+export interface TransactionShipment {
+  id: string;
+  type: ShipmentType;
+  shipmentDate: string;
+  shippingService: RefLite | null;
+  trackingNumber: string | null;
+  shippingCostEur: number | null;
+  costBorneBy: CostBorneBy;
+  dutyImportEur: number | null;
+  comments: string | null;
+}
+
+export interface Shipment {
+  id: string;
+  transactionId: string;
+  transactionRef: string | null;
+  transactionDate: string | null;
+  salesChannel: { id: string; name: string } | null;
+  company: { id: string; officialName: string } | null;
+  destinationCountry: { id: string; name: string } | null;
+  fulfilmentStatus: 'pending' | 'shipped' | 'cancelled' | null;
+  type: ShipmentType;
+  shipmentDate: string;
+  shippingServiceId: string | null;
+  shippingService: { id: string; name: string } | null;
+  trackingNumber: string | null;
+  shippingCostEur: number | null;
+  costBorneBy: CostBorneBy;
+  dutyImportEur: number | null;
+  comments: string | null;
+  createdAt: string;
+}
+
+export interface PendingShipment {
+  id: string;
+  transactionRef: string;
+  date: string;
+  salesChannel: { id: string; name: string } | null;
+  company: { id: string; officialName: string } | null;
+  destinationCountry: { id: string; name: string } | null;
+  defaultShippingService: { id: string; name: string } | null;
+  skus: string[];
+  itemCount: number;
+  quantity: number;
+  shipmentCount: number;
+}
+
+export interface ShipmentListResponse { items: Shipment[]; total: number; page: number; pageSize: number }
+export interface PendingListResponse { items: PendingShipment[]; total: number; page: number; pageSize: number }
+
+export const shipmentsApi = {
+  list: (params: { q?: string; companyId?: string; salesChannelId?: string; type?: string; page?: number; pageSize?: number }) =>
+    api.get<ShipmentListResponse>('/shipments', { params }).then((r) => r.data),
+  pending: (params: { q?: string; companyId?: string; salesChannelId?: string; page?: number; pageSize?: number }) =>
+    api.get<PendingListResponse>('/shipments/pending', { params }).then((r) => r.data),
+  forTransaction: (transactionId: string) => api.get<TransactionShipment[]>(`/shipments/transaction/${transactionId}`).then((r) => r.data),
+  create: (body: any) => api.post<Shipment>('/shipments', body).then((r) => r.data),
+  update: (id: string, body: any) => api.patch<Shipment>(`/shipments/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/shipments/${id}`).then((r) => r.data),
+  setFulfilment: (transactionId: string, status: 'pending' | 'shipped' | 'cancelled') =>
+    api.patch(`/shipments/transaction/${transactionId}/fulfilment`, { status }).then((r) => r.data),
+};
 
 export const salesTransactionsApi = {
   list: (params: { q?: string; companyId?: string; salesChannelId?: string; status?: string; profitTierId?: string; sortBy?: 'date' | 'profit' | 'profitPct'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>

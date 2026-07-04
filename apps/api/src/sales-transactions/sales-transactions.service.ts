@@ -26,6 +26,11 @@ const include = {
     include: { product: { select: { packageWeightKg: true, productWeightKg: true, packageLengthCm: true, packageWidthCm: true, packageHeightCm: true, purchaseCostAmount: true, purchaseCostCurrency: true } } },
   },
   unlockRequests: { where: { status: 'pending' }, orderBy: { createdAt: 'desc' as const } },
+  shipments: {
+    where: { deletedAt: null },
+    orderBy: { shipmentDate: 'asc' as const },
+    include: { shippingService: { select: { id: true, name: true } } },
+  },
 } satisfies Prisma.SalesTransactionInclude;
 
 const n = (v: any) => Number(v ?? 0);
@@ -93,7 +98,22 @@ export class SalesTransactionsService {
       if (rate) estimatedShippingCost = Number(rate.chargeEur);
     }
 
-    // Profit (€): (net + shipping in EUR) − (product purchase cost + est. shipping + sales fee in EUR).
+    // --- Actual shipment costs (operations records these; they override the estimate) ---
+    // Actual shipping cost = company-borne outbound shipments (in EUR). Duty and any
+    // company-borne inbound (return) shipping are added as extra costs.
+    const shipments = t.shipments ?? [];
+    const hasOutbound = shipments.some((s: any) => s.type === 'outbound');
+    const actualShippingCost = hasOutbound
+      ? round(shipments.filter((s: any) => s.type === 'outbound' && s.costBorneBy === 'company').reduce((sum: number, s: any) => sum + n(s.shippingCostEur), 0), 2)
+      : null;
+    const returnShippingCost = round(shipments.filter((s: any) => s.type === 'inbound' && s.costBorneBy === 'company').reduce((sum: number, s: any) => sum + n(s.shippingCostEur), 0), 2);
+    const dutyImportCost = round(shipments.reduce((sum: number, s: any) => sum + n(s.dutyImportEur), 0), 2);
+    // The shipping cost used in the profit calc: actual (when a shipment exists) else estimated.
+    const shippingCostSource: 'actual' | 'estimated' = actualShippingCost != null ? 'actual' : 'estimated';
+    const effectiveShippingCost = actualShippingCost != null ? actualShippingCost : estimatedShippingCost;
+
+    // Profit (€): (net + shipping in EUR) − (product cost + effective shipping + return
+    // shipping we bear + duty + sales fee in EUR).
     const fxRate = t.exchangeRate;
     const feeFx = t.feeExchangeRate ?? t.exchangeRate;
     let profit: number | null = null;
@@ -106,7 +126,7 @@ export class SalesTransactionsService {
         cost += unitCost * (it.quantity ?? 1);
         cost += n(it.salesChannelSalesFeeAmount) * (feeFx ?? fxRate);
       }
-      cost += estimatedShippingCost ?? 0;
+      cost += (effectiveShippingCost ?? 0) + returnShippingCost + dutyImportCost;
       profit = round(revenue - cost, 2);
     }
 
@@ -137,6 +157,22 @@ export class SalesTransactionsService {
       vatOverridden: t.vatOverridden,
       overallPackageWeight,
       estimatedShippingCost,
+      actualShippingCost,
+      shippingCostSource,
+      returnShippingCost,
+      dutyImportCost,
+      fulfilmentStatus: t.fulfilmentStatus,
+      shipments: shipments.map((s: any) => ({
+        id: s.id,
+        type: s.type,
+        shipmentDate: s.shipmentDate,
+        shippingService: s.shippingService ?? null,
+        trackingNumber: s.trackingNumber,
+        shippingCostEur: s.shippingCostEur,
+        costBorneBy: s.costBorneBy,
+        dutyImportEur: s.dutyImportEur,
+        comments: s.comments,
+      })),
       profit,
       profitPct,
       items: items.map((it: any) => ({

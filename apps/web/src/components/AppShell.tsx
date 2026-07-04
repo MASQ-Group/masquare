@@ -14,6 +14,7 @@ import {
   Search,
   Settings,
   SlidersHorizontal,
+  Truck,
   Users,
   Warehouse,
   type LucideIcon,
@@ -35,6 +36,7 @@ interface NavDef {
 const OPERATIONS: NavDef[] = [
   { to: '/products', label: 'Products', icon: Package },
   { to: '/sales-transactions', label: 'Sales Transactions', icon: Receipt },
+  { to: '/shipments', label: 'Shipments', icon: Truck },
   { label: 'Inventory', icon: Boxes, badge: 'soon', disabled: true },
   { label: 'Warehouses', icon: Warehouse, badge: 'soon', disabled: true },
   { label: 'Integrations', icon: Plug, badge: 'soon', disabled: true },
