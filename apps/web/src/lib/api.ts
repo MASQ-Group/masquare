@@ -423,6 +423,7 @@ export interface SalesTransaction {
   currency: string | null;
   feeCurrency: string | null;
   exchangeRate: number | null;
+  feeExchangeRate: number | null;
   status: 'draft' | 'submitted';
   unlockedForEdit: boolean;
   hasPendingUnlock: boolean;
@@ -430,6 +431,7 @@ export interface SalesTransaction {
   destinationCountryVatPct: number | null;
   overallPackageWeight: number | null;
   estimatedShippingCost: number | null;
+  profit: number | null;
   items: SalesTransactionItem[];
   itemCount: number;
   totals: { quantity: number; netSales: number; vat: number; shipping: number; shippingVat: number; fee: number };
@@ -438,7 +440,7 @@ export interface SalesTransactionListResponse { items: SalesTransaction[]; total
 export interface UnlockRequest { id: string; transactionId: string; transactionRef: string; requestedBy: string; createdAt: string }
 
 export const salesTransactionsApi = {
-  list: (params: { q?: string; companyId?: string; salesChannelId?: string; page?: number; pageSize?: number }) =>
+  list: (params: { q?: string; companyId?: string; salesChannelId?: string; status?: string; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<SalesTransactionListResponse>('/sales-transactions', { params }).then((r) => r.data),
   get: (id: string) => api.get<SalesTransaction>(`/sales-transactions/${id}`).then((r) => r.data),
   create: (body: any) => api.post<SalesTransaction>('/sales-transactions', body).then((r) => r.data),

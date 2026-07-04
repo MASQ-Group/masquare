@@ -47,6 +47,8 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
   const [destinationCountryId, setDestinationCountryId] = useState<string | null>(transaction?.destinationCountryId ?? null);
   const [shippingServiceId, setShippingServiceId] = useState<string | null>(transaction?.shippingServiceId ?? null);
   const [serviceOverridden, setServiceOverridden] = useState(!!transaction);
+  const [destinationVatPct, setDestinationVatPct] = useState<string>(transaction?.destinationCountryVatPct != null ? String(transaction.destinationCountryVatPct) : '');
+  const [vatOverridden, setVatOverridden] = useState(!!transaction);
   const [items, setItems] = useState<ItemForm[]>(
     transaction?.items.map((i) => ({
       productId: i.productId ?? null, sku: i.sku, quantity: String(i.quantity),
@@ -68,16 +70,17 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
   const handleDestination = (v: string | null) => {
     setDestinationCountryId(v);
     touch();
-    if (!serviceOverridden) setShippingServiceId(countries.find((c) => c.id === v)?.defaultShippingServiceId ?? null);
+    const c = countries.find((x) => x.id === v);
+    if (!serviceOverridden) setShippingServiceId(c?.defaultShippingServiceId ?? null);
+    if (!vatOverridden) setDestinationVatPct(c && c.vatRate != null ? String(c.vatRate) : '');
   };
 
-  // Live-computed calculated fields (server recomputes the rest on save).
+  // Live-computed calculated field (server recomputes the rest on save).
   const liveSalesFeePct = useMemo(() => {
     const base = items.reduce((s, i) => s + (Number(i.netSalesAmount) || 0) + (Number(i.vatAmount) || 0) + (Number(i.shippingAmount) || 0) + (Number(i.shippingAmountVat) || 0), 0);
     const fee = items.reduce((s, i) => s + (Number(i.salesChannelSalesFeeAmount) || 0), 0);
     return base > 0 ? (fee / base) * 100 : null;
   }, [items]);
-  const liveVatPct = useMemo(() => countries.find((c) => c.id === destinationCountryId)?.vatRate ?? null, [countries, destinationCountryId]);
 
   const saveWith = async (status: 'draft' | 'submitted') => {
     if (!canSave) { toast.error('Transaction ID and at least one SKU are required'); return; }
@@ -88,6 +91,7 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
         salesChannelId: channel?.id ?? null,
         destinationCountryId,
         shippingServiceId,
+        destinationVatPct: destinationVatPct.trim() === '' ? null : Number(destinationVatPct),
         companyId: activeCompanyId,
         items: items.filter((i) => i.sku.trim()).map((i) => ({
           productId: i.productId, sku: i.sku,
@@ -159,6 +163,10 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
               {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
+          <div>
+            <label className="label">Destination VAT % <span className="font-normal text-n-400">(from country — editable)</span></label>
+            <input className="input mono" inputMode="decimal" value={destinationVatPct} onChange={(e) => { setDestinationVatPct(e.target.value); setVatOverridden(true); touch(); }} placeholder="0" />
+          </div>
         </div>
 
         {selected && (
@@ -172,10 +180,10 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
           <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-n-500">Calculated</div>
           <div className="grid grid-cols-3 gap-3 max-[560px]:grid-cols-2">
             <Calc label="Sales Fee %" value={liveSalesFeePct != null ? `${liveSalesFeePct.toFixed(2)}%` : '—'} />
-            <Calc label="Destination VAT %" value={liveVatPct != null ? `${liveVatPct}%` : '—'} />
             <Calc label={`Exchange rate (${ccy(nativeCcy)}→EUR)`} value={transaction?.exchangeRate != null ? String(transaction.exchangeRate) : '—'} />
             <Calc label="Package weight (kg)" value={transaction?.overallPackageWeight != null ? String(transaction.overallPackageWeight) : '—'} />
             <Calc label="Est. shipping cost" value={transaction?.estimatedShippingCost != null ? `€${transaction.estimatedShippingCost.toFixed(2)}` : '—'} />
+            <Calc label="Profit (€)" value={transaction?.profit != null ? `€${transaction.profit.toFixed(2)}` : '—'} />
           </div>
           <p className="mt-2 text-[11px] text-n-400">
             {transaction ? 'Exchange rate, package weight and shipping cost refresh on save.' : 'Exchange rate, package weight and shipping cost are calculated when you save.'}

@@ -665,6 +665,10 @@ model SalesTransaction {
   shippingServiceId String? @map("shipping_service_id") @db.Uuid
   // Snapshot: channel currency -> EUR exchange rate at the transaction date.
   exchangeRate Float? @map("exchange_rate")
+  // Snapshot: fee currency -> EUR rate (same as exchangeRate when fee is in native currency).
+  feeExchangeRate Float? @map("fee_exchange_rate")
+  // Destination VAT %: defaults from the country but is editable per transaction.
+  destinationVatPct Float? @map("destination_vat_pct")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")

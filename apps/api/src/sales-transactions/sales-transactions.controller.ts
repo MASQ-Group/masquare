@@ -17,10 +17,12 @@ export class SalesTransactionsController {
     @Query('q') q?: string,
     @Query('companyId') companyId?: string,
     @Query('salesChannelId') salesChannelId?: string,
+    @Query('status') status?: string,
+    @Query('sortDir') sortDir?: 'asc' | 'desc',
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    const query: TxQuery = { q, companyId, salesChannelId, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
+    const query: TxQuery = { q, companyId, salesChannelId, status, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
     return this.svc.list(query);
   }
 

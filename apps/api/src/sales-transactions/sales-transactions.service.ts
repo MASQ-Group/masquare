@@ -8,6 +8,8 @@ export interface TxQuery {
   q?: string;
   companyId?: string;
   salesChannelId?: string;
+  status?: string;
+  sortDir?: 'asc' | 'desc';
   page?: number;
   pageSize?: number;
 }
@@ -19,7 +21,7 @@ const include = {
   items: {
     where: { deletedAt: null },
     orderBy: { createdAt: 'asc' as const },
-    include: { product: { select: { packageWeightKg: true, productWeightKg: true, packageLengthCm: true, packageWidthCm: true, packageHeightCm: true } } },
+    include: { product: { select: { packageWeightKg: true, productWeightKg: true, packageLengthCm: true, packageWidthCm: true, packageHeightCm: true, purchaseCostAmount: true, purchaseCostCurrency: true } } },
   },
   unlockRequests: { where: { status: 'pending' }, orderBy: { createdAt: 'desc' as const } },
 } satisfies Prisma.SalesTransactionInclude;
@@ -50,8 +52,8 @@ export class SalesTransactionsService {
     const feeBase = items.reduce((s: number, it: any) => s + n(it.netSalesAmount) + n(it.vatAmount) + n(it.shippingAmount) + n(it.shippingAmountVat), 0);
     const salesFeePct = feeBase > 0 ? round((totals.fee / feeBase) * 100, 2) : null;
 
-    // Destination country VAT % (from Global Settings → Countries).
-    const destinationCountryVatPct = t.destinationCountry ? Number(t.destinationCountry.vatRate) : null;
+    // Destination VAT % — the (editable) stored value, falling back to the country rate.
+    const destinationCountryVatPct = t.destinationVatPct ?? (t.destinationCountry ? Number(t.destinationCountry.vatRate) : null);
 
     // Overall package weight: sum of per-SKU weight × quantity, by the service's cost basis.
     const method: string | null = t.shippingService?.calcMethod ?? null;
@@ -89,6 +91,23 @@ export class SalesTransactionsService {
       if (rate) estimatedShippingCost = Number(rate.chargeEur);
     }
 
+    // Profit (€): (net + shipping in EUR) − (product purchase cost + est. shipping + sales fee in EUR).
+    const fxRate = t.exchangeRate;
+    const feeFx = t.feeExchangeRate ?? t.exchangeRate;
+    let profit: number | null = null;
+    if (fxRate != null) {
+      let revenue = 0;
+      let cost = 0;
+      for (const it of items) {
+        revenue += (n(it.netSalesAmount) + n(it.shippingAmount)) * fxRate;
+        const unitCost = it.product?.purchaseCostAmount != null ? Number(it.product.purchaseCostAmount) : 0;
+        cost += unitCost * (it.quantity ?? 1);
+        cost += n(it.salesChannelSalesFeeAmount) * (feeFx ?? fxRate);
+      }
+      cost += estimatedShippingCost ?? 0;
+      profit = round(revenue - cost, 2);
+    }
+
     return {
       id: t.id,
       date: t.date,
@@ -103,6 +122,7 @@ export class SalesTransactionsService {
       currency: t.currency,
       feeCurrency: t.feeCurrency,
       exchangeRate: t.exchangeRate,
+      feeExchangeRate: t.feeExchangeRate,
       status: t.status,
       unlockedForEdit: t.unlockedForEdit,
       hasPendingUnlock: (t.unlockRequests ?? []).length > 0,
@@ -110,6 +130,7 @@ export class SalesTransactionsService {
       destinationCountryVatPct,
       overallPackageWeight,
       estimatedShippingCost,
+      profit,
       items: items.map((it: any) => ({
         id: it.id,
         productId: it.productId,
@@ -133,6 +154,7 @@ export class SalesTransactionsService {
       deletedAt: null,
       ...(query.companyId ? { companyId: query.companyId } : {}),
       ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
+      ...(query.status ? { status: query.status } : {}),
       ...(query.q
         ? {
             OR: [
@@ -144,7 +166,7 @@ export class SalesTransactionsService {
     };
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.salesTransaction.count({ where }),
-      this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+      this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: query.sortDir === 'asc' ? 'asc' : 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
     ]);
     const serviceMap = await this.buildServiceMap();
     return { items: rows.map((r) => this.serialize(r, serviceMap)), total, page, pageSize };
@@ -164,6 +186,12 @@ export class SalesTransactionsService {
       include: { zones: { where: { deletedAt: null }, include: { countries: true, rates: { where: { deletedAt: null } } } } },
     });
     return new Map<string, any>(services.map((s) => [s.id, s]));
+  }
+
+  private async countryVatRate(countryId: string | null): Promise<number | null> {
+    if (!countryId) return null;
+    const c = await this.prisma.country.findUnique({ where: { id: countryId }, select: { vatRate: true } });
+    return c ? Number(c.vatRate) : null;
   }
 
   private async resolveShippingService(explicit: string | null | undefined, countryId: string | null) {
@@ -225,6 +253,8 @@ export class SalesTransactionsService {
     const { currency, feeCurrency } = await this.currenciesFor(dto.salesChannelId);
     const shippingServiceId = await this.resolveShippingService(dto.shippingServiceId, dto.destinationCountryId ?? null);
     const exchangeRate = await this.fetchExchangeRate(currency, dto.date);
+    const feeExchangeRate = feeCurrency && feeCurrency !== currency ? await this.fetchExchangeRate(feeCurrency, dto.date) : exchangeRate;
+    const destinationVatPct = dto.destinationVatPct ?? (await this.countryVatRate(dto.destinationCountryId ?? null));
     const t = await this.prisma.salesTransaction.create({
       data: {
         date: new Date(dto.date),
@@ -236,6 +266,8 @@ export class SalesTransactionsService {
         currency,
         feeCurrency,
         exchangeRate,
+        feeExchangeRate,
+        destinationVatPct,
         status: dto.status ?? 'draft',
         unlockedForEdit: false,
         createdById: actorId,
@@ -264,9 +296,12 @@ export class SalesTransactionsService {
     const nextStatus = dto.status ?? existing.status;
     // Submitting re-locks it (unless the actor is an admin, who always retains access).
     const unlockedForEdit = nextStatus === 'submitted' ? false : existing.unlockedForEdit;
-    const exchangeRate = await this.fetchExchangeRate(currency, dto.date ?? existing.date.toISOString());
+    const txDate = dto.date ?? existing.date.toISOString();
+    const exchangeRate = await this.fetchExchangeRate(currency, txDate);
+    const feeExchangeRate = feeCurrency && feeCurrency !== currency ? await this.fetchExchangeRate(feeCurrency, txDate) : exchangeRate;
     const destCountryId = dto.destinationCountryId === undefined ? existing.destinationCountryId : dto.destinationCountryId;
     const resolvedServiceId = await this.resolveShippingService(dto.shippingServiceId, destCountryId);
+    const destinationVatPct = dto.destinationVatPct ?? (await this.countryVatRate(destCountryId));
 
     await this.prisma.$transaction(async (tx) => {
       if (dto.items) {
@@ -286,6 +321,8 @@ export class SalesTransactionsService {
           currency,
           feeCurrency,
           exchangeRate,
+          feeExchangeRate,
+          destinationVatPct,
           status: nextStatus,
           unlockedForEdit,
           updatedById: user.sub,
