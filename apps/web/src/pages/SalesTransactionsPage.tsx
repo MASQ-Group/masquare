@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, Columns3, Lock, Pencil, Plus, Search, Trash2, Unlock } from 'lucide-react';
+import { ArrowDown, ArrowUp, Columns3, Pencil, Plus, Search, Trash2, Unlock } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
 import { profitTiersApi, salesChannelsApi, salesTransactionsApi, type ProfitTier, type SalesTransaction } from '../lib/api';
@@ -118,17 +118,21 @@ export function SalesTransactionsPage() {
       case 'date': return formatDate(t.date);
       case 'ref': return <span className="font-medium text-n-800">{t.transactionRef}</span>;
       case 'status': return (
-        <span className="inline-flex items-center gap-1">
-          {t.status === 'submitted'
-            ? <span className="tag inline-flex items-center gap-1 border border-teal-100 bg-teal-50 text-teal-700"><Lock size={11} /> Submitted</span>
-            : <span className="tag border border-orange-100 bg-orange-50 text-orange-700">Draft</span>}
-          {t.unlockedForEdit && <span className="text-[10px] font-medium text-green-600">unlocked</span>}
-          {t.hasPendingUnlock && <span className="text-[10px] font-medium text-orange-600">pending</span>}
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            className={`inline-block h-2.5 w-2.5 rounded-full ${t.status === 'submitted' ? 'bg-teal-500' : 'bg-orange-400'}`}
+            title={t.status === 'submitted' ? 'Submitted' : 'Draft'}
+          />
+          {t.unlockedForEdit && <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" title="Unlocked for edit" />}
+          {t.hasPendingUnlock && <span className="inline-block h-1.5 w-1.5 rounded-full bg-orange-500" title="Unlock request pending" />}
         </span>
       );
-      case 'shipped': return t.shipped
-        ? <span className="tag border border-teal-100 bg-teal-50 text-teal-700">Shipped</span>
-        : <span className="tag border border-n-200 bg-n-100 text-n-500">Not shipped</span>;
+      case 'shipped': return (
+        <span
+          className={`inline-block h-2.5 w-2.5 rounded-full ${t.shipped ? 'bg-teal-500' : 'bg-n-300'}`}
+          title={t.shipped ? 'Shipped' : 'Not shipped'}
+        />
+      );
       case 'channel': return t.salesChannel?.name ?? '—';
       case 'destination': return t.destinationCountry?.name ?? '—';
       case 'skus': return (

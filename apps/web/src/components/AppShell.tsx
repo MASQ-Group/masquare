@@ -9,6 +9,8 @@ import {
   LineChart,
   Menu,
   Package,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plug,
   Receipt,
   Search,
@@ -56,7 +58,10 @@ export function AppShell() {
   const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar-collapsed') === '1');
   const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0'); }, [collapsed]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -79,11 +84,15 @@ export function AppShell() {
           return (
             <div
               key={item.label}
-              className="flex w-full cursor-not-allowed items-center gap-3 rounded-md px-3 py-2.5 text-[13.5px] font-medium text-n-300/70"
+              title={collapsed ? `${item.label}${item.badge ? ` (${item.badge})` : ''}` : undefined}
+              className={[
+                'flex w-full cursor-not-allowed items-center rounded-md py-2.5 text-[13.5px] font-medium text-n-300/70',
+                collapsed ? 'justify-center px-0' : 'gap-3 px-3',
+              ].join(' ')}
             >
               <Icon size={18} />
-              <span className="flex-1">{item.label}</span>
-              {item.badge && (
+              {!collapsed && <span className="flex-1">{item.label}</span>}
+              {!collapsed && item.badge && (
                 <span className="rounded-pill bg-white/[0.08] px-2 py-0.5 font-mono text-[11px] text-n-300">
                   {item.badge}
                 </span>
@@ -96,10 +105,12 @@ export function AppShell() {
             key={item.label}
             to={item.to}
             end={item.to === '/'}
+            title={collapsed ? item.label : undefined}
             onClick={() => setDrawerOpen(false)}
             className={({ isActive }) =>
               [
-                'relative flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-[13.5px] font-medium transition-colors',
+                'relative flex w-full items-center rounded-md py-2.5 text-[13.5px] font-medium transition-colors',
+                collapsed ? 'justify-center px-0' : 'gap-3 px-3',
                 isActive
                   ? 'bg-teal-500/[0.16] text-white before:absolute before:-left-3 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-r before:bg-teal-400'
                   : 'text-n-300 hover:bg-white/[0.06] hover:text-white',
@@ -107,8 +118,8 @@ export function AppShell() {
             }
           >
             <Icon size={18} />
-            <span className="flex-1">{item.label}</span>
-            {item.badge && (
+            {!collapsed && <span className="flex-1">{item.label}</span>}
+            {!collapsed && item.badge && (
               <span className="rounded-pill bg-white/[0.08] px-2 py-0.5 font-mono text-[11px] text-n-300">
                 {item.badge}
               </span>
@@ -118,7 +129,10 @@ export function AppShell() {
       });
 
   return (
-    <div className="grid h-screen grid-cols-[var(--sidebar-w)_1fr] max-[760px]:grid-cols-1">
+    <div className={[
+      'grid h-screen max-[760px]:grid-cols-1',
+      collapsed ? 'grid-cols-[var(--rail-w)_1fr]' : 'grid-cols-[var(--sidebar-w)_1fr]',
+    ].join(' ')}>
       {/* Sidebar */}
       <aside
         className={[
@@ -127,47 +141,68 @@ export function AppShell() {
           drawerOpen ? 'max-[760px]:translate-x-0' : 'max-[760px]:-translate-x-full',
         ].join(' ')}
       >
-        <div className="flex h-[var(--topbar-h)] flex-shrink-0 items-center gap-2.5 border-b border-white/[0.06] px-[18px]">
-          <div className="grid h-[30px] w-[30px] place-items-center rounded-lg bg-gradient-to-br from-teal-400 to-teal-600 text-[15px] font-bold text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]">
+        <div className={[
+          'flex h-[var(--topbar-h)] flex-shrink-0 items-center border-b border-white/[0.06]',
+          collapsed ? 'justify-center px-0' : 'gap-2.5 px-[18px]',
+        ].join(' ')}>
+          <div className="grid h-[30px] w-[30px] flex-shrink-0 place-items-center rounded-lg bg-gradient-to-br from-teal-400 to-teal-600 text-[15px] font-bold text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]">
             m
           </div>
-          <div className="text-[15px] font-semibold tracking-tight text-white">
-            ma<span className="text-green-400">Square</span>
-          </div>
+          {!collapsed && (
+            <div className="text-[15px] font-semibold tracking-tight text-white">
+              ma<span className="text-green-400">Square</span>
+            </div>
+          )}
         </div>
 
-        <CompanySwitcher />
+        <CompanySwitcher collapsed={collapsed} />
 
-        <div className="px-3 pb-1 pt-2.5">
-          <div className="px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-n-400">
-            Operations
-          </div>
+        <div className={collapsed ? 'px-2 pb-1 pt-2.5' : 'px-3 pb-1 pt-2.5'}>
+          {collapsed
+            ? <div className="mx-2 my-1.5 border-t border-white/[0.06]" />
+            : <div className="px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-n-400">Operations</div>}
           {renderNav(OPERATIONS)}
         </div>
-        <div className="px-3 pb-1 pt-2.5">
-          <div className="px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-n-400">
-            Administration
-          </div>
+        <div className={collapsed ? 'px-2 pb-1 pt-2.5' : 'px-3 pb-1 pt-2.5'}>
+          {collapsed
+            ? <div className="mx-2 my-1.5 border-t border-white/[0.06]" />
+            : <div className="px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-n-400">Administration</div>}
           {renderNav(ADMIN)}
         </div>
 
         <div className="flex-1" />
-        <div className="border-t border-white/[0.06] p-3">
+        <div className="flex flex-col gap-1 border-t border-white/[0.06] p-3">
+          <button
+            onClick={() => setCollapsed((v) => !v)}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className={[
+              'flex items-center rounded-md p-2 text-n-300 hover:bg-white/[0.06] hover:text-white',
+              collapsed ? 'justify-center' : 'gap-2.5',
+            ].join(' ')}
+          >
+            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            {!collapsed && <span className="text-[12.5px] font-medium">Collapse</span>}
+          </button>
           <button
             onClick={() => {
               signOut();
               navigate('/login');
             }}
-            className="flex w-full items-center gap-2.5 rounded-md p-2 text-left hover:bg-white/[0.06]"
-            title="Sign out"
+            className={[
+              'flex items-center rounded-md p-2 text-left hover:bg-white/[0.06]',
+              collapsed ? 'justify-center' : 'gap-2.5',
+            ].join(' ')}
+            title={collapsed ? `${user?.fullName ?? ''} — Sign out` : 'Sign out'}
           >
             <div className="grid h-[30px] w-[30px] flex-shrink-0 place-items-center rounded-full bg-gradient-to-br from-orange-400 to-orange-600 text-[12px] font-semibold text-white">
               {initials(user?.fullName ?? 'U')}
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] font-semibold text-white">{user?.fullName}</div>
-              <div className="text-[11px] text-n-400">{user?.isAdmin ? 'Administrator' : 'Member'}</div>
-            </div>
+            {!collapsed && (
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13px] font-semibold text-white">{user?.fullName}</div>
+                <div className="text-[11px] text-n-400">{user?.isAdmin ? 'Administrator' : 'Member'}</div>
+              </div>
+            )}
           </button>
         </div>
       </aside>
