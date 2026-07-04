@@ -34,6 +34,14 @@ export class DecideUnlockDto {
   @IsBoolean() grant!: boolean;
 }
 
+export class ResolveTransactionDto {
+  @IsIn(['none', 'cancelled', 'returned', 'replaced']) resolution!: 'none' | 'cancelled' | 'returned' | 'replaced';
+  @IsOptional() @IsNumber() refundAmount?: number | null;
+  @IsOptional() @IsBoolean() restockItems?: boolean;
+  @IsOptional() @IsBoolean() feeRefunded?: boolean;
+  @IsOptional() @IsString() resolutionNotes?: string | null;
+}
+
 export class UpdateSalesTransactionDto extends CreateSalesTransactionDto {
   @IsOptional() @IsDateString() declare date: string;
   @IsOptional() @IsString() @MinLength(1) declare transactionRef: string;

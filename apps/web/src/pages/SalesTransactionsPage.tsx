@@ -9,9 +9,10 @@ import { useAuth } from '../lib/auth';
 import { formatDate, formatMoney } from '../lib/format';
 import { SalesTransactionModal } from '../components/sales/SalesTransactionModal';
 import { SalesTransactionSummaryModal } from '../components/sales/SalesTransactionSummaryModal';
+import { ResolveTransactionModal } from '../components/sales/ResolveTransactionModal';
 
 type ColKey =
-  | 'date' | 'ref' | 'status' | 'channel' | 'destination' | 'skus' | 'qty'
+  | 'date' | 'ref' | 'status' | 'shipped' | 'channel' | 'destination' | 'skus' | 'qty'
   | 'netSales' | 'salesFee' | 'feePct' | 'estShip' | 'profit' | 'profitPct'
   | 'vatPct' | 'weight' | 'fx';
 
@@ -21,6 +22,7 @@ const ALL_COLUMNS: { key: ColKey; label: string; standard: boolean; right?: bool
   { key: 'date', label: 'Date', standard: true, sort: 'date' },
   { key: 'ref', label: 'Transaction ID', standard: true },
   { key: 'status', label: 'Status', standard: true },
+  { key: 'shipped', label: 'Shipment', standard: true },
   { key: 'channel', label: 'Sales channel', standard: true },
   { key: 'destination', label: 'Destination', standard: true },
   { key: 'skus', label: 'SKUs', standard: true },
@@ -52,6 +54,7 @@ export function SalesTransactionsPage() {
   useEffect(() => { if (urlQ) { setQInput(urlQ); setQ(urlQ); setPage(1); } }, [urlQ]);
   const [editing, setEditing] = useState<SalesTransaction | null | undefined>(undefined);
   const [viewing, setViewing] = useState<SalesTransaction | undefined>(undefined);
+  const [resolving, setResolving] = useState<SalesTransaction | undefined>(undefined);
   const [reqOpen, setReqOpen] = useState(false);
 
   // view controls
@@ -117,12 +120,15 @@ export function SalesTransactionsPage() {
       case 'status': return (
         <span className="inline-flex items-center gap-1">
           {t.status === 'submitted'
-            ? <span className="tag inline-flex items-center gap-1 border border-n-200 bg-n-100 text-n-600"><Lock size={11} /> Submitted</span>
-            : <span className="tag border border-teal-100 bg-teal-50 text-teal-700">Draft</span>}
+            ? <span className="tag inline-flex items-center gap-1 border border-teal-100 bg-teal-50 text-teal-700"><Lock size={11} /> Submitted</span>
+            : <span className="tag border border-orange-100 bg-orange-50 text-orange-700">Draft</span>}
           {t.unlockedForEdit && <span className="text-[10px] font-medium text-green-600">unlocked</span>}
           {t.hasPendingUnlock && <span className="text-[10px] font-medium text-orange-600">pending</span>}
         </span>
       );
+      case 'shipped': return t.shipped
+        ? <span className="tag border border-teal-100 bg-teal-50 text-teal-700">Shipped</span>
+        : <span className="tag border border-n-200 bg-n-100 text-n-500">Not shipped</span>;
       case 'channel': return t.salesChannel?.name ?? '—';
       case 'destination': return t.destinationCountry?.name ?? '—';
       case 'skus': return (
@@ -263,11 +269,19 @@ export function SalesTransactionsPage() {
         </div>
       </div>
 
-      {viewing !== undefined && editing === undefined && (
+      {viewing !== undefined && editing === undefined && resolving === undefined && (
         <SalesTransactionSummaryModal
           transaction={viewing}
           onClose={() => setViewing(undefined)}
           onEdit={() => { setEditing(viewing); setViewing(undefined); }}
+          onResolve={() => { setResolving(viewing); setViewing(undefined); }}
+        />
+      )}
+      {resolving !== undefined && (
+        <ResolveTransactionModal
+          transaction={resolving}
+          onClose={() => setResolving(undefined)}
+          onSaved={() => { setResolving(undefined); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }}
         />
       )}
       {editing !== undefined && (

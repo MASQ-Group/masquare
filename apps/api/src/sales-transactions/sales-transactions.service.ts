@@ -112,21 +112,35 @@ export class SalesTransactionsService {
     const shippingCostSource: 'actual' | 'estimated' = actualShippingCost != null ? 'actual' : 'estimated';
     const effectiveShippingCost = actualShippingCost != null ? actualShippingCost : estimatedShippingCost;
 
-    // Profit (€): (net + shipping in EUR) − (product cost + effective shipping + return
-    // shipping we bear + duty + sales fee in EUR).
+    // --- Order resolution (returns / cancellations / refunds) ---
+    const resolution: string = t.resolution ?? 'none';
     const fxRate = t.exchangeRate;
     const feeFx = t.feeExchangeRate ?? t.exchangeRate;
+    // Refund reverses our revenue (net + shipping portion, exc VAT), in native currency.
+    const refundEur = t.refundAmount != null && fxRate != null ? round(n(t.refundAmount) * fxRate, 2) : 0;
+    // Cancelled before anything shipped → goods never left: no COGS, no shipping.
+    const cancelledPreShip = resolution === 'cancelled' && !hasOutbound;
+    // COGS is reversed when goods never left, or came back resellable (restock).
+    const cogsReversed = cancelledPreShip || (resolution !== 'none' && !!t.restockItems);
+    const shippingApplies = !cancelledPreShip;
+
+    // Profit (€): (net + shipping in EUR) − refund − (product cost + effective shipping +
+    // return shipping we bear + duty + sales fee in EUR), adjusted for the resolution.
     let profit: number | null = null;
     if (fxRate != null) {
       let revenue = 0;
       let cost = 0;
       for (const it of items) {
         revenue += (n(it.netSalesAmount) + n(it.shippingAmount)) * fxRate;
-        const unitCost = it.product?.purchaseCostAmount != null ? Number(it.product.purchaseCostAmount) : 0;
-        cost += unitCost * (it.quantity ?? 1);
-        cost += n(it.salesChannelSalesFeeAmount) * (feeFx ?? fxRate);
+        if (!cogsReversed) {
+          const unitCost = it.product?.purchaseCostAmount != null ? Number(it.product.purchaseCostAmount) : 0;
+          cost += unitCost * (it.quantity ?? 1);
+        }
+        if (!t.feeRefunded) cost += n(it.salesChannelSalesFeeAmount) * (feeFx ?? fxRate);
       }
-      cost += (effectiveShippingCost ?? 0) + returnShippingCost + dutyImportCost;
+      revenue -= refundEur;
+      if (shippingApplies) cost += effectiveShippingCost ?? 0;
+      cost += returnShippingCost + dutyImportCost; // real spends regardless of resolution
       profit = round(revenue - cost, 2);
     }
 
@@ -162,6 +176,13 @@ export class SalesTransactionsService {
       returnShippingCost,
       dutyImportCost,
       fulfilmentStatus: t.fulfilmentStatus,
+      resolution,
+      refundAmount: t.refundAmount,
+      refundEur,
+      restockItems: t.restockItems,
+      feeRefunded: t.feeRefunded,
+      resolutionNotes: t.resolutionNotes,
+      shipped: hasOutbound, // has a recorded outbound shipment
       shipments: shipments.map((s: any) => ({
         id: s.id,
         type: s.type,
@@ -421,6 +442,31 @@ export class SalesTransactionsService {
           updatedById: user.sub,
         },
       });
+    });
+    return this.get(id);
+  }
+
+  /** Apply an order resolution (return / cancellation / refund). Cancelling also
+   *  moves the transaction out of the fulfilment worklist. */
+  async resolve(id: string, dto: { resolution: string; refundAmount?: number | null; restockItems?: boolean; feeRefunded?: boolean; resolutionNotes?: string | null }, user: AuthUser) {
+    const existing = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null }, select: { id: true, status: true, unlockedForEdit: true, fulfilmentStatus: true } });
+    if (!existing) throw new NotFoundException('Sales transaction not found');
+    this.assertCanEdit(existing, user);
+    const clearing = dto.resolution === 'none';
+    await this.prisma.salesTransaction.update({
+      where: { id },
+      data: {
+        resolution: dto.resolution,
+        refundAmount: clearing ? null : dto.refundAmount ?? null,
+        restockItems: clearing ? false : !!dto.restockItems,
+        feeRefunded: clearing ? false : !!dto.feeRefunded,
+        resolutionNotes: clearing ? null : dto.resolutionNotes ?? null,
+        resolvedAt: clearing ? null : new Date(),
+        // Cancelling removes it from the pending worklist; clearing a cancel restores pending.
+        ...(dto.resolution === 'cancelled' ? { fulfilmentStatus: 'cancelled' } : {}),
+        ...(clearing && existing.fulfilmentStatus === 'cancelled' ? { fulfilmentStatus: 'pending' } : {}),
+        updatedById: user.sub,
+      },
     });
     return this.get(id);
   }

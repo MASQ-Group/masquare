@@ -731,6 +731,13 @@ model SalesTransaction {
   // Fulfilment lifecycle (operations): pending until an outbound shipment is recorded
   // and the order is marked fully shipped. 'cancelled' is used by the returns layer.
   fulfilmentStatus String @default("pending") @map("fulfilment_status") // pending | shipped | cancelled
+  // Order resolution (returns/cancellations/refunds). Adjusts revenue/COGS in the profit calc.
+  resolution      String   @default("none") @map("resolution") // none | cancelled | returned | replaced
+  refundAmount    Float?   @map("refund_amount") // our-revenue portion refunded (net+shipping, exc VAT), native currency
+  restockItems    Boolean  @default(false) @map("restock_items") // returned goods resellable → reverse COGS
+  feeRefunded     Boolean  @default(false) @map("fee_refunded") // channel refunded its selling fee
+  resolutionNotes String?  @map("resolution_notes")
+  resolvedAt      DateTime? @map("resolved_at")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")

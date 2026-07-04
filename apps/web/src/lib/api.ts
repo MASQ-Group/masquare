@@ -507,6 +507,13 @@ export interface SalesTransaction {
   returnShippingCost: number;
   dutyImportCost: number;
   fulfilmentStatus: 'pending' | 'shipped' | 'cancelled';
+  resolution: 'none' | 'cancelled' | 'returned' | 'replaced';
+  refundAmount: number | null;
+  refundEur: number;
+  restockItems: boolean;
+  feeRefunded: boolean;
+  resolutionNotes: string | null;
+  shipped: boolean;
   shipments: TransactionShipment[];
   profit: number | null;
   profitPct: number | null;
@@ -591,6 +598,8 @@ export const salesTransactionsApi = {
   create: (body: any) => api.post<SalesTransaction>('/sales-transactions', body).then((r) => r.data),
   update: (id: string, body: any) => api.patch<SalesTransaction>(`/sales-transactions/${id}`, body).then((r) => r.data),
   remove: (id: string) => api.delete(`/sales-transactions/${id}`).then((r) => r.data),
+  resolve: (id: string, body: { resolution: 'none' | 'cancelled' | 'returned' | 'replaced'; refundAmount?: number | null; restockItems?: boolean; feeRefunded?: boolean; resolutionNotes?: string | null }) =>
+    api.patch<SalesTransaction>(`/sales-transactions/${id}/resolution`, body).then((r) => r.data),
   requestUnlock: (id: string) => api.post(`/sales-transactions/${id}/unlock-request`, {}).then((r) => r.data),
   listUnlockRequests: () => api.get<UnlockRequest[]>('/sales-transactions/unlock-requests').then((r) => r.data),
   decideUnlock: (requestId: string, grant: boolean) => api.post(`/sales-transactions/unlock-requests/${requestId}/decide`, { grant }).then((r) => r.data),

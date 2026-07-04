@@ -9,7 +9,15 @@ interface Props {
   onClose: () => void;
   /** Switch to the edit modal (lock rules are enforced there). */
   onEdit: () => void;
+  /** Open the resolution (return / cancellation / refund) modal. */
+  onResolve: () => void;
 }
+
+const RESOLUTION: Record<string, { label: string; cls: string }> = {
+  cancelled: { label: 'Cancelled', cls: 'border border-danger-bd bg-danger-bg text-danger' },
+  returned: { label: 'Returned / refunded', cls: 'border border-orange-100 bg-orange-50 text-orange-700' },
+  replaced: { label: 'Replaced', cls: 'border border-orange-100 bg-orange-50 text-orange-700' },
+};
 
 const PROFIT_GREEN = '#14A79D';
 
@@ -17,7 +25,7 @@ const money = (amount: number | null | undefined, currency: string | null) =>
   amount != null ? formatMoney({ amount, currency: currency ?? 'EUR' }) : '—';
 
 /** Read-only wide summary of a sales transaction, opened from the list view. */
-export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit }: Props) {
+export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, onResolve }: Props) {
   const { data: profitTiers = [] } = useQuery({ queryKey: ['profit-tiers'], queryFn: () => profitTiersApi.list() });
 
   const tier = t.profitPct != null ? profitTiers.find((x: ProfitTier) => t.profitPct! >= x.fromPct && t.profitPct! <= x.toPct) : undefined;
@@ -32,6 +40,8 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit }
       initialSize={{ w: 1040, h: 660 }}
       primaryLabel="Edit transaction"
       onPrimary={onEdit}
+      secondaryLabel={t.resolution === 'none' ? 'Resolve / return' : 'Edit resolution'}
+      onSecondary={onResolve}
       onClose={onClose}
     >
       <div className="flex flex-col gap-5">
@@ -43,8 +53,8 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit }
             <div className="text-[11px] text-n-500">Status</div>
             <div className="mt-0.5">
               {t.status === 'submitted'
-                ? <span className="tag inline-flex items-center gap-1 border border-n-200 bg-n-100 text-n-600"><Lock size={11} /> Submitted</span>
-                : <span className="tag border border-teal-100 bg-teal-50 text-teal-700">Draft</span>}
+                ? <span className="tag inline-flex items-center gap-1 border border-teal-100 bg-teal-50 text-teal-700"><Lock size={11} /> Submitted</span>
+                : <span className="tag border border-orange-100 bg-orange-50 text-orange-700">Draft</span>}
               {t.unlockedForEdit && <span className="ml-1.5 text-[10px] font-medium text-green-600">unlocked</span>}
               {t.hasPendingUnlock && <span className="ml-1.5 text-[10px] font-medium text-orange-600">unlock pending</span>}
             </div>
@@ -63,6 +73,17 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit }
           <Fact label="Currency / fee currency" value={`${ccy} / ${feeCcy}`} mono />
           <Fact label={`FX ${ccy}→EUR`} value={t.exchangeRate != null ? String(t.exchangeRate) : '—'} mono />
         </div>
+
+        {/* Resolution banner */}
+        {t.resolution !== 'none' && RESOLUTION[t.resolution] && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-orange-100 bg-orange-50/60 px-3.5 py-2.5 text-[12.5px] text-n-700">
+            <span className={`tag ${RESOLUTION[t.resolution].cls}`}>{RESOLUTION[t.resolution].label}</span>
+            {t.refundEur > 0 && <span>Refund: <strong className="mono">€{t.refundEur.toFixed(2)}</strong> ({money(t.refundAmount, ccy)})</span>}
+            {t.restockItems && <span className="text-n-500">stock returned</span>}
+            {t.feeRefunded && <span className="text-n-500">fee refunded</span>}
+            {t.resolutionNotes && <span className="text-n-500">· {t.resolutionNotes}</span>}
+          </div>
+        )}
 
         {/* Items */}
         <div className="overflow-hidden rounded-lg border border-n-200">

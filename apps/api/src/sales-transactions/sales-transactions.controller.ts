@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SalesTransactionsService, type TxQuery } from './sales-transactions.service';
-import { CreateSalesTransactionDto, DecideUnlockDto, UpdateSalesTransactionDto } from './dto/sales-transaction.dto';
+import { CreateSalesTransactionDto, DecideUnlockDto, ResolveTransactionDto, UpdateSalesTransactionDto } from './dto/sales-transaction.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 
@@ -59,6 +59,11 @@ export class SalesTransactionsController {
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateSalesTransactionDto, @CurrentUser() user: AuthUser) {
     return this.svc.update(id, dto, user);
+  }
+
+  @Patch(':id/resolution')
+  resolve(@Param('id') id: string, @Body() dto: ResolveTransactionDto, @CurrentUser() user: AuthUser) {
+    return this.svc.resolve(id, dto, user);
   }
 
   @Delete(':id')
