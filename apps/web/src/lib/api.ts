@@ -414,6 +414,42 @@ export const searchApi = {
     api.get<SearchResponse>('/search', { params: { q, scope } }).then((r) => r.data),
 };
 
+// ---- Customs FX (Cyprus Customs monthly exchange rates) ----
+export interface CustomsFxCurrency { code: string; name: string | null }
+export interface CustomsFxMonth { month: number; rates: Record<string, number> }
+export interface CustomsFxSync {
+  id: string;
+  status: 'success' | 'error';
+  message: string | null;
+  sourceUrl: string | null;
+  sourceModified: string | null;
+  monthsImported: number;
+  ratesImported: number;
+  trigger: string;
+  createdAt: string;
+}
+export interface CustomsFxResponse {
+  year: number | null;
+  availableYears: number[];
+  currencies: CustomsFxCurrency[];
+  months: CustomsFxMonth[];
+  lastSync: CustomsFxSync | null;
+  source: string;
+}
+export interface CustomsFxSyncResult {
+  status: 'success' | 'error';
+  message?: string;
+  sourceUrl?: string;
+  sourceModified?: string | null;
+  monthsImported: number;
+  ratesImported: number;
+}
+
+export const customsFxApi = {
+  get: (year?: number) => api.get<CustomsFxResponse>('/customs-fx', { params: year ? { year } : undefined }).then((r) => r.data),
+  sync: () => api.post<CustomsFxSyncResult>('/customs-fx/sync', {}).then((r) => r.data),
+};
+
 // ---- Profit tiers (colour bands for the Profit % chip) ----
 export interface ProfitTier {
   id: string;

@@ -665,6 +665,38 @@ model ProfitTier {
   @@map("profit_tier")
 }
 
+// Official Cyprus Customs monthly exchange rates (units of the foreign currency
+// per 1 EUR), pulled from the Cyprus open-data portal (data.gov.cy) for tax use.
+model CustomsExchangeRate {
+  id           String   @id @default(uuid()) @db.Uuid
+  year         Int
+  month        Int // 1-12
+  currencyCode String   @map("currency_code") // 3-letter code from the source header
+  currencyName String?  @map("currency_name")
+  rate         Float // foreign currency units per 1 EUR
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([year, month, currencyCode])
+  @@index([year, month])
+  @@map("customs_exchange_rate")
+}
+
+// Audit log of each pull from the Cyprus customs open-data portal.
+model CustomsFxSync {
+  id             String    @id @default(uuid()) @db.Uuid
+  status         String // 'success' | 'error'
+  message        String?
+  sourceUrl      String?   @map("source_url")
+  sourceModified DateTime? @map("source_modified")
+  monthsImported Int       @default(0) @map("months_imported")
+  ratesImported  Int       @default(0) @map("rates_imported")
+  trigger        String    @default("manual") // 'manual' | 'schedule' | 'startup'
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@map("customs_fx_sync")
+}
+
 // ===========================================================================
 // Sales Transactions module — registers sales across all sales channels.
 // Header + line items (one per SKU). Amounts stored in the sales channel's
