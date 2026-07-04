@@ -371,6 +371,8 @@ model PlatformSettings {
   id                String            @id @default(uuid()) @db.Uuid
   measurementSystem MeasurementSystem @default(metric) @map("measurement_system")
   dateFormat        DateFormat        @default(ddmmyyyy) @map("date_format")
+  // Admin-defined standard column set for the Sales Transactions list (JSON array of keys).
+  salesTxStandardColumns String? @map("sales_tx_standard_columns")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

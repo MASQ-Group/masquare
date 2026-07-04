@@ -18,8 +18,9 @@ export class AnalyticsController {
     @Query('compareTo') compareTo?: string,
     @Query('companyId') companyId?: string,
     @Query('skuChannelId') skuChannelId?: string,
+    @Query('skuCountryId') skuCountryId?: string,
   ) {
-    const query: AnalyticsQuery = { from, to, compareFrom, compareTo, companyId, skuChannelId };
+    const query: AnalyticsQuery = { from, to, compareFrom, compareTo, companyId, skuChannelId, skuCountryId };
     return this.svc.report(query);
   }
 }

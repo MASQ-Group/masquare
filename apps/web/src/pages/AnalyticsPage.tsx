@@ -25,6 +25,7 @@ export function AnalyticsPage() {
   const [customCompare, setCustomCompare] = useState<DateRange>({ from: '', to: '' });
   const [incVat, setIncVat] = useState(false);
   const [skuChannel, setSkuChannel] = useState('');
+  const [skuCountry, setSkuCountry] = useState('');
 
   const range = useMemo(() => presetRange(rangePreset, { year, quarter, custom: customRange }), [rangePreset, year, quarter, customRange]);
   const compare = useMemo(() => compareRange(range, comparePreset, customCompare), [range, comparePreset, customCompare]);
@@ -34,6 +35,7 @@ export function AnalyticsPage() {
     compareFrom: compare?.from, compareTo: compare?.to,
     companyId: activeCompanyId || undefined,
     skuChannelId: skuChannel || undefined,
+    skuCountryId: skuCountry || undefined,
   };
   const { data, isLoading } = useQuery({ queryKey: ['analytics-sales', params], queryFn: () => analyticsApi.sales(params) });
 
@@ -85,7 +87,7 @@ export function AnalyticsPage() {
         <div className="mx-1 h-9 w-px self-end bg-n-200" />
 
         <Field label="Compare to">
-          <select className="input h-9 w-48" value={comparePreset} onChange={(e) => setComparePreset(e.target.value as ComparePreset)}>
+          <select className="input h-9 w-[17rem]" value={comparePreset} onChange={(e) => setComparePreset(e.target.value as ComparePreset)}>
             <option value="prev_month">Same period, previous month</option>
             <option value="prev_period">Previous period</option>
             <option value="prev_year">Same period, previous year</option>
@@ -170,7 +172,41 @@ export function AnalyticsPage() {
             </div>
           </div>
 
-          {/* Per-SKU table */}
+          {/* Per-destination-country table */}
+          <SectionTitle>Per destination country</SectionTitle>
+          <div className="card mb-6 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] border-collapse text-[13px]">
+                <thead>
+                  <tr>
+                    {['Destination country', `Revenue ${incVat ? 'inc' : 'exc'} VAT (€)`, 'Profit (€)', 'Profit %', 'Fees (€)', 'Orders', 'Units', 'vs prev'].map((h, i) => (
+                      <th key={h} className={`border-b border-n-200 bg-n-25 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data!.byCountry.length === 0 && <tr><td colSpan={8} className="px-4 py-10 text-center text-n-500">No sales in this range.</td></tr>}
+                  {data!.byCountry.map((r) => {
+                    const delta = r.prevRevenueExVatEur != null && r.prevRevenueExVatEur !== 0 ? ((r.revenueExVatEur - r.prevRevenueExVatEur) / Math.abs(r.prevRevenueExVatEur)) * 100 : null;
+                    return (
+                      <tr key={r.countryId ?? 'none'} className="hover:bg-teal-50/40">
+                        <td className="border-b border-n-100 px-3 py-2 font-medium text-n-800">{r.countryName}</td>
+                        <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{eur2(incVat ? r.revenueIncVatEur : r.revenueExVatEur)}</td>
+                        <td className="mono border-b border-n-100 px-3 py-2 text-right font-medium" style={{ color: r.profitEur >= 0 ? PROFIT_TEAL : 'var(--danger)' }}>{eur2(r.profitEur)}</td>
+                        <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{pctStr(r.profitPct)}</td>
+                        <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{eur2(r.feesEur)}</td>
+                        <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{num(r.orders)}</td>
+                        <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{num(r.units)}</td>
+                        <td className="mono border-b border-n-100 px-3 py-2 text-right">{delta == null ? <span className="text-n-300">—</span> : <DeltaText v={delta} good={delta >= 0} />}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Per-SKU (global or by channel) */}
           <div className="mb-2 flex items-center gap-3">
             <SectionTitle>Per SKU</SectionTitle>
             <select className="input h-8 w-56 text-[12.5px]" value={skuChannel} onChange={(e) => setSkuChannel(e.target.value)}>
@@ -178,38 +214,54 @@ export function AnalyticsPage() {
               {data!.channels.map((ch) => <option key={ch.id} value={ch.id}>{ch.name}</option>)}
             </select>
           </div>
-          <div className="card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[820px] border-collapse text-[13px]">
-                <thead>
-                  <tr>
-                    {['SKU', `Revenue ${incVat ? 'inc' : 'exc'} VAT (€)`, 'Profit (€)', 'Profit %', 'Fees (€)', 'Avg fee/unit (€)', 'Units'].map((h, i) => (
-                      <th key={h} className={`border-b border-n-200 bg-n-25 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data!.bySku.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-n-500">No SKU sales in this range.</td></tr>}
-                  {data!.bySku.map((r) => (
-                    <tr key={r.sku} className="hover:bg-teal-50/40">
-                      <td className="border-b border-n-100 px-3 py-2">
-                        <span className="mono font-medium text-n-800">{r.sku}</span>
-                        {r.productTitle && <span className="ml-2 text-[11.5px] text-n-400">{r.productTitle.length > 40 ? r.productTitle.slice(0, 40) + '…' : r.productTitle}</span>}
-                      </td>
-                      <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{eur2(incVat ? r.revenueIncVatEur : r.revenueExVatEur)}</td>
-                      <td className="mono border-b border-n-100 px-3 py-2 text-right font-medium" style={{ color: r.profitEur >= 0 ? PROFIT_TEAL : 'var(--danger)' }}>{eur2(r.profitEur)}</td>
-                      <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{pctStr(r.profitPct)}</td>
-                      <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{eur2(r.feesEur)}</td>
-                      <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{eur2(r.avgFeeEur)}</td>
-                      <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{num(r.units)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <div className="mb-6"><SkuTable rows={data!.bySku} incVat={incVat} /></div>
+
+          {/* Per-SKU per destination country */}
+          <div className="mb-2 flex items-center gap-3">
+            <SectionTitle>Per SKU · per destination country</SectionTitle>
+            <select className="input h-8 w-56 text-[12.5px]" value={skuCountry} onChange={(e) => setSkuCountry(e.target.value)}>
+              <option value="">All countries (global)</option>
+              {data!.countries.map((co) => <option key={co.id} value={co.id}>{co.name}</option>)}
+            </select>
           </div>
+          <SkuTable rows={data!.bySkuByCountry} incVat={incVat} />
         </>
       )}
+    </div>
+  );
+}
+
+function SkuTable({ rows, incVat }: { rows: AnalyticsSkuRow[]; incVat: boolean }) {
+  return (
+    <div className="card overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[820px] border-collapse text-[13px]">
+          <thead>
+            <tr>
+              {['SKU', `Revenue ${incVat ? 'inc' : 'exc'} VAT (€)`, 'Profit (€)', 'Profit %', 'Fees (€)', 'Avg fee/unit (€)', 'Units'].map((h, i) => (
+                <th key={h} className={`border-b border-n-200 bg-n-25 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-n-500">No SKU sales in this range.</td></tr>}
+            {rows.map((r) => (
+              <tr key={r.sku} className="hover:bg-teal-50/40">
+                <td className="border-b border-n-100 px-3 py-2">
+                  <span className="mono font-medium text-n-800">{r.sku}</span>
+                  {r.productTitle && <span className="ml-2 text-[11.5px] text-n-400">{r.productTitle.length > 40 ? r.productTitle.slice(0, 40) + '…' : r.productTitle}</span>}
+                </td>
+                <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{eur2(incVat ? r.revenueIncVatEur : r.revenueExVatEur)}</td>
+                <td className="mono border-b border-n-100 px-3 py-2 text-right font-medium" style={{ color: r.profitEur >= 0 ? PROFIT_TEAL : 'var(--danger)' }}>{eur2(r.profitEur)}</td>
+                <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{pctStr(r.profitPct)}</td>
+                <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{eur2(r.feesEur)}</td>
+                <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{eur2(r.avgFeeEur)}</td>
+                <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{num(r.units)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

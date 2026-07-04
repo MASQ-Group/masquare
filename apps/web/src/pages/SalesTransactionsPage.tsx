@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, Columns3, Pencil, Plus, Search, Trash2, Unlock } from 'lucide-react';
+import { ArrowDown, ArrowUp, Columns3, Lock, Pencil, Plus, RotateCcw, Save, Search, Trash2, Unlock } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
-import { profitTiersApi, salesChannelsApi, salesTransactionsApi, type ProfitTier, type SalesTransaction } from '../lib/api';
+import { profitTiersApi, salesChannelsApi, salesTransactionsApi, settingsApi, type ProfitTier, type SalesTransaction } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate, formatMoney } from '../lib/format';
 import { SalesTransactionModal } from '../components/sales/SalesTransactionModal';
@@ -37,7 +37,9 @@ const ALL_COLUMNS: { key: ColKey; label: string; standard: boolean; right?: bool
   { key: 'weight', label: 'Weight (kg)', standard: false, right: true },
   { key: 'fx', label: 'FX rate', standard: false, right: true },
 ];
-const STANDARD_COLS = ALL_COLUMNS.filter((c) => c.standard).map((c) => c.key);
+const ALL_KEYS = ALL_COLUMNS.map((c) => c.key);
+const DEFAULT_STANDARD = ALL_COLUMNS.filter((c) => c.standard).map((c) => c.key);
+const orderedFrom = (set: Set<ColKey>) => ALL_COLUMNS.filter((c) => set.has(c.key)).map((c) => c.key);
 
 const money = (amount: number | null | undefined, currency: string) => formatMoney({ amount: amount ?? null, currency });
 
@@ -64,8 +66,27 @@ export function SalesTransactionsPage() {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterTier, setFilterTier] = useState('');
   const [eurOnly, setEurOnly] = useState(false);
-  const [cols, setCols] = useState<Set<ColKey>>(new Set(STANDARD_COLS));
+  const [cols, setCols] = useState<Set<ColKey>>(new Set(DEFAULT_STANDARD));
+  const [colsCustomized, setColsCustomized] = useState(false);
   const [colsOpen, setColsOpen] = useState(false);
+
+  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: () => settingsApi.get() });
+  // Admin-defined standard column set (falls back to the built-in default).
+  const standardCols = useMemo<ColKey[]>(() => {
+    const raw = settings?.salesTxStandardColumns;
+    const valid = raw?.filter((k): k is ColKey => (ALL_KEYS as string[]).includes(k)) ?? [];
+    return valid.length ? valid : DEFAULT_STANDARD;
+  }, [settings]);
+  // Apply the standard set as the default until the user customises columns this session.
+  useEffect(() => { if (!colsCustomized) setCols(new Set(standardCols)); }, [standardCols, colsCustomized]);
+
+  const toggleCol = (key: ColKey) => { setCols((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; }); setColsCustomized(true); };
+  const resetCols = () => { setCols(new Set(standardCols)); setColsCustomized(false); };
+  const saveStandard = useMutation({
+    mutationFn: () => settingsApi.update({ salesTxStandardColumns: orderedFrom(cols) }),
+    onSuccess: () => { toast.success('Standard view saved for everyone'); setColsCustomized(false); qc.invalidateQueries({ queryKey: ['settings'] }); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save standard view'),
+  });
 
   const { data: channels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
   const { data: profitTiers = [] } = useQuery({ queryKey: ['profit-tiers'], queryFn: () => profitTiersApi.list() });
@@ -91,6 +112,9 @@ export function SalesTransactionsPage() {
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / 50));
   const visible = useMemo(() => ALL_COLUMNS.filter((c) => cols.has(c.key)), [cols]);
+  // Use text chips for Status/Shipment while the column set is compact enough to stay on
+  // one line; switch to space-saving circles once more columns are shown.
+  const chipMode: 'text' | 'circle' = visible.length <= 9 ? 'text' : 'circle';
 
   const netCell = (t: SalesTransaction) => {
     if (eurOnly) return t.exchangeRate != null ? money(t.totals.netSales * t.exchangeRate, 'EUR') : '—';
@@ -119,20 +143,20 @@ export function SalesTransactionsPage() {
       case 'ref': return <span className="font-medium text-n-800">{t.transactionRef}</span>;
       case 'status': return (
         <span className="inline-flex items-center gap-1.5">
-          <span
-            className={`inline-block h-2.5 w-2.5 rounded-full ${t.status === 'submitted' ? 'bg-teal-500' : 'bg-orange-400'}`}
-            title={t.status === 'submitted' ? 'Submitted' : 'Draft'}
-          />
+          {chipMode === 'text'
+            ? (t.status === 'submitted'
+                ? <span className="tag inline-flex items-center gap-1 whitespace-nowrap border border-teal-100 bg-teal-50 text-teal-700"><Lock size={11} /> Submitted</span>
+                : <span className="tag whitespace-nowrap border border-orange-100 bg-orange-50 text-orange-700">Draft</span>)
+            : <span className={`inline-block h-2.5 w-2.5 rounded-full ${t.status === 'submitted' ? 'bg-teal-500' : 'bg-orange-400'}`} title={t.status === 'submitted' ? 'Submitted' : 'Draft'} />}
           {t.unlockedForEdit && <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" title="Unlocked for edit" />}
           {t.hasPendingUnlock && <span className="inline-block h-1.5 w-1.5 rounded-full bg-orange-500" title="Unlock request pending" />}
         </span>
       );
-      case 'shipped': return (
-        <span
-          className={`inline-block h-2.5 w-2.5 rounded-full ${t.shipped ? 'bg-teal-500' : 'bg-n-300'}`}
-          title={t.shipped ? 'Shipped' : 'Not shipped'}
-        />
-      );
+      case 'shipped': return chipMode === 'text'
+        ? (t.shipped
+            ? <span className="tag whitespace-nowrap border border-teal-100 bg-teal-50 text-teal-700">Shipped</span>
+            : <span className="tag whitespace-nowrap border border-n-200 bg-n-100 text-n-500">Not shipped</span>)
+        : <span className={`inline-block h-2.5 w-2.5 rounded-full ${t.shipped ? 'bg-teal-500' : 'bg-n-300'}`} title={t.shipped ? 'Shipped' : 'Not shipped'} />;
       case 'channel': return t.salesChannel?.name ?? '—';
       case 'destination': return t.destinationCountry?.name ?? '—';
       case 'skus': return (
@@ -202,14 +226,23 @@ export function SalesTransactionsPage() {
             <Columns3 size={15} className="opacity-60" /> Columns
           </button>
           {colsOpen && (
-            <div className="absolute right-0 top-11 z-40 max-h-80 w-56 overflow-auto rounded-lg border border-n-200 bg-n-0 p-2 shadow-lg" onMouseLeave={() => setColsOpen(false)}>
+            <div className="absolute right-0 top-11 z-40 max-h-[26rem] w-60 overflow-auto rounded-lg border border-n-200 bg-n-0 p-2 shadow-lg" onMouseLeave={() => setColsOpen(false)}>
               {ALL_COLUMNS.map((c) => (
                 <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-n-50">
-                  <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={cols.has(c.key)} onChange={() => setCols((s) => { const n = new Set(s); n.has(c.key) ? n.delete(c.key) : n.add(c.key); return n; })} />
+                  <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={cols.has(c.key)} onChange={() => toggleCol(c.key)} />
                   <span className="text-[13px] text-n-700">{c.label}</span>
                 </label>
               ))}
-              <button className="mt-1 w-full rounded-md px-2 py-1.5 text-left text-[12px] font-medium text-teal-700 hover:bg-teal-50" onClick={() => setCols(new Set(STANDARD_COLS))}>Reset to standard</button>
+              <button className="mt-1 w-full rounded-md px-2 py-1.5 text-left text-[12px] font-medium text-teal-700 hover:bg-teal-50" onClick={resetCols}>Reset to standard view</button>
+              {isAdmin && (
+                <button
+                  className="mt-0.5 flex w-full items-center gap-1.5 rounded-md border-t border-n-100 px-2 py-1.5 text-left text-[12px] font-semibold text-n-700 hover:bg-n-50 disabled:opacity-50"
+                  disabled={saveStandard.isPending}
+                  onClick={() => saveStandard.mutate()}
+                >
+                  <Save size={13} className="opacity-70" /> {saveStandard.isPending ? 'Saving…' : 'Save current as standard view'}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -253,8 +286,16 @@ export function SalesTransactionsPage() {
                   {visible.map((c) => <td key={c.key} className={cellClass(c.key, c.right)}>{renderCell(c.key, t)}</td>)}
                   <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-1">
-                      <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" onClick={() => setEditing(t)}><Pencil size={15} /></button>
-                      <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" onClick={() => confirm(`Remove transaction ${t.transactionRef}?`) && del.mutate(t.id)}><Trash2 size={15} /></button>
+                      <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Edit transaction" onClick={() => setEditing(t)}><Pencil size={15} /></button>
+                      <button
+                        className={`relative grid h-8 w-8 place-items-center rounded-md hover:bg-n-100 hover:text-n-800 ${t.resolution !== 'none' ? 'text-orange-600' : 'text-n-500'}`}
+                        title={t.resolution === 'none' ? 'Resolve / return' : 'Edit resolution'}
+                        onClick={() => setResolving(t)}
+                      >
+                        <RotateCcw size={15} />
+                        {t.resolution !== 'none' && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-orange-500" />}
+                      </button>
+                      <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" title="Remove" onClick={() => confirm(`Remove transaction ${t.transactionRef}?`) && del.mutate(t.id)}><Trash2 size={15} /></button>
                     </div>
                   </td>
                 </tr>

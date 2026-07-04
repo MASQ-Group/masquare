@@ -167,6 +167,7 @@ export interface PlatformSettings {
   id: string;
   measurementSystem: 'metric' | 'imperial';
   dateFormat: 'ddmmyyyy' | 'mmddyyyy' | 'yyyymmdd';
+  salesTxStandardColumns: string[] | null;
 }
 
 const crud = <T,>(path: string) => ({
@@ -426,6 +427,12 @@ export interface AnalyticsChannelRow {
   profitEur: number; feesEur: number; orders: number; units: number; profitPct: number | null;
   prevRevenueExVatEur: number | null; prevProfitEur: number | null;
 }
+export interface AnalyticsCountryRow {
+  countryId: string | null; countryName: string;
+  revenueExVatEur: number; revenueIncVatEur: number; profitEur: number; feesEur: number;
+  orders: number; units: number; profitPct: number | null;
+  prevRevenueExVatEur: number | null; prevProfitEur: number | null;
+}
 export interface AnalyticsSkuRow {
   sku: string; productTitle: string | null; revenueExVatEur: number; revenueIncVatEur: number;
   profitEur: number; feesEur: number; units: number; lines: number; profitPct: number | null; avgFeeEur: number;
@@ -437,13 +444,16 @@ export interface AnalyticsReport {
   totals: AnalyticsTotals;
   compareTotals: AnalyticsTotals | null;
   byChannel: AnalyticsChannelRow[];
+  byCountry: AnalyticsCountryRow[];
   bySku: AnalyticsSkuRow[];
+  bySkuByCountry: AnalyticsSkuRow[];
   channels: { id: string; name: string }[];
+  countries: { id: string; name: string }[];
   trend: AnalyticsTrendPoint[];
 }
 
 export const analyticsApi = {
-  sales: (params: { from: string; to: string; compareFrom?: string; compareTo?: string; companyId?: string; skuChannelId?: string }) =>
+  sales: (params: { from: string; to: string; compareFrom?: string; compareTo?: string; companyId?: string; skuChannelId?: string; skuCountryId?: string }) =>
     api.get<AnalyticsReport>('/analytics/sales', { params }).then((r) => r.data),
 };
 
