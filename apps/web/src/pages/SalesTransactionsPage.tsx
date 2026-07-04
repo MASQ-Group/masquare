@@ -3,18 +3,20 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Columns3, Lock, Pencil, Plus, Search, Trash2, Unlock } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
-import { salesChannelsApi, salesTransactionsApi, type SalesTransaction } from '../lib/api';
+import { profitTiersApi, salesChannelsApi, salesTransactionsApi, type ProfitTier, type SalesTransaction } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate, formatMoney } from '../lib/format';
 import { SalesTransactionModal } from '../components/sales/SalesTransactionModal';
 
 type ColKey =
   | 'date' | 'ref' | 'status' | 'channel' | 'destination' | 'skus' | 'qty'
-  | 'netSales' | 'salesFee' | 'feePct' | 'estShip' | 'profit'
+  | 'netSales' | 'salesFee' | 'feePct' | 'estShip' | 'profit' | 'profitPct'
   | 'vatPct' | 'weight' | 'fx';
 
-const ALL_COLUMNS: { key: ColKey; label: string; standard: boolean; right?: boolean }[] = [
-  { key: 'date', label: 'Date', standard: true },
+type SortKey = 'date' | 'profit' | 'profitPct';
+
+const ALL_COLUMNS: { key: ColKey; label: string; standard: boolean; right?: boolean; sort?: SortKey }[] = [
+  { key: 'date', label: 'Date', standard: true, sort: 'date' },
   { key: 'ref', label: 'Transaction ID', standard: true },
   { key: 'status', label: 'Status', standard: true },
   { key: 'channel', label: 'Sales channel', standard: true },
@@ -25,7 +27,8 @@ const ALL_COLUMNS: { key: ColKey; label: string; standard: boolean; right?: bool
   { key: 'salesFee', label: 'Sales fee', standard: true, right: true },
   { key: 'feePct', label: 'Fee %', standard: true, right: true },
   { key: 'estShip', label: 'Est. ship', standard: true, right: true },
-  { key: 'profit', label: 'Profit (€)', standard: true, right: true },
+  { key: 'profit', label: 'Profit (€)', standard: true, right: true, sort: 'profit' },
+  { key: 'profitPct', label: 'Profit (%)', standard: true, right: true, sort: 'profitPct' },
   { key: 'vatPct', label: 'Dest. VAT %', standard: false, right: true },
   { key: 'weight', label: 'Weight (kg)', standard: false, right: true },
   { key: 'fx', label: 'FX rate', standard: false, right: true },
@@ -45,6 +48,7 @@ export function SalesTransactionsPage() {
   const [reqOpen, setReqOpen] = useState(false);
 
   // view controls
+  const [sortBy, setSortBy] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [filterChannel, setFilterChannel] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -53,6 +57,7 @@ export function SalesTransactionsPage() {
   const [colsOpen, setColsOpen] = useState(false);
 
   const { data: channels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
+  const { data: profitTiers = [] } = useQuery({ queryKey: ['profit-tiers'], queryFn: () => profitTiersApi.list() });
   const { data: unlockReqs = [] } = useQuery({
     queryKey: ['unlock-requests'], queryFn: () => salesTransactionsApi.listUnlockRequests(),
     enabled: isAdmin, refetchInterval: isAdmin ? 15000 : false,
@@ -64,7 +69,7 @@ export function SalesTransactionsPage() {
 
   useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
 
-  const params = { q: q || undefined, companyId: activeCompanyId || undefined, salesChannelId: filterChannel || undefined, status: filterStatus || undefined, sortDir, page, pageSize: 50 };
+  const params = { q: q || undefined, companyId: activeCompanyId || undefined, salesChannelId: filterChannel || undefined, status: filterStatus || undefined, sortBy, sortDir, page, pageSize: 50 };
   const { data, isLoading } = useQuery({ queryKey: ['sales-transactions', params], queryFn: () => salesTransactionsApi.list(params) });
   const del = useMutation({
     mutationFn: (id: string) => salesTransactionsApi.remove(id),
@@ -83,6 +88,18 @@ export function SalesTransactionsPage() {
   const feeCell = (t: SalesTransaction) => {
     if (eurOnly) { const r = t.feeExchangeRate ?? t.exchangeRate; return r != null ? money(t.totals.fee * r, 'EUR') : '—'; }
     return money(t.totals.fee, t.feeCurrency ?? t.currency ?? 'EUR');
+  };
+
+  // Profit (%) chip, coloured by the matching profit tier from Global Settings.
+  const profitPctChip = (t: SalesTransaction) => {
+    if (t.profitPct == null) return '—';
+    const tier = profitTiers.find((x: ProfitTier) => t.profitPct! >= x.fromPct && t.profitPct! <= x.toPct);
+    const style = tier ? { background: tier.bgColor, color: tier.fontColor } : undefined;
+    return (
+      <span className={`tag mono ${tier ? '' : 'border border-n-200 bg-n-100 text-n-600'}`} style={style} title={tier?.name ?? undefined}>
+        {t.profitPct.toFixed(2)}%
+      </span>
+    );
   };
 
   const renderCell = (key: ColKey, t: SalesTransaction) => {
@@ -111,7 +128,8 @@ export function SalesTransactionsPage() {
       case 'salesFee': return feeCell(t);
       case 'feePct': return t.salesFeePct != null ? `${t.salesFeePct}%` : '—';
       case 'estShip': return t.estimatedShippingCost != null ? money(t.estimatedShippingCost, 'EUR') : '—';
-      case 'profit': return t.profit != null ? <span className={t.profit >= 0 ? 'font-medium text-success' : 'font-medium text-danger'}>{money(t.profit, 'EUR')}</span> : '—';
+      case 'profit': return t.profit != null ? <span className="font-medium" style={{ color: t.profit >= 0 ? 'var(--green-500)' : 'var(--danger)' }}>{money(t.profit, 'EUR')}</span> : '—';
+      case 'profitPct': return profitPctChip(t);
       case 'vatPct': return t.destinationCountryVatPct != null ? `${t.destinationCountryVatPct}%` : '—';
       case 'weight': return t.overallPackageWeight != null ? t.overallPackageWeight : '—';
       case 'fx': return t.exchangeRate != null ? t.exchangeRate : '—';
@@ -119,7 +137,7 @@ export function SalesTransactionsPage() {
   };
 
   const cellClass = (key: ColKey, right?: boolean) => {
-    const mono = ['date', 'ref', 'qty', 'netSales', 'salesFee', 'feePct', 'estShip', 'profit', 'vatPct', 'weight', 'fx'].includes(key);
+    const mono = ['date', 'ref', 'qty', 'netSales', 'salesFee', 'feePct', 'estShip', 'profit', 'profitPct', 'vatPct', 'weight', 'fx'].includes(key);
     return `border-b border-n-100 px-4 py-2.5 text-[13px] text-n-700 ${mono ? 'mono' : ''} ${right ? 'text-right' : ''}`;
   };
 
@@ -184,9 +202,16 @@ export function SalesTransactionsPage() {
               <tr>
                 {visible.map((c) => (
                   <th key={c.key} className={`border-b border-n-200 bg-n-25 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap ${c.right ? 'text-right' : 'text-left'}`}>
-                    {c.key === 'date' ? (
-                      <button className="inline-flex items-center gap-1 uppercase text-n-500 hover:text-n-800" onClick={() => setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))}>
-                        {c.label} {sortDir === 'desc' ? <ArrowDown size={12} /> : <ArrowUp size={12} />}
+                    {c.sort ? (
+                      <button
+                        className={`inline-flex items-center gap-1 uppercase hover:text-n-800 ${sortBy === c.sort ? 'text-n-800' : 'text-n-500'}`}
+                        onClick={() => {
+                          if (sortBy === c.sort) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+                          else { setSortBy(c.sort!); setSortDir('desc'); }
+                          setPage(1);
+                        }}
+                      >
+                        {c.label} {sortBy === c.sort && (sortDir === 'desc' ? <ArrowDown size={12} /> : <ArrowUp size={12} />)}
                       </button>
                     ) : c.label}
                   </th>

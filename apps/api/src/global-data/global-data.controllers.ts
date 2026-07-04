@@ -5,9 +5,11 @@ import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { CountriesService } from './countries.service';
 import { ShippingServicesService } from './shipping-services.service';
 import { SalesChannelsService } from './sales-channels.service';
+import { ProfitTiersService } from './profit-tiers.service';
 import { CreateCountryDto, SetCountryZoneDto, UpdateCountryDto } from './dto/country.dto';
 import { CreateShippingServiceDto, UpdateShippingServiceDto } from './dto/shipping.dto';
 import { CreateSalesChannelDto, UpdateSalesChannelDto } from './dto/sales-channel.dto';
+import { SaveProfitTiersDto } from './dto/profit-tier.dto';
 
 @ApiTags('global-data')
 @ApiBearerAuth()
@@ -45,4 +47,14 @@ export class SalesChannelsController {
   @Post() create(@Body() dto: CreateSalesChannelDto, @CurrentUser() u: AuthUser) { return this.svc.create(dto, u.sub); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateSalesChannelDto, @CurrentUser() u: AuthUser) { return this.svc.update(id, dto, u.sub); }
   @Delete(':id') remove(@Param('id') id: string) { return this.svc.remove(id); }
+}
+
+@ApiTags('global-data')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
+@Controller('profit-tiers')
+export class ProfitTiersController {
+  constructor(private readonly svc: ProfitTiersService) {}
+  @Get() list() { return this.svc.list(); }
+  @Put() saveAll(@Body() dto: SaveProfitTiersDto) { return this.svc.saveAll(dto); }
 }

@@ -402,6 +402,23 @@ export const salesChannelsApi = {
   remove: (id: string) => api.delete(`/sales-channels/${id}`).then((r) => r.data),
 };
 
+// ---- Profit tiers (colour bands for the Profit % chip) ----
+export interface ProfitTier {
+  id: string;
+  name: string | null;
+  fromPct: number;
+  toPct: number;
+  bgColor: string;
+  fontColor: string;
+  sortOrder: number;
+}
+
+export const profitTiersApi = {
+  list: () => api.get<ProfitTier[]>('/profit-tiers').then((r) => r.data),
+  saveAll: (tiers: { name?: string | null; fromPct: number; toPct: number; bgColor: string; fontColor: string }[]) =>
+    api.put<ProfitTier[]>('/profit-tiers', { tiers }).then((r) => r.data),
+};
+
 // ---- Sales Transactions ----
 export interface SalesTransactionItem {
   id?: string;
@@ -438,6 +455,7 @@ export interface SalesTransaction {
   overallPackageWeight: number | null;
   estimatedShippingCost: number | null;
   profit: number | null;
+  profitPct: number | null;
   items: SalesTransactionItem[];
   itemCount: number;
   totals: { quantity: number; netSales: number; vat: number; shipping: number; shippingVat: number; fee: number };
@@ -446,7 +464,7 @@ export interface SalesTransactionListResponse { items: SalesTransaction[]; total
 export interface UnlockRequest { id: string; transactionId: string; transactionRef: string; requestedBy: string; createdAt: string }
 
 export const salesTransactionsApi = {
-  list: (params: { q?: string; companyId?: string; salesChannelId?: string; status?: string; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
+  list: (params: { q?: string; companyId?: string; salesChannelId?: string; status?: string; sortBy?: 'date' | 'profit' | 'profitPct'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<SalesTransactionListResponse>('/sales-transactions', { params }).then((r) => r.data),
   get: (id: string) => api.get<SalesTransaction>(`/sales-transactions/${id}`).then((r) => r.data),
   create: (body: any) => api.post<SalesTransaction>('/sales-transactions', body).then((r) => r.data),

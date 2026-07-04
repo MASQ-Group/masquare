@@ -9,6 +9,7 @@ export interface TxQuery {
   companyId?: string;
   salesChannelId?: string;
   status?: string;
+  sortBy?: 'date' | 'profit' | 'profitPct';
   sortDir?: 'asc' | 'desc';
   page?: number;
   pageSize?: number;
@@ -108,6 +109,10 @@ export class SalesTransactionsService {
       profit = round(revenue - cost, 2);
     }
 
+    // Profit (%): profit € / total transaction amount in € (net + VAT + shipping + shipping VAT).
+    const totalEur = fxRate != null ? feeBase * fxRate : null;
+    const profitPct = profit != null && totalEur != null && totalEur > 0 ? round((profit / totalEur) * 100, 2) : null;
+
     return {
       id: t.id,
       date: t.date,
@@ -132,6 +137,7 @@ export class SalesTransactionsService {
       overallPackageWeight,
       estimatedShippingCost,
       profit,
+      profitPct,
       items: items.map((it: any) => ({
         id: it.id,
         productId: it.productId,
@@ -165,9 +171,28 @@ export class SalesTransactionsService {
           }
         : {}),
     };
+    const dir = query.sortDir === 'asc' ? 1 : -1;
+    const sortBy = query.sortBy === 'profit' || query.sortBy === 'profitPct' ? query.sortBy : 'date';
+
+    // Profit / profit % are computed fields, so sorting by them happens in memory
+    // over the whole filtered set before paginating.
+    if (sortBy !== 'date') {
+      const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: 'desc' } });
+      const serviceMap = await this.buildServiceMap();
+      const all = rows.map((r) => this.serialize(r, serviceMap));
+      all.sort((a: any, b: any) => {
+        const av = a[sortBy]; const bv = b[sortBy];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1; // nulls last regardless of direction
+        if (bv == null) return -1;
+        return (av - bv) * dir;
+      });
+      return { items: all.slice((page - 1) * pageSize, page * pageSize), total: all.length, page, pageSize };
+    }
+
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.salesTransaction.count({ where }),
-      this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: query.sortDir === 'asc' ? 'asc' : 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+      this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: dir === 1 ? 'asc' : 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
     ]);
     const serviceMap = await this.buildServiceMap();
     return { items: rows.map((r) => this.serialize(r, serviceMap)), total, page, pageSize };
