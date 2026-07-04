@@ -12,6 +12,7 @@ import { ProductsModule } from './products/products.module';
 import { SalesTransactionsModule } from './sales-transactions/sales-transactions.module';
 import { ShipmentsModule } from './shipments/shipments.module';
 import { SearchModule } from './search/search.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { CustomsFxModule } from './customs-fx/customs-fx.module';
 import { StorageModule } from './storage/storage.module';
 
@@ -31,6 +32,7 @@ import { StorageModule } from './storage/storage.module';
     SalesTransactionsModule,
     ShipmentsModule,
     SearchModule,
+    AnalyticsModule,
     CustomsFxModule,
   ],
 })

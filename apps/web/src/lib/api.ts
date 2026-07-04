@@ -414,6 +414,39 @@ export const searchApi = {
     api.get<SearchResponse>('/search', { params: { q, scope } }).then((r) => r.data),
 };
 
+// ---- Sales analytics / reporting ----
+export interface AnalyticsTotals {
+  revenueExVatEur: number; revenueIncVatEur: number; profitEur: number; feesEur: number;
+  orders: number; units: number; shippingEur: number; dutyEur: number; refundEur: number;
+  profitPct: number | null; avgOrderValueEur: number;
+}
+export interface AnalyticsChannelRow {
+  channelId: string | null; channelName: string; currency: string | null;
+  revenueExVatNative: number; revenueIncVatNative: number; revenueExVatEur: number; revenueIncVatEur: number;
+  profitEur: number; feesEur: number; orders: number; units: number; profitPct: number | null;
+  prevRevenueExVatEur: number | null; prevProfitEur: number | null;
+}
+export interface AnalyticsSkuRow {
+  sku: string; productTitle: string | null; revenueExVatEur: number; revenueIncVatEur: number;
+  profitEur: number; feesEur: number; units: number; lines: number; profitPct: number | null; avgFeeEur: number;
+}
+export interface AnalyticsTrendPoint { bucket: string; revenueExVatEur: number; profitEur: number; orders: number }
+export interface AnalyticsReport {
+  range: { from: string; to: string };
+  compareRange: { from: string; to: string } | null;
+  totals: AnalyticsTotals;
+  compareTotals: AnalyticsTotals | null;
+  byChannel: AnalyticsChannelRow[];
+  bySku: AnalyticsSkuRow[];
+  channels: { id: string; name: string }[];
+  trend: AnalyticsTrendPoint[];
+}
+
+export const analyticsApi = {
+  sales: (params: { from: string; to: string; compareFrom?: string; compareTo?: string; companyId?: string; skuChannelId?: string }) =>
+    api.get<AnalyticsReport>('/analytics/sales', { params }).then((r) => r.data),
+};
+
 // ---- Customs FX (Cyprus Customs monthly exchange rates) ----
 export interface CustomsFxCurrency { code: string; name: string | null }
 export interface CustomsFxMonth { month: number; rates: Record<string, number> }

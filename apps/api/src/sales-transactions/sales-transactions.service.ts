@@ -23,7 +23,7 @@ const include = {
   items: {
     where: { deletedAt: null },
     orderBy: { createdAt: 'asc' as const },
-    include: { product: { select: { packageWeightKg: true, productWeightKg: true, packageLengthCm: true, packageWidthCm: true, packageHeightCm: true, purchaseCostAmount: true, purchaseCostCurrency: true } } },
+    include: { product: { select: { title: true, packageWeightKg: true, productWeightKg: true, packageLengthCm: true, packageWidthCm: true, packageHeightCm: true, purchaseCostAmount: true, purchaseCostCurrency: true } } },
   },
   unlockRequests: { where: { status: 'pending' }, orderBy: { createdAt: 'desc' as const } },
   shipments: {
@@ -148,6 +148,27 @@ export class SalesTransactionsService {
     const totalEur = fxRate != null ? feeBase * fxRate : null;
     const profitPct = profit != null && totalEur != null && totalEur > 0 ? round((profit / totalEur) * 100, 2) : null;
 
+    // EUR revenue/fee figures for analytics (revenue is gross of refunds; profit is net).
+    const revenueExVatEur = fxRate != null ? round((totals.netSales + totals.shipping) * fxRate, 2) : null;
+    const revenueIncVatEur = fxRate != null ? round(feeBase * fxRate, 2) : null;
+    const feesEur = fxRate != null ? round(totals.fee * (feeFx ?? fxRate) * (t.feeRefunded ? 0 : 1), 2) : null;
+
+    // Per-item (SKU) economics: transaction-level shipping/duty/refund are allocated to
+    // items by revenue share so per-SKU figures sum back to the transaction totals.
+    const totalRevExVatNative = items.reduce((s: number, it: any) => s + n(it.netSalesAmount) + n(it.shippingAmount), 0);
+    const sharedCostEur = (shippingApplies ? effectiveShippingCost ?? 0 : 0) + returnShippingCost + dutyImportCost;
+    const itemEcon = items.map((it: any) => {
+      const revNative = n(it.netSalesAmount) + n(it.shippingAmount);
+      const w = totalRevExVatNative > 0 ? revNative / totalRevExVatNative : items.length ? 1 / items.length : 0;
+      const revExVatEur = fxRate != null ? round(revNative * fxRate, 2) : null;
+      const revIncVatEur = fxRate != null ? round((n(it.netSalesAmount) + n(it.vatAmount) + n(it.shippingAmount) + n(it.shippingAmountVat)) * fxRate, 2) : null;
+      const fEur = fxRate != null ? round((t.feeRefunded ? 0 : n(it.salesChannelSalesFeeAmount)) * (feeFx ?? fxRate), 2) : null;
+      const unitCost = it.product?.purchaseCostAmount != null ? Number(it.product.purchaseCostAmount) : 0;
+      const cEur = cogsReversed ? 0 : round(unitCost * (it.quantity ?? 1), 2);
+      const pEur = fxRate != null ? round((revExVatEur ?? 0) - refundEur * w - cEur - (fEur ?? 0) - sharedCostEur * w, 2) : null;
+      return { revExVatEur, revIncVatEur, fEur, cEur, pEur };
+    });
+
     return {
       id: t.id,
       date: t.date,
@@ -196,9 +217,13 @@ export class SalesTransactionsService {
       })),
       profit,
       profitPct,
-      items: items.map((it: any) => ({
+      revenueExVatEur,
+      revenueIncVatEur,
+      feesEur,
+      items: items.map((it: any, idx: number) => ({
         id: it.id,
         productId: it.productId,
+        productTitle: it.product?.title ?? null,
         sku: it.sku,
         quantity: it.quantity,
         netSalesAmount: it.netSalesAmount,
@@ -206,6 +231,11 @@ export class SalesTransactionsService {
         shippingAmount: it.shippingAmount,
         shippingAmountVat: it.shippingAmountVat,
         salesChannelSalesFeeAmount: it.salesChannelSalesFeeAmount,
+        revenueExVatEur: itemEcon[idx].revExVatEur,
+        revenueIncVatEur: itemEcon[idx].revIncVatEur,
+        feesEur: itemEcon[idx].fEur,
+        cogsEur: itemEcon[idx].cEur,
+        profitEur: itemEcon[idx].pEur,
       })),
       itemCount: items.length,
       totals,
@@ -269,6 +299,17 @@ export class SalesTransactionsService {
     if (!t) throw new NotFoundException('Sales transaction not found');
     const serviceMap = await this.buildServiceMap();
     return this.serialize(t, serviceMap);
+  }
+
+  /** All serialized transactions in a date range (for analytics/reporting). */
+  async allInRange(from: Date, to: Date, companyId?: string) {
+    const rows = await this.prisma.salesTransaction.findMany({
+      where: { deletedAt: null, date: { gte: from, lte: to }, ...(companyId ? { companyId } : {}) },
+      include,
+      orderBy: { date: 'asc' },
+    });
+    const serviceMap = await this.buildServiceMap();
+    return rows.map((r) => this.serialize(r, serviceMap));
   }
 
   /** Shipping services with zones (countries + rates) for shipping-cost estimation. */
