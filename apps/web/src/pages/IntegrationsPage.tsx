@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Download, ListChecks, Pencil, Plug, Plus, RefreshCw, ShieldCheck, Trash2, XCircle } from 'lucide-react';
+import { CalendarRange, CheckCircle2, Download, ListChecks, Pencil, Plug, Plus, RefreshCw, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { integrationsApi, type ChannelIntegration } from '../lib/api';
 import { IntegrationModal } from '../components/integrations/IntegrationModal';
 import { MappingVerifyModal } from '../components/integrations/MappingVerifyModal';
+import { BackfillModal } from '../components/integrations/BackfillModal';
 
 const fmtDateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
@@ -20,6 +21,7 @@ export function IntegrationsPage() {
   const qc = useQueryClient();
   const [modal, setModal] = useState<ChannelIntegration | null | undefined>(undefined); // null = new, obj = edit
   const [mapVerify, setMapVerify] = useState<ChannelIntegration | undefined>(undefined);
+  const [backfill, setBackfill] = useState<ChannelIntegration | undefined>(undefined);
 
   const { data: integrations = [], isLoading } = useQuery({ queryKey: ['integrations'], queryFn: () => integrationsApi.list() });
   const del = useMutation({
@@ -125,6 +127,14 @@ export function IntegrationsPage() {
                 >
                   <Download size={14} className={sync.isPending && syncingId === i.id ? 'animate-pulse' : ''} /> {sync.isPending && syncingId === i.id ? 'Syncing…' : 'Sync now'}
                 </button>
+                <button
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-medium text-n-700 hover:border-n-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!canSync(i)}
+                  title={canSync(i) ? 'Import all orders in a past date range' : 'Verify the mapping and set the target channel/company first'}
+                  onClick={() => setBackfill(i)}
+                >
+                  <CalendarRange size={14} /> Pull older orders
+                </button>
                 {i.lastSyncStatus === 'ok' && <span className="text-n-500">{i.lastSyncMessage}</span>}
                 {i.lastSyncStatus === 'error' && <span className="text-danger" title={i.lastSyncMessage ?? undefined}>Last sync failed</span>}
                 <span className="ml-auto text-n-400">{i.lastSyncRunAt ? `synced ${fmtDateTime(i.lastSyncRunAt)}` : 'never synced'}</span>
@@ -149,6 +159,13 @@ export function IntegrationsPage() {
           integration={mapVerify}
           onClose={() => setMapVerify(undefined)}
           onVerified={() => { setMapVerify(undefined); invalidate(); }}
+        />
+      )}
+      {backfill && (
+        <BackfillModal
+          integration={backfill}
+          onClose={() => setBackfill(undefined)}
+          onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }}
         />
       )}
     </div>

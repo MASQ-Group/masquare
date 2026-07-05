@@ -353,7 +353,7 @@ export class IntegrationsService {
   /** Import OnBuy orders into sales transactions. Incremental after the first run;
    *  imports as drafts, deduped by (integration + order id), never touching manual
    *  entries. Gated on a verified mapping + active status + configured target. */
-  async syncOrders(id: string, trigger: 'manual' | 'schedule', actorId?: string) {
+  async syncOrders(id: string, trigger: 'manual' | 'schedule', actorId?: string, range?: { from?: string; to?: string }) {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
     if (!row) throw new NotFoundException('Integration not found');
     if (row.channelType !== 'onbuy') throw new BadRequestException('Order import currently supports OnBuy only.');
@@ -361,17 +361,22 @@ export class IntegrationsService {
     if (!row.mappingVerifiedAt) throw new BadRequestException('Confirm the field mapping before importing.');
     if (!row.targetSalesChannelId || !row.targetCompanyId) throw new BadRequestException('Set the target sales channel and company in the integration settings first.');
 
-    // Cutoff: first run backfills `backfillDays`; later runs pull since the last
-    // imported order date, minus a small buffer to catch updates.
-    const cutoff = row.lastSyncedAt
-      ? new Date(row.lastSyncedAt.getTime() - 36 * 3600 * 1000)
-      : new Date(Date.now() - (row.backfillDays ?? 30) * 24 * 3600 * 1000);
+    // An explicit range = a backdated pull (e.g. all of 2026). Otherwise: first
+    // run backfills `backfillDays`; later runs pull since the last imported order
+    // date, minus a small buffer to catch updates.
+    const isRange = !!range?.from;
+    const cutoff = isRange
+      ? new Date(range!.from!)
+      : row.lastSyncedAt
+        ? new Date(row.lastSyncedAt.getTime() - 36 * 3600 * 1000)
+        : new Date(Date.now() - (row.backfillDays ?? 30) * 24 * 3600 * 1000);
+    const upper = isRange ? (range!.to ? new Date(new Date(range!.to).setHours(23, 59, 59, 999)) : new Date()) : null;
 
     const counts = { scanned: 0, created: 0, updated: 0, skipped: 0, cancelled: 0, errors: 0 };
-    let maxDate = row.lastSyncedAt ?? null;
+    let maxDate = row.lastSyncedAt ?? null; // never regresses the high-water mark
     const sysUser = { sub: actorId ?? 'system', email: 'system', isAdmin: true } as any;
     const LIMIT = 100;
-    const MAX_PAGES = 15;
+    const MAX_PAGES = isRange ? 200 : 15; // a range pull may span the full order history
 
     try {
       const config = (row.config ?? {}) as Record<string, string>;
@@ -387,7 +392,7 @@ export class IntegrationsService {
         for (const order of page.orders) {
           counts.scanned++;
           const orderDate = new Date(String(order.date ?? '').replace(' ', 'T'));
-          if (isNaN(orderDate.getTime()) || orderDate < cutoff) { counts.skipped++; continue; }
+          if (isNaN(orderDate.getTime()) || orderDate < cutoff || (upper && orderDate > upper)) { counts.skipped++; continue; }
           const mapped = mapOnBuyOrder(order);
           if (mapped.payload.resolution === 'cancelled') { counts.cancelled++; continue; } // handled in a later refinement
 
@@ -422,9 +427,10 @@ export class IntegrationsService {
         if (page.orders.length < LIMIT) break;
       }
 
-      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled skipped, ${counts.errors} errors`;
+      const rangeNote = isRange ? ` for ${range!.from}…${range!.to ?? 'now'}` : '';
+      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled skipped, ${counts.errors} errors${rangeNote}`;
       await this.prisma.channelIntegration.update({ where: { id }, data: { lastSyncedAt: maxDate ?? undefined, lastSyncRunAt: new Date(), lastSyncStatus: counts.errors ? 'error' : 'ok', lastSyncMessage: message } });
-      await this.audit(id, actorId, 'sync', `${trigger}: ${message}`);
+      await this.audit(id, actorId, isRange ? 'sync.range' : 'sync', `${trigger}: ${message}`);
       return { ok: true, ...counts, message };
     } catch (e: any) {
       const message = (e?.message ?? String(e)).slice(0, 300);

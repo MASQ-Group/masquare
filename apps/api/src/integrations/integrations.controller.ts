@@ -60,8 +60,9 @@ export class IntegrationsController {
   }
 
   @Post(':id/sync')
-  sync(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    return this.svc.syncOrders(id, 'manual', user.sub);
+  sync(@Param('id') id: string, @Body() dto: { from?: string; to?: string }, @CurrentUser() user: AuthUser) {
+    const range = dto?.from ? { from: dto.from, to: dto.to } : undefined;
+    return this.svc.syncOrders(id, 'manual', user.sub, range);
   }
 
   @Delete(':id')

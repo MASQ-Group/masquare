@@ -456,7 +456,7 @@ export const integrationsApi = {
     api.post<ChannelIntegration>('/integrations', body).then((r) => r.data),
   update: (id: string, body: { name?: string; marketplace?: string | null; config?: Record<string, string>; secrets?: Record<string, string>; status?: 'active' | 'disabled'; targetSalesChannelId?: string | null; targetCompanyId?: string | null; autoSyncEnabled?: boolean; backfillDays?: number }) =>
     api.patch<ChannelIntegration>(`/integrations/${id}`, body).then((r) => r.data),
-  sync: (id: string) => api.post<IntegrationSyncResult>(`/integrations/${id}/sync`, {}).then((r) => r.data),
+  sync: (id: string, range?: { from: string; to?: string }) => api.post<IntegrationSyncResult>(`/integrations/${id}/sync`, range ?? {}).then((r) => r.data),
   test: (id: string, mode: 'live' | 'test') => api.post<IntegrationTestResult>(`/integrations/${id}/test`, { mode }).then((r) => r.data),
   previewMapping: (id: string) => api.post<MappingPreview>(`/integrations/${id}/preview-mapping`, {}).then((r) => r.data),
   verifyMapping: (id: string, confirmed: boolean) => api.post<ChannelIntegration>(`/integrations/${id}/verify-mapping`, { confirmed }).then((r) => r.data),
