@@ -4,12 +4,13 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
+import { jwtSecret } from '../config/secrets';
 
 @Module({
   imports: [
     PassportModule,
     JwtModule.register({
-      secret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
+      secret: jwtSecret(),
       signOptions: { expiresIn: process.env.JWT_EXPIRES_IN ?? '8h' },
     }),
   ],

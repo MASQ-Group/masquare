@@ -41,7 +41,7 @@ const OPERATIONS: NavDef[] = [
   { to: '/shipments', label: 'Shipments', icon: Truck },
   { label: 'Inventory', icon: Boxes, badge: 'soon', disabled: true },
   { label: 'Warehouses', icon: Warehouse, badge: 'soon', disabled: true },
-  { label: 'Integrations', icon: Plug, badge: 'soon', disabled: true },
+  { to: '/integrations', label: 'Integrations', icon: Plug, adminOnly: true },
   { to: '/analytics', label: 'Analytics', icon: LineChart },
 ];
 

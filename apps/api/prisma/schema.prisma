@@ -651,6 +651,66 @@ model SalesChannel {
   @@map("sales_channel")
 }
 
+// ===========================================================================
+// Channel Integrations — direct API connections to sales channels (OnBuy first).
+// Non-secret config lives on the integration; API keys/secrets are AES-256-GCM
+// encrypted in integration_secret and NEVER returned through the API.
+// ===========================================================================
+model ChannelIntegration {
+  id             String    @id @default(uuid()) @db.Uuid
+  name           String
+  channelType    String    @map("channel_type") // connector key, e.g. 'onbuy'
+  config         Json      @default("{}") // non-secret fields (url, sellerId, siteIds, …)
+  status         String    @default("active") // active | disabled
+  lastTestedAt   DateTime? @map("last_tested_at")
+  lastTestStatus String?   @map("last_test_status") // ok | fail
+  lastTestMessage String?  @map("last_test_message")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  secrets IntegrationSecret[]
+  audits  IntegrationAudit[]
+
+  @@map("channel_integration")
+}
+
+// One encrypted secret field (e.g. liveSecretKey). Stores only ciphertext + the
+// GCM nonce/tag + key version + last-4 (for masked display). No plaintext, ever.
+model IntegrationSecret {
+  id            String   @id @default(uuid()) @db.Uuid
+  integrationId String   @map("integration_id") @db.Uuid
+  fieldKey      String   @map("field_key")
+  ciphertext    String
+  iv            String
+  authTag       String   @map("auth_tag")
+  keyVersion    Int      @map("key_version")
+  last4         String
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  integration ChannelIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationId, fieldKey])
+  @@map("integration_secret")
+}
+
+// Audit trail for integrations — who did what, when. Never records secret values.
+model IntegrationAudit {
+  id            String   @id @default(uuid()) @db.Uuid
+  integrationId String?  @map("integration_id") @db.Uuid
+  actorId       String?  @map("actor_id") @db.Uuid
+  action        String // create | update | secret.set | secret.replace | delete | test
+  detail        String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  integration ChannelIntegration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+
+  @@map("integration_audit")
+}
+
 // Profit-percentage tiers: colour bands for the Profit (%) chip in the sales
 // transaction list (e.g. Tier 1: 1–10% → green chip). Managed in Global Settings.
 model ProfitTier {
