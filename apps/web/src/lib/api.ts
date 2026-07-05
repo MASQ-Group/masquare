@@ -417,13 +417,16 @@ export const searchApi = {
 
 // ---- Channel integrations (secure third-party API connections) ----
 export interface ConnectorField {
-  key: string; label: string; type: 'text' | 'url' | 'textarea';
+  key: string; label: string; type: 'text' | 'url' | 'textarea' | 'select';
   secret: boolean; required: boolean; group?: string; placeholder?: string; help?: string;
+  options?: { value: string; label: string }[];
 }
-export interface ConnectorDef { type: string; label: string; description: string; testable: boolean; fields: ConnectorField[] }
+export interface ConnectorMarketplace { id: string; label: string; meta?: Record<string, string> }
+export interface ConnectorDef { type: string; label: string; description: string; testable: boolean; marketplaces: ConnectorMarketplace[]; fields: ConnectorField[] }
 export interface IntegrationSecretField { fieldKey: string; set: boolean; last4: string | null }
 export interface ChannelIntegration {
   id: string; name: string; channelType: string; connectorLabel: string;
+  marketplace: string | null; marketplaceLabel: string | null;
   config: Record<string, string>; status: 'active' | 'disabled';
   lastTestedAt: string | null; lastTestStatus: 'ok' | 'fail' | null; lastTestMessage: string | null;
   secretFields: IntegrationSecretField[]; createdAt: string;
@@ -434,9 +437,9 @@ export const integrationsApi = {
   connectors: () => api.get<ConnectorDef[]>('/integrations/connectors').then((r) => r.data),
   list: () => api.get<ChannelIntegration[]>('/integrations').then((r) => r.data),
   get: (id: string) => api.get<ChannelIntegration>(`/integrations/${id}`).then((r) => r.data),
-  create: (body: { name: string; channelType: string; config?: Record<string, string>; secrets?: Record<string, string> }) =>
+  create: (body: { name: string; channelType: string; marketplace?: string | null; config?: Record<string, string>; secrets?: Record<string, string> }) =>
     api.post<ChannelIntegration>('/integrations', body).then((r) => r.data),
-  update: (id: string, body: { name?: string; config?: Record<string, string>; secrets?: Record<string, string>; status?: 'active' | 'disabled' }) =>
+  update: (id: string, body: { name?: string; marketplace?: string | null; config?: Record<string, string>; secrets?: Record<string, string>; status?: 'active' | 'disabled' }) =>
     api.patch<ChannelIntegration>(`/integrations/${id}`, body).then((r) => r.data),
   test: (id: string, mode: 'live' | 'test') => api.post<IntegrationTestResult>(`/integrations/${id}/test`, { mode }).then((r) => r.data),
   remove: (id: string) => api.delete(`/integrations/${id}`).then((r) => r.data),

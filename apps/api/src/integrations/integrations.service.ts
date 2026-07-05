@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
-import { configFieldKeys, getConnector, listConnectors, secretFieldKeys, type ConnectorDef } from './connectors';
+import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFieldKeys, type ConnectorDef } from './connectors';
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
 
 @Injectable()
@@ -29,11 +29,14 @@ export class IntegrationsService {
       set: setKeys.has(key),
       last4: setKeys.get(key) ?? null,
     }));
+    const marketplace = getMarketplace(row.channelType, row.marketplace);
     return {
       id: row.id,
       name: row.name,
       channelType: row.channelType,
       connectorLabel: connector?.label ?? row.channelType,
+      marketplace: row.marketplace ?? null,
+      marketplaceLabel: marketplace?.label ?? row.marketplace ?? null,
       config: row.config ?? {},
       status: row.status,
       lastTestedAt: row.lastTestedAt,
@@ -76,7 +79,7 @@ export class IntegrationsService {
     const connector = this.requireConnector(dto.channelType);
     const config = this.cleanConfig(connector, dto.config);
     const created = await this.prisma.channelIntegration.create({
-      data: { name: dto.name, channelType: dto.channelType, config, createdById: actorId, updatedById: actorId },
+      data: { name: dto.name, channelType: dto.channelType, marketplace: dto.marketplace ?? null, config, createdById: actorId, updatedById: actorId },
     });
     await this.audit(created.id, actorId, 'create', dto.name);
     if (dto.secrets) await this.writeSecrets(created.id, connector, dto.secrets, actorId, true);
@@ -90,7 +93,7 @@ export class IntegrationsService {
     const nextConfig = dto.config ? { ...(existing.config as object), ...this.cleanConfig(connector, dto.config) } : undefined;
     await this.prisma.channelIntegration.update({
       where: { id },
-      data: { name: dto.name, status: dto.status, ...(nextConfig ? { config: nextConfig } : {}), updatedById: actorId },
+      data: { name: dto.name, status: dto.status, marketplace: dto.marketplace, ...(nextConfig ? { config: nextConfig } : {}), updatedById: actorId },
     });
     await this.audit(id, actorId, 'update');
     if (dto.secrets) await this.writeSecrets(id, connector, dto.secrets, actorId, false);
@@ -145,9 +148,63 @@ export class IntegrationsService {
   }
 
   private async runTest(row: any, mode: 'live' | 'test'): Promise<{ ok: boolean; message: string }> {
-    if (row.channelType !== 'onbuy') return { ok: false, message: 'Testing not supported for this channel yet.' };
     const config = (row.config ?? {}) as Record<string, string>;
     const secrets = await this.decryptedSecrets(row.id);
+    if (row.channelType === 'amazon') return this.testAmazon(config, secrets);
+    if (row.channelType === 'ebay') return this.testEbay(config, secrets);
+    if (row.channelType === 'onbuy') return this.testOnBuy(config, secrets, mode);
+    return { ok: false, message: 'Testing not supported for this channel yet.' };
+  }
+
+  /** Amazon LWA: exchange the refresh token for an access token (validates the
+   *  Client ID/Secret + Refresh Token). Endpoint is global (region-independent). */
+  private async testAmazon(config: Record<string, string>, secrets: Record<string, string>): Promise<{ ok: boolean; message: string }> {
+    const clientId = config.lwaClientId;
+    const clientSecret = secrets.lwaClientSecret;
+    const refreshToken = secrets.refreshToken;
+    if (!clientId || !clientSecret || !refreshToken) return { ok: false, message: 'Need LWA Client ID, Client Secret and Refresh Token.' };
+    try {
+      const res = await fetch('https://api.amazon.com/auth/o2/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: clientId, client_secret: clientSecret }).toString(),
+        signal: AbortSignal.timeout(8000),
+      });
+      const json: any = await res.json().catch(() => null);
+      if (res.ok && json?.access_token) return { ok: true, message: 'Authenticated with Amazon LWA — access token received.' };
+      const detail = (json?.error_description || json?.error || '').toString().slice(0, 160);
+      return { ok: false, message: `Amazon responded ${res.status}${detail ? `: ${detail}` : ''}` };
+    } catch (e: any) {
+      return { ok: false, message: e?.name === 'TimeoutError' ? 'Request timed out.' : 'Could not reach Amazon LWA.' };
+    }
+  }
+
+  /** eBay OAuth: client-credentials grant validates the App ID + Cert ID keyset. */
+  private async testEbay(config: Record<string, string>, secrets: Record<string, string>): Promise<{ ok: boolean; message: string }> {
+    const appId = config.appId;
+    const certId = secrets.certId;
+    if (!appId || !certId) return { ok: false, message: 'Need App ID (Client ID) and Cert ID (Client Secret).' };
+    const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+    try {
+      const res = await fetch(`${base}/identity/v1/oauth2/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: `Basic ${Buffer.from(`${appId}:${certId}`).toString('base64')}`,
+        },
+        body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'https://api.ebay.com/oauth/api_scope' }).toString(),
+        signal: AbortSignal.timeout(8000),
+      });
+      const json: any = await res.json().catch(() => null);
+      if (res.ok && json?.access_token) return { ok: true, message: 'Authenticated with eBay — application token received.' };
+      const detail = (json?.error_description || json?.error || '').toString().slice(0, 160);
+      return { ok: false, message: `eBay responded ${res.status}${detail ? `: ${detail}` : ''}` };
+    } catch (e: any) {
+      return { ok: false, message: e?.name === 'TimeoutError' ? 'Request timed out.' : 'Could not reach the eBay API.' };
+    }
+  }
+
+  private async testOnBuy(config: Record<string, string>, secrets: Record<string, string>, mode: 'live' | 'test'): Promise<{ ok: boolean; message: string }> {
     const consumerKey = secrets[mode === 'live' ? 'liveConsumerKey' : 'testConsumerKey'];
     const secretKey = secrets[mode === 'live' ? 'liveSecretKey' : 'testSecretKey'];
     if (!consumerKey || !secretKey) return { ok: false, message: `Missing ${mode} Consumer/Secret key.` };

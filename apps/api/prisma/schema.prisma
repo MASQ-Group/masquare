@@ -659,7 +659,8 @@ model SalesChannel {
 model ChannelIntegration {
   id             String    @id @default(uuid()) @db.Uuid
   name           String
-  channelType    String    @map("channel_type") // connector key, e.g. 'onbuy'
+  channelType    String    @map("channel_type") // connector/family key: 'amazon' | 'ebay' | 'onbuy'
+  marketplace    String?   @map("marketplace") // sub-channel id, e.g. 'UK', 'DE'
   config         Json      @default("{}") // non-secret fields (url, sellerId, siteIds, …)
   status         String    @default("active") // active | disabled
   lastTestedAt   DateTime? @map("last_tested_at")

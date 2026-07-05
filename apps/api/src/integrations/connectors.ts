@@ -1,37 +1,113 @@
 /**
- * Connector definitions drive the dynamic "add integration" form. Each channel
- * declares its fields; the frontend renders them and marks secret fields as
- * write-only. Adding a channel (Amazon, eBay) = adding a definition here — no
- * schema or storage changes.
+ * Connector definitions drive the dynamic "add integration" form.
+ *
+ * Each channel family (Amazon, eBay, OnBuy) declares:
+ *  - `marketplaces`: the sub-channels a user can create an integration for
+ *    (e.g. Amazon UK, Amazon DE). Each sub-channel is its own integration with
+ *    its own credentials.
+ *  - `fields`: the API fields required for that family. Secret fields are
+ *    encrypted at rest and write-only.
  */
 
 export interface ConnectorField {
   key: string;
   label: string;
-  type: 'text' | 'url' | 'textarea';
-  secret: boolean; // encrypted at rest + write-only
+  type: 'text' | 'url' | 'textarea' | 'select';
+  secret: boolean;
   required: boolean;
-  group?: string; // visual grouping in the form
+  group?: string;
   placeholder?: string;
   help?: string;
+  options?: { value: string; label: string }[]; // for type 'select'
+}
+
+export interface ConnectorMarketplace {
+  id: string; // stored on the integration, e.g. 'UK'
+  label: string; // e.g. 'Amazon UK'
+  meta?: Record<string, string>; // region/endpoint/marketplaceId used by sync + test
 }
 
 export interface ConnectorDef {
-  type: string;
+  type: string; // 'amazon' | 'ebay' | 'onbuy'
   label: string;
   description: string;
-  /** Whether "Test connection" can run for this connector. */
   testable: boolean;
+  marketplaces: ConnectorMarketplace[];
   fields: ConnectorField[];
 }
 
+// --- Amazon (Selling Partner API, LWA auth) -------------------------------
+const AMZ_EU = 'https://sellingpartnerapi-eu.amazon.com';
+const AMZ_NA = 'https://sellingpartnerapi-na.amazon.com';
+const AMZ_FE = 'https://sellingpartnerapi-fe.amazon.com';
+const amzMkt = (id: string, label: string, region: string, endpoint: string, marketplaceId: string): ConnectorMarketplace =>
+  ({ id, label, meta: { region, endpoint, marketplaceId } });
+
+const AMAZON: ConnectorDef = {
+  type: 'amazon',
+  label: 'Amazon',
+  description: 'Amazon Selling Partner API (SP-API) — sales and inventory. One integration per marketplace.',
+  testable: true,
+  marketplaces: [
+    amzMkt('UK', 'Amazon UK', 'eu', AMZ_EU, 'A1F83G8C2ARO7P'),
+    amzMkt('DE', 'Amazon DE', 'eu', AMZ_EU, 'A1PA6795UKMFR9'),
+    amzMkt('FR', 'Amazon FR', 'eu', AMZ_EU, 'A13V1IB3VIYZZH'),
+    amzMkt('IT', 'Amazon IT', 'eu', AMZ_EU, 'APJ6JRA9NG5V4'),
+    amzMkt('ES', 'Amazon ES', 'eu', AMZ_EU, 'A1RKKUPIHCS9HS'),
+    amzMkt('NL', 'Amazon NL', 'eu', AMZ_EU, 'A1805IZSGTT6HS'),
+    amzMkt('SE', 'Amazon SE', 'eu', AMZ_EU, 'A2NODRKZP88ZB9'),
+    amzMkt('PL', 'Amazon PL', 'eu', AMZ_EU, 'A1C3SOZRARQ6R3'),
+    amzMkt('IE', 'Amazon IE', 'eu', AMZ_EU, 'A28R8C7NBKEWEA'),
+    amzMkt('US', 'Amazon US', 'na', AMZ_NA, 'ATVPDKIKX0DER'),
+    amzMkt('CA', 'Amazon CA', 'na', AMZ_NA, 'A2EUQ1WTGCTBG2'),
+    amzMkt('AU', 'Amazon AU', 'fe', AMZ_FE, 'A39IBJ37TRP1C6'),
+  ],
+  fields: [
+    { key: 'lwaClientId', label: 'LWA Client ID', type: 'text', secret: false, required: true, group: 'Application', placeholder: 'amzn1.application-oa2-client.…' },
+    { key: 'sellerId', label: 'Seller ID (Merchant token)', type: 'text', secret: false, required: false, group: 'Application' },
+    { key: 'lwaClientSecret', label: 'LWA Client Secret', type: 'text', secret: true, required: false, group: 'LWA credentials' },
+    { key: 'refreshToken', label: 'Refresh Token', type: 'text', secret: true, required: false, group: 'LWA credentials', help: 'From authorising your SP-API app in Seller Central.' },
+  ],
+};
+
+// --- eBay (Sell APIs, OAuth) ----------------------------------------------
+const ebayMkt = (id: string, label: string, marketplaceId: string): ConnectorMarketplace => ({ id, label, meta: { marketplaceId } });
+
+const EBAY: ConnectorDef = {
+  type: 'ebay',
+  label: 'eBay',
+  description: 'eBay Sell APIs (OAuth) — sales and inventory. One integration per marketplace.',
+  testable: true,
+  marketplaces: [
+    ebayMkt('GB', 'eBay UK', 'EBAY_GB'),
+    ebayMkt('DE', 'eBay DE', 'EBAY_DE'),
+    ebayMkt('FR', 'eBay FR', 'EBAY_FR'),
+    ebayMkt('IT', 'eBay IT', 'EBAY_IT'),
+    ebayMkt('ES', 'eBay ES', 'EBAY_ES'),
+    ebayMkt('IE', 'eBay IE', 'EBAY_IE'),
+    ebayMkt('US', 'eBay US', 'EBAY_US'),
+    ebayMkt('AU', 'eBay AU', 'EBAY_AU'),
+    ebayMkt('CA', 'eBay CA', 'EBAY_CA'),
+  ],
+  fields: [
+    { key: 'env', label: 'Environment', type: 'select', secret: false, required: true, group: 'Application', options: [{ value: 'production', label: 'Production' }, { value: 'sandbox', label: 'Sandbox' }] },
+    { key: 'appId', label: 'App ID (Client ID)', type: 'text', secret: false, required: true, group: 'Application' },
+    { key: 'devId', label: 'Dev ID', type: 'text', secret: false, required: false, group: 'Application' },
+    { key: 'ruName', label: 'Redirect URL name (RuName)', type: 'text', secret: false, required: false, group: 'Application' },
+    { key: 'certId', label: 'Cert ID (Client Secret)', type: 'text', secret: true, required: false, group: 'OAuth credentials' },
+    { key: 'refreshToken', label: 'OAuth Refresh Token', type: 'text', secret: true, required: false, group: 'OAuth credentials', help: 'User access token from the OAuth consent flow.' },
+  ],
+};
+
+// --- OnBuy (v2 API) --------------------------------------------------------
 const ONBUY: ConnectorDef = {
   type: 'onbuy',
-  label: 'OnBuy UK',
-  description: 'OnBuy marketplace API — retrieves sales and inventory data.',
+  label: 'OnBuy',
+  description: 'OnBuy marketplace API (v2) — sales and inventory.',
   testable: true,
+  marketplaces: [{ id: 'UK', label: 'OnBuy UK', meta: { siteId: '2000' } }],
   fields: [
-    { key: 'url', label: 'API URL', type: 'url', secret: false, required: true, group: 'Connection', placeholder: 'https://api.onbuy.com/v2' },
+    { key: 'url', label: 'API URL', type: 'url', secret: false, required: true, group: 'Connection', placeholder: 'https://api.onbuy.com/v2/' },
     { key: 'sellerId', label: 'Seller ID', type: 'text', secret: false, required: true, group: 'Connection' },
     { key: 'sellerEntityId', label: 'Seller Entity ID', type: 'text', secret: false, required: true, group: 'Connection' },
     { key: 'siteIds', label: 'Site IDs', type: 'text', secret: false, required: false, group: 'Connection', help: 'Comma-separated if more than one.' },
@@ -42,9 +118,11 @@ const ONBUY: ConnectorDef = {
   ],
 };
 
-const CONNECTORS: ConnectorDef[] = [ONBUY];
+const CONNECTORS: ConnectorDef[] = [AMAZON, EBAY, ONBUY];
 
 export const listConnectors = (): ConnectorDef[] => CONNECTORS;
 export const getConnector = (type: string): ConnectorDef | undefined => CONNECTORS.find((c) => c.type === type);
+export const getMarketplace = (type: string, id?: string | null): ConnectorMarketplace | undefined =>
+  id ? getConnector(type)?.marketplaces.find((m) => m.id === id) : undefined;
 export const configFieldKeys = (c: ConnectorDef): string[] => c.fields.filter((f) => !f.secret).map((f) => f.key);
 export const secretFieldKeys = (c: ConnectorDef): string[] => c.fields.filter((f) => f.secret).map((f) => f.key);
