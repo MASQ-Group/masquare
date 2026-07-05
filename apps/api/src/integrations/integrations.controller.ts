@@ -49,6 +49,16 @@ export class IntegrationsController {
     return this.svc.previewOrders(id, user.sub);
   }
 
+  @Post(':id/preview-mapping')
+  previewMapping(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.svc.previewMapping(id, user.sub);
+  }
+
+  @Post(':id/verify-mapping')
+  verifyMapping(@Param('id') id: string, @Body() dto: { confirmed?: boolean }, @CurrentUser() user: AuthUser) {
+    return this.svc.verifyMapping(id, dto?.confirmed !== false, user.sub);
+  }
+
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.svc.remove(id, user.sub);

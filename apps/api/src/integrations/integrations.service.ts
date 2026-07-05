@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFieldKeys, type ConnectorDef } from './connectors';
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
+import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 
 @Injectable()
 export class IntegrationsService {
@@ -42,6 +43,7 @@ export class IntegrationsService {
       lastTestedAt: row.lastTestedAt,
       lastTestStatus: row.lastTestStatus,
       lastTestMessage: row.lastTestMessage,
+      mappingVerifiedAt: row.mappingVerifiedAt ?? null,
       secretFields,
       createdAt: row.createdAt,
     };
@@ -251,27 +253,65 @@ export class IntegrationsService {
     return { token: json.access_token, mode, base };
   }
 
-  /** Read-only: fetch a few recent OnBuy orders to validate the connection and
-   *  reveal the data shape before we build the importer. Nothing is stored. */
-  async previewOrders(id: string, actorId?: string, limit = 5) {
-    const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
-    if (!row) throw new NotFoundException('Integration not found');
-    if (row.channelType !== 'onbuy') throw new BadRequestException('Order preview currently supports OnBuy only.');
+  /** Fetch recent OnBuy orders (read-only). Shared by preview + mapping + import. */
+  private async fetchOnBuyOrders(row: any, limit: number): Promise<{ ok: boolean; mode: 'live' | 'test'; status?: number; message?: string; siteId: string | null; total: number | null; orders: any[] }> {
     const config = (row.config ?? {}) as Record<string, string>;
     const secrets = await this.decryptedSecrets(row.id);
     const { token, mode, base } = await this.onbuyAccessToken(config, secrets);
-
-    const siteId = (config.siteIds || '').match(/\d+/)?.[0];
+    const siteId = (config.siteIds || '').match(/\d+/)?.[0] ?? null;
     const params = new URLSearchParams({ limit: String(limit), offset: '0' });
     if (siteId) params.set('site_id', siteId);
     const res = await fetch(`${base}/orders?${params.toString()}`, { headers: { Authorization: token }, signal: AbortSignal.timeout(12000) });
     const json: any = await res.json().catch(() => null);
-    await this.audit(id, actorId, 'preview', `mode=${mode} status=${res.status}`);
-    if (!res.ok) {
-      return { ok: false, mode, status: res.status, message: (json?.error?.message || json?.message || '').toString().slice(0, 200) };
+    if (!res.ok) return { ok: false, mode, status: res.status, message: (json?.error?.message || json?.message || '').toString().slice(0, 200), siteId, total: null, orders: [] };
+    return { ok: true, mode, siteId, total: json?.total ?? null, orders: json?.results ?? (Array.isArray(json) ? json : []) };
+  }
+
+  /** Read-only: fetch a few recent OnBuy orders to validate the connection. */
+  async previewOrders(id: string, actorId?: string, limit = 5) {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
+    if (!row) throw new NotFoundException('Integration not found');
+    if (row.channelType !== 'onbuy') throw new BadRequestException('Order preview currently supports OnBuy only.');
+    const r = await this.fetchOnBuyOrders(row, limit);
+    await this.audit(id, actorId, 'preview', `mode=${r.mode} status=${r.status ?? 200}`);
+    return r.ok ? { ok: true, mode: r.mode, siteId: r.siteId, total: r.total, count: r.orders.length, orders: r.orders } : { ok: false, mode: r.mode, status: r.status, message: r.message };
+  }
+
+  /** First-run mapping verification: fetch sample orders, apply the mapping, and
+   *  return target ← source = value for each field so the user can confirm it. */
+  async previewMapping(id: string, actorId?: string, limit = 3) {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
+    if (!row) throw new NotFoundException('Integration not found');
+    if (row.channelType !== 'onbuy') throw new BadRequestException('Mapping preview currently supports OnBuy only.');
+    const r = await this.fetchOnBuyOrders(row, limit);
+    await this.audit(id, actorId, 'mapping.preview', `mode=${r.mode} status=${r.status ?? 200}`);
+    if (!r.ok) return { ok: false, mode: r.mode, status: r.status, message: r.message };
+
+    const mapped = r.orders.map((o) => mapOnBuyOrder(o));
+    // Resolve destination country codes to names for the review.
+    const codes = [...new Set(mapped.map((m) => m.payload.destinationCountryCode).filter(Boolean) as string[])];
+    const countries = codes.length ? await this.prisma.country.findMany({ where: { isoCode: { in: codes } }, select: { isoCode: true, name: true } }) : [];
+    const nameByCode = new Map(countries.map((c) => [c.isoCode, c.name]));
+    for (const m of mapped) {
+      const dest = m.header.find((f) => f.target === 'destinationCountry');
+      if (dest && dest.value) dest.resolved = nameByCode.get(String(dest.value)) ?? null;
     }
-    const orders = json?.results ?? (Array.isArray(json) ? json : []);
-    return { ok: true, mode, siteId: siteId ?? null, total: json?.total ?? null, count: orders.length, orders };
+    return {
+      ok: true,
+      mode: r.mode,
+      verifiedAt: row.mappingVerifiedAt ?? null,
+      target: 'Sales transaction',
+      samples: mapped.map((m) => ({ orderId: m.orderId, header: m.header, items: m.items.map((it) => ({ sku: it.sku, fields: it.fields })), raw: m.raw })),
+    };
+  }
+
+  /** Record that the user reviewed & confirmed the field mapping (import gate). */
+  async verifyMapping(id: string, confirmed: boolean, actorId?: string) {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null }, select: { id: true } });
+    if (!row) throw new NotFoundException('Integration not found');
+    await this.prisma.channelIntegration.update({ where: { id }, data: { mappingVerifiedAt: confirmed ? new Date() : null } });
+    await this.audit(id, actorId, confirmed ? 'mapping.verify' : 'mapping.unverify');
+    return this.get(id);
   }
 
   private async audit(integrationId: string, actorId: string | undefined, action: string, detail?: string) {

@@ -429,9 +429,16 @@ export interface ChannelIntegration {
   marketplace: string | null; marketplaceLabel: string | null;
   config: Record<string, string>; status: 'active' | 'disabled';
   lastTestedAt: string | null; lastTestStatus: 'ok' | 'fail' | null; lastTestMessage: string | null;
+  mappingVerifiedAt: string | null;
   secretFields: IntegrationSecretField[]; createdAt: string;
 }
 export interface IntegrationTestResult { ok: boolean; message: string }
+export interface MappedField { target: string; label: string; source: string; value: string | number | null; resolved?: string | null }
+export interface MappingSample { orderId: string; header: MappedField[]; items: { sku: string | null; fields: MappedField[] }[]; raw: unknown }
+export interface MappingPreview {
+  ok: boolean; mode?: 'live' | 'test'; status?: number; message?: string;
+  verifiedAt?: string | null; target?: string; samples?: MappingSample[];
+}
 
 export const integrationsApi = {
   connectors: () => api.get<ConnectorDef[]>('/integrations/connectors').then((r) => r.data),
@@ -442,6 +449,8 @@ export const integrationsApi = {
   update: (id: string, body: { name?: string; marketplace?: string | null; config?: Record<string, string>; secrets?: Record<string, string>; status?: 'active' | 'disabled' }) =>
     api.patch<ChannelIntegration>(`/integrations/${id}`, body).then((r) => r.data),
   test: (id: string, mode: 'live' | 'test') => api.post<IntegrationTestResult>(`/integrations/${id}/test`, { mode }).then((r) => r.data),
+  previewMapping: (id: string) => api.post<MappingPreview>(`/integrations/${id}/preview-mapping`, {}).then((r) => r.data),
+  verifyMapping: (id: string, confirmed: boolean) => api.post<ChannelIntegration>(`/integrations/${id}/verify-mapping`, { confirmed }).then((r) => r.data),
   remove: (id: string) => api.delete(`/integrations/${id}`).then((r) => r.data),
 };
 

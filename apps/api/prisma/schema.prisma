@@ -666,6 +666,8 @@ model ChannelIntegration {
   lastTestedAt   DateTime? @map("last_tested_at")
   lastTestStatus String?   @map("last_test_status") // ok | fail
   lastTestMessage String?  @map("last_test_message")
+  // Set when the user has reviewed & confirmed the field mapping (gate for import).
+  mappingVerifiedAt DateTime? @map("mapping_verified_at")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")

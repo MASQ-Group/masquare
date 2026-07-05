@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Pencil, Plug, Plus, ShieldCheck, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, ListChecks, Pencil, Plug, Plus, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { integrationsApi, type ChannelIntegration } from '../lib/api';
 import { IntegrationModal } from '../components/integrations/IntegrationModal';
+import { MappingVerifyModal } from '../components/integrations/MappingVerifyModal';
 
 const fmtDateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
@@ -18,6 +19,7 @@ function groupByFamily(rows: ChannelIntegration[]): [string, ChannelIntegration[
 export function IntegrationsPage() {
   const qc = useQueryClient();
   const [modal, setModal] = useState<ChannelIntegration | null | undefined>(undefined); // null = new, obj = edit
+  const [mapVerify, setMapVerify] = useState<ChannelIntegration | undefined>(undefined);
 
   const { data: integrations = [], isLoading } = useQuery({ queryKey: ['integrations'], queryFn: () => integrationsApi.list() });
   const del = useMutation({
@@ -87,11 +89,16 @@ export function IntegrationsPage() {
                 ))}
               </div>
 
-              <div className="mt-3 flex items-center gap-2 border-t border-n-100 pt-2.5 text-[12px]">
+              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-n-100 pt-2.5 text-[12px]">
                 {i.lastTestStatus === 'ok' && <span className="inline-flex items-center gap-1 text-success"><CheckCircle2 size={13} /> Connection OK</span>}
                 {i.lastTestStatus === 'fail' && <span className="inline-flex items-center gap-1 text-danger" title={i.lastTestMessage ?? undefined}><XCircle size={13} /> Test failed</span>}
                 {!i.lastTestStatus && <span className="text-n-400">Not tested yet</span>}
-                <span className="ml-auto text-n-400">{i.lastTestedAt ? fmtDateTime(i.lastTestedAt) : ''}</span>
+                {i.mappingVerifiedAt
+                  ? <span className="inline-flex items-center gap-1 text-success"><CheckCircle2 size={13} /> Mapping verified</span>
+                  : <span className="inline-flex items-center gap-1 text-n-400"><ListChecks size={13} /> Mapping not verified</span>}
+                <button className="ml-auto inline-flex items-center gap-1 font-medium text-teal-700 hover:underline" onClick={() => setMapVerify(i)}>
+                  <ListChecks size={13} /> {i.mappingVerifiedAt ? 'Review mapping' : 'Verify field mapping'}
+                </button>
               </div>
             </div>
           ))}
@@ -106,6 +113,13 @@ export function IntegrationsPage() {
           integration={modal ?? undefined}
           onClose={() => setModal(undefined)}
           onSaved={() => { setModal(undefined); invalidate(); }}
+        />
+      )}
+      {mapVerify && (
+        <MappingVerifyModal
+          integration={mapVerify}
+          onClose={() => setMapVerify(undefined)}
+          onVerified={() => { setMapVerify(undefined); invalidate(); }}
         />
       )}
     </div>
