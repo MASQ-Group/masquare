@@ -321,14 +321,16 @@ export const productsApi = {
     api.post<{ created: number; updated: number; skipped: number; errors: { sku: string; message: string }[] }>('/products/import/commit', { items }).then((r) => r.data),
 };
 
+export interface ImportRowIssue { field: string; message: string; severity: 'error' | 'warning' }
 export interface ImportRowResult {
   index: number;
   sku: string;
   title: string;
-  status: 'new' | 'conflict' | 'match' | 'missing';
+  status: 'new' | 'conflict' | 'match' | 'missing' | 'error';
   conflictOn: string[];
   existingProductId: string | null;
   existingSku: string | null;
+  issues: ImportRowIssue[];
 }
 
 // ---- Global Data: Countries, Shipping Services, Sales Channels ----

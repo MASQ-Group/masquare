@@ -372,59 +372,88 @@ export class ProductsService {
   }
 
   // --- Bulk import: validate then commit -----------------------------------
-  async importValidate(purpose: 'add' | 'edit', rows: Record<string, string>[]) {
+  /** Field-level checks on a single import row. Errors block the row from being
+   *  imported; warnings are informational. Every value is read as a string, so a
+   *  stray numeric/blank cell can never crash the review. */
+  private validateImportRow(row: Record<string, unknown>): { field: string; message: string; severity: 'error' | 'warning' }[] {
+    const issues: { field: string; message: string; severity: 'error' | 'warning' }[] = [];
+    const get = (k: string) => (row[k] == null ? '' : String(row[k]).trim());
+
+    if (!get('mainSku') && !get('sku')) issues.push({ field: 'mainSku', message: 'Main SKU is required', severity: 'error' });
+    if (!get('title')) issues.push({ field: 'title', message: 'Title is required', severity: 'error' });
+
+    const numericFields: [string, string][] = [
+      ['purchaseCost', 'Purchase cost'], ['map', 'MAP'], ['msrp', 'MSRP'],
+      ['productWeightKg', 'Product weight'], ['packageWeightKg', 'Package weight'],
+      ['packageLengthCm', 'Package length'], ['packageWidthCm', 'Package width'], ['packageHeightCm', 'Package height'],
+    ];
+    for (const [key, label] of numericFields) {
+      const v = get(key);
+      if (v === '') continue;
+      const n = Number(v);
+      if (!Number.isFinite(n)) issues.push({ field: key, message: `${label} must be a number (got "${v}")`, severity: 'error' });
+      else if (n < 0) issues.push({ field: key, message: `${label} cannot be negative`, severity: 'error' });
+    }
+
+    for (const [key, label] of [['ean', 'EAN'], ['upc', 'UPC']] as [string, string][]) {
+      const v = get(key);
+      if (v && !/^\d{6,14}$/.test(v)) issues.push({ field: key, message: `${label} should be 6–14 digits (got "${v}")`, severity: 'warning' });
+    }
+    return issues;
+  }
+
+  async importValidate(purpose: 'add' | 'edit', rows: Record<string, unknown>[]) {
     const out: Array<{
-      index: number;
-      sku: string;
-      title: string;
-      status: string;
-      conflictOn: string[];
-      existingProductId: string | null;
-      existingSku: string | null;
+      index: number; sku: string; title: string; status: string;
+      conflictOn: string[]; existingProductId: string | null; existingSku: string | null;
+      issues: { field: string; message: string; severity: 'error' | 'warning' }[];
     }> = [];
+    const seenSku = new Map<string, number>(); // within-file duplicate detection
+
     for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const sku = (row.mainSku ?? row.sku ?? '').trim();
-      const ean = (row.ean ?? '').trim();
-      const upc = (row.upc ?? '').trim();
+      const row = rows[i] ?? {};
+      const get = (k: string) => (row[k] == null ? '' : String(row[k]).trim());
+      const sku = get('mainSku') || get('sku');
+      const ean = get('ean');
+      const upc = get('upc');
 
-      const bySku = sku
-        ? await this.prisma.product.findFirst({
-            where: {
-              deletedAt: null,
-              OR: [
-                { mainSku: { equals: sku, mode: 'insensitive' } },
-                { aliases: { some: { deletedAt: null, skuValue: { equals: sku, mode: 'insensitive' } } } },
-              ],
-            },
-            select: { id: true, mainSku: true },
-          })
-        : null;
-      const byEan = ean
-        ? await this.prisma.product.findFirst({ where: { deletedAt: null, ean: { equals: ean, mode: 'insensitive' } }, select: { id: true, mainSku: true } })
-        : null;
-      const byUpc = upc
-        ? await this.prisma.product.findFirst({ where: { deletedAt: null, upc: { equals: upc, mode: 'insensitive' } }, select: { id: true, mainSku: true } })
-        : null;
+      const issues = this.validateImportRow(row);
+      if (sku) {
+        const dupOf = seenSku.get(sku.toLowerCase());
+        if (dupOf != null) issues.push({ field: 'mainSku', message: `Duplicate of row ${dupOf + 1} in this file`, severity: 'error' });
+        else seenSku.set(sku.toLowerCase(), i);
+      }
 
-      const matched = bySku ?? byEan ?? byUpc;
-      const conflictOn: string[] = [];
-      if (bySku) conflictOn.push('SKU');
-      if (byEan) conflictOn.push('EAN');
-      if (byUpc) conflictOn.push('UPC');
+      try {
+        const bySku = sku
+          ? await this.prisma.product.findFirst({
+              where: {
+                deletedAt: null,
+                OR: [
+                  { mainSku: { equals: sku, mode: 'insensitive' } },
+                  { aliases: { some: { deletedAt: null, skuValue: { equals: sku, mode: 'insensitive' } } } },
+                ],
+              },
+              select: { id: true, mainSku: true },
+            })
+          : null;
+        const byEan = ean ? await this.prisma.product.findFirst({ where: { deletedAt: null, ean: { equals: ean, mode: 'insensitive' } }, select: { id: true, mainSku: true } }) : null;
+        const byUpc = upc ? await this.prisma.product.findFirst({ where: { deletedAt: null, upc: { equals: upc, mode: 'insensitive' } }, select: { id: true, mainSku: true } }) : null;
 
-      const status =
-        purpose === 'add' ? (matched ? 'conflict' : 'new') : matched ? 'match' : 'missing';
+        const matched = bySku ?? byEan ?? byUpc;
+        const conflictOn: string[] = [];
+        if (bySku) conflictOn.push('SKU');
+        if (byEan) conflictOn.push('EAN');
+        if (byUpc) conflictOn.push('UPC');
 
-      out.push({
-        index: i,
-        sku,
-        title: (row.title ?? '').trim(),
-        status,
-        conflictOn,
-        existingProductId: matched?.id ?? null,
-        existingSku: matched?.mainSku ?? null,
-      });
+        const hasError = issues.some((x) => x.severity === 'error');
+        const status = hasError ? 'error' : purpose === 'add' ? (matched ? 'conflict' : 'new') : matched ? 'match' : 'missing';
+
+        out.push({ index: i, sku, title: get('title'), status, conflictOn, existingProductId: matched?.id ?? null, existingSku: matched?.mainSku ?? null, issues });
+      } catch (e: any) {
+        // A single bad row must never fail the whole review — report it as an error row.
+        out.push({ index: i, sku, title: get('title'), status: 'error', conflictOn: [], existingProductId: null, existingSku: null, issues: [...issues, { field: 'row', message: e?.message ?? 'Could not read this row', severity: 'error' }] });
+      }
     }
     return { rows: out };
   }
@@ -461,21 +490,25 @@ export class ProductsService {
     }
   }
 
-  private async rowToBody(row: Record<string, string>): Promise<CreateProductDto> {
+  private async rowToBody(row: Record<string, unknown>): Promise<CreateProductDto> {
+    // Coerce every cell to a string up-front so numeric/blank cells can't crash.
+    const str = (k: string) => (row[k] == null ? undefined : String(row[k]).trim() || undefined);
     const num = (k: string) => {
-      const v = row[k];
-      return v == null || String(v).trim() === '' ? null : Number(v);
+      const v = str(k);
+      if (v == null) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
     };
     return {
-      mainSku: (row.mainSku ?? row.sku ?? '').trim(),
-      title: (row.title ?? '').trim(),
-      brandId: await this.resolveNamed('brand', row.brand),
-      vendorId: await this.resolveNamed('vendor', row.vendor),
-      productTypeId: await this.resolveNamed('productType', row.productType),
-      fulfilmentTypeId: await this.resolveNamed('fulfilmentType', row.fulfilmentType),
-      categoryId: await this.resolveNamed('category', row.category),
-      ean: row.ean, upc: row.upc, vendorSku: row.vendorSku, manufacturerSku: row.manufacturerSku,
-      countryOfOrigin: row.countryOfOrigin, hsCode: row.hsCode,
+      mainSku: (str('mainSku') ?? str('sku') ?? '').trim(),
+      title: (str('title') ?? '').trim(),
+      brandId: await this.resolveNamed('brand', str('brand')),
+      vendorId: await this.resolveNamed('vendor', str('vendor')),
+      productTypeId: await this.resolveNamed('productType', str('productType')),
+      fulfilmentTypeId: await this.resolveNamed('fulfilmentType', str('fulfilmentType')),
+      categoryId: await this.resolveNamed('category', str('category')),
+      ean: str('ean'), upc: str('upc'), vendorSku: str('vendorSku'), manufacturerSku: str('manufacturerSku'),
+      countryOfOrigin: str('countryOfOrigin'), hsCode: str('hsCode'),
       purchaseCost: { amount: num('purchaseCost'), currency: 'EUR' },
       map: { amount: num('map'), currency: 'EUR' },
       msrp: { amount: num('msrp'), currency: 'EUR' },

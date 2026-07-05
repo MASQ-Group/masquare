@@ -38,6 +38,7 @@ export function ProductImportModal({ onClose, onDone }: Props) {
       const res = await productsApi.importValidate(purpose, rows);
       setResults(res.rows);
       setActions(res.rows.map((r) => {
+        if (r.status === 'error') return { action: 'skip' }; // rows with problems can't be imported
         if (purpose === 'add') return r.status === 'conflict' ? { action: 'edit', productId: r.existingProductId ?? undefined } : { action: 'add' };
         return r.status === 'match' ? { action: 'edit', productId: r.existingProductId ?? undefined } : { action: 'skip' };
       }));
@@ -68,6 +69,8 @@ export function ProductImportModal({ onClose, onDone }: Props) {
     edit: actions.filter((a) => a.action === 'edit').length,
     skip: actions.filter((a) => a.action === 'skip').length,
   };
+  const errorCount = results.filter((r) => r.status === 'error').length;
+  const missingCount = results.filter((r) => r.status === 'missing').length;
 
   const primary = step === 'setup'
     ? { label: 'Review file', onClick: runValidate, disabled: rows.length === 0 }
@@ -110,30 +113,53 @@ export function ProductImportModal({ onClose, onDone }: Props) {
             <span className="rounded-pill border border-success-bd bg-success-bg px-3 py-1 font-medium text-success">{counts.add} add</span>
             <span className="rounded-pill border border-info-bd bg-info-bg px-3 py-1 font-medium text-info">{counts.edit} edit</span>
             {counts.skip > 0 && <span className="rounded-pill border border-warning-bd bg-warning-bg px-3 py-1 font-medium text-warning">{counts.skip} skipped</span>}
+            {errorCount > 0 && <span className="rounded-pill border border-danger-bd bg-danger-bg px-3 py-1 font-medium text-danger">{errorCount} with errors</span>}
           </div>
+
+          {errorCount > 0 && (
+            <div className="rounded-lg border border-danger-bd bg-danger-bg/40 px-3 py-2 text-[12.5px] text-danger">
+              <div className="flex items-center gap-1.5 font-semibold"><AlertTriangle size={13} /> {errorCount} row(s) have problems and won't be imported</div>
+              <div className="mt-0.5 text-[12px]">Fix the fields listed in the Issues column below and re-upload — or import the valid rows now and fix the rest separately.</div>
+            </div>
+          )}
+
           <div className="max-h-72 overflow-auto rounded-lg border border-n-200">
             <table className="w-full border-collapse text-[12.5px]">
               <thead className="sticky top-0">
                 <tr>
-                  {['#', 'Main SKU', 'Title', 'Status', 'Action'].map((h) => (
+                  {['#', 'Main SKU', 'Title', 'Status', 'Issues', 'Action'].map((h) => (
                     <th key={h} className="border-b border-n-200 bg-n-25 px-2 py-1.5 text-left font-semibold uppercase tracking-wide text-n-500">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {results.map((r, i) => (
-                  <tr key={i} className={actions[i]?.action === 'skip' ? 'bg-warning-bg/30' : ''}>
-                    <td className="border-t border-n-100 px-2 py-1.5 font-mono text-n-400">{i + 1}</td>
-                    <td className="border-t border-n-100 px-2 py-1.5 font-mono text-n-800">{r.sku || '—'}</td>
-                    <td className="border-t border-n-100 px-2 py-1.5 text-n-700">{r.title || '—'}</td>
-                    <td className="border-t border-n-100 px-2 py-1.5">
+                  <tr key={i} className={r.status === 'error' ? 'bg-danger-bg/30' : actions[i]?.action === 'skip' ? 'bg-warning-bg/30' : ''}>
+                    <td className="border-t border-n-100 px-2 py-1.5 font-mono text-n-400 align-top">{i + 1}</td>
+                    <td className="border-t border-n-100 px-2 py-1.5 font-mono text-n-800 align-top">{r.sku || '—'}</td>
+                    <td className="border-t border-n-100 px-2 py-1.5 text-n-700 align-top">{r.title || '—'}</td>
+                    <td className="border-t border-n-100 px-2 py-1.5 align-top">
                       {r.status === 'new' && <span className="text-success">New</span>}
                       {r.status === 'match' && <span className="text-info">Exists</span>}
                       {r.status === 'conflict' && <span className="inline-flex items-center gap-1 text-warning"><AlertTriangle size={12} /> Exists ({r.conflictOn.join(', ')})</span>}
                       {r.status === 'missing' && <span className="inline-flex items-center gap-1 text-danger"><AlertTriangle size={12} /> Unknown SKU</span>}
+                      {r.status === 'error' && <span className="inline-flex items-center gap-1 font-medium text-danger"><AlertTriangle size={12} /> Error</span>}
                     </td>
-                    <td className="border-t border-n-100 px-2 py-1.5">
-                      {purpose === 'add' && r.status === 'conflict' ? (
+                    <td className="border-t border-n-100 px-2 py-1.5 align-top">
+                      {r.issues.length === 0 ? <span className="text-n-300">—</span> : (
+                        <ul className="flex flex-col gap-0.5">
+                          {r.issues.map((iss, k) => (
+                            <li key={k} className={iss.severity === 'error' ? 'text-danger' : 'text-warning'}>
+                              <span className="mono">{iss.field}</span>: {iss.message}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </td>
+                    <td className="border-t border-n-100 px-2 py-1.5 align-top">
+                      {r.status === 'error' ? (
+                        <span className="font-medium text-danger">Skipped — fix required</span>
+                      ) : purpose === 'add' && r.status === 'conflict' ? (
                         <select
                           className="h-8 rounded border border-n-200 bg-n-0 px-1.5 text-[12.5px]"
                           value={actions[i]?.action}
@@ -153,8 +179,8 @@ export function ProductImportModal({ onClose, onDone }: Props) {
               </tbody>
             </table>
           </div>
-          {purpose === 'edit' && counts.skip > 0 && (
-            <p className="text-[12px] text-warning">⚠ {counts.skip} row(s) reference SKUs that don't exist and will be dropped (edit mode only allows existing SKUs).</p>
+          {purpose === 'edit' && missingCount > 0 && (
+            <p className="text-[12px] text-warning">⚠ {missingCount} row(s) reference SKUs that don't exist and will be dropped (edit mode only allows existing SKUs).</p>
           )}
         </div>
       )}
