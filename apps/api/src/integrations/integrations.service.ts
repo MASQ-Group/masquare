@@ -153,21 +153,24 @@ export class IntegrationsService {
     if (!consumerKey || !secretKey) return { ok: false, message: `Missing ${mode} Consumer/Secret key.` };
     const base = (config.url || 'https://api.onbuy.com/v2').replace(/\/+$/, '');
     try {
-      // OnBuy v2 auth: POST /auth/request-token/ with Authorization: <consumerKey>
-      // and form field secret_key=<secretKey>; a token in the response = success.
-      const res = await fetch(`${base}/auth/request-token/`, {
+      // OnBuy v2 auth (docs.api.onbuy.com): POST /auth/request-token with
+      // consumer_key + secret_key in an x-www-form-urlencoded body. A response
+      // containing access_token = success. Token is valid ~15 minutes.
+      const res = await fetch(`${base}/auth/request-token`, {
         method: 'POST',
-        headers: { Authorization: consumerKey, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ secret_key: secretKey }).toString(),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ consumer_key: consumerKey, secret_key: secretKey }).toString(),
         signal: AbortSignal.timeout(8000),
       });
       const text = await res.text();
-      let hasToken = false;
-      try { hasToken = !!JSON.parse(text)?.access_token; } catch { /* non-JSON */ }
-      if (res.ok && hasToken) return { ok: true, message: 'Authenticated successfully.' };
-      return { ok: false, message: `OnBuy responded ${res.status}. Check keys/URL.` };
+      let json: any = null;
+      try { json = JSON.parse(text); } catch { /* non-JSON */ }
+      if (res.ok && json?.access_token) return { ok: true, message: 'Authenticated successfully — access token received.' };
+      // Surface OnBuy's own error text (never contains our keys) to aid debugging.
+      const detail = (json?.error?.message || json?.message || text || '').toString().slice(0, 160);
+      return { ok: false, message: `OnBuy responded ${res.status}${detail ? `: ${detail}` : ''}` };
     } catch (e: any) {
-      return { ok: false, message: e?.name === 'TimeoutError' ? 'Request timed out.' : 'Could not reach the OnBuy API.' };
+      return { ok: false, message: e?.name === 'TimeoutError' ? 'Request timed out.' : 'Could not reach the OnBuy API — check the API URL.' };
     }
   }
 
