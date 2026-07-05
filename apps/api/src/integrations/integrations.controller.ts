@@ -59,6 +59,11 @@ export class IntegrationsController {
     return this.svc.verifyMapping(id, dto?.confirmed !== false, user.sub);
   }
 
+  @Post(':id/sync')
+  sync(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.svc.syncOrders(id, 'manual', user.sub);
+  }
+
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.svc.remove(id, user.sub);

@@ -668,6 +668,15 @@ model ChannelIntegration {
   lastTestMessage String?  @map("last_test_message")
   // Set when the user has reviewed & confirmed the field mapping (gate for import).
   mappingVerifiedAt DateTime? @map("mapping_verified_at")
+  // Import settings: where imported orders land, and how the sync runs.
+  targetSalesChannelId String?  @map("target_sales_channel_id") @db.Uuid
+  targetCompanyId      String?  @map("target_company_id") @db.Uuid
+  autoSyncEnabled      Boolean  @default(false) @map("auto_sync_enabled")
+  backfillDays         Int      @default(30) @map("backfill_days")
+  lastSyncedAt         DateTime? @map("last_synced_at") // high-water mark (max imported order date)
+  lastSyncRunAt        DateTime? @map("last_sync_run_at")
+  lastSyncStatus       String?   @map("last_sync_status") // ok | error
+  lastSyncMessage      String?   @map("last_sync_message")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -803,6 +812,10 @@ model SalesTransaction {
   feeRefunded     Boolean  @default(false) @map("fee_refunded") // channel refunded its selling fee
   resolutionNotes String?  @map("resolution_notes")
   resolvedAt      DateTime? @map("resolved_at")
+  // Provenance: 'manual' or an importer key like 'onbuy'; integrationId links the
+  // source integration so a re-sync only ever touches its own imported records.
+  source        String  @default("manual") @map("source")
+  integrationId String? @map("integration_id") @db.Uuid
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")

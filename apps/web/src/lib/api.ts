@@ -430,9 +430,17 @@ export interface ChannelIntegration {
   config: Record<string, string>; status: 'active' | 'disabled';
   lastTestedAt: string | null; lastTestStatus: 'ok' | 'fail' | null; lastTestMessage: string | null;
   mappingVerifiedAt: string | null;
+  targetSalesChannelId: string | null; targetCompanyId: string | null;
+  autoSyncEnabled: boolean; backfillDays: number;
+  lastSyncedAt: string | null; lastSyncRunAt: string | null;
+  lastSyncStatus: 'ok' | 'error' | null; lastSyncMessage: string | null;
   secretFields: IntegrationSecretField[]; createdAt: string;
 }
 export interface IntegrationTestResult { ok: boolean; message: string }
+export interface IntegrationSyncResult {
+  ok: boolean; message: string;
+  scanned: number; created: number; updated: number; skipped: number; cancelled: number; errors: number;
+}
 export interface MappedField { target: string; label: string; source: string; value: string | number | null; resolved?: string | null }
 export interface MappingSample { orderId: string; header: MappedField[]; items: { sku: string | null; fields: MappedField[] }[]; raw: unknown }
 export interface MappingPreview {
@@ -446,8 +454,9 @@ export const integrationsApi = {
   get: (id: string) => api.get<ChannelIntegration>(`/integrations/${id}`).then((r) => r.data),
   create: (body: { name: string; channelType: string; marketplace?: string | null; config?: Record<string, string>; secrets?: Record<string, string> }) =>
     api.post<ChannelIntegration>('/integrations', body).then((r) => r.data),
-  update: (id: string, body: { name?: string; marketplace?: string | null; config?: Record<string, string>; secrets?: Record<string, string>; status?: 'active' | 'disabled' }) =>
+  update: (id: string, body: { name?: string; marketplace?: string | null; config?: Record<string, string>; secrets?: Record<string, string>; status?: 'active' | 'disabled'; targetSalesChannelId?: string | null; targetCompanyId?: string | null; autoSyncEnabled?: boolean; backfillDays?: number }) =>
     api.patch<ChannelIntegration>(`/integrations/${id}`, body).then((r) => r.data),
+  sync: (id: string) => api.post<IntegrationSyncResult>(`/integrations/${id}/sync`, {}).then((r) => r.data),
   test: (id: string, mode: 'live' | 'test') => api.post<IntegrationTestResult>(`/integrations/${id}/test`, { mode }).then((r) => r.data),
   previewMapping: (id: string) => api.post<MappingPreview>(`/integrations/${id}/preview-mapping`, {}).then((r) => r.data),
   verifyMapping: (id: string, confirmed: boolean) => api.post<ChannelIntegration>(`/integrations/${id}/verify-mapping`, { confirmed }).then((r) => r.data),

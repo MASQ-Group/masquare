@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
+import { SalesTransactionsService } from '../sales-transactions/sales-transactions.service';
 import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFieldKeys, type ConnectorDef } from './connectors';
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
 import { mapOnBuyOrder } from './mappings/onbuy-mapping';
@@ -9,7 +11,11 @@ import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 export class IntegrationsService {
   private readonly logger = new Logger(IntegrationsService.name);
 
-  constructor(private readonly prisma: PrismaService, private readonly crypto: CryptoService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly crypto: CryptoService,
+    private readonly salesTx: SalesTransactionsService,
+  ) {}
 
   connectors() {
     return listConnectors();
@@ -44,6 +50,14 @@ export class IntegrationsService {
       lastTestStatus: row.lastTestStatus,
       lastTestMessage: row.lastTestMessage,
       mappingVerifiedAt: row.mappingVerifiedAt ?? null,
+      targetSalesChannelId: row.targetSalesChannelId ?? null,
+      targetCompanyId: row.targetCompanyId ?? null,
+      autoSyncEnabled: row.autoSyncEnabled ?? false,
+      backfillDays: row.backfillDays ?? 30,
+      lastSyncedAt: row.lastSyncedAt ?? null,
+      lastSyncRunAt: row.lastSyncRunAt ?? null,
+      lastSyncStatus: row.lastSyncStatus ?? null,
+      lastSyncMessage: row.lastSyncMessage ?? null,
       secretFields,
       createdAt: row.createdAt,
     };
@@ -95,7 +109,12 @@ export class IntegrationsService {
     const nextConfig = dto.config ? { ...(existing.config as object), ...this.cleanConfig(connector, dto.config) } : undefined;
     await this.prisma.channelIntegration.update({
       where: { id },
-      data: { name: dto.name, status: dto.status, marketplace: dto.marketplace, ...(nextConfig ? { config: nextConfig } : {}), updatedById: actorId },
+      data: {
+        name: dto.name, status: dto.status, marketplace: dto.marketplace,
+        targetSalesChannelId: dto.targetSalesChannelId, targetCompanyId: dto.targetCompanyId,
+        autoSyncEnabled: dto.autoSyncEnabled, backfillDays: dto.backfillDays,
+        ...(nextConfig ? { config: nextConfig } : {}), updatedById: actorId,
+      },
     });
     await this.audit(id, actorId, 'update');
     if (dto.secrets) await this.writeSecrets(id, connector, dto.secrets, actorId, false);
@@ -253,18 +272,24 @@ export class IntegrationsService {
     return { token: json.access_token, mode, base };
   }
 
-  /** Fetch recent OnBuy orders (read-only). Shared by preview + mapping + import. */
+  /** One page of OnBuy orders (read-only) using an already-obtained token. */
+  private async onbuyOrdersPage(base: string, token: string, siteId: string | null, limit: number, offset: number): Promise<{ ok: boolean; status?: number; message?: string; total: number | null; orders: any[] }> {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (siteId) params.set('site_id', siteId);
+    const res = await fetch(`${base}/orders?${params.toString()}`, { headers: { Authorization: token }, signal: AbortSignal.timeout(15000) });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, status: res.status, message: (json?.error?.message || json?.message || '').toString().slice(0, 200), total: null, orders: [] };
+    return { ok: true, total: json?.total ?? null, orders: json?.results ?? (Array.isArray(json) ? json : []) };
+  }
+
+  /** Fetch recent OnBuy orders (read-only). Shared by preview + mapping. */
   private async fetchOnBuyOrders(row: any, limit: number): Promise<{ ok: boolean; mode: 'live' | 'test'; status?: number; message?: string; siteId: string | null; total: number | null; orders: any[] }> {
     const config = (row.config ?? {}) as Record<string, string>;
     const secrets = await this.decryptedSecrets(row.id);
     const { token, mode, base } = await this.onbuyAccessToken(config, secrets);
     const siteId = (config.siteIds || '').match(/\d+/)?.[0] ?? null;
-    const params = new URLSearchParams({ limit: String(limit), offset: '0' });
-    if (siteId) params.set('site_id', siteId);
-    const res = await fetch(`${base}/orders?${params.toString()}`, { headers: { Authorization: token }, signal: AbortSignal.timeout(12000) });
-    const json: any = await res.json().catch(() => null);
-    if (!res.ok) return { ok: false, mode, status: res.status, message: (json?.error?.message || json?.message || '').toString().slice(0, 200), siteId, total: null, orders: [] };
-    return { ok: true, mode, siteId, total: json?.total ?? null, orders: json?.results ?? (Array.isArray(json) ? json : []) };
+    const page = await this.onbuyOrdersPage(base, token, siteId, limit, 0);
+    return { ...page, mode, siteId };
   }
 
   /** Read-only: fetch a few recent OnBuy orders to validate the connection. */
@@ -312,6 +337,114 @@ export class IntegrationsService {
     await this.prisma.channelIntegration.update({ where: { id }, data: { mappingVerifiedAt: confirmed ? new Date() : null } });
     await this.audit(id, actorId, confirmed ? 'mapping.verify' : 'mapping.unverify');
     return this.get(id);
+  }
+
+  // --- Order import ---------------------------------------------------------
+
+  /** Match an incoming SKU to a product (main SKU, then alias) for profit/costing. */
+  private async resolveProductId(sku: string | null): Promise<string | null> {
+    if (!sku) return null;
+    const p = await this.prisma.product.findFirst({ where: { deletedAt: null, mainSku: sku }, select: { id: true } });
+    if (p) return p.id;
+    const a = await this.prisma.productSkuAlias.findFirst({ where: { deletedAt: null, skuValue: sku }, select: { productId: true } });
+    return a?.productId ?? null;
+  }
+
+  /** Import OnBuy orders into sales transactions. Incremental after the first run;
+   *  imports as drafts, deduped by (integration + order id), never touching manual
+   *  entries. Gated on a verified mapping + active status + configured target. */
+  async syncOrders(id: string, trigger: 'manual' | 'schedule', actorId?: string) {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
+    if (!row) throw new NotFoundException('Integration not found');
+    if (row.channelType !== 'onbuy') throw new BadRequestException('Order import currently supports OnBuy only.');
+    if (row.status !== 'active') throw new BadRequestException('Integration is disabled.');
+    if (!row.mappingVerifiedAt) throw new BadRequestException('Confirm the field mapping before importing.');
+    if (!row.targetSalesChannelId || !row.targetCompanyId) throw new BadRequestException('Set the target sales channel and company in the integration settings first.');
+
+    // Cutoff: first run backfills `backfillDays`; later runs pull since the last
+    // imported order date, minus a small buffer to catch updates.
+    const cutoff = row.lastSyncedAt
+      ? new Date(row.lastSyncedAt.getTime() - 36 * 3600 * 1000)
+      : new Date(Date.now() - (row.backfillDays ?? 30) * 24 * 3600 * 1000);
+
+    const counts = { scanned: 0, created: 0, updated: 0, skipped: 0, cancelled: 0, errors: 0 };
+    let maxDate = row.lastSyncedAt ?? null;
+    const sysUser = { sub: actorId ?? 'system', email: 'system', isAdmin: true } as any;
+    const LIMIT = 100;
+    const MAX_PAGES = 15;
+
+    try {
+      const config = (row.config ?? {}) as Record<string, string>;
+      const secrets = await this.decryptedSecrets(row.id);
+      const { token, base } = await this.onbuyAccessToken(config, secrets);
+      const siteId = (config.siteIds || '').match(/\d+/)?.[0] ?? null;
+
+      for (let pageNo = 0; pageNo < MAX_PAGES; pageNo++) {
+        const page = await this.onbuyOrdersPage(base, token, siteId, LIMIT, pageNo * LIMIT);
+        if (!page.ok) throw new Error(`OnBuy orders ${page.status}: ${page.message}`);
+        if (page.orders.length === 0) break;
+
+        for (const order of page.orders) {
+          counts.scanned++;
+          const orderDate = new Date(String(order.date ?? '').replace(' ', 'T'));
+          if (isNaN(orderDate.getTime()) || orderDate < cutoff) { counts.skipped++; continue; }
+          const mapped = mapOnBuyOrder(order);
+          if (mapped.payload.resolution === 'cancelled') { counts.cancelled++; continue; } // handled in a later refinement
+
+          const destCountry = mapped.payload.destinationCountryCode
+            ? await this.prisma.country.findFirst({ where: { deletedAt: null, isoCode: mapped.payload.destinationCountryCode }, select: { id: true } })
+            : null;
+          const items = await Promise.all(mapped.items.map(async (it) => ({ ...it.payload, productId: await this.resolveProductId(it.sku) })));
+
+          const dto: any = {
+            date: orderDate.toISOString(),
+            transactionRef: mapped.payload.transactionRef,
+            salesChannelId: row.targetSalesChannelId,
+            destinationCountryId: destCountry?.id ?? null,
+            companyId: row.targetCompanyId,
+            status: 'draft',
+            fulfilmentStatus: mapped.payload.fulfilmentStatus,
+            source: 'onbuy',
+            integrationId: row.id,
+            items,
+          };
+
+          try {
+            const existing = await this.prisma.salesTransaction.findFirst({ where: { integrationId: row.id, transactionRef: dto.transactionRef, deletedAt: null }, select: { id: true } });
+            if (existing) { await this.salesTx.update(existing.id, dto, sysUser); counts.updated++; }
+            else { await this.salesTx.create(dto, actorId); counts.created++; }
+            if (!maxDate || orderDate > maxDate) maxDate = orderDate;
+          } catch (e: any) {
+            counts.errors++;
+            this.logger.warn(`Import failed for order ${dto.transactionRef}: ${e?.message ?? e}`);
+          }
+        }
+        if (page.orders.length < LIMIT) break;
+      }
+
+      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled skipped, ${counts.errors} errors`;
+      await this.prisma.channelIntegration.update({ where: { id }, data: { lastSyncedAt: maxDate ?? undefined, lastSyncRunAt: new Date(), lastSyncStatus: counts.errors ? 'error' : 'ok', lastSyncMessage: message } });
+      await this.audit(id, actorId, 'sync', `${trigger}: ${message}`);
+      return { ok: true, ...counts, message };
+    } catch (e: any) {
+      const message = (e?.message ?? String(e)).slice(0, 300);
+      await this.prisma.channelIntegration.update({ where: { id }, data: { lastSyncRunAt: new Date(), lastSyncStatus: 'error', lastSyncMessage: message } });
+      await this.audit(id, actorId, 'sync', `${trigger}: ERROR ${message}`);
+      return { ok: false, ...counts, message };
+    }
+  }
+
+  /** Daily automatic pull for integrations that opted in. */
+  @Cron('0 5 * * *')
+  async scheduledSync() {
+    const rows = await this.prisma.channelIntegration.findMany({
+      where: { deletedAt: null, status: 'active', autoSyncEnabled: true, mappingVerifiedAt: { not: null }, channelType: 'onbuy' },
+      select: { id: true, name: true },
+    });
+    for (const r of rows) {
+      this.logger.log(`Auto-sync: ${r.name}`);
+      await this.syncOrders(r.id, 'schedule').catch((e) => this.logger.error(`Auto-sync failed for ${r.name}: ${e?.message ?? e}`));
+    }
   }
 
   private async audit(integrationId: string, actorId: string | undefined, action: string, detail?: string) {

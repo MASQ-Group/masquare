@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, ListChecks, Pencil, Plug, Plus, ShieldCheck, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, Download, ListChecks, Pencil, Plug, Plus, RefreshCw, ShieldCheck, Trash2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { integrationsApi, type ChannelIntegration } from '../lib/api';
 import { IntegrationModal } from '../components/integrations/IntegrationModal';
@@ -26,8 +26,22 @@ export function IntegrationsPage() {
     mutationFn: (id: string) => integrationsApi.remove(id),
     onSuccess: () => { toast.success('Integration removed'); qc.invalidateQueries({ queryKey: ['integrations'] }); },
   });
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const sync = useMutation({
+    mutationFn: (id: string) => integrationsApi.sync(id),
+    onMutate: (id) => setSyncingId(id),
+    onSuccess: (res) => {
+      if (res.ok) toast.success(`Sync complete — ${res.created} created, ${res.updated} updated${res.cancelled ? `, ${res.cancelled} cancelled skipped` : ''}`);
+      else toast.error(res.message ?? 'Sync failed');
+      qc.invalidateQueries({ queryKey: ['integrations'] });
+      qc.invalidateQueries({ queryKey: ['sales-transactions'] });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Sync failed'),
+    onSettled: () => setSyncingId(null),
+  });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['integrations'] });
+  const canSync = (i: ChannelIntegration) => !!i.mappingVerifiedAt && !!i.targetSalesChannelId && !!i.targetCompanyId && i.status === 'active';
 
   return (
     <div className="w-full">
@@ -96,9 +110,24 @@ export function IntegrationsPage() {
                 {i.mappingVerifiedAt
                   ? <span className="inline-flex items-center gap-1 text-success"><CheckCircle2 size={13} /> Mapping verified</span>
                   : <span className="inline-flex items-center gap-1 text-n-400"><ListChecks size={13} /> Mapping not verified</span>}
+                {i.autoSyncEnabled && <span className="inline-flex items-center gap-1 text-teal-700"><RefreshCw size={12} /> daily</span>}
                 <button className="ml-auto inline-flex items-center gap-1 font-medium text-teal-700 hover:underline" onClick={() => setMapVerify(i)}>
                   <ListChecks size={13} /> {i.mappingVerifiedAt ? 'Review mapping' : 'Verify field mapping'}
                 </button>
+              </div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+                <button
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12.5px] font-semibold text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!canSync(i) || (sync.isPending && syncingId === i.id)}
+                  title={canSync(i) ? 'Pull orders now' : 'Verify the mapping and set the target channel/company first'}
+                  onClick={() => sync.mutate(i.id)}
+                >
+                  <Download size={14} className={sync.isPending && syncingId === i.id ? 'animate-pulse' : ''} /> {sync.isPending && syncingId === i.id ? 'Syncing…' : 'Sync now'}
+                </button>
+                {i.lastSyncStatus === 'ok' && <span className="text-n-500">{i.lastSyncMessage}</span>}
+                {i.lastSyncStatus === 'error' && <span className="text-danger" title={i.lastSyncMessage ?? undefined}>Last sync failed</span>}
+                <span className="ml-auto text-n-400">{i.lastSyncRunAt ? `synced ${fmtDateTime(i.lastSyncRunAt)}` : 'never synced'}</span>
               </div>
             </div>
           ))}

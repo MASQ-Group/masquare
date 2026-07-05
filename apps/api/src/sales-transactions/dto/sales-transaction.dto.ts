@@ -25,6 +25,10 @@ export class CreateSalesTransactionDto {
   @IsOptional() @IsNumber() destinationVatPct?: number | null;
   @IsOptional() @IsBoolean() vatOverridden?: boolean;
   @IsOptional() @IsIn(['draft', 'submitted']) status?: 'draft' | 'submitted';
+  // Set by importers (not exposed in the UI).
+  @IsOptional() @IsString() source?: string;
+  @IsOptional() @IsUUID() integrationId?: string | null;
+  @IsOptional() @IsIn(['pending', 'shipped', 'cancelled']) fulfilmentStatus?: 'pending' | 'shipped' | 'cancelled';
 
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => SalesTransactionItemDto)
   items!: SalesTransactionItemDto[];
