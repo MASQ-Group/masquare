@@ -564,6 +564,10 @@ export const profitTiersApi = {
 export interface SalesTransactionItem {
   id?: string;
   productId?: string | null;
+  productTitle?: string | null;
+  productMatched?: boolean;
+  productCost?: number | null;
+  productWeightKg?: number | null;
   sku: string;
   quantity: number;
   netSalesAmount?: number | null;
@@ -693,6 +697,8 @@ export const salesTransactionsApi = {
   remove: (id: string) => api.delete(`/sales-transactions/${id}`).then((r) => r.data),
   resolve: (id: string, body: { resolution: 'none' | 'cancelled' | 'returned' | 'replaced'; refundAmount?: number | null; restockItems?: boolean; feeRefunded?: boolean; resolutionNotes?: string | null }) =>
     api.patch<SalesTransaction>(`/sales-transactions/${id}/resolution`, body).then((r) => r.data),
+  bulkStatus: (ids: string[], status: 'draft' | 'submitted') =>
+    api.post<{ updated: number; skipped: number }>('/sales-transactions/bulk/status', { ids, status }).then((r) => r.data),
   requestUnlock: (id: string) => api.post(`/sales-transactions/${id}/unlock-request`, {}).then((r) => r.data),
   listUnlockRequests: () => api.get<UnlockRequest[]>('/sales-transactions/unlock-requests').then((r) => r.data),
   decideUnlock: (requestId: string, grant: boolean) => api.post(`/sales-transactions/unlock-requests/${requestId}/decide`, { grant }).then((r) => r.data),

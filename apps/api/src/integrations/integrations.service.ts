@@ -346,12 +346,13 @@ export class IntegrationsService {
 
   // --- Order import ---------------------------------------------------------
 
-  /** Match an incoming SKU to a product (main SKU, then alias) for profit/costing. */
+  /** Match an incoming SKU to a product (main SKU, then alias), case-insensitively. */
   private async resolveProductId(sku: string | null): Promise<string | null> {
-    if (!sku) return null;
-    const p = await this.prisma.product.findFirst({ where: { deletedAt: null, mainSku: sku }, select: { id: true } });
+    const s = (sku ?? '').trim();
+    if (!s) return null;
+    const p = await this.prisma.product.findFirst({ where: { deletedAt: null, mainSku: { equals: s, mode: 'insensitive' } }, select: { id: true } });
     if (p) return p.id;
-    const a = await this.prisma.productSkuAlias.findFirst({ where: { deletedAt: null, skuValue: sku }, select: { productId: true } });
+    const a = await this.prisma.productSkuAlias.findFirst({ where: { deletedAt: null, skuValue: { equals: s, mode: 'insensitive' } }, select: { productId: true } });
     return a?.productId ?? null;
   }
 

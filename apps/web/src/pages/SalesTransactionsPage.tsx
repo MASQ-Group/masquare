@@ -58,6 +58,7 @@ export function SalesTransactionsPage() {
   const [viewing, setViewing] = useState<SalesTransaction | undefined>(undefined);
   const [resolving, setResolving] = useState<SalesTransaction | undefined>(undefined);
   const [reqOpen, setReqOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // view controls
   const [sortBy, setSortBy] = useState<SortKey>('date');
@@ -112,6 +113,22 @@ export function SalesTransactionsPage() {
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / 50));
   const visible = useMemo(() => ALL_COLUMNS.filter((c) => cols.has(c.key)), [cols]);
+
+  // Bulk selection
+  const pageIds = items.map((t) => t.id);
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+  const toggleOne = (id: string) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAll = () => setSelected((s) => { const n = new Set(s); if (allOnPageSelected) pageIds.forEach((id) => n.delete(id)); else pageIds.forEach((id) => n.add(id)); return n; });
+  const clearSel = () => setSelected(new Set());
+  const bulk = useMutation({
+    mutationFn: (status: 'draft' | 'submitted') => salesTransactionsApi.bulkStatus([...selected], status),
+    onSuccess: (res, status) => {
+      toast.success(`${res.updated} ${status === 'submitted' ? 'submitted' : 'saved as draft'}${res.skipped ? `, ${res.skipped} skipped (locked)` : ''}`);
+      clearSel();
+      qc.invalidateQueries({ queryKey: ['sales-transactions'] });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Bulk action failed'),
+  });
   // Use text chips for Status/Shipment while the column set is compact enough to stay on
   // one line; switch to space-saving circles once more columns are shown.
   const chipMode: 'text' | 'circle' = visible.length <= 9 ? 'text' : 'circle';
@@ -254,11 +271,23 @@ export function SalesTransactionsPage() {
         )}
       </div>
 
+      {selected.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2.5 rounded-lg border border-teal-200 bg-teal-50/70 px-3.5 py-2.5">
+          <span className="text-[13px] font-semibold text-teal-800">{selected.size} selected</span>
+          <button className="btn btn-ghost h-8" disabled={bulk.isPending} onClick={() => bulk.mutate('draft')}>Save as draft</button>
+          <button className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-semibold text-white hover:bg-primary-hover disabled:opacity-50" disabled={bulk.isPending} onClick={() => bulk.mutate('submitted')}>Submit</button>
+          <button className="ml-auto text-[12.5px] font-medium text-n-500 hover:text-n-800" onClick={clearSel}>Clear</button>
+        </div>
+      )}
+
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] border-collapse">
             <thead>
               <tr>
+                <th className="border-b border-n-200 bg-n-25 px-3 py-3 text-left">
+                  <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={allOnPageSelected} onChange={toggleAll} title="Select all on this page" />
+                </th>
                 {visible.map((c) => (
                   <th key={c.key} className={`border-b border-n-200 bg-n-25 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap ${c.right ? 'text-right' : 'text-left'}`}>
                     {c.sort ? (
@@ -279,10 +308,13 @@ export function SalesTransactionsPage() {
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={visible.length + 1} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
-              {!isLoading && items.length === 0 && <tr><td colSpan={visible.length + 1} className="px-4 py-12 text-center text-[13px] text-n-500">No transactions match. Register your first sale.</td></tr>}
+              {isLoading && <tr><td colSpan={visible.length + 2} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
+              {!isLoading && items.length === 0 && <tr><td colSpan={visible.length + 2} className="px-4 py-12 text-center text-[13px] text-n-500">No transactions match. Register your first sale.</td></tr>}
               {items.map((t) => (
-                <tr key={t.id} className="cursor-pointer hover:bg-teal-50" onClick={() => setViewing(t)}>
+                <tr key={t.id} className={`cursor-pointer hover:bg-teal-50 ${selected.has(t.id) ? 'bg-teal-50/60' : ''}`} onClick={() => setViewing(t)}>
+                  <td className="border-b border-n-100 px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={selected.has(t.id)} onChange={() => toggleOne(t.id)} />
+                  </td>
                   {visible.map((c) => <td key={c.key} className={cellClass(c.key, c.right)}>{renderCell(c.key, t)}</td>)}
                   <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-1">

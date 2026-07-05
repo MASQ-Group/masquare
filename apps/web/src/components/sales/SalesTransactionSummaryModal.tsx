@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Lock } from 'lucide-react';
+import { AlertTriangle, Lock } from 'lucide-react';
 import { ModalShell } from '@masquare/ui';
 import { profitTiersApi, type ProfitTier, type SalesTransaction } from '../../lib/api';
 import { formatDate, formatMoney } from '../../lib/format';
@@ -91,7 +91,7 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, 
             <table className="w-full min-w-[720px] border-collapse">
               <thead>
                 <tr>
-                  {['SKU', 'Qty', `Net sales (${ccy})`, `VAT (${ccy})`, `Shipping (${ccy})`, `Shipping VAT (${ccy})`, `Sales fee (${feeCcy})`].map((h, i) => (
+                  {['SKU', 'Qty', `Net sales (${ccy})`, `VAT (${ccy})`, `Shipping (${ccy})`, `Shipping VAT (${ccy})`, `Sales fee (${feeCcy})`, 'Product cost (€)'].map((h, i) => (
                     <th key={h} className={`border-b border-n-200 bg-n-25 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>
                   ))}
                 </tr>
@@ -99,13 +99,21 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, 
               <tbody>
                 {t.items.map((it, idx) => (
                   <tr key={it.id ?? idx}>
-                    <td className="mono border-b border-n-100 px-3 py-2 text-[13px] font-medium text-n-800">{it.sku}</td>
+                    <td className="mono border-b border-n-100 px-3 py-2 text-[13px] font-medium text-n-800">
+                      {it.sku}
+                      {!it.productMatched && <span className="ml-1.5 inline-flex items-center gap-0.5 rounded bg-orange-50 px-1 py-0.5 text-[10px] font-medium text-orange-700" title="No matching product in Products — cost/weight not linked"><AlertTriangle size={10} /> no product</span>}
+                    </td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{it.quantity}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{money(it.netSalesAmount, ccy)}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{money(it.vatAmount, ccy)}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{money(it.shippingAmount, ccy)}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{money(it.shippingAmountVat, ccy)}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{money(it.salesChannelSalesFeeAmount, feeCcy)}</td>
+                    <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px]">
+                      {it.productMatched && it.productCost != null
+                        ? <span className="text-n-800">€{it.productCost.toFixed(2)}</span>
+                        : <span className="text-orange-600">—</span>}
+                    </td>
                   </tr>
                 ))}
                 <tr>
@@ -116,6 +124,7 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, 
                   <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">{money(t.totals.shipping, ccy)}</td>
                   <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">{money(t.totals.shippingVat, ccy)}</td>
                   <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">{money(t.totals.fee, feeCcy)}</td>
+                  <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">€{t.items.reduce((s, it) => s + (it.productCost ?? 0) * it.quantity, 0).toFixed(2)}</td>
                 </tr>
               </tbody>
             </table>

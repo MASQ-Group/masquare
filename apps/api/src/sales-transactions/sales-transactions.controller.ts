@@ -28,7 +28,12 @@ export class SalesTransactionsController {
     return this.svc.list(query);
   }
 
-  // --- Unlock requests (literal paths declared before ":id") ---
+  // --- Bulk actions & unlock requests (literal paths declared before ":id") ---
+  @Post('bulk/status')
+  bulkStatus(@Body() dto: { ids: string[]; status: 'draft' | 'submitted' }, @CurrentUser() user: AuthUser) {
+    return this.svc.bulkStatus(dto.ids ?? [], dto.status === 'submitted' ? 'submitted' : 'draft', user);
+  }
+
   @Get('unlock-requests')
   listUnlockRequests(@CurrentUser() user: AuthUser) {
     if (!user.isAdmin) throw new ForbiddenException('Admin only');

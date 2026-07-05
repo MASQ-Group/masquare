@@ -224,6 +224,9 @@ export class SalesTransactionsService {
         id: it.id,
         productId: it.productId,
         productTitle: it.product?.title ?? null,
+        productMatched: it.product != null, // did the SKU link to a product?
+        productCost: it.product?.purchaseCostAmount != null ? Number(it.product.purchaseCostAmount) : null, // unit purchase cost
+        productWeightKg: it.product?.packageWeightKg != null ? Number(it.product.packageWeightKg) : it.product?.productWeightKg != null ? Number(it.product.productWeightKg) : null,
         sku: it.sku,
         quantity: it.quantity,
         netSalesAmount: it.netSalesAmount,
@@ -489,6 +492,28 @@ export class SalesTransactionsService {
       });
     });
     return this.get(id);
+  }
+
+  /** Bulk set status (draft/submitted) on many transactions. Skips ones the user
+   *  can't edit (submitted + locked for non-admins). */
+  async bulkStatus(ids: string[], status: 'draft' | 'submitted', user: AuthUser) {
+    const rows = await this.prisma.salesTransaction.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      select: { id: true, status: true, unlockedForEdit: true },
+    });
+    let updated = 0;
+    let skipped = 0;
+    for (const r of rows) {
+      const editable = user.isAdmin || r.status === 'draft' || r.unlockedForEdit;
+      if (!editable) { skipped++; continue; }
+      // Submitting re-locks for non-admins; moving to draft clears the unlock flag.
+      await this.prisma.salesTransaction.update({
+        where: { id: r.id },
+        data: { status, unlockedForEdit: false, updatedById: user.sub },
+      });
+      updated++;
+    }
+    return { updated, skipped };
   }
 
   /** Apply an order resolution (return / cancellation / refund). Cancelling also
