@@ -272,14 +272,19 @@ export class IntegrationsService {
     return { token: json.access_token, mode, base };
   }
 
-  /** One page of OnBuy orders (read-only) using an already-obtained token. */
-  private async onbuyOrdersPage(base: string, token: string, siteId: string | null, limit: number, offset: number): Promise<{ ok: boolean; status?: number; message?: string; total: number | null; orders: any[] }> {
-    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  /** One page of OnBuy orders (read-only) using an already-obtained token.
+   *  IMPORTANT: without filter[status], OnBuy returns ONLY awaiting-dispatch
+   *  orders — so we always request status=all to see dispatched/complete/etc.
+   *  Date filters use OnBuy's `YYYY-MM-DD HH:MM:SS` format; sort by created desc. */
+  private async onbuyOrdersPage(base: string, token: string, siteId: string | null, limit: number, offset: number, opts?: { dateFrom?: string; dateTo?: string }): Promise<{ ok: boolean; status?: number; message?: string; total: number | null; orders: any[] }> {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset), 'filter[status]': 'all', 'sort[created]': 'desc' });
     if (siteId) params.set('site_id', siteId);
+    if (opts?.dateFrom) params.set('filter[date_from]', opts.dateFrom);
+    if (opts?.dateTo) params.set('filter[date_to]', opts.dateTo);
     const res = await fetch(`${base}/orders?${params.toString()}`, { headers: { Authorization: token }, signal: AbortSignal.timeout(15000) });
     const json: any = await res.json().catch(() => null);
     if (!res.ok) return { ok: false, status: res.status, message: (json?.error?.message || json?.message || '').toString().slice(0, 200), total: null, orders: [] };
-    return { ok: true, total: json?.total ?? null, orders: json?.results ?? (Array.isArray(json) ? json : []) };
+    return { ok: true, total: json?.metadata?.total_rows ?? json?.total ?? null, orders: json?.results ?? (Array.isArray(json) ? json : []) };
   }
 
   /** Fetch recent OnBuy orders (read-only). Shared by preview + mapping. */
@@ -372,11 +377,16 @@ export class IntegrationsService {
         : new Date(Date.now() - (row.backfillDays ?? 30) * 24 * 3600 * 1000);
     const upper = isRange ? (range!.to ? new Date(new Date(range!.to).setHours(23, 59, 59, 999)) : new Date()) : null;
 
+    // OnBuy date filter format: 'YYYY-MM-DD HH:MM:SS'.
+    const fmt = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
+    const dateFrom = isRange ? `${range!.from} 00:00:00` : fmt(cutoff);
+    const dateTo = isRange && range!.to ? `${range!.to} 23:59:59` : undefined;
+
     const counts = { scanned: 0, created: 0, updated: 0, skipped: 0, cancelled: 0, errors: 0 };
     let maxDate = row.lastSyncedAt ?? null; // never regresses the high-water mark
     const sysUser = { sub: actorId ?? 'system', email: 'system', isAdmin: true } as any;
     const LIMIT = 100;
-    const MAX_PAGES = isRange ? 200 : 15; // a range pull may span the full order history
+    const MAX_PAGES = 100; // date-filtered + sorted desc; stop early when a partial page returns
 
     try {
       const config = (row.config ?? {}) as Record<string, string>;
@@ -385,7 +395,7 @@ export class IntegrationsService {
       const siteId = (config.siteIds || '').match(/\d+/)?.[0] ?? null;
 
       for (let pageNo = 0; pageNo < MAX_PAGES; pageNo++) {
-        const page = await this.onbuyOrdersPage(base, token, siteId, LIMIT, pageNo * LIMIT);
+        const page = await this.onbuyOrdersPage(base, token, siteId, LIMIT, pageNo * LIMIT, { dateFrom, dateTo });
         if (!page.ok) throw new Error(`OnBuy orders ${page.status}: ${page.message}`);
         if (page.orders.length === 0) break;
 
@@ -394,7 +404,9 @@ export class IntegrationsService {
           const orderDate = new Date(String(order.date ?? '').replace(' ', 'T'));
           if (isNaN(orderDate.getTime()) || orderDate < cutoff || (upper && orderDate > upper)) { counts.skipped++; continue; }
           const mapped = mapOnBuyOrder(order);
-          if (mapped.payload.resolution === 'cancelled') { counts.cancelled++; continue; } // handled in a later refinement
+          // Skip fully cancelled/refunded orders (not net sales). Partial refunds/dispatches import.
+          const st = String(order.status ?? '').toLowerCase();
+          if (mapped.payload.resolution === 'cancelled' || (st.includes('refund') && !st.includes('partial'))) { counts.cancelled++; continue; }
 
           const destCountry = mapped.payload.destinationCountryCode
             ? await this.prisma.country.findFirst({ where: { deletedAt: null, isoCode: mapped.payload.destinationCountryCode }, select: { id: true } })
@@ -428,7 +440,7 @@ export class IntegrationsService {
       }
 
       const rangeNote = isRange ? ` for ${range!.from}…${range!.to ?? 'now'}` : '';
-      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled skipped, ${counts.errors} errors${rangeNote}`;
+      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled/refunded skipped, ${counts.errors} errors${rangeNote}`;
       await this.prisma.channelIntegration.update({ where: { id }, data: { lastSyncedAt: maxDate ?? undefined, lastSyncRunAt: new Date(), lastSyncStatus: counts.errors ? 'error' : 'ok', lastSyncMessage: message } });
       await this.audit(id, actorId, isRange ? 'sync.range' : 'sync', `${trigger}: ${message}`);
       return { ok: true, ...counts, message };
