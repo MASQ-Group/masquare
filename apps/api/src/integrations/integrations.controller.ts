@@ -44,6 +44,11 @@ export class IntegrationsController {
     return this.svc.test(id, dto.mode ?? 'test', user.sub);
   }
 
+  @Post(':id/preview-orders')
+  previewOrders(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.svc.previewOrders(id, user.sub);
+  }
+
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.svc.remove(id, user.sub);

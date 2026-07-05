@@ -231,6 +231,49 @@ export class IntegrationsService {
     }
   }
 
+  // --- OnBuy data pull (read-only preview for now) --------------------------
+
+  /** Fresh OnBuy access token (valid ~15 min). Prefers live keys, else test. */
+  private async onbuyAccessToken(config: Record<string, string>, secrets: Record<string, string>): Promise<{ token: string; mode: 'live' | 'test'; base: string }> {
+    const mode: 'live' | 'test' = secrets.liveConsumerKey && secrets.liveSecretKey ? 'live' : 'test';
+    const consumerKey = secrets[mode === 'live' ? 'liveConsumerKey' : 'testConsumerKey'];
+    const secretKey = secrets[mode === 'live' ? 'liveSecretKey' : 'testSecretKey'];
+    if (!consumerKey || !secretKey) throw new BadRequestException('No OnBuy keys set.');
+    const base = (config.url || 'https://api.onbuy.com/v2').replace(/\/+$/, '');
+    const res = await fetch(`${base}/auth/request-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ consumer_key: consumerKey, secret_key: secretKey }).toString(),
+      signal: AbortSignal.timeout(8000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok || !json?.access_token) throw new BadRequestException(`OnBuy auth failed (${res.status}).`);
+    return { token: json.access_token, mode, base };
+  }
+
+  /** Read-only: fetch a few recent OnBuy orders to validate the connection and
+   *  reveal the data shape before we build the importer. Nothing is stored. */
+  async previewOrders(id: string, actorId?: string, limit = 5) {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
+    if (!row) throw new NotFoundException('Integration not found');
+    if (row.channelType !== 'onbuy') throw new BadRequestException('Order preview currently supports OnBuy only.');
+    const config = (row.config ?? {}) as Record<string, string>;
+    const secrets = await this.decryptedSecrets(row.id);
+    const { token, mode, base } = await this.onbuyAccessToken(config, secrets);
+
+    const siteId = (config.siteIds || '').match(/\d+/)?.[0];
+    const params = new URLSearchParams({ limit: String(limit), offset: '0' });
+    if (siteId) params.set('site_id', siteId);
+    const res = await fetch(`${base}/orders?${params.toString()}`, { headers: { Authorization: token }, signal: AbortSignal.timeout(12000) });
+    const json: any = await res.json().catch(() => null);
+    await this.audit(id, actorId, 'preview', `mode=${mode} status=${res.status}`);
+    if (!res.ok) {
+      return { ok: false, mode, status: res.status, message: (json?.error?.message || json?.message || '').toString().slice(0, 200) };
+    }
+    const orders = json?.results ?? (Array.isArray(json) ? json : []);
+    return { ok: true, mode, siteId: siteId ?? null, total: json?.total ?? null, count: orders.length, orders };
+  }
+
   private async audit(integrationId: string, actorId: string | undefined, action: string, detail?: string) {
     await this.prisma.integrationAudit.create({ data: { integrationId, actorId: actorId ?? null, action, detail: detail ?? null } }).catch(() => undefined);
   }
