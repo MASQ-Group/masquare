@@ -14,6 +14,7 @@ import { ProductModal } from '../components/products/ProductModal';
 import { ExportModal } from '../components/products/ExportModal';
 import { BulkEditModal } from '../components/products/BulkEditModal';
 import { ProductImportModal } from '../components/products/ProductImportModal';
+import { ConfirmDeleteModal } from '../components/products/ConfirmDeleteModal';
 import { EXPORT_COLUMNS } from '../components/products/columns';
 
 const SEARCH_FIELDS = [
@@ -64,6 +65,8 @@ export function ProductsPage() {
   const [exportProducts, setExportProducts] = useState<Product[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [openMenu, setOpenMenu] = useState<'filters' | 'columns' | null>(null);
+  // Pending delete awaiting confirmation: a single product, or a bulk delete of the selection.
+  const [pendingDelete, setPendingDelete] = useState<{ kind: 'single'; product: Product } | { kind: 'bulk'; ids: string[] } | null>(null);
 
   // debounce search
   useEffect(() => {
@@ -92,7 +95,8 @@ export function ProductsPage() {
 
   const del = useMutation({
     mutationFn: (id: string) => productsApi.remove(id),
-    onSuccess: () => { toast.success('Product removed'); qc.invalidateQueries({ queryKey: ['products'] }); },
+    onSuccess: () => { toast.success('Product removed'); setPendingDelete(null); qc.invalidateQueries({ queryKey: ['products'] }); },
+    onError: () => toast.error('Could not remove product'),
   });
 
   const items = data?.items ?? [];
@@ -134,8 +138,8 @@ export function ProductsPage() {
   const clearAll = () => { setFilters(EMPTY); setQInput(''); setQ(''); setPage(1); };
 
   const bulkDelete = useMutation({
-    mutationFn: () => productsApi.bulkDelete([...selected]),
-    onSuccess: (r: any) => { toast.success(`Removed ${r.count} products`); setSelected(new Set()); qc.invalidateQueries({ queryKey: ['products'] }); },
+    mutationFn: (ids: string[]) => productsApi.bulkDelete(ids),
+    onSuccess: (r: any) => { toast.success(`Removed ${r.count} products`); setSelected(new Set()); setPendingDelete(null); qc.invalidateQueries({ queryKey: ['products'] }); },
     onError: () => toast.error('Bulk delete failed'),
   });
 
@@ -258,13 +262,13 @@ export function ProductsPage() {
           <div className="mx-1 h-5 w-px bg-teal-200" />
           <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:bg-n-50" onClick={() => setBulkEdit(true)}><SlidersHorizontal size={14} /> Bulk edit</button>
           <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:bg-n-50" onClick={onExport}><Download size={14} /> Export selected</button>
-          <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-bd bg-n-0 px-2.5 text-[12.5px] font-medium text-danger hover:bg-danger-bg" onClick={() => { if (confirm(`Remove ${selected.size} products?`)) bulkDelete.mutate(); }}><Trash2 size={14} /> Delete</button>
+          <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-bd bg-n-0 px-2.5 text-[12.5px] font-medium text-danger hover:bg-danger-bg" onClick={() => setPendingDelete({ kind: 'bulk', ids: [...selected] })}><Trash2 size={14} /> Delete</button>
           <button className="ml-auto text-[12.5px] font-medium text-teal-700 hover:underline" onClick={() => setSelected(new Set())}>Clear selection</button>
         </div>
       )}
 
       {view === 'list' ? (
-        <ListView items={items} loading={isLoading} cols={cols} selected={selected} allSelected={allSelected} onToggleAll={toggleAll} onToggleOne={toggleOne} onEdit={setEditing} onDelete={(p) => confirm(`Remove ${p.mainSku}?`) && del.mutate(p.id)} />
+        <ListView items={items} loading={isLoading} cols={cols} selected={selected} allSelected={allSelected} onToggleAll={toggleAll} onToggleOne={toggleOne} onEdit={setEditing} onDelete={(p) => setPendingDelete({ kind: 'single', product: p })} />
       ) : (
         <GridView items={items} loading={isLoading} onEdit={setEditing} />
       )}
@@ -300,6 +304,18 @@ export function ProductsPage() {
       {exportProducts && <ExportModal products={exportProducts} onClose={() => setExportProducts(null)} />}
       {bulkEdit && (
         <BulkEditModal ids={[...selected]} onClose={() => setBulkEdit(false)} onDone={() => { setBulkEdit(false); setSelected(new Set()); qc.invalidateQueries({ queryKey: ['products'] }); }} />
+      )}
+      {pendingDelete && (
+        <ConfirmDeleteModal
+          count={pendingDelete.kind === 'single' ? 1 : pendingDelete.ids.length}
+          label={pendingDelete.kind === 'single' ? pendingDelete.product.mainSku : undefined}
+          busy={del.isPending || bulkDelete.isPending}
+          onConfirm={() => {
+            if (pendingDelete.kind === 'single') del.mutate(pendingDelete.product.id);
+            else bulkDelete.mutate(pendingDelete.ids);
+          }}
+          onClose={() => setPendingDelete(null)}
+        />
       )}
     </div>
   );
