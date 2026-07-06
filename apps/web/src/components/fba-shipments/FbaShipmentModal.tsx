@@ -151,8 +151,8 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
 
           <div>
             <label className="label">SKUs in this shipment</label>
-            <div className="overflow-hidden rounded-lg border border-n-200">
-              <div className="grid grid-cols-[1fr_1fr_90px_36px] gap-2 border-b border-n-200 bg-n-25 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-n-500">
+            <div className="rounded-lg border border-n-200">
+              <div className="grid grid-cols-[1fr_1fr_90px_36px] gap-2 rounded-t-lg border-b border-n-200 bg-n-25 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-n-500">
                 <span>SKU</span><span>Product</span><span className="text-right">Qty</span><span />
               </div>
               {lines.map((l, i) => (
