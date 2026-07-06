@@ -90,12 +90,22 @@ export class SalesTransactionsService {
     }
 
     // Estimated shipping cost: zone of the service the destination belongs to → weight range → charge.
+    // Products are usually listed free-shipping for the buyer, but shipping still costs us —
+    // so we always apply this estimate (later overridden by the actual from Shipments).
     let estimatedShippingCost: number | null = null;
     const svc = t.shippingServiceId ? serviceMap.get(t.shippingServiceId) : null;
     if (svc && t.destinationCountryId && overallPackageWeight != null) {
       const zone = (svc.zones ?? []).find((z: any) => (z.countries ?? []).some((c: any) => c.countryId === t.destinationCountryId));
-      const rate = zone?.rates?.find((r: any) => overallPackageWeight! >= Number(r.fromWeightKg) && overallPackageWeight! <= Number(r.toWeightKg));
-      if (rate) estimatedShippingCost = Number(rate.chargeEur);
+      const rates: any[] = (zone?.rates ?? []).slice().sort((a: any, b: any) => Number(a.fromWeightKg) - Number(b.fromWeightKg));
+      if (rates.length) {
+        const w = overallPackageWeight;
+        // Exact band, else clamp to the nearest: under the lightest → lightest band;
+        // over the heaviest → heaviest band. Guarantees a shipping cost when the
+        // destination is zoned (a very out-of-range weight likely signals bad weight data).
+        const exact = rates.find((r) => w >= Number(r.fromWeightKg) && w <= Number(r.toWeightKg));
+        const chosen = exact ?? (w < Number(rates[0].fromWeightKg) ? rates[0] : rates[rates.length - 1]);
+        estimatedShippingCost = Number(chosen.chargeEur);
+      }
     }
 
     // --- Actual shipment costs (operations records these; they override the estimate) ---
