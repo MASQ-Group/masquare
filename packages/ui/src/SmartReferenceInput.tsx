@@ -143,7 +143,7 @@ export function SmartReferenceInput({
       </div>
 
       {open && (
-        <div className="absolute left-0 right-0 top-[44px] z-30 overflow-hidden rounded-lg border border-n-200 bg-n-0 p-1 shadow-lg">
+        <div className="absolute left-0 right-0 top-[44px] z-30 max-h-72 overflow-y-auto rounded-lg border border-n-200 bg-n-0 p-1 shadow-lg">
           {loading && <div className="px-3 py-2 text-[12px] text-n-500">Searching…</div>}
           {!loading &&
             options.map((o) => (
