@@ -143,6 +143,14 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
   ];
   const destName = estimate?.destinationCountry?.name ?? (channel ? '—' : '');
 
+  // When editing a shipment whose actual cost is registered, show the allocation against
+  // that actual cost (the estimate preview is proportional by weight, so we scale it).
+  const actualCost = editing && shipment?.actualCostEur != null ? shipment.actualCostEur : null;
+  const effectiveTotal = actualCost ?? estimate?.estimatedCostEur ?? null;
+  const usingActual = actualCost != null;
+  const allocScale = estimate?.estimatedCostEur && effectiveTotal != null ? effectiveTotal / estimate.estimatedCostEur : 1;
+  const scaled = (v: number | null | undefined) => (v != null ? Math.round(v * allocScale * 10000) / 10000 : null);
+
   return (
     <ModalShell
       open
@@ -268,11 +276,12 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
       {tab === 'allocation' && (
         <div className="flex flex-col gap-3">
           <p className="text-[13px] text-n-500">
-            The {estimate ? 'estimated' : ''} shipping cost is split across SKUs by weight share, then divided by quantity to give the cost per individual product. The actual cost (registered later) re-allocates these figures.
+            The {usingActual ? <><strong className="text-n-800">actual</strong> shipping cost ({eur(actualCost)})</> : 'estimated shipping cost'} is split across SKUs by weight share, then divided by quantity to give the cost per individual product.
+            {!usingActual && ' Registering the actual cost later re-allocates these figures.'}
           </p>
           <div className="rounded-lg border border-n-200">
             <div className="grid grid-cols-[1fr_70px_100px_110px_120px] gap-2 rounded-t-lg border-b border-n-200 bg-n-25 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-n-500">
-              <span>SKU</span><span className="text-right">Qty</span><span className="text-right">Weight</span><span className="text-right">Allocated</span><span className="text-right">Per unit</span>
+              <span>SKU</span><span className="text-right">Qty</span><span className="text-right">Weight</span><span className="text-right">{usingActual ? 'Allocated (actual)' : 'Allocated'}</span><span className="text-right">Per unit</span>
             </div>
             {(estimate?.allocation ?? []).length === 0 && <div className="px-3 py-6 text-center text-[13px] text-n-500">Add SKUs and pick a service to see the allocation.</div>}
             {(estimate?.allocation ?? []).map((it, i) => (
@@ -280,8 +289,8 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
                 <span className="mono truncate text-n-800" title={it.title ?? undefined}>{it.sku}</span>
                 <span className="mono text-right text-n-600">{it.quantity}</span>
                 <span className="mono text-right text-n-600">{kg(it.lineWeightKg)}</span>
-                <span className="mono text-right text-n-700">{eur(it.allocatedCostEur)}</span>
-                <span className="mono text-right font-semibold text-n-900">{eur(it.allocatedCostPerUnitEur)}</span>
+                <span className="mono text-right text-n-700">{eur(scaled(it.allocatedCostEur))}</span>
+                <span className="mono text-right font-semibold text-n-900">{eur(scaled(it.allocatedCostPerUnitEur))}</span>
               </div>
             ))}
             {estimate && estimate.allocation.length > 0 && (
@@ -289,11 +298,12 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
                 <span className="text-n-700">Total</span>
                 <span className="mono text-right text-n-600">{estimate.allocation.reduce((s, it) => s + it.quantity, 0)}</span>
                 <span />
-                <span className="mono text-right text-n-900">{eur(estimate.estimatedCostEur)}</span>
+                <span className="mono text-right text-n-900">{eur(effectiveTotal)}</span>
                 <span />
               </div>
             )}
           </div>
+          {usingActual && <p className="text-[12px] text-n-400">Estimated shipping cost was {eur(estimate?.estimatedCostEur)}; the registered actual is {eur(actualCost)}.</p>}
           <div><label className="label">Comments</label><input className="input" value={comments} onChange={(e) => { setComments(e.target.value); touch(); }} placeholder="Optional notes" /></div>
         </div>
       )}

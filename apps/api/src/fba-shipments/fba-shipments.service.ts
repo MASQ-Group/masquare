@@ -462,8 +462,16 @@ export class FbaShipmentsService {
   }
 
   async update(id: string, dto: UpdateFbaShipmentDto, actorId?: string) {
-    await this.get(id);
+    const before = await this.get(id);
     const est = await this.computeEstimate(dto);
+    // If an actual cost was already registered, keep allocating the lines to it (by their
+    // new weight shares) rather than reverting to the fresh estimate. actualCostEur itself
+    // is left untouched below (headerData doesn't include it).
+    if (before.actualCostEur != null) {
+      const lines = est.boxes.flatMap((b) => b.items);
+      this.allocate(lines, before.actualCostEur);
+      est.allocation = this.aggregate(lines);
+    }
     await this.prisma.$transaction(async (tx) => {
       await tx.fbaShipmentItem.deleteMany({ where: { shipmentId: id } });
       await tx.fbaShipmentBox.deleteMany({ where: { shipmentId: id } });
