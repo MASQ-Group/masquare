@@ -333,7 +333,9 @@ export class ProductsService {
 
   async remove(id: string) {
     await this.get(id);
-    await this.prisma.product.update({ where: { id }, data: { deletedAt: new Date() } });
+    // Hard delete: aliases/attributes/media/company links cascade; linked sales-transaction
+    // items keep their history with productId set to NULL. This frees the SKU for re-use.
+    await this.prisma.product.delete({ where: { id } });
     return { ok: true };
   }
 
@@ -347,10 +349,8 @@ export class ProductsService {
   }
 
   async bulkDelete(ids: string[]) {
-    const res = await this.prisma.product.updateMany({
-      where: { id: { in: ids }, deletedAt: null },
-      data: { deletedAt: new Date() },
-    });
+    // Hard delete (see remove): frees the SKUs for re-use and can't leave orphaned soft-deleted rows.
+    const res = await this.prisma.product.deleteMany({ where: { id: { in: ids } } });
     return { ok: true, count: res.count };
   }
 
