@@ -689,6 +689,95 @@ export const shipmentsApi = {
     api.patch(`/shipments/transaction/${transactionId}/fulfilment`, { status }).then((r) => r.data),
 };
 
+// ---- FBA Shipments (stock inbound to Amazon fulfilment centers) ----
+export interface FbaShipmentLineInput { sku: string; productId?: string | null; quantity: number }
+export interface FbaEstimateItem {
+  sku: string;
+  productId: string | null;
+  title: string | null;
+  quantity: number;
+  unitWeightKg: number | null;
+  lineWeightKg: number | null;
+  weightMissing: boolean;
+  allocatedCostEur: number | null;
+}
+export interface FbaEstimate {
+  calcMethod: 'actual_weight' | 'volumetric_weight' | null;
+  salesChannelId: string | null;
+  destinationCountryId: string | null;
+  destinationCountry: { id: string; name: string; isoCode: string } | null;
+  shippingServiceId: string | null;
+  shippingZoneId: string | null;
+  shippingZoneName: string | null;
+  packagingPct: number;
+  basisWeightKg: number | null;
+  chargeableWeightKg: number | null;
+  estimatedCostEur: number | null;
+  items: FbaEstimateItem[];
+  warnings: string[];
+}
+export interface FbaShipmentItem {
+  id: string;
+  productId: string | null;
+  sku: string;
+  title: string | null;
+  quantity: number;
+  unitWeightKg: number | null;
+  lineWeightKg: number | null;
+  allocatedCostEur: number | null;
+}
+export interface FbaShipment {
+  id: string;
+  date: string;
+  salesChannelId: string | null;
+  salesChannel: { id: string; name: string } | null;
+  destinationCountryId: string | null;
+  destinationCountry: { id: string; name: string; isoCode: string } | null;
+  fbaShipmentRef: string | null;
+  shippingServiceId: string | null;
+  shippingService: { id: string; name: string; calcMethod: string } | null;
+  shippingZoneId: string | null;
+  shippingZone: { id: string; name: string } | null;
+  calcMethod: 'actual_weight' | 'volumetric_weight' | null;
+  packagingPct: number | null;
+  basisWeightKg: number | null;
+  chargeableWeightKg: number | null;
+  estimatedCostEur: number | null;
+  actualCostEur: number | null;
+  effectiveCostEur: number | null;
+  costSource: 'actual' | 'estimated';
+  status: 'draft' | 'confirmed';
+  comments: string | null;
+  itemCount: number;
+  quantity: number;
+  items: FbaShipmentItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+export interface FbaShipmentListResponse { items: FbaShipment[]; total: number; page: number; pageSize: number }
+export interface FbaShipmentInput {
+  date?: string;
+  salesChannelId?: string | null;
+  fbaShipmentRef?: string | null;
+  shippingServiceId?: string | null;
+  packagingPct?: number;
+  comments?: string | null;
+  status?: 'draft' | 'confirmed';
+  items: FbaShipmentLineInput[];
+}
+
+export const fbaShipmentsApi = {
+  list: (params: { q?: string; salesChannelId?: string; status?: string; page?: number; pageSize?: number }) =>
+    api.get<FbaShipmentListResponse>('/fba-shipments', { params }).then((r) => r.data),
+  get: (id: string) => api.get<FbaShipment>(`/fba-shipments/${id}`).then((r) => r.data),
+  estimate: (body: Omit<FbaShipmentInput, 'status'>) => api.post<FbaEstimate>('/fba-shipments/estimate', body).then((r) => r.data),
+  create: (body: FbaShipmentInput) => api.post<FbaShipment>('/fba-shipments', body).then((r) => r.data),
+  update: (id: string, body: FbaShipmentInput) => api.patch<FbaShipment>(`/fba-shipments/${id}`, body).then((r) => r.data),
+  setStatus: (id: string, status: 'draft' | 'confirmed') => api.patch<FbaShipment>(`/fba-shipments/${id}/status`, { status }).then((r) => r.data),
+  setActualCost: (id: string, actualCostEur: number) => api.patch<FbaShipment>(`/fba-shipments/${id}/actual-cost`, { actualCostEur }).then((r) => r.data),
+  remove: (id: string) => api.delete(`/fba-shipments/${id}`).then((r) => r.data),
+};
+
 export const salesTransactionsApi = {
   list: (params: { q?: string; companyId?: string; salesChannelId?: string; status?: string; profitTierId?: string; sortBy?: 'date' | 'profit' | 'profitPct'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<SalesTransactionListResponse>('/sales-transactions', { params }).then((r) => r.data),

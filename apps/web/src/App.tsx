@@ -10,6 +10,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { ProductsPage } from './pages/ProductsPage';
 import { SalesTransactionsPage } from './pages/SalesTransactionsPage';
 import { ShipmentsPage } from './pages/ShipmentsPage';
+import { FbaShipmentsPage } from './pages/FbaShipmentsPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 
@@ -49,6 +50,7 @@ export function App() {
         <Route path="/products" element={<ProductsPage />} />
         <Route path="/sales-transactions" element={<SalesTransactionsPage />} />
         <Route path="/shipments" element={<ShipmentsPage />} />
+        <Route path="/fba-shipments" element={<FbaShipmentsPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/integrations" element={<RequireAdmin><IntegrationsPage /></RequireAdmin>} />
         <Route path="/companies" element={<RequireAdmin><CompaniesPage /></RequireAdmin>} />
