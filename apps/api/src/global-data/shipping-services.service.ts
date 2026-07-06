@@ -23,6 +23,7 @@ export class ShippingServicesService {
       id: s.id,
       name: s.name,
       alias: s.alias,
+      trackingUrlTemplate: s.trackingUrlTemplate ?? null,
       calcMethod: s.calcMethod,
       zones: (s.zones ?? []).map((z: any) => ({
         id: z.id,
@@ -75,7 +76,7 @@ export class ShippingServicesService {
   async create(dto: CreateShippingServiceDto, actorId?: string) {
     const id = await this.prisma.$transaction(async (tx) => {
       const service = await tx.shippingService.create({
-        data: { name: dto.name, alias: dto.alias, calcMethod: dto.calcMethod, createdById: actorId, updatedById: actorId },
+        data: { name: dto.name, alias: dto.alias, trackingUrlTemplate: dto.trackingUrlTemplate?.trim() || null, calcMethod: dto.calcMethod, createdById: actorId, updatedById: actorId },
       });
       await this.writeZonesAndRates(tx, service.id, dto);
       return service.id;
@@ -89,7 +90,7 @@ export class ShippingServicesService {
       await tx.shippingZone.deleteMany({ where: { shippingServiceId: id } }); // cascades zone countries + rates
       await tx.shippingService.update({
         where: { id },
-        data: { name: dto.name, alias: dto.alias, calcMethod: dto.calcMethod, updatedById: actorId },
+        data: { name: dto.name, alias: dto.alias, trackingUrlTemplate: dto.trackingUrlTemplate?.trim() || null, calcMethod: dto.calcMethod, updatedById: actorId },
       });
       await this.writeZonesAndRates(tx, id, dto);
     }, { timeout: 30000, maxWait: 15000 });

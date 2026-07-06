@@ -73,6 +73,7 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
 
   const [name, setName] = useState(service?.name ?? '');
   const [alias, setAlias] = useState(service?.alias ?? '');
+  const [trackingUrlTemplate, setTrackingUrlTemplate] = useState(service?.trackingUrlTemplate ?? '');
   const [calcMethod, setCalcMethod] = useState<'actual_weight' | 'volumetric_weight'>(service?.calcMethod ?? 'actual_weight');
   const [zones, setZones] = useState<ZoneForm[]>(service?.zones.map((z) => ({ name: z.name, countryIds: z.countryIds })) ?? [{ name: 'Zone 1', countryIds: [] }]);
   const [rates, setRates] = useState<RateForm[]>(
@@ -87,7 +88,7 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
     setBusy(true);
     try {
       const body = {
-        name, alias: alias || undefined, calcMethod,
+        name, alias: alias || undefined, trackingUrlTemplate: trackingUrlTemplate.trim() || null, calcMethod,
         zones: zones.filter((z) => z.name.trim()).map((z) => ({ name: z.name.trim(), countryIds: z.countryIds })),
         rates: rates.filter((r) => r.zoneName && r.fromWeightKg && r.toWeightKg).map((r) => ({
           zoneName: r.zoneName, fromWeightKg: Number(r.fromWeightKg), toWeightKg: Number(r.toWeightKg), chargeEur: Number(r.chargeEur || 0),
@@ -194,6 +195,11 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
           </div>
           <div><label className="label">Shipping service name *</label><input className="input" value={name} onChange={(e) => { setName(e.target.value); touch(); }} placeholder="Cyprus Postal Service" /></div>
           <div><label className="label">Alias</label><input className="input mono" value={alias} onChange={(e) => { setAlias(e.target.value); touch(); }} placeholder="CPS" /></div>
+          <div>
+            <label className="label">Tracking URL template</label>
+            <input className="input mono" value={trackingUrlTemplate} onChange={(e) => { setTrackingUrlTemplate(e.target.value); touch(); }} placeholder="https://track.courier.com/?id={tracking}" />
+            <p className="mt-1 text-[12px] text-n-400">Use <span className="mono">{'{tracking}'}</span> where the tracking number goes. Tracking numbers entered on shipments become clickable links to check status.</p>
+          </div>
         </div>
       )}
 

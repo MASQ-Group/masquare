@@ -359,6 +359,7 @@ export interface ShippingService {
   id: string;
   name: string;
   alias: string | null;
+  trackingUrlTemplate: string | null;
   calcMethod: 'actual_weight' | 'volumetric_weight';
   zones: ShippingZone[];
 }
@@ -690,7 +691,16 @@ export const shipmentsApi = {
 };
 
 // ---- FBA Shipments (stock inbound to Amazon fulfilment centers) ----
-export interface FbaShipmentLineInput { sku: string; productId?: string | null; quantity: number }
+export interface FbaLineInput { sku: string; productId?: string | null; quantity: number }
+export interface FbaBoxInput {
+  label?: string | null;
+  emptyWeightKg?: number | null;
+  lengthCm?: number | null;
+  widthCm?: number | null;
+  heightCm?: number | null;
+  trackingNumber?: string | null;
+  items: FbaLineInput[];
+}
 export interface FbaEstimateItem {
   sku: string;
   productId: string | null;
@@ -700,6 +710,17 @@ export interface FbaEstimateItem {
   lineWeightKg: number | null;
   weightMissing: boolean;
   allocatedCostEur: number | null;
+  allocatedCostPerUnitEur: number | null;
+}
+export interface FbaEstimateBox {
+  label: string | null;
+  emptyWeightKg: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  trackingNumber: string | null;
+  volumetricWeightKg: number | null;
+  items: FbaEstimateItem[];
 }
 export interface FbaEstimate {
   calcMethod: 'actual_weight' | 'volumetric_weight' | null;
@@ -710,14 +731,18 @@ export interface FbaEstimate {
   shippingZoneId: string | null;
   shippingZoneName: string | null;
   packagingPct: number;
-  basisWeightKg: number | null;
+  productWeightKg: number | null;
+  emptyBoxesWeightKg: number | null;
+  boxesVolumetricWeightKg: number | null;
   chargeableWeightKg: number | null;
   estimatedCostEur: number | null;
-  items: FbaEstimateItem[];
+  boxes: FbaEstimateBox[];
+  allocation: FbaEstimateItem[];
   warnings: string[];
 }
 export interface FbaShipmentItem {
   id: string;
+  boxId: string | null;
   productId: string | null;
   sku: string;
   title: string | null;
@@ -725,6 +750,18 @@ export interface FbaShipmentItem {
   unitWeightKg: number | null;
   lineWeightKg: number | null;
   allocatedCostEur: number | null;
+  allocatedCostPerUnitEur: number | null;
+}
+export interface FbaShipmentBox {
+  id: string;
+  label: string | null;
+  emptyWeightKg: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  trackingNumber: string | null;
+  volumetricWeightKg: number | null;
+  items: FbaShipmentItem[];
 }
 export interface FbaShipment {
   id: string;
@@ -735,12 +772,13 @@ export interface FbaShipment {
   destinationCountry: { id: string; name: string; isoCode: string } | null;
   fbaShipmentRef: string | null;
   shippingServiceId: string | null;
-  shippingService: { id: string; name: string; calcMethod: string } | null;
+  shippingService: { id: string; name: string; calcMethod: string; trackingUrlTemplate: string | null } | null;
   shippingZoneId: string | null;
   shippingZone: { id: string; name: string } | null;
   calcMethod: 'actual_weight' | 'volumetric_weight' | null;
   packagingPct: number | null;
-  basisWeightKg: number | null;
+  productWeightKg: number | null;
+  emptyBoxesWeightKg: number | null;
   chargeableWeightKg: number | null;
   estimatedCostEur: number | null;
   actualCostEur: number | null;
@@ -748,9 +786,11 @@ export interface FbaShipment {
   costSource: 'actual' | 'estimated';
   status: 'draft' | 'confirmed';
   comments: string | null;
+  boxCount: number;
   itemCount: number;
   quantity: number;
-  items: FbaShipmentItem[];
+  boxes: FbaShipmentBox[];
+  allocation: FbaShipmentItem[];
   createdAt: string;
   updatedAt: string;
 }
@@ -763,7 +803,7 @@ export interface FbaShipmentInput {
   packagingPct?: number;
   comments?: string | null;
   status?: 'draft' | 'confirmed';
-  items: FbaShipmentLineInput[];
+  boxes: FbaBoxInput[];
 }
 
 export const fbaShipmentsApi = {

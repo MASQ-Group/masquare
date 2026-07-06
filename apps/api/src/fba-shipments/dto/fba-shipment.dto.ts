@@ -10,7 +10,18 @@ export class FbaShipmentLineDto {
   @IsInt() @Min(1) quantity!: number;
 }
 
-/** Shared shape for estimate-preview and create/update. Items drive the weight & cost. */
+export class FbaShipmentBoxDto {
+  @IsOptional() @IsString() label?: string | null;
+  @IsOptional() @IsNumber() @Min(0) emptyWeightKg?: number | null;
+  @IsOptional() @IsNumber() @Min(0) lengthCm?: number | null;
+  @IsOptional() @IsNumber() @Min(0) widthCm?: number | null;
+  @IsOptional() @IsNumber() @Min(0) heightCm?: number | null;
+  @IsOptional() @IsString() trackingNumber?: string | null;
+  @IsArray() @ValidateNested({ each: true }) @Type(() => FbaShipmentLineDto)
+  items!: FbaShipmentLineDto[];
+}
+
+/** Shared shape for estimate-preview and create/update. Boxes drive weight & cost. */
 export class FbaShipmentBaseDto {
   @IsOptional() @IsDateString() date?: string;
   @IsOptional() @IsUUID() salesChannelId?: string | null;
@@ -18,8 +29,8 @@ export class FbaShipmentBaseDto {
   @IsOptional() @IsUUID() shippingServiceId?: string | null;
   @IsOptional() @IsNumber() @Min(0) packagingPct?: number;
   @IsOptional() @IsString() comments?: string | null;
-  @IsArray() @ValidateNested({ each: true }) @Type(() => FbaShipmentLineDto)
-  items!: FbaShipmentLineDto[];
+  @IsArray() @ValidateNested({ each: true }) @Type(() => FbaShipmentBoxDto)
+  boxes!: FbaShipmentBoxDto[];
 }
 
 /** Preview the weight/cost/allocation without persisting. */

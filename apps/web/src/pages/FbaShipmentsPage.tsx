@@ -96,7 +96,7 @@ export function FbaShipmentsPage() {
                   <td className={td}>{s.destinationCountry?.name ?? '—'}</td>
                   <td className={td}>{s.shippingService?.name ?? '—'}{s.shippingZone ? <span className="text-n-400"> · {s.shippingZone.name}</span> : ''}</td>
                   <td className={`${td} mono text-right`}>{s.itemCount} / {s.quantity}</td>
-                  <td className={`${td} mono text-right`}>{kg(s.chargeableWeightKg ?? s.basisWeightKg)}</td>
+                  <td className={`${td} mono text-right`}>{kg(s.chargeableWeightKg ?? s.productWeightKg)}</td>
                   <td className={`${td} mono text-right`}>{eur(s.estimatedCostEur)}</td>
                   <td className={`${td} mono text-right ${s.actualCostEur != null ? 'font-semibold text-n-900' : 'text-n-400'}`}>{eur(s.actualCostEur)}</td>
                   <td className={td}>

@@ -543,6 +543,9 @@ model ShippingService {
   name       String
   alias      String?
   calcMethod String @map("calc_method") // 'actual_weight' | 'volumetric_weight'
+  // Tracking URL template for this courier. A `{tracking}` placeholder is replaced with
+  // the shipment's tracking number to build a status/track link (used across modules).
+  trackingUrlTemplate String? @map("tracking_url_template")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -939,19 +942,49 @@ model FbaShipment {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
+  // Total empty-box weight (Σ box weights) snapshotted at estimate time.
+  emptyBoxesWeightKg Decimal? @map("empty_boxes_weight_kg") @db.Decimal(12, 3)
+
   salesChannel       SalesChannel?    @relation(fields: [salesChannelId], references: [id], onDelete: SetNull)
   destinationCountry Country?         @relation(fields: [destinationCountryId], references: [id], onDelete: SetNull)
   shippingService    ShippingService? @relation("FbaShipmentService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
   shippingZone       ShippingZone?    @relation(fields: [shippingZoneId], references: [id], onDelete: SetNull)
+  boxes              FbaShipmentBox[]
   items              FbaShipmentItem[]
 
   @@index([salesChannelId])
   @@map("fba_shipment")
 }
 
+// A physical box within an FBA shipment. Holds its own empty weight + dimensions
+// (so the box weight/volume feeds the shipping-cost calc) and an optional tracking
+// number added later by operations (boxes may share or have distinct tracking).
+model FbaShipmentBox {
+  id             String  @id @default(uuid()) @db.Uuid
+  shipmentId     String  @map("shipment_id") @db.Uuid
+  label          String? // e.g. "Box 1"
+  emptyWeightKg  Decimal? @map("empty_weight_kg") @db.Decimal(12, 3)
+  lengthCm       Decimal? @map("length_cm") @db.Decimal(10, 2)
+  widthCm        Decimal? @map("width_cm") @db.Decimal(10, 2)
+  heightCm       Decimal? @map("height_cm") @db.Decimal(10, 2)
+  trackingNumber String? @map("tracking_number")
+  sortOrder      Int     @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  shipment FbaShipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  items    FbaShipmentItem[]
+
+  @@index([shipmentId])
+  @@map("fba_shipment_box")
+}
+
 model FbaShipmentItem {
   id         String  @id @default(uuid()) @db.Uuid
   shipmentId String  @map("shipment_id") @db.Uuid
+  boxId      String? @map("box_id") @db.Uuid
   productId  String? @map("product_id") @db.Uuid
   sku        String
   title      String? // snapshot of the product title at add time
@@ -965,10 +998,12 @@ model FbaShipmentItem {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  shipment FbaShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
-  product  Product?    @relation(fields: [productId], references: [id], onDelete: SetNull)
+  shipment FbaShipment     @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  box      FbaShipmentBox? @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  product  Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([shipmentId])
+  @@index([boxId])
   @@index([productId])
   @@map("fba_shipment_item")
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, Boxes, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
 import {
@@ -17,7 +17,9 @@ interface Props {
 }
 
 interface LineForm { productId: string | null; sku: string; quantity: string }
+interface BoxForm { emptyWeightKg: string; lengthCm: string; widthCm: string; heightCm: string; trackingNumber: string; items: LineForm[] }
 const emptyLine = (): LineForm => ({ productId: null, sku: '', quantity: '1' });
+const emptyBox = (): BoxForm => ({ emptyWeightKg: '', lengthCm: '', widthCm: '', heightCm: '', trackingNumber: '', items: [emptyLine()] });
 const today = () => new Date().toISOString().slice(0, 10);
 const eur = (v: number | null | undefined, dp = 2) => (v != null ? `€${v.toFixed(dp)}` : '—');
 const kg = (v: number | null | undefined) => (v != null ? `${v.toFixed(3)} kg` : '—');
@@ -31,7 +33,6 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
   const [busy, setBusy] = useState(false);
   const touch = () => setDirty(true);
 
-  const { data: channels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
   const { data: services = [] } = useQuery({ queryKey: ['shipping-services'], queryFn: () => shippingServicesApi.list() });
 
   const [date, setDate] = useState(shipment ? shipment.date.slice(0, 10) : today());
@@ -40,21 +41,38 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
   const [serviceId, setServiceId] = useState<string | null>(shipment?.shippingServiceId ?? null);
   const [packagingPct, setPackagingPct] = useState(shipment?.packagingPct != null ? String(shipment.packagingPct) : '10');
   const [comments, setComments] = useState(shipment?.comments ?? '');
-  const [lines, setLines] = useState<LineForm[]>(
-    shipment && shipment.items.length
-      ? shipment.items.map((it) => ({ productId: it.productId, sku: it.sku, quantity: String(it.quantity) }))
-      : [emptyLine()],
-  );
+  const [boxes, setBoxes] = useState<BoxForm[]>(() => {
+    if (shipment && shipment.boxes.length) {
+      return shipment.boxes.map((b) => ({
+        emptyWeightKg: b.emptyWeightKg != null ? String(b.emptyWeightKg) : '',
+        lengthCm: b.lengthCm != null ? String(b.lengthCm) : '',
+        widthCm: b.widthCm != null ? String(b.widthCm) : '',
+        heightCm: b.heightCm != null ? String(b.heightCm) : '',
+        trackingNumber: b.trackingNumber ?? '',
+        items: b.items.length ? b.items.map((it) => ({ productId: it.productId, sku: it.sku, quantity: String(it.quantity) })) : [emptyLine()],
+      }));
+    }
+    // Legacy shipment (items but no boxes yet) → seed a single box with its SKUs.
+    if (shipment && shipment.allocation?.length) {
+      return [{ ...emptyBox(), items: shipment.allocation.map((it) => ({ productId: it.productId, sku: it.sku, quantity: String(it.quantity) })) }];
+    }
+    return [emptyBox()];
+  });
 
   const [estimate, setEstimate] = useState<FbaEstimate | null>(null);
   const [estimating, setEstimating] = useState(false);
 
   const service = services.find((s) => s.id === serviceId) ?? null;
   const isActualWeight = service?.calcMethod === 'actual_weight';
+  const isVolumetric = service?.calcMethod === 'volumetric_weight';
 
-  const setLine = (i: number, v: Partial<LineForm>) => { setLines((r) => r.map((x, idx) => (idx === i ? { ...x, ...v } : x))); touch(); };
+  const num = (s: string) => (s.trim() === '' ? null : Number(s));
+  const setBox = (bi: number, v: Partial<BoxForm>) => { setBoxes((r) => r.map((x, i) => (i === bi ? { ...x, ...v } : x))); touch(); };
+  const setItem = (bi: number, li: number, v: Partial<LineForm>) => {
+    setBoxes((r) => r.map((b, i) => (i === bi ? { ...b, items: b.items.map((x, j) => (j === li ? { ...x, ...v } : x)) } : b)));
+    touch();
+  };
 
-  // Build the estimate/save payload from the current form.
   const buildInput = (): Omit<FbaShipmentInput, 'status'> => ({
     date,
     salesChannelId: channel?.id ?? null,
@@ -62,37 +80,47 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
     shippingServiceId: serviceId,
     packagingPct: Number(packagingPct) || 0,
     comments: comments.trim() || null,
-    items: lines
-      .filter((l) => l.sku.trim())
-      .map((l) => ({ sku: l.sku.trim(), productId: l.productId, quantity: Math.max(1, Number(l.quantity) || 1) })),
+    boxes: boxes.map((b, i) => ({
+      label: `Box ${i + 1}`,
+      emptyWeightKg: num(b.emptyWeightKg),
+      lengthCm: num(b.lengthCm),
+      widthCm: num(b.widthCm),
+      heightCm: num(b.heightCm),
+      trackingNumber: b.trackingNumber.trim() || null,
+      items: b.items.filter((l) => l.sku.trim()).map((l) => ({ sku: l.sku.trim(), productId: l.productId, quantity: Math.max(1, Number(l.quantity) || 1) })),
+    })),
   });
 
-  // Live estimate: recompute whenever the inputs that affect it change (debounced).
   const estKey = JSON.stringify({
     c: channel?.id ?? null, s: serviceId, p: packagingPct,
-    items: lines.filter((l) => l.sku.trim()).map((l) => ({ sku: l.sku.trim(), pid: l.productId, q: l.quantity })),
+    boxes: boxes.map((b) => ({ w: b.emptyWeightKg, l: b.lengthCm, wd: b.widthCm, h: b.heightCm, items: b.items.filter((l) => l.sku.trim()).map((l) => ({ sku: l.sku.trim(), pid: l.productId, q: l.quantity })) })),
   });
   useEffect(() => {
     const input = buildInput();
-    if (!input.items.length) { setEstimate(null); return; }
+    if (!input.boxes.some((b) => b.items.length)) { setEstimate(null); return; }
     let cancelled = false;
     setEstimating(true);
     const t = setTimeout(async () => {
       try {
         const res = await fbaShipmentsApi.estimate(input);
         if (!cancelled) setEstimate(res);
-      } catch {
-        if (!cancelled) setEstimate(null);
-      } finally {
-        if (!cancelled) setEstimating(false);
-      }
+      } catch { if (!cancelled) setEstimate(null); }
+      finally { if (!cancelled) setEstimating(false); }
     }, 350);
     return () => { cancelled = true; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [estKey]);
 
-  const titleForLine = (l: LineForm) => estimate?.items.find((it) => it.sku.toLowerCase() === l.sku.trim().toLowerCase())?.title ?? null;
-  const canSave = useMemo(() => channel && serviceId && lines.some((l) => l.sku.trim()), [channel, serviceId, lines]);
+  // sku -> title lookup from the latest estimate.
+  const titleMap = useMemo(() => {
+    const m = new Map<string, string>();
+    estimate?.boxes.forEach((b) => b.items.forEach((it) => { if (it.title) m.set(it.sku.toLowerCase(), it.title); }));
+    return m;
+  }, [estimate]);
+  const titleFor = (sku: string) => titleMap.get(sku.trim().toLowerCase()) ?? null;
+
+  const hasItems = boxes.some((b) => b.items.some((l) => l.sku.trim()));
+  const canSave = useMemo(() => !!channel && !!serviceId && hasItems, [channel, serviceId, hasItems]);
 
   const save = async (status: 'draft' | 'confirmed') => {
     if (!canSave) { toast.error('Pick a sales channel, a shipping service and at least one SKU'); return; }
@@ -105,17 +133,14 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
       onSaved();
     } catch (e: any) {
       toast.error(e?.response?.data?.message ?? 'Save failed');
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   };
 
   const tabs = [
-    { key: 'details', label: '1 · Shipment details' },
+    { key: 'details', label: '1 · Boxes & SKUs' },
     { key: 'weight', label: '2 · Weight & cost' },
     { key: 'allocation', label: '3 · Cost allocation' },
   ];
-
   const destName = estimate?.destinationCountry?.name ?? (channel ? '—' : '');
 
   return (
@@ -134,7 +159,7 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
       onSecondary={() => save('draft')}
       secondaryDisabled={!canSave}
       busy={busy}
-      initialSize={{ w: 780, h: 620 }}
+      initialSize={{ w: 860, h: 660 }}
       onClose={onClose}
     >
       {tab === 'details' && (
@@ -149,24 +174,44 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
             <div><label className="label">FBA Shipment ID</label><input className="input mono" value={fbaRef} onChange={(e) => { setFbaRef(e.target.value); touch(); }} placeholder="e.g. FBA15ABCXYZ" /></div>
           </div>
 
-          <div>
-            <label className="label">SKUs in this shipment</label>
-            <div className="rounded-lg border border-n-200">
-              <div className="grid grid-cols-[1fr_1fr_90px_36px] gap-2 rounded-t-lg border-b border-n-200 bg-n-25 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-n-500">
-                <span>SKU</span><span>Product</span><span className="text-right">Qty</span><span />
-              </div>
-              {lines.map((l, i) => (
-                <div key={i} className="grid grid-cols-[1fr_1fr_90px_36px] items-center gap-2 border-b border-n-100 px-3 py-2 last:border-b-0">
-                  <ProductSkuField value={{ productId: l.productId, sku: l.sku }} onChange={(v) => setLine(i, v)} />
-                  <span className="truncate text-[13px] text-n-700" title={titleForLine(l) ?? undefined}>
-                    {titleForLine(l) ?? (l.sku.trim() ? <span className="inline-flex items-center gap-1 text-warning"><AlertTriangle size={12} /> no product</span> : <span className="text-n-300">—</span>)}
-                  </span>
-                  <input className="input mono text-right" inputMode="numeric" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} />
-                  <button className="grid h-9 w-9 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" onClick={() => { setLines((r) => r.filter((_, idx) => idx !== i)); touch(); }}><Trash2 size={15} /></button>
+          <div className="flex flex-col gap-3">
+            <label className="label mb-0">Boxes</label>
+            {boxes.map((box, bi) => (
+              <div key={bi} className="rounded-lg border border-n-200 bg-n-25/40 p-3">
+                <div className="mb-2.5 flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-n-800"><Boxes size={15} className="text-teal-600" /> Box {bi + 1}</span>
+                  <div className="flex-1" />
+                  {boxes.length > 1 && (
+                    <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" title="Remove box" onClick={() => { setBoxes((r) => r.filter((_, i) => i !== bi)); touch(); }}><Trash2 size={15} /></button>
+                  )}
                 </div>
-              ))}
-            </div>
-            <div className="mt-2"><button className="btn btn-ghost" onClick={() => { setLines((r) => [...r, emptyLine()]); touch(); }}><Plus size={16} /> Add SKU</button></div>
+                <div className="mb-3 grid grid-cols-[1.2fr_0.8fr_0.8fr_0.8fr_1.4fr] gap-2 max-[680px]:grid-cols-2">
+                  <Field label="Empty weight (kg)"><input className="input mono" inputMode="decimal" value={box.emptyWeightKg} onChange={(e) => setBox(bi, { emptyWeightKg: e.target.value })} placeholder="0.00" /></Field>
+                  <Field label="L (cm)"><input className="input mono" inputMode="decimal" value={box.lengthCm} onChange={(e) => setBox(bi, { lengthCm: e.target.value })} placeholder="0" /></Field>
+                  <Field label="W (cm)"><input className="input mono" inputMode="decimal" value={box.widthCm} onChange={(e) => setBox(bi, { widthCm: e.target.value })} placeholder="0" /></Field>
+                  <Field label="H (cm)"><input className="input mono" inputMode="decimal" value={box.heightCm} onChange={(e) => setBox(bi, { heightCm: e.target.value })} placeholder="0" /></Field>
+                  <Field label="Tracking number"><input className="input mono" value={box.trackingNumber} onChange={(e) => setBox(bi, { trackingNumber: e.target.value })} placeholder="add later" /></Field>
+                </div>
+
+                <div className="rounded-md border border-n-200 bg-n-0">
+                  <div className="grid grid-cols-[1fr_1fr_80px_32px] gap-2 rounded-t-md border-b border-n-200 bg-n-25 px-2.5 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-n-500">
+                    <span>SKU</span><span>Product</span><span className="text-right">Qty</span><span />
+                  </div>
+                  {box.items.map((l, li) => (
+                    <div key={li} className="grid grid-cols-[1fr_1fr_80px_32px] items-center gap-2 border-b border-n-100 px-2.5 py-1.5 last:border-b-0">
+                      <ProductSkuField value={{ productId: l.productId, sku: l.sku }} onChange={(v) => setItem(bi, li, v)} />
+                      <span className="truncate text-[12.5px] text-n-700" title={titleFor(l.sku) ?? undefined}>
+                        {titleFor(l.sku) ?? (l.sku.trim() ? <span className="inline-flex items-center gap-1 text-warning"><AlertTriangle size={12} /> no product</span> : <span className="text-n-300">—</span>)}
+                      </span>
+                      <input className="input mono text-right" inputMode="numeric" value={l.quantity} onChange={(e) => setItem(bi, li, { quantity: e.target.value })} />
+                      <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" onClick={() => { setBoxes((r) => r.map((b, i) => (i === bi ? { ...b, items: b.items.filter((_, j) => j !== li) } : b))); touch(); }}><Trash2 size={14} /></button>
+                    </div>
+                  ))}
+                  <div className="px-2.5 py-1.5"><button className="text-[12.5px] font-medium text-teal-700 hover:underline" onClick={() => { setBoxes((r) => r.map((b, i) => (i === bi ? { ...b, items: [...b.items, emptyLine()] } : b))); touch(); }}>+ Add SKU to this box</button></div>
+                </div>
+              </div>
+            ))}
+            <div><button className="btn btn-ghost" onClick={() => { setBoxes((r) => [...r, emptyBox()]); touch(); }}><Plus size={16} /> Add box</button></div>
           </div>
         </div>
       )}
@@ -194,8 +239,15 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
           </div>
 
           <div className="rounded-lg border border-n-200">
-            <Row label={service ? (isActualWeight ? 'Summed product weight' : 'Summed volumetric weight') : 'Weight basis'} value={kg(estimate?.basisWeightKg)} />
-            {isActualWeight && <Row label={`Chargeable weight (incl. ${estimate?.packagingPct ?? packagingPct}% packaging)`} value={kg(estimate?.chargeableWeightKg)} />}
+            <Row label="Summed product weight" value={kg(estimate?.productWeightKg)} />
+            <Row label="Empty boxes weight" value={kg(estimate?.emptyBoxesWeightKg)} />
+            {isVolumetric && <Row label="Boxes volumetric weight (L×W×H ÷ 5000)" value={kg(estimate?.boxesVolumetricWeightKg)} />}
+            <Row
+              label={isActualWeight
+                ? `Chargeable weight (products +${estimate?.packagingPct ?? packagingPct}% packaging + boxes)`
+                : 'Chargeable weight (greater of volumetric / actual)'}
+              value={kg(estimate?.chargeableWeightKg)}
+            />
             <Row label="Rate band charge" value={eur(estimate?.estimatedCostEur)} strong />
           </div>
 
@@ -205,9 +257,9 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
           ))}
           <p className="rounded-md border border-info-bd bg-info-bg px-3 py-2 text-[12.5px] text-info">
             {isActualWeight
-              ? 'Actual-weight service: product weights are summed, the packaging uplift is added, then rounded up to the next weight band to read the charge.'
+              ? 'Actual-weight service: product weights are summed with the packaging uplift, the empty boxes weight is added, then rounded up to the next weight band to read the charge.'
               : service
-                ? 'Volumetric service: each unit is charged on the greater of its volumetric (L×W×H ÷ 5000) and actual weight.'
+                ? 'Volumetric service: charged on the greater of the boxes’ volumetric weight and the actual weight (products + boxes).'
                 : 'Pick a shipping service to estimate the cost.'}
           </p>
         </div>
@@ -216,25 +268,29 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
       {tab === 'allocation' && (
         <div className="flex flex-col gap-3">
           <p className="text-[13px] text-n-500">
-            The estimated shipping cost is split across SKUs by each line's share of the total {isActualWeight ? 'weight' : 'volumetric weight'}. The actual cost is registered from the shipments list once known, which re-allocates these figures.
+            The {estimate ? 'estimated' : ''} shipping cost is split across SKUs by weight share, then divided by quantity to give the cost per individual product. The actual cost (registered later) re-allocates these figures.
           </p>
-          <div className="overflow-hidden rounded-lg border border-n-200">
-            <div className="grid grid-cols-[1fr_90px_110px_110px] gap-2 border-b border-n-200 bg-n-25 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-n-500">
-              <span>SKU</span><span className="text-right">Qty</span><span className="text-right">Weight</span><span className="text-right">Allocated</span>
+          <div className="rounded-lg border border-n-200">
+            <div className="grid grid-cols-[1fr_70px_100px_110px_120px] gap-2 rounded-t-lg border-b border-n-200 bg-n-25 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-n-500">
+              <span>SKU</span><span className="text-right">Qty</span><span className="text-right">Weight</span><span className="text-right">Allocated</span><span className="text-right">Per unit</span>
             </div>
-            {(estimate?.items ?? []).length === 0 && <div className="px-3 py-6 text-center text-[13px] text-n-500">Add SKUs and pick a service to see the allocation.</div>}
-            {(estimate?.items ?? []).map((it, i) => (
-              <div key={i} className="grid grid-cols-[1fr_90px_110px_110px] gap-2 border-b border-n-100 px-3 py-2 text-[13px] last:border-b-0">
+            {(estimate?.allocation ?? []).length === 0 && <div className="px-3 py-6 text-center text-[13px] text-n-500">Add SKUs and pick a service to see the allocation.</div>}
+            {(estimate?.allocation ?? []).map((it, i) => (
+              <div key={i} className="grid grid-cols-[1fr_70px_100px_110px_120px] gap-2 border-b border-n-100 px-3 py-2 text-[13px] last:border-b-0">
                 <span className="mono truncate text-n-800" title={it.title ?? undefined}>{it.sku}</span>
                 <span className="mono text-right text-n-600">{it.quantity}</span>
                 <span className="mono text-right text-n-600">{kg(it.lineWeightKg)}</span>
-                <span className="mono text-right font-medium text-n-800">{eur(it.allocatedCostEur)}</span>
+                <span className="mono text-right text-n-700">{eur(it.allocatedCostEur)}</span>
+                <span className="mono text-right font-semibold text-n-900">{eur(it.allocatedCostPerUnitEur)}</span>
               </div>
             ))}
-            {estimate && estimate.items.length > 0 && (
-              <div className="grid grid-cols-[1fr_90px_110px_110px] gap-2 bg-n-25 px-3 py-2 text-[13px] font-semibold">
-                <span className="text-n-700">Total</span><span /><span className="mono text-right text-n-600">{kg(estimate.basisWeightKg)}</span>
+            {estimate && estimate.allocation.length > 0 && (
+              <div className="grid grid-cols-[1fr_70px_100px_110px_120px] gap-2 bg-n-25 px-3 py-2 text-[13px] font-semibold">
+                <span className="text-n-700">Total</span>
+                <span className="mono text-right text-n-600">{estimate.allocation.reduce((s, it) => s + it.quantity, 0)}</span>
+                <span />
                 <span className="mono text-right text-n-900">{eur(estimate.estimatedCostEur)}</span>
+                <span />
               </div>
             )}
           </div>
@@ -242,6 +298,15 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
         </div>
       )}
     </ModalShell>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-medium text-n-500">{label}</div>
+      {children}
+    </div>
   );
 }
 

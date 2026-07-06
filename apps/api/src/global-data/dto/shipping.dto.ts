@@ -16,6 +16,7 @@ export class ShippingRateDto {
 export class CreateShippingServiceDto {
   @IsString() @MinLength(1) name!: string;
   @IsOptional() @IsString() alias?: string;
+  @IsOptional() @IsString() trackingUrlTemplate?: string | null;
   @IsIn(['actual_weight', 'volumetric_weight']) calcMethod!: 'actual_weight' | 'volumetric_weight';
 
   @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => ShippingZoneDto)

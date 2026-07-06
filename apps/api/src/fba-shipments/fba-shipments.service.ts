@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
-  CreateFbaShipmentDto, EstimateFbaShipmentDto, FbaShipmentLineDto, UpdateFbaShipmentDto,
+  CreateFbaShipmentDto, EstimateFbaShipmentDto, FbaShipmentBoxDto, UpdateFbaShipmentDto,
 } from './dto/fba-shipment.dto';
 
 const VOLUMETRIC_DIVISOR = 5000; // (L×W×H cm) / 5000 = volumetric kg — matches sales-transactions.
@@ -10,16 +10,33 @@ const round = (v: number, dp = 2) => {
   return Math.round((v + Number.EPSILON) * f) / f;
 };
 const n = (v: any): number | null => (v == null ? null : Number(v));
+const num = (v: any): number | null => {
+  if (v == null || v === '') return null;
+  const x = Number(v);
+  return Number.isFinite(x) ? x : null;
+};
 
 export interface EstimateLine {
   sku: string;
   productId: string | null;
   title: string | null;
   quantity: number;
-  unitWeightKg: number | null; // per-unit basis weight (actual or volumetric per the service)
-  lineWeightKg: number | null; // unitWeightKg × quantity
+  unitWeightKg: number | null;  // per-unit allocation basis (actual or volumetric per the service)
+  lineWeightKg: number | null;  // unitWeightKg × quantity
   weightMissing: boolean;
-  allocatedCostEur: number | null;
+  allocatedCostEur: number | null;         // total for the line
+  allocatedCostPerUnitEur: number | null;  // per individual product = allocated / quantity
+}
+
+export interface EstimateBox {
+  label: string | null;
+  emptyWeightKg: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  trackingNumber: string | null;
+  volumetricWeightKg: number | null; // box L×W×H / 5000
+  items: EstimateLine[];
 }
 
 export interface EstimateResult {
@@ -31,10 +48,13 @@ export interface EstimateResult {
   shippingZoneId: string | null;
   shippingZoneName: string | null;
   packagingPct: number;
-  basisWeightKg: number | null;      // Σ line basis weight, before packaging
-  chargeableWeightKg: number | null; // weight used to pick the rate band
+  productWeightKg: number | null;        // Σ product weight × qty (physical)
+  emptyBoxesWeightKg: number | null;     // Σ box empty weights
+  boxesVolumetricWeightKg: number | null; // Σ box volumetric weights
+  chargeableWeightKg: number | null;     // weight used to pick the rate band
   estimatedCostEur: number | null;
-  items: EstimateLine[];
+  boxes: EstimateBox[];
+  allocation: EstimateLine[];            // aggregated per product (for Tab 3)
   warnings: string[];
 }
 
@@ -42,44 +62,57 @@ export interface EstimateResult {
 export class FbaShipmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // --- SKU resolution -------------------------------------------------------
   /** Resolve each line's SKU to a live product (by main SKU or alias, case-insensitive). */
-  private async resolveProducts(lines: FbaShipmentLineDto[]) {
-    const byId = new Map<string, any>();
-    for (const line of lines) {
-      const sku = (line.sku ?? '').trim();
-      if (!sku && !line.productId) continue;
-      let product = null as any;
-      if (line.productId) {
-        product = await this.prisma.product.findFirst({ where: { id: line.productId, deletedAt: null } });
+  private async resolveProducts(boxes: FbaShipmentBoxDto[]) {
+    const map = new Map<string, any>();
+    const keyFor = (line: { sku?: string; productId?: string | null }) =>
+      (line.sku ?? '').trim().toLowerCase() || line.productId || '';
+    const seen = new Set<string>();
+    for (const box of boxes ?? []) {
+      for (const line of box.items ?? []) {
+        const key = keyFor(line);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        const sku = (line.sku ?? '').trim();
+        let product = null as any;
+        if (line.productId) product = await this.prisma.product.findFirst({ where: { id: line.productId, deletedAt: null } });
+        if (!product && sku) {
+          product = await this.prisma.product.findFirst({
+            where: {
+              deletedAt: null,
+              OR: [
+                { mainSku: { equals: sku, mode: 'insensitive' } },
+                { aliases: { some: { deletedAt: null, skuValue: { equals: sku, mode: 'insensitive' } } } },
+              ],
+            },
+          });
+        }
+        map.set(key, product);
       }
-      if (!product && sku) {
-        product = await this.prisma.product.findFirst({
-          where: {
-            deletedAt: null,
-            OR: [
-              { mainSku: { equals: sku, mode: 'insensitive' } },
-              { aliases: { some: { deletedAt: null, skuValue: { equals: sku, mode: 'insensitive' } } } },
-            ],
-          },
-        });
-      }
-      byId.set(sku.toLowerCase() || line.productId!, product);
     }
-    return byId;
+    return map;
   }
 
-  private unitWeight(product: any, method: string | null): number | null {
-    if (!product) return null;
-    const actual = product.packageWeightKg != null ? Number(product.packageWeightKg)
-      : product.productWeightKg != null ? Number(product.productWeightKg) : null;
+  private productActualWeight(p: any): number | null {
+    if (!p) return null;
+    return p.packageWeightKg != null ? Number(p.packageWeightKg) : p.productWeightKg != null ? Number(p.productWeightKg) : null;
+  }
+
+  /** Per-unit allocation basis: actual weight, or volumetric (product dims) for volumetric services. */
+  private allocationUnit(p: any, method: string | null): number | null {
+    const actual = this.productActualWeight(p);
     if (method === 'volumetric_weight') {
-      const vol = product.packageLengthCm != null && product.packageWidthCm != null && product.packageHeightCm != null
-        ? (Number(product.packageLengthCm) * Number(product.packageWidthCm) * Number(product.packageHeightCm)) / VOLUMETRIC_DIVISOR
+      const vol = p?.packageLengthCm != null && p?.packageWidthCm != null && p?.packageHeightCm != null
+        ? (Number(p.packageLengthCm) * Number(p.packageWidthCm) * Number(p.packageHeightCm)) / VOLUMETRIC_DIVISOR
         : null;
       return vol != null && actual != null ? Math.max(vol, actual) : vol ?? actual;
     }
     return actual;
+  }
+
+  private boxVolumetric(box: FbaShipmentBoxDto): number | null {
+    const l = num(box.lengthCm), w = num(box.widthCm), h = num(box.heightCm);
+    return l != null && w != null && h != null ? (l * w * h) / VOLUMETRIC_DIVISOR : null;
   }
 
   // --- Estimate engine (shared by preview + persist) ------------------------
@@ -87,59 +120,87 @@ export class FbaShipmentsService {
     const warnings: string[] = [];
     const packagingPct = input.packagingPct != null && input.packagingPct >= 0 ? input.packagingPct : 0;
 
-    // Sales channel → native country (the destination).
     const channel = input.salesChannelId
-      ? await this.prisma.salesChannel.findFirst({
-          where: { id: input.salesChannelId, deletedAt: null },
-          include: { nativeCountry: true },
-        })
+      ? await this.prisma.salesChannel.findFirst({ where: { id: input.salesChannelId, deletedAt: null }, include: { nativeCountry: true } })
       : null;
     const destinationCountry = channel?.nativeCountry ?? null;
     const destinationCountryId = destinationCountry?.id ?? null;
 
-    // Shipping service with zones (countries + rates) and its calc method.
     const service = input.shippingServiceId
       ? await this.prisma.shippingService.findFirst({
           where: { id: input.shippingServiceId, deletedAt: null },
-          include: {
-            zones: { where: { deletedAt: null }, include: { countries: true, rates: { where: { deletedAt: null } } } },
-          },
+          include: { zones: { where: { deletedAt: null }, include: { countries: true, rates: { where: { deletedAt: null } } } } },
         })
       : null;
     const calcMethod = service?.calcMethod ?? null;
 
-    // Resolve products and build per-line basis weights.
-    const productMap = await this.resolveProducts(input.items ?? []);
-    const items: EstimateLine[] = [];
-    let basisWeight = 0;
-    let anyWeight = false;
-    for (const line of input.items ?? []) {
-      const key = (line.sku ?? '').trim().toLowerCase() || line.productId || '';
-      const product = productMap.get(key) ?? null;
-      const qty = line.quantity ?? 1;
-      const unit = this.unitWeight(product, calcMethod);
-      const lineWeight = unit != null ? round(unit * qty, 3) : null;
-      if (unit != null) { basisWeight += unit * qty; anyWeight = true; }
-      items.push({
-        sku: line.sku,
-        productId: product?.id ?? null,
-        title: product?.title ?? null,
-        quantity: qty,
-        unitWeightKg: unit != null ? round(unit, 3) : null,
-        lineWeightKg: lineWeight,
-        weightMissing: product == null || unit == null,
-        allocatedCostEur: null,
+    const productMap = await this.resolveProducts(input.boxes ?? []);
+
+    let productWeight = 0;      // Σ product actual weight × qty (physical)
+    let emptyBoxesWeight = 0;
+    let boxesVolumetric = 0;
+    let anyProductWeight = false;
+    let anyMissing = false;
+
+    const boxes: EstimateBox[] = (input.boxes ?? []).map((box, bi) => {
+      const emptyW = num(box.emptyWeightKg);
+      if (emptyW != null) emptyBoxesWeight += emptyW;
+      const boxVol = this.boxVolumetric(box);
+      if (boxVol != null) boxesVolumetric += boxVol;
+
+      const items: EstimateLine[] = (box.items ?? []).map((line) => {
+        const key = (line.sku ?? '').trim().toLowerCase() || line.productId || '';
+        const product = productMap.get(key) ?? null;
+        const qty = line.quantity ?? 1;
+        const actualUnit = this.productActualWeight(product);
+        if (actualUnit != null) { productWeight += actualUnit * qty; anyProductWeight = true; }
+        const basisUnit = this.allocationUnit(product, calcMethod);
+        const missing = product == null || basisUnit == null;
+        if (missing) anyMissing = true;
+        return {
+          sku: line.sku,
+          productId: product?.id ?? null,
+          title: product?.title ?? null,
+          quantity: qty,
+          unitWeightKg: basisUnit != null ? round(basisUnit, 3) : null,
+          lineWeightKg: basisUnit != null ? round(basisUnit * qty, 3) : null,
+          weightMissing: missing,
+          allocatedCostEur: null,
+          allocatedCostPerUnitEur: null,
+        };
       });
+
+      return {
+        label: box.label ?? `Box ${bi + 1}`,
+        emptyWeightKg: emptyW,
+        lengthCm: num(box.lengthCm),
+        widthCm: num(box.widthCm),
+        heightCm: num(box.heightCm),
+        trackingNumber: box.trackingNumber?.trim() || null,
+        volumetricWeightKg: boxVol != null ? round(boxVol, 3) : null,
+        items,
+      };
+    });
+
+    const productWeightKg = anyProductWeight ? round(productWeight, 3) : null;
+    const emptyBoxesWeightKg = round(emptyBoxesWeight, 3);
+    const boxesVolumetricWeightKg = round(boxesVolumetric, 3);
+
+    // Chargeable weight per the service's cost basis:
+    // - actual: product weight (+ packaging uplift) + empty box weights
+    // - volumetric: greater of the boxes' volumetric weight and the actual total (products + boxes)
+    let chargeableWeightKg: number | null = null;
+    if (calcMethod === 'actual_weight') {
+      if (productWeightKg != null || emptyBoxesWeight > 0) {
+        chargeableWeightKg = round((productWeightKg ?? 0) * (1 + packagingPct / 100) + emptyBoxesWeight, 3);
+      }
+    } else if (calcMethod === 'volumetric_weight') {
+      const actualTotal = (productWeightKg ?? 0) + emptyBoxesWeight;
+      const chargeable = Math.max(boxesVolumetric, actualTotal);
+      if (chargeable > 0) chargeableWeightKg = round(chargeable, 3);
     }
-    const basisWeightKg = anyWeight ? round(basisWeight, 3) : null;
 
-    // Packaging uplift applies to actual-weight services only (volumetric already
-    // reflects box size). Round nothing here — the rate band picks the "upper" range.
-    const chargeableWeightKg = basisWeightKg == null ? null
-      : calcMethod === 'actual_weight' ? round(basisWeightKg * (1 + packagingPct / 100), 3)
-      : basisWeightKg;
-
-    // Zone: the service zone whose countries include the destination.
+    // Zone → rate band → charge.
     let shippingZoneId: string | null = null;
     let shippingZoneName: string | null = null;
     let estimatedCostEur: number | null = null;
@@ -151,8 +212,6 @@ export class FbaShipmentsService {
         const rates = (zone.rates ?? []).slice().sort((a: any, b: any) => Number(a.fromWeightKg) - Number(b.fromWeightKg));
         if (rates.length && chargeableWeightKg != null) {
           const w = chargeableWeightKg;
-          // Closest upper band: the lightest band whose upper bound covers the weight;
-          // clamp under the lightest / over the heaviest so a cost is always found.
           const covering = rates.find((r: any) => w <= Number(r.toWeightKg));
           const chosen = covering ?? rates[rates.length - 1];
           estimatedCostEur = Number(chosen.chargeEur);
@@ -165,10 +224,15 @@ export class FbaShipmentsService {
     }
     if (!service) warnings.push('Select a shipping service to estimate the cost.');
     if (!destinationCountryId && input.salesChannelId) warnings.push('The selected sales channel has no native country set.');
-    if (items.some((i) => i.weightMissing)) warnings.push('Some SKUs have no matching product or missing weight/dimensions — they are excluded from the weight.');
+    if (anyMissing) warnings.push('Some SKUs have no matching product or missing weight/dimensions — they are excluded from the weight.');
+    if (calcMethod === 'volumetric_weight' && boxesVolumetric <= 0) warnings.push('No box dimensions entered — volumetric weight cannot be computed.');
 
-    // Allocate the effective cost across lines by their weight×qty share.
-    this.allocate(items, basisWeightKg, estimatedCostEur);
+    // Allocate the effective cost across all lines by their weight×qty share.
+    const allLines = boxes.flatMap((b) => b.items);
+    this.allocate(allLines, estimatedCostEur);
+
+    // Aggregate per product for the allocation view (Tab 3).
+    const allocation = this.aggregate(allLines);
 
     return {
       calcMethod,
@@ -179,33 +243,85 @@ export class FbaShipmentsService {
       shippingZoneId,
       shippingZoneName,
       packagingPct,
-      basisWeightKg,
+      productWeightKg,
+      emptyBoxesWeightKg,
+      boxesVolumetricWeightKg,
       chargeableWeightKg,
       estimatedCostEur,
-      items,
+      boxes,
+      allocation,
       warnings,
     };
   }
 
-  /** Distribute `cost` across lines proportional to lineWeight (weight × qty). Mutates items. */
-  private allocate(items: EstimateLine[], totalWeight: number | null, cost: number | null) {
-    if (cost == null || !totalWeight || totalWeight <= 0) {
-      for (const it of items) it.allocatedCostEur = null;
-      return;
-    }
-    for (const it of items) {
-      const w = it.lineWeightKg ?? 0;
-      it.allocatedCostEur = round((w / totalWeight) * cost, 4);
+  /** Distribute `cost` across lines proportional to lineWeight (weight × qty). Mutates lines. */
+  private allocate(lines: EstimateLine[], cost: number | null) {
+    const total = lines.reduce((s, l) => s + (l.lineWeightKg ?? 0), 0);
+    for (const l of lines) {
+      if (cost == null || total <= 0) { l.allocatedCostEur = null; l.allocatedCostPerUnitEur = null; continue; }
+      const alloc = round(((l.lineWeightKg ?? 0) / total) * cost, 4);
+      l.allocatedCostEur = alloc;
+      l.allocatedCostPerUnitEur = l.quantity > 0 ? round(alloc / l.quantity, 4) : null;
     }
   }
 
-  // --- Public: preview -------------------------------------------------------
+  /** Combine lines with the same product/SKU across boxes into one allocation row. */
+  private aggregate(lines: EstimateLine[]): EstimateLine[] {
+    const byKey = new Map<string, EstimateLine>();
+    for (const l of lines) {
+      const key = l.productId ?? l.sku.toLowerCase();
+      const cur = byKey.get(key);
+      if (!cur) {
+        byKey.set(key, { ...l });
+      } else {
+        cur.quantity += l.quantity;
+        cur.lineWeightKg = round((cur.lineWeightKg ?? 0) + (l.lineWeightKg ?? 0), 3);
+        cur.allocatedCostEur = cur.allocatedCostEur != null || l.allocatedCostEur != null
+          ? round((cur.allocatedCostEur ?? 0) + (l.allocatedCostEur ?? 0), 4) : null;
+        cur.weightMissing = cur.weightMissing || l.weightMissing;
+      }
+    }
+    for (const l of byKey.values()) {
+      l.allocatedCostPerUnitEur = l.allocatedCostEur != null && l.quantity > 0 ? round(l.allocatedCostEur / l.quantity, 4) : null;
+    }
+    return [...byKey.values()];
+  }
+
   estimate(input: EstimateFbaShipmentDto) {
     return this.computeEstimate(input);
   }
 
   // --- Serialize a persisted shipment ---------------------------------------
+  private serializeItem(it: any) {
+    const alloc = n(it.allocatedCostEur);
+    return {
+      id: it.id,
+      boxId: it.boxId,
+      productId: it.productId,
+      sku: it.sku,
+      title: it.title ?? it.product?.title ?? null,
+      quantity: it.quantity,
+      unitWeightKg: n(it.unitWeightKg),
+      lineWeightKg: it.unitWeightKg != null ? round(Number(it.unitWeightKg) * (it.quantity ?? 1), 3) : null,
+      allocatedCostEur: alloc,
+      allocatedCostPerUnitEur: alloc != null && it.quantity > 0 ? round(alloc / it.quantity, 4) : null,
+    };
+  }
+
   private serialize(s: any) {
+    const boxes = (s.boxes ?? []).map((b: any) => ({
+      id: b.id,
+      label: b.label,
+      emptyWeightKg: n(b.emptyWeightKg),
+      lengthCm: n(b.lengthCm),
+      widthCm: n(b.widthCm),
+      heightCm: n(b.heightCm),
+      trackingNumber: b.trackingNumber,
+      volumetricWeightKg: b.lengthCm != null && b.widthCm != null && b.heightCm != null
+        ? round((Number(b.lengthCm) * Number(b.widthCm) * Number(b.heightCm)) / VOLUMETRIC_DIVISOR, 3) : null,
+      items: (b.items ?? []).map((it: any) => this.serializeItem(it)),
+    }));
+    const allItems = (s.items ?? []).map((it: any) => this.serializeItem(it));
     return {
       id: s.id,
       date: s.date,
@@ -215,12 +331,13 @@ export class FbaShipmentsService {
       destinationCountry: s.destinationCountry ? { id: s.destinationCountry.id, name: s.destinationCountry.name, isoCode: s.destinationCountry.isoCode } : null,
       fbaShipmentRef: s.fbaShipmentRef,
       shippingServiceId: s.shippingServiceId,
-      shippingService: s.shippingService ? { id: s.shippingService.id, name: s.shippingService.name, calcMethod: s.shippingService.calcMethod } : null,
+      shippingService: s.shippingService ? { id: s.shippingService.id, name: s.shippingService.name, calcMethod: s.shippingService.calcMethod, trackingUrlTemplate: s.shippingService.trackingUrlTemplate ?? null } : null,
       shippingZoneId: s.shippingZoneId,
       shippingZone: s.shippingZone ? { id: s.shippingZone.id, name: s.shippingZone.name } : null,
       calcMethod: s.calcMethod,
       packagingPct: n(s.packagingPct),
-      basisWeightKg: n(s.basisWeightKg),
+      productWeightKg: n(s.basisWeightKg),
+      emptyBoxesWeightKg: n(s.emptyBoxesWeightKg),
       chargeableWeightKg: n(s.chargeableWeightKg),
       estimatedCostEur: n(s.estimatedCostEur),
       actualCostEur: n(s.actualCostEur),
@@ -228,18 +345,11 @@ export class FbaShipmentsService {
       costSource: s.actualCostEur != null ? 'actual' : 'estimated',
       status: s.status,
       comments: s.comments,
-      itemCount: (s.items ?? []).length,
-      quantity: (s.items ?? []).reduce((sum: number, it: any) => sum + (it.quantity ?? 0), 0),
-      items: (s.items ?? []).map((it: any) => ({
-        id: it.id,
-        productId: it.productId,
-        sku: it.sku,
-        title: it.title ?? it.product?.title ?? null,
-        quantity: it.quantity,
-        unitWeightKg: n(it.unitWeightKg),
-        lineWeightKg: it.unitWeightKg != null ? round(Number(it.unitWeightKg) * (it.quantity ?? 1), 3) : null,
-        allocatedCostEur: n(it.allocatedCostEur),
-      })),
+      boxCount: boxes.length,
+      itemCount: allItems.length,
+      quantity: allItems.reduce((sum: number, it: any) => sum + (it.quantity ?? 0), 0),
+      boxes,
+      allocation: this.aggregate(allItems as any),
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
     };
@@ -248,8 +358,13 @@ export class FbaShipmentsService {
   private readonly include = {
     salesChannel: { select: { id: true, name: true } },
     destinationCountry: { select: { id: true, name: true, isoCode: true } },
-    shippingService: { select: { id: true, name: true, calcMethod: true } },
+    shippingService: { select: { id: true, name: true, calcMethod: true, trackingUrlTemplate: true } },
     shippingZone: { select: { id: true, name: true } },
+    boxes: {
+      where: { deletedAt: null },
+      orderBy: { sortOrder: 'asc' as const },
+      include: { items: { where: { deletedAt: null }, include: { product: { select: { id: true, title: true } } } } },
+    },
     items: { where: { deletedAt: null }, include: { product: { select: { id: true, title: true } } } },
   };
 
@@ -266,6 +381,7 @@ export class FbaShipmentsService {
         OR: [
           { fbaShipmentRef: { contains: q, mode: 'insensitive' } },
           { items: { some: { sku: { contains: q, mode: 'insensitive' } } } },
+          { boxes: { some: { trackingNumber: { contains: q, mode: 'insensitive' } } } },
         ],
       });
     }
@@ -283,94 +399,111 @@ export class FbaShipmentsService {
     return this.serialize(s);
   }
 
-  private itemsCreateData(est: EstimateResult) {
-    return est.items.map((it) => ({
-      productId: it.productId,
-      sku: it.sku,
-      title: it.title,
-      quantity: it.quantity,
-      unitWeightKg: it.unitWeightKg,
-      allocatedCostEur: it.allocatedCostEur,
+  /** Nested Prisma create for boxes + their items, carrying the shipment id onto items. */
+  private boxesCreateData(est: EstimateResult, shipmentId: string) {
+    return est.boxes.map((box, bi) => ({
+      shipmentId,
+      label: box.label,
+      emptyWeightKg: box.emptyWeightKg,
+      lengthCm: box.lengthCm,
+      widthCm: box.widthCm,
+      heightCm: box.heightCm,
+      trackingNumber: box.trackingNumber,
+      sortOrder: bi,
+      items: {
+        create: box.items.map((it) => ({
+          shipmentId,
+          productId: it.productId,
+          sku: it.sku,
+          title: it.title,
+          quantity: it.quantity,
+          unitWeightKg: it.unitWeightKg,
+          allocatedCostEur: it.allocatedCostEur,
+        })),
+      },
     }));
+  }
+
+  private headerData(dto: CreateFbaShipmentDto | UpdateFbaShipmentDto, est: EstimateResult) {
+    return {
+      salesChannelId: dto.salesChannelId ?? null,
+      destinationCountryId: est.destinationCountryId,
+      fbaShipmentRef: dto.fbaShipmentRef?.trim() || null,
+      shippingServiceId: dto.shippingServiceId ?? null,
+      shippingZoneId: est.shippingZoneId,
+      calcMethod: est.calcMethod,
+      packagingPct: est.packagingPct,
+      basisWeightKg: est.productWeightKg,
+      emptyBoxesWeightKg: est.emptyBoxesWeightKg,
+      chargeableWeightKg: est.chargeableWeightKg,
+      estimatedCostEur: est.estimatedCostEur,
+      comments: dto.comments?.trim() || null,
+    };
   }
 
   async create(dto: CreateFbaShipmentDto, actorId?: string) {
     const est = await this.computeEstimate(dto);
-    const created = await this.prisma.fbaShipment.create({
-      data: {
-        date: dto.date ? new Date(dto.date) : new Date(),
-        salesChannelId: dto.salesChannelId ?? null,
-        destinationCountryId: est.destinationCountryId,
-        fbaShipmentRef: dto.fbaShipmentRef?.trim() || null,
-        shippingServiceId: dto.shippingServiceId ?? null,
-        shippingZoneId: est.shippingZoneId,
-        calcMethod: est.calcMethod,
-        packagingPct: est.packagingPct,
-        basisWeightKg: est.basisWeightKg,
-        chargeableWeightKg: est.chargeableWeightKg,
-        estimatedCostEur: est.estimatedCostEur,
-        status: dto.status ?? 'draft',
-        comments: dto.comments?.trim() || null,
-        createdById: actorId,
-        updatedById: actorId,
-        items: { create: this.itemsCreateData(est) },
-      },
-      include: this.include,
+    const created = await this.prisma.$transaction(async (tx) => {
+      const shipment = await tx.fbaShipment.create({
+        data: {
+          date: dto.date ? new Date(dto.date) : new Date(),
+          ...this.headerData(dto, est),
+          status: dto.status ?? 'draft',
+          createdById: actorId,
+          updatedById: actorId,
+        },
+      });
+      for (const box of this.boxesCreateData(est, shipment.id)) {
+        await tx.fbaShipmentBox.create({ data: box });
+      }
+      return shipment.id;
     });
-    return this.serialize(created);
+    return this.get(created);
   }
 
   async update(id: string, dto: UpdateFbaShipmentDto, actorId?: string) {
     await this.get(id);
     const est = await this.computeEstimate(dto);
-    const updated = await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       await tx.fbaShipmentItem.deleteMany({ where: { shipmentId: id } });
-      return tx.fbaShipment.update({
+      await tx.fbaShipmentBox.deleteMany({ where: { shipmentId: id } });
+      await tx.fbaShipment.update({
         where: { id },
         data: {
           date: dto.date ? new Date(dto.date) : undefined,
-          salesChannelId: dto.salesChannelId ?? null,
-          destinationCountryId: est.destinationCountryId,
-          fbaShipmentRef: dto.fbaShipmentRef?.trim() || null,
-          shippingServiceId: dto.shippingServiceId ?? null,
-          shippingZoneId: est.shippingZoneId,
-          calcMethod: est.calcMethod,
-          packagingPct: est.packagingPct,
-          basisWeightKg: est.basisWeightKg,
-          chargeableWeightKg: est.chargeableWeightKg,
-          estimatedCostEur: est.estimatedCostEur,
+          ...this.headerData(dto, est),
           status: dto.status ?? undefined,
-          comments: dto.comments?.trim() || null,
           updatedById: actorId,
-          items: { create: this.itemsCreateData(est) },
         },
-        include: this.include,
       });
+      for (const box of this.boxesCreateData(est, id)) {
+        await tx.fbaShipmentBox.create({ data: box });
+      }
     });
-    return this.serialize(updated);
+    return this.get(id);
   }
 
   async setStatus(id: string, status: 'draft' | 'confirmed', actorId?: string) {
     await this.get(id);
-    const s = await this.prisma.fbaShipment.update({ where: { id }, data: { status, updatedById: actorId }, include: this.include });
-    return this.serialize(s);
+    await this.prisma.fbaShipment.update({ where: { id }, data: { status, updatedById: actorId } });
+    return this.get(id);
   }
 
   /** Register the actual shipping cost; re-allocate each line by its weight share. */
   async setActualCost(id: string, actualCostEur: number, actorId?: string) {
-    const existing = await this.prisma.fbaShipment.findFirst({ where: { id, deletedAt: null }, include: this.include });
+    const existing = await this.prisma.fbaShipment.findFirst({ where: { id, deletedAt: null }, include: { items: { where: { deletedAt: null } } } });
     if (!existing) throw new NotFoundException('FBA shipment not found');
     const totalWeight = (existing.items ?? []).reduce(
       (sum: number, it: any) => sum + (it.unitWeightKg != null ? Number(it.unitWeightKg) * (it.quantity ?? 1) : 0), 0);
-    const s = await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       for (const it of existing.items ?? []) {
         const lineW = it.unitWeightKg != null ? Number(it.unitWeightKg) * (it.quantity ?? 1) : 0;
         const alloc = totalWeight > 0 ? round((lineW / totalWeight) * actualCostEur, 4) : null;
         await tx.fbaShipmentItem.update({ where: { id: it.id }, data: { allocatedCostEur: alloc } });
       }
-      return tx.fbaShipment.update({ where: { id }, data: { actualCostEur, updatedById: actorId }, include: this.include });
+      await tx.fbaShipment.update({ where: { id }, data: { actualCostEur, updatedById: actorId } });
     });
-    return this.serialize(s);
+    return this.get(id);
   }
 
   async remove(id: string) {
@@ -389,14 +522,11 @@ export class FbaShipmentsService {
         productId,
         shipment: { deletedAt: null, status: 'confirmed', ...(salesChannelId ? { salesChannelId } : {}) },
       },
-      include: { shipment: { select: { estimatedCostEur: true, actualCostEur: true } } },
     });
     let totalCost = 0;
     let totalQty = 0;
     for (const it of items) {
-      const qty = it.quantity ?? 0;
-      totalQty += qty;
-      // allocatedCostEur already reflects actual-vs-estimate (re-allocated on setActualCost).
+      totalQty += it.quantity ?? 0;
       totalCost += it.allocatedCostEur != null ? Number(it.allocatedCostEur) : 0;
     }
     return {
