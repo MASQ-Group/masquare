@@ -58,7 +58,7 @@ export class FbaShipmentsController {
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateFbaShipmentDto, @CurrentUser() user: AuthUser) {
-    return this.fba.update(id, dto, user.sub);
+    return this.fba.update(id, dto, user.sub, user.isAdmin);
   }
 
   @Delete(':id')

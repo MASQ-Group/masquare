@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   CreateFbaShipmentDto, EstimateFbaShipmentDto, FbaShipmentBoxDto, UpdateFbaShipmentDto,
@@ -461,8 +461,12 @@ export class FbaShipmentsService {
     return this.get(created);
   }
 
-  async update(id: string, dto: UpdateFbaShipmentDto, actorId?: string) {
+  async update(id: string, dto: UpdateFbaShipmentDto, actorId?: string, isAdmin = false) {
     const before = await this.get(id);
+    // A confirmed shipment is locked to non-admins (registering the actual cost is separate).
+    if (before.status === 'confirmed' && !isAdmin) {
+      throw new ForbiddenException('Confirmed FBA shipments can only be edited by an admin.');
+    }
     const est = await this.computeEstimate(dto);
     // If an actual cost was already registered, keep allocating the lines to it (by their
     // new weight shares) rather than reverting to the fresh estimate. actualCostEur itself

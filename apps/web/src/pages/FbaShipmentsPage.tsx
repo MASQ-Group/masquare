@@ -1,23 +1,32 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Coins, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { Coins, Lock, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { fbaShipmentsApi, salesChannelsApi, type FbaShipment } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/format';
 import { FbaShipmentModal } from '../components/fba-shipments/FbaShipmentModal';
+import { FbaShipmentSummaryModal } from '../components/fba-shipments/FbaShipmentSummaryModal';
+import { FbaActualCostModal } from '../components/fba-shipments/FbaActualCostModal';
 
 const eur = (v: number | null | undefined) => (v != null ? `€${v.toFixed(2)}` : '—');
 const kg = (v: number | null | undefined) => (v != null ? `${v.toFixed(2)} kg` : '—');
 
 export function FbaShipmentsPage() {
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const isAdmin = !!user?.isAdmin;
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
   const [filterChannel, setFilterChannel] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState<{ shipment?: FbaShipment } | null>(null);
+  const [viewing, setViewing] = useState<FbaShipment | null>(null);
   const [actualFor, setActualFor] = useState<FbaShipment | null>(null);
+
+  // Confirmed shipments are locked to admins (registering the actual cost stays open to all).
+  const canEdit = (s: FbaShipment) => isAdmin || s.status !== 'confirmed';
 
   useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
 
@@ -89,7 +98,7 @@ export function FbaShipmentsPage() {
               {isLoading && <tr><td colSpan={11} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
               {!isLoading && rows.length === 0 && <tr><td colSpan={11} className="px-4 py-12 text-center text-[13px] text-n-500">No FBA shipments yet. Create one to ship stock to a fulfilment center.</td></tr>}
               {rows.map((s) => (
-                <tr key={s.id} className="cursor-pointer hover:bg-teal-50" onClick={() => setModal({ shipment: s })}>
+                <tr key={s.id} className="cursor-pointer hover:bg-teal-50" onClick={() => setViewing(s)}>
                   <td className={`${td} mono`}>{formatDate(s.date)}</td>
                   <td className={td}><span className="mono font-medium text-n-800">{s.fbaShipmentRef ?? '—'}</span></td>
                   <td className={td}>{s.salesChannel?.name ?? '—'}</td>
@@ -107,7 +116,9 @@ export function FbaShipmentsPage() {
                   <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-1">
                       <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Register actual cost" onClick={() => setActualFor(s)}><Coins size={15} /></button>
-                      <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Edit" onClick={() => setModal({ shipment: s })}><Pencil size={15} /></button>
+                      {canEdit(s)
+                        ? <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Edit" onClick={() => setModal({ shipment: s })}><Pencil size={15} /></button>
+                        : <span className="grid h-8 w-8 place-items-center rounded-md text-n-300" title="Confirmed — only admins can edit"><Lock size={14} /></span>}
                       <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" title="Remove" onClick={() => confirm(`Remove FBA shipment ${s.fbaShipmentRef ?? ''}?`) && del.mutate(s.id)}><Trash2 size={15} /></button>
                     </div>
                   </td>
@@ -127,49 +138,21 @@ export function FbaShipmentsPage() {
         </div>
       </div>
 
+      {viewing && (
+        <FbaShipmentSummaryModal
+          shipment={viewing}
+          canEdit={canEdit(viewing)}
+          onClose={() => setViewing(null)}
+          onEdit={() => { setModal({ shipment: viewing }); setViewing(null); }}
+          onRegisterActual={() => { setActualFor(viewing); setViewing(null); }}
+        />
+      )}
       {modal && (
         <FbaShipmentModal shipment={modal.shipment} onClose={() => setModal(null)} onSaved={() => { setModal(null); invalidate(); }} />
       )}
       {actualFor && (
-        <ActualCostModal shipment={actualFor} onClose={() => setActualFor(null)} onSaved={() => { setActualFor(null); invalidate(); }} />
+        <FbaActualCostModal shipment={actualFor} onClose={() => setActualFor(null)} onSaved={() => { setActualFor(null); invalidate(); }} />
       )}
-    </div>
-  );
-}
-
-/** Small modal to register the actual shipping cost, which re-allocates per SKU. */
-function ActualCostModal({ shipment, onClose, onSaved }: { shipment: FbaShipment; onClose: () => void; onSaved: () => void }) {
-  const [value, setValue] = useState(shipment.actualCostEur != null ? String(shipment.actualCostEur) : '');
-  const [busy, setBusy] = useState(false);
-  const save = async () => {
-    const amount = Number(value);
-    if (!Number.isFinite(amount) || amount < 0) { toast.error('Enter a valid amount'); return; }
-    setBusy(true);
-    try {
-      await fbaShipmentsApi.setActualCost(shipment.id, amount);
-      toast.success('Actual cost registered — allocation updated');
-      onSaved();
-    } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Could not save');
-    } finally { setBusy(false); }
-  };
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(12,16,20,0.5)] p-4" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
-      <div className="w-[420px] max-w-full rounded-lg bg-n-0 shadow-lg">
-        <div className="border-b border-n-200 px-5 py-3.5">
-          <h2 className="text-[15px] font-semibold text-n-900">Register actual shipping cost</h2>
-          <p className="mt-0.5 text-[12.5px] text-n-500">{shipment.fbaShipmentRef ?? 'FBA shipment'} · estimate {eur(shipment.estimatedCostEur)}</p>
-        </div>
-        <div className="px-5 py-4">
-          <label className="label">Actual cost <span className="font-normal text-n-400">(exc. VAT, €)</span></label>
-          <input autoFocus className="input mono" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder="0.00" onKeyDown={(e) => { if (e.key === 'Enter' && !busy) save(); }} />
-          <p className="mt-2 text-[12px] text-n-500">This overrides the estimate and re-allocates the cost across the shipment's SKUs by weight.</p>
-        </div>
-        <div className="flex items-center justify-end gap-2 border-t border-n-200 px-5 py-3.5">
-          <button className="inline-flex h-10 items-center rounded-md border border-n-200 bg-n-0 px-4 text-[13.5px] font-semibold text-n-700 hover:bg-n-50" onClick={() => !busy && onClose()}>Cancel</button>
-          <button className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-[13.5px] font-semibold text-white hover:bg-primary-hover disabled:opacity-50" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save cost'}</button>
-        </div>
-      </div>
     </div>
   );
 }

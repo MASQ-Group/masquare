@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Package, Pencil, Search, Trash2, Truck } from 'lucide-react';
+import { ArrowRight, Coins, Package, Pencil, Search, Trash2, Truck } from 'lucide-react';
 import { toast } from 'sonner';
-import { salesChannelsApi, shipmentsApi, type PendingShipment, type Shipment } from '../lib/api';
+import { fbaShipmentsApi, salesChannelsApi, shipmentsApi, type FbaShipment, type PendingShipment, type Shipment } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/format';
 import { ShipmentModal } from '../components/shipments/ShipmentModal';
+import { FbaActualCostModal } from '../components/fba-shipments/FbaActualCostModal';
 
-type Tab = 'pending' | 'all';
+type Tab = 'pending' | 'all' | 'fba';
 
 const eur = (v: number | null | undefined) => (v != null ? `€${v.toFixed(2)}` : '—');
 
@@ -29,6 +30,7 @@ export function ShipmentsPage() {
   const [filterType, setFilterType] = useState('');
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState<ModalCtx | null>(null);
+  const [fbaActualFor, setFbaActualFor] = useState<FbaShipment | null>(null);
 
   useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
   useEffect(() => { setPage(1); }, [tab]);
@@ -42,6 +44,10 @@ export function ShipmentsPage() {
   const allQ = useQuery({
     queryKey: ['shipments-all', { ...commonParams, type: filterType }], queryFn: () => shipmentsApi.list({ ...commonParams, type: filterType || undefined }), enabled: tab === 'all',
   });
+  const fbaParams = { q: q || undefined, salesChannelId: filterChannel || undefined, page, pageSize: 50 };
+  const fbaQ = useQuery({
+    queryKey: ['fba-shipments', fbaParams], queryFn: () => fbaShipmentsApi.list(fbaParams), enabled: tab === 'fba',
+  });
 
   const del = useMutation({
     mutationFn: (id: string) => shipmentsApi.remove(id),
@@ -52,10 +58,11 @@ export function ShipmentsPage() {
     qc.invalidateQueries({ queryKey: ['shipments-pending'] });
     qc.invalidateQueries({ queryKey: ['shipments-all'] });
     qc.invalidateQueries({ queryKey: ['sales-transactions'] });
+    qc.invalidateQueries({ queryKey: ['fba-shipments'] });
   };
 
-  const data = tab === 'pending' ? pendingQ.data : allQ.data;
-  const isLoading = tab === 'pending' ? pendingQ.isLoading : allQ.isLoading;
+  const data = tab === 'pending' ? pendingQ.data : tab === 'all' ? allQ.data : fbaQ.data;
+  const isLoading = tab === 'pending' ? pendingQ.isLoading : tab === 'all' ? allQ.isLoading : fbaQ.isLoading;
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / 50));
 
@@ -74,6 +81,7 @@ export function ShipmentsPage() {
 
   const pendingRows = useMemo(() => (tab === 'pending' ? (pendingQ.data?.items ?? []) : []), [tab, pendingQ.data]);
   const allRows = useMemo(() => (tab === 'all' ? (allQ.data?.items ?? []) : []), [tab, allQ.data]);
+  const fbaRows = useMemo(() => (tab === 'fba' ? (fbaQ.data?.items ?? []) : []), [tab, fbaQ.data]);
 
   return (
     <div className="w-full">
@@ -87,7 +95,7 @@ export function ShipmentsPage() {
 
       {/* Tabs */}
       <div className="mb-4 flex gap-1 border-b border-n-200">
-        {([['pending', 'Pending fulfilment'], ['all', 'All shipments']] as [Tab, string][]).map(([key, label]) => (
+        {([['pending', 'Pending fulfilment'], ['all', 'All shipments'], ['fba', 'FBA shipments']] as [Tab, string][]).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -166,7 +174,7 @@ export function ShipmentsPage() {
                 ))}
               </tbody>
             </table>
-          ) : (
+          ) : tab === 'all' ? (
             <table className="w-full min-w-[1000px] border-collapse">
               <thead>
                 <tr>
@@ -213,13 +221,54 @@ export function ShipmentsPage() {
                 ))}
               </tbody>
             </table>
+          ) : (
+            <table className="w-full min-w-[1000px] border-collapse">
+              <thead>
+                <tr>
+                  <th className={`${th} text-left`}>Date</th>
+                  <th className={`${th} text-left`}>FBA ID</th>
+                  <th className={`${th} text-left`}>Channel</th>
+                  <th className={`${th} text-left`}>Destination</th>
+                  <th className={`${th} text-left`}>Service</th>
+                  <th className={`${th} text-right`}>Est. cost</th>
+                  <th className={`${th} text-right`}>Actual cost</th>
+                  <th className={`${th} text-left`}>Status</th>
+                  <th className="border-b border-n-200 bg-n-25" />
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading && <tr><td colSpan={9} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
+                {!isLoading && fbaRows.length === 0 && <tr><td colSpan={9} className="px-4 py-12 text-center text-[13px] text-n-500">No FBA shipments. Create them in the FBA Shipments module.</td></tr>}
+                {fbaRows.map((s) => (
+                  <tr key={s.id} className="cursor-pointer hover:bg-teal-50" onClick={() => setFbaActualFor(s)}>
+                    <td className={`${td} mono`}>{formatDate(s.date)}</td>
+                    <td className={td}><span className="mono font-medium text-n-800">{s.fbaShipmentRef ?? '—'}</span></td>
+                    <td className={td}>{s.salesChannel?.name ?? '—'}</td>
+                    <td className={td}>{s.destinationCountry?.name ?? '—'}</td>
+                    <td className={td}>{s.shippingService?.name ?? '—'}{s.shippingZone ? <span className="text-n-400"> · {s.shippingZone.name}</span> : ''}</td>
+                    <td className={`${td} mono text-right`}>{eur(s.estimatedCostEur)}</td>
+                    <td className={`${td} mono text-right ${s.actualCostEur != null ? 'font-semibold text-n-900' : 'text-n-400'}`}>{eur(s.actualCostEur)}</td>
+                    <td className={td}>
+                      {s.status === 'confirmed'
+                        ? <span className="tag border border-teal-100 bg-teal-50 text-teal-700">Confirmed</span>
+                        : <span className="tag border border-n-200 bg-n-100 text-n-600">Draft</span>}
+                    </td>
+                    <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+                      <button className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12.5px] font-semibold text-white hover:bg-primary-hover" onClick={() => setFbaActualFor(s)}>
+                        <Coins size={14} /> {s.actualCostEur != null ? 'Edit actual cost' : 'Enter actual cost'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       </div>
 
       <div className="mt-3 flex items-center justify-between">
         <span className="text-[13px] text-n-500">
-          {tab === 'pending' ? 'Awaiting shipment' : 'Recorded shipments'}: <span className="mono">{total}</span>
+          {tab === 'pending' ? 'Awaiting shipment' : tab === 'all' ? 'Recorded shipments' : 'FBA shipments'}: <span className="mono">{total}</span>
         </span>
         <div className="flex gap-1">
           <button disabled={page <= 1} className="mono grid h-8 w-8 place-items-center rounded-md border border-n-200 bg-n-0 text-[13px] text-n-600 disabled:opacity-40" onClick={() => setPage((p) => p - 1)}>‹</button>
@@ -233,6 +282,11 @@ export function ShipmentsPage() {
           <ArrowRight size={13} /> Click a row to record its shipment. Uncheck “fully shipped” if an order ships in parts.
         </p>
       )}
+      {tab === 'fba' && fbaRows.length > 0 && (
+        <p className="mt-3 inline-flex items-center gap-1.5 text-[12px] text-n-400">
+          <ArrowRight size={13} /> Enter the actual FBA shipping cost here — it updates the shipment's Actual Cost in the FBA Shipments module and re-allocates the per-SKU cost.
+        </p>
+      )}
 
       {modal && (
         <ShipmentModal
@@ -243,6 +297,14 @@ export function ShipmentsPage() {
           shipment={modal.shipment}
           onClose={() => setModal(null)}
           onSaved={() => { setModal(null); invalidate(); }}
+        />
+      )}
+      {fbaActualFor && (
+        <FbaActualCostModal
+          shipment={fbaActualFor}
+          contextLine="via Shipments module"
+          onClose={() => setFbaActualFor(null)}
+          onSaved={() => { setFbaActualFor(null); invalidate(); }}
         />
       )}
     </div>
