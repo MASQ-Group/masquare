@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
-import { attributesApi, categoriesApi, productsApi, productTypesApi } from '../../lib/api';
+import { attributesApi, brandsApi, categoriesApi, fulfilmentTypesApi, productsApi, productTypesApi, vendorsApi } from '../../lib/api';
 
 interface Props {
   ids: string[];
@@ -11,21 +11,27 @@ interface Props {
   onDone: () => void;
 }
 
-/** Apply Product Type / Category / Attributes to the selected products in one pass.
- *  Only the sections you fill are applied. */
+/** Apply Brand / Vendor / Fulfilment Type / Product Type / Category / Attributes to the
+ *  selected products in one pass. Only the sections you fill are applied. */
 export function BulkEditModal({ ids, onClose, onDone }: Props) {
   const [busy, setBusy] = useState(false);
+  const { data: brands = [] } = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
+  const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
+  const { data: ftypes = [] } = useQuery({ queryKey: ['fulfilment-types'], queryFn: () => fulfilmentTypesApi.list() });
   const { data: ptypes = [] } = useQuery({ queryKey: ['product-types'], queryFn: () => productTypesApi.list() });
   const { data: categories = [] } = useQuery({ queryKey: ['categories'], queryFn: categoriesApi.list });
   const { data: attributeLib = [] } = useQuery({ queryKey: ['attributes'], queryFn: () => attributesApi.list() });
 
+  const [brandId, setBrandId] = useState('');
+  const [vendorId, setVendorId] = useState('');
+  const [fulfilmentTypeId, setFulfilmentTypeId] = useState('');
   const [productTypeId, setProductTypeId] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [attrs, setAttrs] = useState<{ attributeId: string; value: string }[]>([]);
 
   const apply = async () => {
     const attributes = attrs.filter((a) => a.attributeId && a.value.trim());
-    if (!productTypeId && !categoryId && attributes.length === 0) {
+    if (!brandId && !vendorId && !fulfilmentTypeId && !productTypeId && !categoryId && attributes.length === 0) {
       toast.error('Set at least one field to apply');
       return;
     }
@@ -33,6 +39,9 @@ export function BulkEditModal({ ids, onClose, onDone }: Props) {
     try {
       await productsApi.bulkUpdate({
         ids,
+        ...(brandId ? { brandId } : {}),
+        ...(vendorId ? { vendorId } : {}),
+        ...(fulfilmentTypeId ? { fulfilmentTypeId } : {}),
         ...(productTypeId ? { productTypeId } : {}),
         ...(categoryId ? { categoryId } : {}),
         ...(attributes.length ? { attributes } : {}),
@@ -49,6 +58,27 @@ export function BulkEditModal({ ids, onClose, onDone }: Props) {
   return (
     <ModalShell open title={`Bulk edit ${ids.length} products`} primaryLabel="Apply to selected" onPrimary={apply} busy={busy} onClose={onClose}>
       <div className="flex flex-col gap-5">
+        <div>
+          <label className="label">Brand</label>
+          <select className="input" value={brandId} onChange={(e) => setBrandId(e.target.value)}>
+            <option value="">— leave unchanged —</option>
+            {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="label">Vendor</label>
+          <select className="input" value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
+            <option value="">— leave unchanged —</option>
+            {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="label">Fulfilment type</label>
+          <select className="input" value={fulfilmentTypeId} onChange={(e) => setFulfilmentTypeId(e.target.value)}>
+            <option value="">— leave unchanged —</option>
+            {ftypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </div>
         <div>
           <label className="label">Product type</label>
           <select className="input" value={productTypeId} onChange={(e) => setProductTypeId(e.target.value)}>

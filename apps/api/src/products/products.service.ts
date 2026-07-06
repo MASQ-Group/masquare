@@ -359,6 +359,9 @@ export class ProductsService {
     let touched = false;
     if (dto.productTypeId !== undefined) { (data as any).productTypeId = dto.productTypeId; touched = true; }
     if (dto.categoryId !== undefined) { (data as any).categoryId = dto.categoryId; touched = true; }
+    if (dto.fulfilmentTypeId !== undefined) { (data as any).fulfilmentTypeId = dto.fulfilmentTypeId; touched = true; }
+    if (dto.brandId !== undefined) { (data as any).brandId = dto.brandId; touched = true; }
+    if (dto.vendorId !== undefined) { (data as any).vendorId = dto.vendorId; touched = true; }
     if (touched) {
       await this.prisma.product.updateMany({ where: { id: { in: dto.ids }, deletedAt: null }, data });
     }

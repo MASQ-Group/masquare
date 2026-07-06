@@ -77,6 +77,9 @@ export class BulkUpdateDto {
   @IsArray() @IsUUID('all', { each: true }) ids!: string[];
   @IsOptional() @IsUUID() productTypeId?: string | null;
   @IsOptional() @IsUUID() categoryId?: string | null;
+  @IsOptional() @IsUUID() fulfilmentTypeId?: string | null;
+  @IsOptional() @IsUUID() brandId?: string | null;
+  @IsOptional() @IsUUID() vendorId?: string | null;
   @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => ProductAttributeDto)
   attributes?: ProductAttributeDto[];
 }
