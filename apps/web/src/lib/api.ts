@@ -312,6 +312,7 @@ export const productsApi = {
   reorderMedia: (id: string, orderedIds: string[]) =>
     api.put<Product>(`/products/${id}/media/order`, { orderedIds }).then((r) => r.data),
   byIds: (ids: string[]) => api.post<Product[]>('/products/by-ids', { ids }).then((r) => r.data),
+  ids: (params: Omit<ProductListParams, 'page' | 'pageSize'>) => api.get<string[]>('/products/ids', { params }).then((r) => r.data),
   bulkDelete: (ids: string[]) => api.post('/products/bulk/delete', { ids }).then((r) => r.data),
   bulkUpdate: (body: { ids: string[]; productTypeId?: string; categoryId?: string; attributes?: { attributeId: string; value: string }[] }) =>
     api.post('/products/bulk/update', body).then((r) => r.data),

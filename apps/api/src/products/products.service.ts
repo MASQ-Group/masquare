@@ -172,10 +172,8 @@ export class ProductsService {
     return [...new Set(ids)];
   }
 
-  async list(query: ProductQuery) {
-    const page = Math.max(1, Number(query.page) || 1);
-    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 25));
-
+  /** Shared filter used by both the paginated list and the all-matching-ids lookup. */
+  private buildWhere(query: ProductQuery): Prisma.ProductWhereInput {
     const and: Prisma.ProductWhereInput[] = [{ deletedAt: null }];
     if (query.vendorId?.length) and.push({ vendorId: { in: query.vendorId } });
     if (query.brandId?.length) and.push({ brandId: { in: query.brandId } });
@@ -194,20 +192,27 @@ export class ProductsService {
       else {
         and.push({
           OR: [
-            { mainSku: like },
-            { title: like },
-            { ean: like },
-            { upc: like },
-            { vendorSku: like },
-            { manufacturerSku: like },
+            { mainSku: like }, { title: like }, { ean: like }, { upc: like },
+            { vendorSku: like }, { manufacturerSku: like },
             { aliases: { some: { deletedAt: null, skuValue: like } } },
             { attributes: { some: { deletedAt: null, value: like } } },
           ],
         });
       }
     }
+    return { AND: and };
+  }
 
-    const where: Prisma.ProductWhereInput = { AND: and };
+  /** All product ids matching the current filter (for "select all across pages"). */
+  async ids(query: ProductQuery): Promise<string[]> {
+    const rows = await this.prisma.product.findMany({ where: this.buildWhere(query), select: { id: true }, orderBy: { createdAt: 'desc' } });
+    return rows.map((r) => r.id);
+  }
+
+  async list(query: ProductQuery) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(500, Math.max(1, Number(query.pageSize) || 25));
+    const where = this.buildWhere(query);
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.product.count({ where }),
       this.prisma.product.findMany({
@@ -387,12 +392,15 @@ export class ProductsService {
       ['productWeightKg', 'Product weight'], ['packageWeightKg', 'Package weight'],
       ['packageLengthCm', 'Package length'], ['packageWidthCm', 'Package width'], ['packageHeightCm', 'Package height'],
     ];
+    const weightKeys = new Set(['productWeightKg', 'packageWeightKg']);
     for (const [key, label] of numericFields) {
       const v = get(key);
       if (v === '') continue;
       const n = Number(v);
       if (!Number.isFinite(n)) issues.push({ field: key, message: `${label} must be a number (got "${v}")`, severity: 'error' });
       else if (n < 0) issues.push({ field: key, message: `${label} cannot be negative`, severity: 'error' });
+      // Sanity check: weights should be in kg. Values over 50 kg usually mean grams were entered.
+      else if (weightKeys.has(key) && n > 50) issues.push({ field: key, message: `${label} is ${n} kg — that's very heavy; did you enter grams instead of kg?`, severity: 'warning' });
     }
 
     for (const [key, label] of [['ean', 'EAN'], ['upc', 'UPC']] as [string, string][]) {

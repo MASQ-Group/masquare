@@ -47,6 +47,25 @@ export class ProductsController {
     return this.products.list(query);
   }
 
+  @Get('ids')
+  ids(
+    @Query('q') q?: string,
+    @Query('field') field?: string,
+    @Query('vendorId') vendorId?: string | string[],
+    @Query('brandId') brandId?: string | string[],
+    @Query('fulfilmentTypeId') fulfilmentTypeId?: string | string[],
+    @Query('productTypeId') productTypeId?: string | string[],
+    @Query('categoryId') categoryId?: string | string[],
+    @Query('country') country?: string,
+  ) {
+    return this.products.ids({
+      q, field, country,
+      vendorId: toArray(vendorId), brandId: toArray(brandId),
+      fulfilmentTypeId: toArray(fulfilmentTypeId), productTypeId: toArray(productTypeId),
+      categoryId: toArray(categoryId),
+    });
+  }
+
   @Get(':id')
   get(@Param('id') id: string) {
     return this.products.get(id);

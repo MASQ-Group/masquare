@@ -55,6 +55,8 @@ export function ProductsPage() {
   const [field, setField] = useState('');
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [selectingAll, setSelectingAll] = useState(false);
   const [cols, setCols] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<Product | null | undefined>(undefined);
   const [importOpen, setImportOpen] = useState(false);
@@ -69,8 +71,9 @@ export function ProductsPage() {
     return () => clearTimeout(t);
   }, [qInput]);
 
-  const params: ProductListParams = {
-    q: q || undefined, field: field || undefined, page, pageSize: 25,
+  // Shared filter (without paging) — reused for the "select all matching" lookup.
+  const filterParams: Omit<ProductListParams, 'page' | 'pageSize'> = {
+    q: q || undefined, field: field || undefined,
     vendorId: filters.vendorId.length ? filters.vendorId : undefined,
     brandId: filters.brandId.length ? filters.brandId : undefined,
     fulfilmentTypeId: filters.fulfilmentTypeId.length ? filters.fulfilmentTypeId : undefined,
@@ -78,6 +81,7 @@ export function ProductsPage() {
     categoryId: filters.categoryId.length ? filters.categoryId : undefined,
     country: filters.country || undefined,
   };
+  const params: ProductListParams = { ...filterParams, page, pageSize };
 
   const { data, isLoading } = useQuery({ queryKey: ['products', params], queryFn: () => productsApi.list(params) });
   const vendors = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
@@ -93,7 +97,17 @@ export function ProductsPage() {
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / 25));
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const allDbSelected = total > 0 && selected.size >= total;
+
+  const selectAllMatching = async () => {
+    setSelectingAll(true);
+    try {
+      const ids = await productsApi.ids(filterParams);
+      setSelected(new Set(ids));
+    } catch { toast.error('Could not select all products'); }
+    finally { setSelectingAll(false); }
+  };
 
   const nameOf = (list: { id: string; name: string }[] | undefined, id: string) => list?.find((x) => x.id === id)?.name ?? id;
 
@@ -235,7 +249,12 @@ export function ProductsPage() {
       {/* Bulk action bar */}
       {selected.size > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2">
-          <span className="text-[13px] font-semibold text-teal-800">{selected.size} selected</span>
+          <span className="text-[13px] font-semibold text-teal-800">{allDbSelected ? `All ${total} products selected` : `${selected.size} selected`}</span>
+          {!allDbSelected && allSelected && total > items.length && (
+            <button className="text-[12.5px] font-semibold text-teal-700 hover:underline disabled:opacity-50" disabled={selectingAll} onClick={selectAllMatching}>
+              {selectingAll ? 'Selecting…' : `Select all ${total} products`}
+            </button>
+          )}
           <div className="mx-1 h-5 w-px bg-teal-200" />
           <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:bg-n-50" onClick={() => setBulkEdit(true)}><SlidersHorizontal size={14} /> Bulk edit</button>
           <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:bg-n-50" onClick={onExport}><Download size={14} /> Export selected</button>
@@ -251,8 +270,20 @@ export function ProductsPage() {
       )}
 
       {/* Pagination */}
-      <div className="mt-3 flex items-center justify-between">
-        <span className="text-[13px] text-n-500">Showing <span className="mono">{items.length}</span> of <span className="mono">{total}</span> products</span>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="text-[13px] text-n-500">Showing <span className="mono">{items.length}</span> of <span className="mono">{total}</span> products</span>
+          <label className="inline-flex items-center gap-1.5 text-[12.5px] text-n-500">
+            Per page
+            <select
+              className="h-8 rounded-md border border-n-200 bg-n-0 px-1.5 text-[12.5px] text-n-700"
+              value={pageSize}
+              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+            >
+              {[50, 100, 200, 300, 500].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+        </div>
         <div className="flex gap-1">
           <button disabled={page <= 1} className="mono grid h-8 w-8 place-items-center rounded-md border border-n-200 bg-n-0 text-[13px] text-n-600 disabled:opacity-40" onClick={() => setPage((p) => p - 1)}>‹</button>
           <span className="mono grid h-8 min-w-8 place-items-center px-2 text-[13px] text-n-600">{page} / {pageCount}</span>
