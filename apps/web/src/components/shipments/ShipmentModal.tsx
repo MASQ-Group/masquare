@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { DatePicker, ModalShell } from '@masquare/ui';
 import { shipmentsApi, shippingServicesApi, type Shipment } from '../../lib/api';
 
 interface Props {
@@ -84,7 +84,7 @@ export function ShipmentModal({ transactionId, transactionRef, contextLine, defa
               <option value="inbound">Inbound (return / receipt)</option>
             </select>
           </div>
-          <div><label className="label">Shipment date</label><input type="date" className="input mono" value={date} onChange={(e) => { setDate(e.target.value); touch(); }} /></div>
+          <div><label className="label">Shipment date</label><DatePicker value={date} onChange={(v) => { setDate(v); touch(); }} /></div>
           <div>
             <label className="label">Shipping service</label>
             <select className="input" value={serviceId ?? ''} onChange={(e) => { setServiceId(e.target.value || null); touch(); }}>

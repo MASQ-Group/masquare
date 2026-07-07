@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { DatePicker, ModalShell } from '@masquare/ui';
 import { countriesApi, salesChannelsApi, salesTransactionsApi, shippingServicesApi, type RefLite, type SalesTransaction } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { RefField } from '../products/RefField';
@@ -178,7 +178,7 @@ export function SalesTransactionModal({ transaction, onClose, onSaved }: Props) 
       <fieldset disabled={locked} className="flex flex-col gap-5 border-0 p-0">
         {/* Header */}
         <div className="grid grid-cols-2 gap-4 max-[560px]:grid-cols-1">
-          <div><label className="label">Date</label><input type="date" className="input mono" value={date} onChange={(e) => { setDate(e.target.value); touch(); }} /></div>
+          <div><label className="label">Date</label><DatePicker value={date} onChange={(v) => { setDate(v); touch(); }} /></div>
           <div><label className="label">Sales channel</label><RefField value={channel} placeholder="Sales channel…" list={(q) => salesChannelsApi.list(q)} onChange={(v) => { setChannel(v); touch(); }} /></div>
           <div><label className="label">Transaction ID</label><input className="input mono" value={transactionRef} onChange={(e) => { setTransactionRef(e.target.value); touch(); }} placeholder="e.g. 402-1234567-1234567" /></div>
           <div><label className="label">Destination country</label><CountrySelect value={destinationCountryId} onChange={handleDestination} /></div>

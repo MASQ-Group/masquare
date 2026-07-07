@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { CalendarRange, CheckCircle2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { DateRangePicker, ModalShell } from '@masquare/ui';
 import { integrationsApi, type ChannelIntegration, type IntegrationSyncResult } from '../../lib/api';
 
 interface Props {
@@ -74,9 +74,9 @@ export function BackfillModal({ integration, onClose, onDone }: Props) {
             </select>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="label">From</label><input type="date" className="input mono" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
-            <div><label className="label">To</label><input type="date" className="input mono" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+          <div className="max-w-[320px]">
+            <label className="label">Date range</label>
+            <DateRangePicker value={{ from, to }} onChange={(r) => { setFrom(r.from); setTo(r.to); }} />
           </div>
         )}
 

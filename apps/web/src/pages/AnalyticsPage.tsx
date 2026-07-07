@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowDownRight, ArrowUpRight, TrendingUp } from 'lucide-react';
+import { DateRangePicker } from '@masquare/ui';
 import { analyticsApi, type AnalyticsChannelRow, type AnalyticsSkuRow, type AnalyticsTotals } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { compareRange, presetRange, prettyRange, type ComparePreset, type DateRange, type RangePreset } from '../lib/analyticsRange';
@@ -78,10 +79,9 @@ export function AnalyticsPage() {
           </Field>
         )}
         {rangePreset === 'custom' && (
-          <>
-            <Field label="From"><input type="date" className="input mono h-9" value={customRange.from} onChange={(e) => setCustomRange((r) => ({ ...r, from: e.target.value }))} /></Field>
-            <Field label="To"><input type="date" className="input mono h-9" value={customRange.to} onChange={(e) => setCustomRange((r) => ({ ...r, to: e.target.value }))} /></Field>
-          </>
+          <Field label="Custom range">
+            <div className="w-[16rem]"><DateRangePicker value={customRange} onChange={setCustomRange} /></div>
+          </Field>
         )}
 
         <div className="mx-1 h-9 w-px self-end bg-n-200" />
@@ -96,10 +96,9 @@ export function AnalyticsPage() {
           </select>
         </Field>
         {comparePreset === 'custom' && (
-          <>
-            <Field label="Cmp from"><input type="date" className="input mono h-9" value={customCompare.from} onChange={(e) => setCustomCompare((r) => ({ ...r, from: e.target.value }))} /></Field>
-            <Field label="Cmp to"><input type="date" className="input mono h-9" value={customCompare.to} onChange={(e) => setCustomCompare((r) => ({ ...r, to: e.target.value }))} /></Field>
-          </>
+          <Field label="Compare range">
+            <div className="w-[16rem]"><DateRangePicker value={customCompare} onChange={setCustomCompare} /></div>
+          </Field>
         )}
 
         <div className="ml-auto flex flex-col items-end gap-1 self-end">
