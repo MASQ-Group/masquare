@@ -682,7 +682,7 @@ export type ShipmentExportRow = Record<string, string | number>;
 export interface ShipmentImportRowResult {
   index: number;
   transactionRef: string;
-  status: 'new' | 'error';
+  status: 'new' | 'skip' | 'error';
   transactionId: string | null;
   shippingServiceId: string | null;
   issues: { field: string; message: string; severity: 'error' | 'warning' }[];
@@ -704,7 +704,7 @@ export const shipmentsApi = {
   importValidate: (rows: Record<string, string>[]) =>
     api.post<{ rows: ShipmentImportRowResult[] }>('/shipments/import/validate', { rows }).then((r) => r.data),
   importCommit: (items: { row: Record<string, string>; transactionId: string; shippingServiceId: string | null }[]) =>
-    api.post<{ created: number; errors: { transactionRef: string; message: string }[] }>('/shipments/import/commit', { items }).then((r) => r.data),
+    api.post<{ created: number; skipped: number; errors: { transactionRef: string; message: string }[] }>('/shipments/import/commit', { items }).then((r) => r.data),
 };
 
 // ---- FBA Shipments (stock inbound to Amazon fulfilment centers) ----

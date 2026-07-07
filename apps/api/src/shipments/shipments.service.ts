@@ -228,7 +228,7 @@ export class ShipmentsService {
   /** Rows for the xlsx export. scope='recorded' → the shipments log; scope='pending' →
    *  a fill-in template of transactions awaiting an outbound shipment. */
   async exportRows(query: ShipmentQuery, scope: 'recorded' | 'pending') {
-    const iso = (d: any) => (d ? new Date(d).toISOString().slice(0, 10) : '');
+    const fmt = await this.dateFormat();
     if (scope === 'pending') {
       const rows = await this.prisma.salesTransaction.findMany({
         where: {
@@ -273,7 +273,7 @@ export class ShipmentsService {
       destination: s.transaction?.destinationCountry?.name ?? '',
       skus: '',
       type: s.type,
-      shipmentDate: iso(s.shipmentDate),
+      shipmentDate: this.formatDateOut(s.shipmentDate, fmt),
       shippingService: s.shippingService?.name ?? '',
       trackingNumber: s.trackingNumber ?? '',
       shippingCostEur: s.shippingCostEur ?? '',
@@ -291,32 +291,67 @@ export class ShipmentsService {
     return Number.isFinite(n) ? n : null;
   }
 
-  /** Parse an import date cell → Date, or null if empty. Handles ISO strings and stray
-   *  Excel serial numbers (e.g. "46028"). Returns undefined for a non-empty, unparseable value. */
-  private parseImportDate(v: string): Date | null | undefined {
-    const s = v.trim();
-    if (!s) return null;
-    // Excel serial date (serial 25569 = 1970-01-01). Plausible range ~1954–2146.
-    if (/^\d+(\.\d+)?$/.test(s)) {
-      const serial = Number(s);
-      if (serial > 20000 && serial < 90000) {
-        const d = new Date(Math.round((serial - 25569) * 86400000));
-        return isNaN(d.getTime()) ? undefined : d;
-      }
-      return undefined;
-    }
-    const d = new Date(s);
+  /** The platform's configured date format (Global Settings → General). */
+  private async dateFormat(): Promise<'ddmmyyyy' | 'mmddyyyy' | 'yyyymmdd'> {
+    const s = await this.prisma.platformSettings.findFirst({ select: { dateFormat: true } });
+    return (s?.dateFormat as any) ?? 'ddmmyyyy';
+  }
+
+  private saneOrUndef(d: Date): Date | undefined {
     if (isNaN(d.getTime())) return undefined;
     const y = d.getUTCFullYear();
     return y >= 1990 && y <= 2100 ? d : undefined;
   }
 
-  /** Validate import rows: resolve each Transaction ID + shipping service, flag problems. */
+  /** Parse an import date cell → Date, or null if empty. Handles Excel serial numbers,
+   *  ISO strings, and day/month/year text read in the platform's configured format.
+   *  Returns undefined for a non-empty, unparseable value. */
+  private parseImportDate(v: string, fmt: 'ddmmyyyy' | 'mmddyyyy' | 'yyyymmdd'): Date | null | undefined {
+    const s = v.trim();
+    if (!s) return null;
+    // Excel serial date (serial 25569 = 1970-01-01). Plausible range ~1954–2146.
+    if (/^\d+(\.\d+)?$/.test(s)) {
+      const serial = Number(s);
+      if (serial > 20000 && serial < 90000) return this.saneOrUndef(new Date(Math.round((serial - 25569) * 86400000)));
+      return undefined;
+    }
+    // ISO YYYY-MM-DD (how the sheet parser normalises real date cells).
+    const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ].*)?$/);
+    if (iso) return this.saneOrUndef(new Date(Date.UTC(+iso[1], +iso[2] - 1, +iso[3])));
+    // day/month/year text, split on / . or -, read per the configured format.
+    const parts = s.split(/[/.\-]/).map((p) => p.trim());
+    if (parts.length === 3 && parts.every((p) => /^\d+$/.test(p))) {
+      let dd: number, mm: number, yyyy: number;
+      if (fmt === 'yyyymmdd') [yyyy, mm, dd] = parts.map(Number);
+      else if (fmt === 'mmddyyyy') [mm, dd, yyyy] = parts.map(Number);
+      else [dd, mm, yyyy] = parts.map(Number);
+      if (yyyy < 100) yyyy += 2000;
+      const d = new Date(Date.UTC(yyyy, mm - 1, dd));
+      if (d.getUTCFullYear() !== yyyy || d.getUTCMonth() !== mm - 1 || d.getUTCDate() !== dd) return undefined;
+      return this.saneOrUndef(d);
+    }
+    return this.saneOrUndef(new Date(s));
+  }
+
+  private formatDateOut(d: Date | null | undefined, fmt: 'ddmmyyyy' | 'mmddyyyy' | 'yyyymmdd'): string {
+    if (!d) return '';
+    const dt = new Date(d);
+    const dd = String(dt.getUTCDate()).padStart(2, '0');
+    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const yyyy = dt.getUTCFullYear();
+    if (fmt === 'yyyymmdd') return `${yyyy}-${mm}-${dd}`;
+    if (fmt === 'mmddyyyy') return `${mm}/${dd}/${yyyy}`;
+    return `${dd}/${mm}/${yyyy}`;
+  }
+
+  /** Validate import rows: resolve each Transaction ID + shipping service, flag problems.
+   *  A row with no Ship date is treated as "not shipped yet" and skipped (left unchanged). */
   async importValidate(rows: Record<string, string>[]) {
+    const fmt = await this.dateFormat();
     const services = await this.prisma.shippingService.findMany({ where: { deletedAt: null }, select: { id: true, name: true } });
     const svcByName = new Map(services.map((s) => [s.name.toLowerCase(), s.id]));
     const out: Array<{
-      index: number; transactionRef: string; status: 'new' | 'error';
+      index: number; transactionRef: string; status: 'new' | 'skip' | 'error';
       transactionId: string | null; shippingServiceId: string | null;
       issues: { field: string; message: string; severity: 'error' | 'warning' }[];
     }> = [];
@@ -326,6 +361,16 @@ export class ShipmentsService {
       const get = (k: string) => (row[k] == null ? '' : String(row[k]).trim());
       const issues: { field: string; message: string; severity: 'error' | 'warning' }[] = [];
       const ref = get('transactionRef');
+
+      // No Ship date → the shipment hasn't happened yet. Skip the row: don't record
+      // anything and leave the order unchanged (still pending). This is how you keep a
+      // not-yet-shipped order in the sheet without it being marked shipped.
+      if (!get('shipmentDate')) {
+        out.push({ index: i, transactionRef: ref, status: 'skip', transactionId: null, shippingServiceId: null,
+          issues: [{ field: 'shipmentDate', message: 'No ship date — treated as not shipped yet; this row is left unchanged', severity: 'warning' }] });
+        continue;
+      }
+
       if (!ref) issues.push({ field: 'transactionRef', message: 'Transaction ID is required', severity: 'error' });
 
       const type = (get('type') || 'outbound').toLowerCase();
@@ -337,8 +382,9 @@ export class ShipmentsService {
         if (v !== '' && !Number.isFinite(Number(v))) issues.push({ field: k, message: `${label} must be a number (got "${v}")`, severity: 'error' });
       }
       const dateVal = get('shipmentDate');
-      if (dateVal && this.parseImportDate(dateVal) === undefined) {
-        issues.push({ field: 'shipmentDate', message: `Ship date isn't a valid date (got "${dateVal}") — use YYYY-MM-DD`, severity: 'error' });
+      if (this.parseImportDate(dateVal, fmt) === undefined) {
+        const example = fmt === 'yyyymmdd' ? 'YYYY-MM-DD' : fmt === 'mmddyyyy' ? 'MM/DD/YYYY' : 'DD/MM/YYYY';
+        issues.push({ field: 'shipmentDate', message: `Ship date isn't a valid date (got "${dateVal}") — use ${example}`, severity: 'error' });
       }
 
       let shippingServiceId: string | null = null;
@@ -368,22 +414,25 @@ export class ShipmentsService {
   /** Commit validated import rows — create a shipment per row (reuses create(), so the
    *  transaction is marked shipped for outbound rows unless markShipped=no). */
   async importCommit(items: { row: Record<string, string>; transactionId: string; shippingServiceId?: string | null }[], actorId?: string) {
+    const fmt = await this.dateFormat();
     let created = 0;
+    let skipped = 0;
     const errors: { transactionRef: string; message: string }[] = [];
     for (const item of items) {
       const get = (k: string) => (item.row[k] == null ? '' : String(item.row[k]).trim());
       const ref = get('transactionRef');
       try {
+        const parsedDate = this.parseImportDate(get('shipmentDate'), fmt);
+        // No ship date → not shipped yet: leave the order unchanged.
+        if (parsedDate == null) { skipped++; continue; }
         if (!item.transactionId) throw new Error('No matching sales transaction');
         const type = (get('type') || 'outbound').toLowerCase() as 'outbound' | 'inbound';
         const markRaw = get('markShipped').toLowerCase();
         const markShipped = !(markRaw === 'no' || markRaw === 'false' || markRaw === 'n');
-        const parsedDate = this.parseImportDate(get('shipmentDate'));
-        if (parsedDate === undefined) throw new Error(`Invalid ship date "${get('shipmentDate')}"`);
         await this.create({
           transactionId: item.transactionId,
           type,
-          shipmentDate: (parsedDate ?? new Date()).toISOString(),
+          shipmentDate: parsedDate.toISOString(),
           shippingServiceId: item.shippingServiceId ?? null,
           trackingNumber: get('trackingNumber') || null,
           shippingCostEur: this.normNum(get('shippingCostEur')),
@@ -397,6 +446,6 @@ export class ShipmentsService {
         errors.push({ transactionRef: ref, message: e?.message ?? 'Failed' });
       }
     }
-    return { created, errors };
+    return { created, skipped, errors };
   }
 }

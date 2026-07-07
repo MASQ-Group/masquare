@@ -14,7 +14,7 @@ export function ShipmentImportModal({ onClose, onDone }: Props) {
   const [rows, setRows] = useState<Record<string, string>[]>([]);
   const [results, setResults] = useState<ShipmentImportRowResult[]>([]);
   const [busy, setBusy] = useState(false);
-  const [summary, setSummary] = useState<{ created: number; errors: { transactionRef: string; message: string }[] } | null>(null);
+  const [summary, setSummary] = useState<{ created: number; skipped: number; errors: { transactionRef: string; message: string }[] } | null>(null);
 
   const onFile = async (file: File) => {
     setFileName(file.name);
@@ -46,10 +46,11 @@ export function ShipmentImportModal({ onClose, onDone }: Props) {
     const items = results
       .filter((r) => r.status === 'new' && r.transactionId)
       .map((r) => ({ row: rows[r.index], transactionId: r.transactionId!, shippingServiceId: r.shippingServiceId }));
+    const notShipped = results.filter((r) => r.status === 'skip').length;
     setBusy(true);
     try {
       const res = await shipmentsApi.importCommit(items);
-      setSummary(res);
+      setSummary({ created: res.created, skipped: res.skipped + notShipped, errors: res.errors });
       setStep('done');
     } catch (e: any) {
       toast.error(e?.response?.data?.message ?? 'Import failed');
@@ -60,6 +61,7 @@ export function ShipmentImportModal({ onClose, onDone }: Props) {
     downloadSheet('masquare-shipments-template', [SHIPMENT_COLUMNS.map((c) => c.label), SHIPMENT_COLUMNS.map((c) => c.sample)], 'xlsx');
 
   const errorCount = results.filter((r) => r.status === 'error').length;
+  const skipCount = results.filter((r) => r.status === 'skip').length;
   const okCount = results.filter((r) => r.status === 'new').length;
 
   const primary = step === 'setup'
@@ -74,6 +76,7 @@ export function ShipmentImportModal({ onClose, onDone }: Props) {
         <div className="flex flex-col gap-5">
           <p className="text-[13px] text-n-500">
             Each row records a shipment against a sales transaction (matched by <strong>Transaction ID</strong>). Outbound rows mark the order shipped unless <span className="mono">Mark fully shipped</span> is <span className="mono">no</span>.
+            <br /><strong>Leave the Ship date empty</strong> for orders not shipped yet — those rows are skipped and left unchanged. Empty cost/duty cells stay empty (not €0). Dates use your Global Settings format.
             Tip: use <strong>Export</strong> on the Pending fulfilment tab to get a pre-filled template.
           </p>
           <div className="flex flex-wrap items-center gap-2">
@@ -92,6 +95,7 @@ export function ShipmentImportModal({ onClose, onDone }: Props) {
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap gap-2 text-[12.5px]">
             <span className="rounded-pill border border-success-bd bg-success-bg px-3 py-1 font-medium text-success">{okCount} to import</span>
+            {skipCount > 0 && <span className="rounded-pill border border-n-200 bg-n-100 px-3 py-1 font-medium text-n-600">{skipCount} not shipped (skipped)</span>}
             {errorCount > 0 && <span className="rounded-pill border border-danger-bd bg-danger-bg px-3 py-1 font-medium text-danger">{errorCount} with errors</span>}
           </div>
           {errorCount > 0 && (
@@ -111,13 +115,15 @@ export function ShipmentImportModal({ onClose, onDone }: Props) {
               </thead>
               <tbody>
                 {results.map((r, i) => (
-                  <tr key={i} className={r.status === 'error' ? 'bg-danger-bg/30' : ''}>
+                  <tr key={i} className={r.status === 'error' ? 'bg-danger-bg/30' : r.status === 'skip' ? 'bg-n-25' : ''}>
                     <td className="border-t border-n-100 px-2 py-1.5 font-mono text-n-400 align-top">{i + 1}</td>
                     <td className="border-t border-n-100 px-2 py-1.5 font-mono text-n-800 align-top">{r.transactionRef || '—'}</td>
                     <td className="border-t border-n-100 px-2 py-1.5 align-top">
                       {r.status === 'new'
                         ? <span className="text-success">Matched</span>
-                        : <span className="inline-flex items-center gap-1 font-medium text-danger"><AlertTriangle size={12} /> Error</span>}
+                        : r.status === 'skip'
+                          ? <span className="text-n-500">Not shipped</span>
+                          : <span className="inline-flex items-center gap-1 font-medium text-danger"><AlertTriangle size={12} /> Error</span>}
                     </td>
                     <td className="border-t border-n-100 px-2 py-1.5 align-top">
                       {r.issues.length === 0 ? <span className="text-n-300">—</span> : (
@@ -140,8 +146,9 @@ export function ShipmentImportModal({ onClose, onDone }: Props) {
         <div className="flex flex-col items-center gap-3 py-6 text-center">
           <CheckCircle2 className="text-success" size={40} />
           <div className="text-[15px] font-semibold text-n-900">Import complete</div>
-          <div className="flex gap-2 text-[13px]">
+          <div className="flex flex-wrap justify-center gap-2 text-[13px]">
             <span className="rounded-pill bg-success-bg px-3 py-1 text-success">{summary.created} shipments recorded</span>
+            {summary.skipped > 0 && <span className="rounded-pill bg-n-100 px-3 py-1 text-n-600">{summary.skipped} not shipped (skipped)</span>}
             {summary.errors.length > 0 && <span className="rounded-pill bg-danger-bg px-3 py-1 text-danger">{summary.errors.length} failed</span>}
           </div>
           {summary.errors.length > 0 && (
