@@ -29,6 +29,8 @@ export class CreateSalesTransactionDto {
   @IsOptional() @IsString() source?: string;
   @IsOptional() @IsUUID() integrationId?: string | null;
   @IsOptional() @IsIn(['pending', 'shipped', 'cancelled']) fulfilmentStatus?: 'pending' | 'shipped' | 'cancelled';
+  // Shipment status reported by the sales channel API (importers only).
+  @IsOptional() @IsIn(['shipped', 'not_shipped']) channelShipmentStatus?: 'shipped' | 'not_shipped';
 
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => SalesTransactionItemDto)
   items!: SalesTransactionItemDto[];

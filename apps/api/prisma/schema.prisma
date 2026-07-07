@@ -810,9 +810,13 @@ model SalesTransaction {
   // user overrides it (vatOverridden = true keeps the manual value on re-save).
   destinationVatPct Float?  @map("destination_vat_pct")
   vatOverridden     Boolean @default(false) @map("vat_overridden")
-  // Fulfilment lifecycle (operations): pending until an outbound shipment is recorded
-  // and the order is marked fully shipped. 'cancelled' is used by the returns layer.
+  // Fulfilment lifecycle (operations): 'cancelled' is used by the returns layer. The
+  // platform "shipped" state is derived from whether an outbound shipment is registered
+  // in the Shipments module — this stored value is no longer the source of truth for it.
   fulfilmentStatus String @default("pending") @map("fulfilment_status") // pending | shipped | cancelled
+  // Shipment status as reported by the sales channel's API (e.g. OnBuy shipped_at/dispatched).
+  // Kept separate from the platform status so a mismatch can later raise an alarm.
+  channelShipmentStatus String? @map("channel_shipment_status") // shipped | not_shipped
   // Order resolution (returns/cancellations/refunds). Adjusts revenue/COGS in the profit calc.
   resolution      String   @default("none") @map("resolution") // none | cancelled | returned | replaced
   refundAmount    Float?   @map("refund_amount") // our-revenue portion refunded (net+shipping, exc VAT), native currency

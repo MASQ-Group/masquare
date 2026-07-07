@@ -34,7 +34,7 @@ export interface MappedOrder {
   // Machine payload (header) for the importer.
   payload: {
     transactionRef: string; date: string; currency: string | null;
-    destinationCountryCode: string | null; fulfilmentStatus: 'pending' | 'shipped';
+    destinationCountryCode: string | null; channelShipmentStatus: 'shipped' | 'not_shipped';
     resolution: 'none' | 'cancelled';
   };
   raw: any;
@@ -46,7 +46,7 @@ const round2 = (x: number) => Math.round(x * 100) / 100;
 export function mapOnBuyOrder(o: any): MappedOrder {
   const shipped = !!o.shipped_at || o.dispatched === true || o.dispatched === 1 || o.dispatched === '1';
   const cancelled = !!o.cancelled_at || String(o.status ?? '').toLowerCase().includes('cancel');
-  const fulfilmentStatus: 'pending' | 'shipped' = shipped ? 'shipped' : 'pending';
+  const channelShipmentStatus: 'shipped' | 'not_shipped' = shipped ? 'shipped' : 'not_shipped';
   const resolution: 'none' | 'cancelled' = cancelled ? 'cancelled' : 'none';
 
   const header: MappedField[] = [
@@ -54,7 +54,7 @@ export function mapOnBuyOrder(o: any): MappedOrder {
     { target: 'date', label: 'Date', source: 'date', value: o.date ?? null },
     { target: 'currency', label: 'Currency', source: 'currency_code', value: o.currency_code ?? null },
     { target: 'destinationCountry', label: 'Destination country', source: 'delivery_address.country_code', value: o.delivery_address?.country_code ?? null },
-    { target: 'fulfilmentStatus', label: 'Fulfilment', source: 'shipped_at / dispatched', value: fulfilmentStatus },
+    { target: 'channelShipmentStatus', label: 'Channel shipment status', source: 'shipped_at / dispatched', value: channelShipmentStatus },
     { target: 'resolution', label: 'Resolution', source: 'status / cancelled_at', value: resolution },
   ];
 
@@ -86,7 +86,7 @@ export function mapOnBuyOrder(o: any): MappedOrder {
     orderId: o.order_id,
     header,
     items,
-    payload: { transactionRef: o.order_id, date: o.date, currency: o.currency_code ?? null, destinationCountryCode: o.delivery_address?.country_code ?? null, fulfilmentStatus, resolution },
+    payload: { transactionRef: o.order_id, date: o.date, currency: o.currency_code ?? null, destinationCountryCode: o.delivery_address?.country_code ?? null, channelShipmentStatus, resolution },
     raw: o,
   };
 }

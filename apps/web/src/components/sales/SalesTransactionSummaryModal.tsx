@@ -60,11 +60,16 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, 
             </div>
           </div>
           <div>
-            <div className="text-[11px] text-n-500">Fulfilment</div>
-            <div className="mt-0.5">
+            <div className="text-[11px] text-n-500">Shipment (platform)</div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
               <span className={`tag ${(FULFILMENT[t.fulfilmentStatus] ?? FULFILMENT.pending).cls}`}>
                 {(FULFILMENT[t.fulfilmentStatus] ?? FULFILMENT.pending).label}
               </span>
+              {t.channelShipmentStatus && (
+                <span className="text-[10.5px] text-n-500" title="As reported by the sales channel API">
+                  channel: <span className={t.channelShipmentStatus === 'shipped' ? 'font-medium text-teal-700' : 'text-n-600'}>{t.channelShipmentStatus === 'shipped' ? 'shipped' : 'not shipped'}</span>
+                </span>
+              )}
             </div>
           </div>
           <Fact label="Sales channel" value={t.salesChannel?.name ?? '—'} />

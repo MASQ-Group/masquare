@@ -606,6 +606,7 @@ export interface SalesTransaction {
   returnShippingCost: number;
   dutyImportCost: number;
   fulfilmentStatus: 'pending' | 'shipped' | 'cancelled';
+  channelShipmentStatus: 'shipped' | 'not_shipped' | null;
   resolution: 'none' | 'cancelled' | 'returned' | 'replaced';
   refundAmount: number | null;
   refundEur: number;

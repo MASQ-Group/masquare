@@ -91,7 +91,10 @@ export class ShipmentsService {
     const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
     const where: Prisma.SalesTransactionWhereInput = {
       deletedAt: null,
-      fulfilmentStatus: 'pending',
+      // Pending = no outbound shipment registered in the platform (the single point of
+      // truth for "shipped"). Cancelled orders don't need fulfilment.
+      shipments: { none: { deletedAt: null, type: 'outbound' } },
+      resolution: { not: 'cancelled' },
       ...(query.companyId ? { companyId: query.companyId } : {}),
       ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
       ...(query.q

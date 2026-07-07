@@ -421,7 +421,9 @@ export class IntegrationsService {
             destinationCountryId: destCountry?.id ?? null,
             companyId: row.targetCompanyId,
             status: 'draft',
-            fulfilmentStatus: mapped.payload.fulfilmentStatus,
+            // Platform shipment status is derived from shipment registration, not the channel.
+            // Store the channel-reported status separately (for future mismatch alarms).
+            channelShipmentStatus: mapped.payload.channelShipmentStatus,
             source: 'onbuy',
             integrationId: row.id,
             items,

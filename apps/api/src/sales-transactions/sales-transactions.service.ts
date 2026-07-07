@@ -206,7 +206,11 @@ export class SalesTransactionsService {
       shippingCostSource,
       returnShippingCost,
       dutyImportCost,
-      fulfilmentStatus: t.fulfilmentStatus,
+      // Platform fulfilment status is derived from shipment registration (the single point
+      // of truth), except 'cancelled' which the returns layer sets explicitly.
+      fulfilmentStatus: resolution === 'cancelled' ? 'cancelled' : hasOutbound ? 'shipped' : 'pending',
+      // Shipment status reported by the sales channel (for future mismatch alarms).
+      channelShipmentStatus: t.channelShipmentStatus ?? null,
       resolution,
       refundAmount: t.refundAmount,
       refundEur,
@@ -436,6 +440,7 @@ export class SalesTransactionsService {
         vatOverridden,
         status: dto.status ?? 'draft',
         fulfilmentStatus: dto.fulfilmentStatus ?? 'pending',
+        channelShipmentStatus: dto.channelShipmentStatus ?? null,
         source: dto.source ?? 'manual',
         integrationId: dto.integrationId ?? null,
         unlockedForEdit: false,
@@ -496,6 +501,7 @@ export class SalesTransactionsService {
           vatOverridden,
           status: nextStatus,
           fulfilmentStatus: dto.fulfilmentStatus,
+          channelShipmentStatus: dto.channelShipmentStatus,
           unlockedForEdit,
           updatedById: user.sub,
         },
