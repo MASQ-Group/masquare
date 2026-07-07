@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Coins, Package, Pencil, Search, Trash2, Truck } from 'lucide-react';
+import { ArrowRight, Coins, Download, Package, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
 import { toast } from 'sonner';
+import { downloadSheet } from '@masquare/ui';
 import { fbaShipmentsApi, salesChannelsApi, shipmentsApi, type FbaShipment, type PendingShipment, type Shipment } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/format';
 import { ShipmentModal } from '../components/shipments/ShipmentModal';
+import { ShipmentImportModal } from '../components/shipments/ShipmentImportModal';
+import { SHIPMENT_HEADER, shipmentRowToCells } from '../components/shipments/shipmentColumns';
 import { FbaActualCostModal } from '../components/fba-shipments/FbaActualCostModal';
 
 type Tab = 'pending' | 'all' | 'fba';
@@ -31,6 +34,29 @@ export function ShipmentsPage() {
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState<ModalCtx | null>(null);
   const [fbaActualFor, setFbaActualFor] = useState<FbaShipment | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // Export the current tab's shipments: recorded shipments (All), or a fill-in template
+  // of transactions awaiting an outbound shipment (Pending).
+  const onExport = async () => {
+    const scope = tab === 'pending' ? 'pending' : 'recorded';
+    setExporting(true);
+    try {
+      const rows = await shipmentsApi.export({
+        scope,
+        q: q || undefined,
+        companyId: activeCompanyId || undefined,
+        salesChannelId: filterChannel || undefined,
+        type: tab === 'all' && filterType ? filterType : undefined,
+      });
+      if (rows.length === 0) { toast.info(scope === 'pending' ? 'Nothing pending to export' : 'No recorded shipments to export'); return; }
+      downloadSheet(`masquare-shipments-${scope}`, [SHIPMENT_HEADER, ...rows.map(shipmentRowToCells)], 'xlsx');
+      toast.success(`Exported ${rows.length} ${scope === 'pending' ? 'pending transactions' : 'shipments'}`);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message ?? 'Export failed');
+    } finally { setExporting(false); }
+  };
 
   useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
   useEffect(() => { setPage(1); }, [tab]);
@@ -91,6 +117,14 @@ export function ShipmentsPage() {
           <h1 className="text-[24px] font-semibold tracking-tight text-n-900">Shipments</h1>
           <p className="mt-1 text-[13.5px] text-n-500">Record actual shipping cost and duty per transaction. Actuals replace the calculated shipping estimate and update profit.</p>
         </div>
+        {tab !== 'fba' && (
+          <>
+            <button className="btn btn-ghost" disabled={exporting} onClick={onExport}>
+              <Download size={16} /> {exporting ? 'Exporting…' : 'Export'}
+            </button>
+            <button className="btn btn-ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button>
+          </>
+        )}
       </div>
 
       {/* Tabs */}
@@ -306,6 +340,9 @@ export function ShipmentsPage() {
           onClose={() => setFbaActualFor(null)}
           onSaved={() => { setFbaActualFor(null); invalidate(); }}
         />
+      )}
+      {importOpen && (
+        <ShipmentImportModal onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); invalidate(); }} />
       )}
     </div>
   );

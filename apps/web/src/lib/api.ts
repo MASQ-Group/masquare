@@ -678,6 +678,16 @@ export interface PendingShipment {
 export interface ShipmentListResponse { items: Shipment[]; total: number; page: number; pageSize: number }
 export interface PendingListResponse { items: PendingShipment[]; total: number; page: number; pageSize: number }
 
+export type ShipmentExportRow = Record<string, string | number>;
+export interface ShipmentImportRowResult {
+  index: number;
+  transactionRef: string;
+  status: 'new' | 'error';
+  transactionId: string | null;
+  shippingServiceId: string | null;
+  issues: { field: string; message: string; severity: 'error' | 'warning' }[];
+}
+
 export const shipmentsApi = {
   list: (params: { q?: string; companyId?: string; salesChannelId?: string; type?: string; page?: number; pageSize?: number }) =>
     api.get<ShipmentListResponse>('/shipments', { params }).then((r) => r.data),
@@ -689,6 +699,12 @@ export const shipmentsApi = {
   remove: (id: string) => api.delete(`/shipments/${id}`).then((r) => r.data),
   setFulfilment: (transactionId: string, status: 'pending' | 'shipped' | 'cancelled') =>
     api.patch(`/shipments/transaction/${transactionId}/fulfilment`, { status }).then((r) => r.data),
+  export: (params: { scope: 'recorded' | 'pending'; q?: string; companyId?: string; salesChannelId?: string; type?: string }) =>
+    api.get<ShipmentExportRow[]>('/shipments/export', { params }).then((r) => r.data),
+  importValidate: (rows: Record<string, string>[]) =>
+    api.post<{ rows: ShipmentImportRowResult[] }>('/shipments/import/validate', { rows }).then((r) => r.data),
+  importCommit: (items: { row: Record<string, string>; transactionId: string; shippingServiceId: string | null }[]) =>
+    api.post<{ created: number; errors: { transactionRef: string; message: string }[] }>('/shipments/import/commit', { items }).then((r) => r.data),
 };
 
 // ---- FBA Shipments (stock inbound to Amazon fulfilment centers) ----

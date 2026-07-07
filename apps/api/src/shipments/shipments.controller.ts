@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { ShipmentsService, type ShipmentQuery } from './shipments.service';
-import { CreateShipmentDto, SetFulfilmentDto, UpdateShipmentDto } from './dto/shipment.dto';
+import { CreateShipmentDto, SetFulfilmentDto, ShipmentImportCommitDto, ShipmentImportValidateDto, UpdateShipmentDto } from './dto/shipment.dto';
 
 @ApiTags('shipments')
 @ApiBearerAuth()
@@ -36,6 +36,27 @@ export class ShipmentsController {
   ) {
     const query: ShipmentQuery = { q, companyId, salesChannelId, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
     return this.svc.pending(query);
+  }
+
+  @Get('export')
+  exportRows(
+    @Query('scope') scope?: string,
+    @Query('q') q?: string,
+    @Query('companyId') companyId?: string,
+    @Query('salesChannelId') salesChannelId?: string,
+    @Query('type') type?: string,
+  ) {
+    return this.svc.exportRows({ q, companyId, salesChannelId, type }, scope === 'pending' ? 'pending' : 'recorded');
+  }
+
+  @Post('import/validate')
+  importValidate(@Body() dto: ShipmentImportValidateDto) {
+    return this.svc.importValidate(dto.rows);
+  }
+
+  @Post('import/commit')
+  importCommit(@Body() dto: ShipmentImportCommitDto, @CurrentUser() user: AuthUser) {
+    return this.svc.importCommit(dto.items, user.sub);
   }
 
   @Get('transaction/:transactionId')

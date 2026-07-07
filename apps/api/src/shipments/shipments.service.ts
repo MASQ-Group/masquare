@@ -210,4 +210,168 @@ export class ShipmentsService {
     await this.prisma.salesTransaction.update({ where: { id: transactionId }, data: { fulfilmentStatus: status } });
     return { ok: true, status };
   }
+
+  // --- Export / import -----------------------------------------------------
+  private txScopeWhere(query: ShipmentQuery): Prisma.SalesTransactionWhereInput {
+    return {
+      ...(query.companyId ? { companyId: query.companyId } : {}),
+      ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
+      ...(query.q
+        ? { OR: [
+            { transactionRef: { contains: query.q, mode: 'insensitive' } },
+            { items: { some: { deletedAt: null, sku: { contains: query.q, mode: 'insensitive' } } } },
+          ] }
+        : {}),
+    };
+  }
+
+  /** Rows for the xlsx export. scope='recorded' → the shipments log; scope='pending' →
+   *  a fill-in template of transactions awaiting an outbound shipment. */
+  async exportRows(query: ShipmentQuery, scope: 'recorded' | 'pending') {
+    const iso = (d: any) => (d ? new Date(d).toISOString().slice(0, 10) : '');
+    if (scope === 'pending') {
+      const rows = await this.prisma.salesTransaction.findMany({
+        where: {
+          deletedAt: null,
+          shipments: { none: { deletedAt: null, type: 'outbound' } },
+          resolution: { not: 'cancelled' },
+          ...this.txScopeWhere(query),
+        },
+        orderBy: { date: 'asc' },
+        select: {
+          transactionRef: true,
+          salesChannel: { select: { name: true } },
+          destinationCountry: { select: { name: true } },
+          shippingService: { select: { name: true } },
+          items: { where: { deletedAt: null }, select: { sku: true } },
+        },
+      });
+      return rows.map((t) => ({
+        transactionRef: t.transactionRef,
+        salesChannel: t.salesChannel?.name ?? '',
+        destination: t.destinationCountry?.name ?? '',
+        skus: t.items.map((i) => i.sku).join('; '),
+        type: 'outbound',
+        shipmentDate: '',
+        shippingService: t.shippingService?.name ?? '',
+        trackingNumber: '',
+        shippingCostEur: '',
+        costBorneBy: 'company',
+        dutyImportEur: '',
+        comments: '',
+        markShipped: 'yes',
+      }));
+    }
+    const rows = await this.prisma.shipment.findMany({
+      where: { deletedAt: null, ...(query.type ? { type: query.type } : {}), transaction: { deletedAt: null, ...this.txScopeWhere(query) } },
+      include,
+      orderBy: { shipmentDate: 'desc' },
+    });
+    return rows.map((s) => ({
+      transactionRef: s.transaction?.transactionRef ?? '',
+      salesChannel: s.transaction?.salesChannel?.name ?? '',
+      destination: s.transaction?.destinationCountry?.name ?? '',
+      skus: '',
+      type: s.type,
+      shipmentDate: iso(s.shipmentDate),
+      shippingService: s.shippingService?.name ?? '',
+      trackingNumber: s.trackingNumber ?? '',
+      shippingCostEur: s.shippingCostEur ?? '',
+      costBorneBy: s.costBorneBy,
+      dutyImportEur: s.dutyImportEur ?? '',
+      comments: s.comments ?? '',
+      markShipped: '',
+    }));
+  }
+
+  private normNum(v: string): number | null {
+    const t = v.trim();
+    if (t === '') return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  /** Validate import rows: resolve each Transaction ID + shipping service, flag problems. */
+  async importValidate(rows: Record<string, string>[]) {
+    const services = await this.prisma.shippingService.findMany({ where: { deletedAt: null }, select: { id: true, name: true } });
+    const svcByName = new Map(services.map((s) => [s.name.toLowerCase(), s.id]));
+    const out: Array<{
+      index: number; transactionRef: string; status: 'new' | 'error';
+      transactionId: string | null; shippingServiceId: string | null;
+      issues: { field: string; message: string; severity: 'error' | 'warning' }[];
+    }> = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i] ?? {};
+      const get = (k: string) => (row[k] == null ? '' : String(row[k]).trim());
+      const issues: { field: string; message: string; severity: 'error' | 'warning' }[] = [];
+      const ref = get('transactionRef');
+      if (!ref) issues.push({ field: 'transactionRef', message: 'Transaction ID is required', severity: 'error' });
+
+      const type = (get('type') || 'outbound').toLowerCase();
+      if (type !== 'outbound' && type !== 'inbound') issues.push({ field: 'type', message: `Type must be "outbound" or "inbound" (got "${get('type')}")`, severity: 'error' });
+      const borne = (get('costBorneBy') || 'company').toLowerCase();
+      if (borne !== 'company' && borne !== 'customer') issues.push({ field: 'costBorneBy', message: `Cost borne by should be "company" or "customer"`, severity: 'warning' });
+      for (const [k, label] of [['shippingCostEur', 'Shipping cost'], ['dutyImportEur', 'Duty/import']] as [string, string][]) {
+        const v = get(k);
+        if (v !== '' && !Number.isFinite(Number(v))) issues.push({ field: k, message: `${label} must be a number (got "${v}")`, severity: 'error' });
+      }
+
+      let shippingServiceId: string | null = null;
+      const svcName = get('shippingService');
+      if (svcName) {
+        shippingServiceId = svcByName.get(svcName.toLowerCase()) ?? null;
+        if (!shippingServiceId) issues.push({ field: 'shippingService', message: `Unknown shipping service "${svcName}" — will be left blank`, severity: 'warning' });
+      }
+
+      let transactionId: string | null = null;
+      if (ref) {
+        const matches = await this.prisma.salesTransaction.findMany({
+          where: { deletedAt: null, transactionRef: { equals: ref, mode: 'insensitive' } },
+          select: { id: true },
+        });
+        if (matches.length === 0) issues.push({ field: 'transactionRef', message: `No sales transaction found with ID "${ref}"`, severity: 'error' });
+        else if (matches.length > 1) issues.push({ field: 'transactionRef', message: `${matches.length} transactions match "${ref}" — can't tell which`, severity: 'error' });
+        else transactionId = matches[0].id;
+      }
+
+      const hasError = issues.some((x) => x.severity === 'error');
+      out.push({ index: i, transactionRef: ref, status: hasError ? 'error' : 'new', transactionId, shippingServiceId, issues });
+    }
+    return { rows: out };
+  }
+
+  /** Commit validated import rows — create a shipment per row (reuses create(), so the
+   *  transaction is marked shipped for outbound rows unless markShipped=no). */
+  async importCommit(items: { row: Record<string, string>; transactionId: string; shippingServiceId?: string | null }[], actorId?: string) {
+    let created = 0;
+    const errors: { transactionRef: string; message: string }[] = [];
+    for (const item of items) {
+      const get = (k: string) => (item.row[k] == null ? '' : String(item.row[k]).trim());
+      const ref = get('transactionRef');
+      try {
+        if (!item.transactionId) throw new Error('No matching sales transaction');
+        const type = (get('type') || 'outbound').toLowerCase() as 'outbound' | 'inbound';
+        const markRaw = get('markShipped').toLowerCase();
+        const markShipped = !(markRaw === 'no' || markRaw === 'false' || markRaw === 'n');
+        const dateStr = get('shipmentDate');
+        await this.create({
+          transactionId: item.transactionId,
+          type,
+          shipmentDate: dateStr ? new Date(dateStr).toISOString() : new Date().toISOString(),
+          shippingServiceId: item.shippingServiceId ?? null,
+          trackingNumber: get('trackingNumber') || null,
+          shippingCostEur: this.normNum(get('shippingCostEur')),
+          costBorneBy: ((get('costBorneBy') || 'company').toLowerCase()) as 'company' | 'customer',
+          dutyImportEur: this.normNum(get('dutyImportEur')),
+          comments: get('comments') || null,
+          markShipped,
+        }, actorId);
+        created++;
+      } catch (e: any) {
+        errors.push({ transactionRef: ref, message: e?.message ?? 'Failed' });
+      }
+    }
+    return { created, errors };
+  }
 }

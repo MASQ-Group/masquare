@@ -1,5 +1,5 @@
 import {
-  IsBoolean, IsDateString, IsIn, IsNumber, IsOptional, IsString, IsUUID, MinLength,
+  IsArray, IsBoolean, IsDateString, IsIn, IsNumber, IsOptional, IsString, IsUUID, MinLength,
 } from 'class-validator';
 
 export class CreateShipmentDto {
@@ -29,4 +29,18 @@ export class UpdateShipmentDto {
 
 export class SetFulfilmentDto {
   @IsIn(['pending', 'shipped', 'cancelled']) status!: 'pending' | 'shipped' | 'cancelled';
+}
+
+export class ShipmentImportValidateDto {
+  @IsArray() rows!: Record<string, string>[];
+}
+
+export class ShipmentImportCommitItemDto {
+  @IsOptional() row!: Record<string, string>;
+  @IsUUID() transactionId!: string;
+  @IsOptional() @IsUUID() shippingServiceId?: string | null;
+}
+
+export class ShipmentImportCommitDto {
+  @IsArray() items!: ShipmentImportCommitItemDto[];
 }
