@@ -7,9 +7,14 @@ import { CreateSalesTransactionDto, UpdateSalesTransactionDto } from './dto/sale
 export interface TxQuery {
   q?: string;
   companyId?: string;
-  salesChannelId?: string;
-  status?: string;
-  profitTierId?: string;
+  salesChannelId?: string[];
+  destinationCountryId?: string[];
+  status?: string[];
+  profitTierId?: string[];
+  shipmentStatus?: string[]; // 'shipped' | 'not_shipped'
+  sku?: string;
+  dateFrom?: string;
+  dateTo?: string;
   sortBy?: 'date' | 'profit' | 'profitPct';
   sortDir?: 'asc' | 'desc';
   page?: number;
@@ -262,34 +267,40 @@ export class SalesTransactionsService {
   async list(query: TxQuery) {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
-    const where: Prisma.SalesTransactionWhereInput = {
-      deletedAt: null,
-      ...(query.companyId ? { companyId: query.companyId } : {}),
-      ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
-      ...(query.status ? { status: query.status } : {}),
-      ...(query.q
-        ? {
-            OR: [
-              { transactionRef: { contains: query.q, mode: 'insensitive' } },
-              { items: { some: { deletedAt: null, sku: { contains: query.q, mode: 'insensitive' } } } },
-            ],
-          }
-        : {}),
-    };
+    const and: Prisma.SalesTransactionWhereInput[] = [{ deletedAt: null }];
+    if (query.companyId) and.push({ companyId: query.companyId });
+    if (query.salesChannelId?.length) and.push({ salesChannelId: { in: query.salesChannelId } });
+    if (query.destinationCountryId?.length) and.push({ destinationCountryId: { in: query.destinationCountryId } });
+    if (query.status?.length) and.push({ status: { in: query.status } });
+    if (query.sku?.trim()) and.push({ items: { some: { deletedAt: null, sku: { contains: query.sku.trim(), mode: 'insensitive' } } } });
+    if (query.dateFrom) and.push({ date: { gte: new Date(query.dateFrom) } });
+    if (query.dateTo) and.push({ date: { lte: new Date(`${query.dateTo}T23:59:59.999Z`) } });
+    // Shipment status = whether an outbound shipment is registered. Both selected → no filter.
+    const ss = query.shipmentStatus ?? [];
+    if (ss.length === 1) {
+      const outbound = { deletedAt: null, type: 'outbound' } as const;
+      if (ss[0] === 'shipped') and.push({ shipments: { some: outbound } });
+      else if (ss[0] === 'not_shipped') and.push({ shipments: { none: outbound } });
+    }
+    if (query.q) {
+      and.push({ OR: [
+        { transactionRef: { contains: query.q, mode: 'insensitive' } },
+        { items: { some: { deletedAt: null, sku: { contains: query.q, mode: 'insensitive' } } } },
+      ] });
+    }
+    const where: Prisma.SalesTransactionWhereInput = { AND: and };
     const dir = query.sortDir === 'asc' ? 1 : -1;
     const sortBy = query.sortBy === 'profit' || query.sortBy === 'profitPct' ? query.sortBy : 'date';
 
     // Profit / profit % are computed fields, so sorting or filtering by them happens
     // in memory over the whole filtered set before paginating.
-    if (sortBy !== 'date' || query.profitTierId) {
+    if (sortBy !== 'date' || query.profitTierId?.length) {
       const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: query.sortDir === 'asc' ? 'asc' : 'desc' } });
       const serviceMap = await this.buildServiceMap();
       let all = rows.map((r) => this.serialize(r, serviceMap));
-      if (query.profitTierId) {
-        const tier = await this.prisma.profitTier.findUnique({ where: { id: query.profitTierId } });
-        if (tier) {
-          all = all.filter((t: any) => t.profitPct != null && t.profitPct >= Number(tier.fromPct) && t.profitPct <= Number(tier.toPct));
-        }
+      if (query.profitTierId?.length) {
+        const tiers = await this.prisma.profitTier.findMany({ where: { id: { in: query.profitTierId } } });
+        all = all.filter((t: any) => t.profitPct != null && tiers.some((tier) => t.profitPct >= Number(tier.fromPct) && t.profitPct <= Number(tier.toPct)));
       }
       if (sortBy !== 'date') {
         all.sort((a: any, b: any) => {

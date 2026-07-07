@@ -16,15 +16,29 @@ export class SalesTransactionsController {
   list(
     @Query('q') q?: string,
     @Query('companyId') companyId?: string,
-    @Query('salesChannelId') salesChannelId?: string,
-    @Query('status') status?: string,
-    @Query('profitTierId') profitTierId?: string,
+    @Query('salesChannelId') salesChannelId?: string | string[],
+    @Query('destinationCountryId') destinationCountryId?: string | string[],
+    @Query('status') status?: string | string[],
+    @Query('profitTierId') profitTierId?: string | string[],
+    @Query('shipmentStatus') shipmentStatus?: string | string[],
+    @Query('sku') sku?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
     @Query('sortBy') sortBy?: 'date' | 'profit' | 'profitPct',
     @Query('sortDir') sortDir?: 'asc' | 'desc',
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    const query: TxQuery = { q, companyId, salesChannelId, status, profitTierId, sortBy, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
+    const arr = (v?: string | string[]) => (v == null ? undefined : Array.isArray(v) ? v : [v]);
+    const query: TxQuery = {
+      q, companyId, sku, dateFrom, dateTo,
+      salesChannelId: arr(salesChannelId),
+      destinationCountryId: arr(destinationCountryId),
+      status: arr(status),
+      profitTierId: arr(profitTierId),
+      shipmentStatus: arr(shipmentStatus),
+      sortBy, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined,
+    };
     return this.svc.list(query);
   }
 

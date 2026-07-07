@@ -1,15 +1,27 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, Columns3, Lock, Pencil, Plus, RotateCcw, Save, Search, Trash2, Unlock } from 'lucide-react';
+import { ArrowDown, ArrowUp, Columns3, Filter, Lock, Pencil, Plus, RotateCcw, Save, Search, Trash2, Unlock, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
-import { profitTiersApi, salesChannelsApi, salesTransactionsApi, settingsApi, type ProfitTier, type SalesTransaction } from '../lib/api';
+import { DateRangePicker, ModalShell } from '@masquare/ui';
+import { countriesApi, profitTiersApi, salesChannelsApi, salesTransactionsApi, settingsApi, type ProfitTier, type SalesTransaction } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate, formatMoney } from '../lib/format';
 import { SalesTransactionModal } from '../components/sales/SalesTransactionModal';
 import { SalesTransactionSummaryModal } from '../components/sales/SalesTransactionSummaryModal';
 import { ResolveTransactionModal } from '../components/sales/ResolveTransactionModal';
+
+interface TxFilters {
+  salesChannelId: string[];
+  destinationCountryId: string[];
+  status: string[];
+  profitTierId: string[];
+  shipmentStatus: string[];
+  sku: string;
+}
+const EMPTY_FILTERS: TxFilters = { salesChannelId: [], destinationCountryId: [], status: [], profitTierId: [], shipmentStatus: [], sku: '' };
+const STATUS_OPTS = [{ id: 'draft', name: 'Draft' }, { id: 'submitted', name: 'Submitted' }];
+const SHIPMENT_OPTS = [{ id: 'shipped', name: 'Shipped' }, { id: 'not_shipped', name: 'Not shipped' }];
 
 type ColKey =
   | 'date' | 'ref' | 'status' | 'shipped' | 'channel' | 'destination' | 'skus' | 'qty'
@@ -63,9 +75,9 @@ export function SalesTransactionsPage() {
   // view controls
   const [sortBy, setSortBy] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [filterChannel, setFilterChannel] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
-  const [filterTier, setFilterTier] = useState('');
+  const [filters, setFilters] = useState<TxFilters>(EMPTY_FILTERS);
+  const [dateRange, setDateRange] = useState<{ from: string; to: string }>({ from: '', to: '' });
+  const [filterOpen, setFilterOpen] = useState(false);
   const [eurOnly, setEurOnly] = useState(false);
   const [cols, setCols] = useState<Set<ColKey>>(new Set(DEFAULT_STANDARD));
   const [colsCustomized, setColsCustomized] = useState(false);
@@ -91,6 +103,31 @@ export function SalesTransactionsPage() {
 
   const { data: channels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
   const { data: profitTiers = [] } = useQuery({ queryKey: ['profit-tiers'], queryFn: () => profitTiersApi.list() });
+  const { data: countries = [] } = useQuery({ queryKey: ['countries'], queryFn: () => countriesApi.list() });
+
+  const toggleFilter = (key: keyof TxFilters, id: string) => {
+    setPage(1);
+    setFilters((f) => {
+      const arr = f[key] as string[];
+      return { ...f, [key]: arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id] };
+    });
+  };
+  const clearAllFilters = () => { setFilters(EMPTY_FILTERS); setDateRange({ from: '', to: '' }); setPage(1); };
+
+  const tierName = (t: ProfitTier) => t.name || `Tier ${t.sortOrder + 1}`;
+  const nameOf = (list: { id: string; name: string }[], id: string) => list.find((x) => x.id === id)?.name ?? id;
+  const activeChips = useMemo(() => {
+    const chips: { label: string; onRemove: () => void }[] = [];
+    filters.salesChannelId.forEach((id) => chips.push({ label: `Channel: ${nameOf(channels, id)}`, onRemove: () => toggleFilter('salesChannelId', id) }));
+    filters.destinationCountryId.forEach((id) => chips.push({ label: `Destination: ${nameOf(countries, id)}`, onRemove: () => toggleFilter('destinationCountryId', id) }));
+    filters.status.forEach((id) => chips.push({ label: `Status: ${nameOf(STATUS_OPTS, id)}`, onRemove: () => toggleFilter('status', id) }));
+    filters.shipmentStatus.forEach((id) => chips.push({ label: `Shipment: ${nameOf(SHIPMENT_OPTS, id)}`, onRemove: () => toggleFilter('shipmentStatus', id) }));
+    filters.profitTierId.forEach((id) => { const t = profitTiers.find((x) => x.id === id); chips.push({ label: `Tier: ${t ? tierName(t) : id}`, onRemove: () => toggleFilter('profitTierId', id) }); });
+    if (filters.sku.trim()) chips.push({ label: `SKU: ${filters.sku.trim()}`, onRemove: () => setFilters((f) => ({ ...f, sku: '' })) });
+    if (dateRange.from || dateRange.to) chips.push({ label: `Date: ${dateRange.from ? formatDate(dateRange.from) : '…'} – ${dateRange.to ? formatDate(dateRange.to) : '…'}`, onRemove: () => setDateRange({ from: '', to: '' }) });
+    return chips;
+  }, [filters, dateRange, channels, countries, profitTiers]);
+  const filterCount = filters.salesChannelId.length + filters.destinationCountryId.length + filters.status.length + filters.shipmentStatus.length + filters.profitTierId.length + (filters.sku.trim() ? 1 : 0);
   const { data: unlockReqs = [] } = useQuery({
     queryKey: ['unlock-requests'], queryFn: () => salesTransactionsApi.listUnlockRequests(),
     enabled: isAdmin, refetchInterval: isAdmin ? 15000 : false,
@@ -102,7 +139,19 @@ export function SalesTransactionsPage() {
 
   useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
 
-  const params = { q: q || undefined, companyId: activeCompanyId || undefined, salesChannelId: filterChannel || undefined, status: filterStatus || undefined, profitTierId: filterTier || undefined, sortBy, sortDir, page, pageSize: 50 };
+  const params = {
+    q: q || undefined,
+    companyId: activeCompanyId || undefined,
+    salesChannelId: filters.salesChannelId.length ? filters.salesChannelId : undefined,
+    destinationCountryId: filters.destinationCountryId.length ? filters.destinationCountryId : undefined,
+    status: filters.status.length ? filters.status : undefined,
+    profitTierId: filters.profitTierId.length ? filters.profitTierId : undefined,
+    shipmentStatus: filters.shipmentStatus.length ? filters.shipmentStatus : undefined,
+    sku: filters.sku.trim() || undefined,
+    dateFrom: dateRange.from || undefined,
+    dateTo: dateRange.to || undefined,
+    sortBy, sortDir, page, pageSize: 50,
+  };
   const { data, isLoading } = useQuery({ queryKey: ['sales-transactions', params], queryFn: () => salesTransactionsApi.list(params) });
   const del = useMutation({
     mutationFn: (id: string) => salesTransactionsApi.remove(id),
@@ -217,23 +266,27 @@ export function SalesTransactionsPage() {
           <Search size={16} className="text-n-400" />
           <input className="h-full flex-1 text-[13px] outline-none" placeholder="Search transaction ID or SKU…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
         </div>
-        <select className="h-[38px] rounded-md border border-n-200 bg-n-0 px-2 text-[13px] text-n-700" value={filterChannel} onChange={(e) => { setFilterChannel(e.target.value); setPage(1); }}>
-          <option value="">All channels</option>
-          {channels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select className="h-[38px] rounded-md border border-n-200 bg-n-0 px-2 text-[13px] text-n-700" value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}>
-          <option value="">All statuses</option>
-          <option value="draft">Draft</option>
-          <option value="submitted">Submitted</option>
-        </select>
-        {profitTiers.length > 0 && (
-          <select className="h-[38px] rounded-md border border-n-200 bg-n-0 px-2 text-[13px] text-n-700" value={filterTier} onChange={(e) => { setFilterTier(e.target.value); setPage(1); }}>
-            <option value="">All profit tiers</option>
-            {profitTiers.map((t) => (
-              <option key={t.id} value={t.id}>{t.name || `Tier ${t.sortOrder + 1}`} ({t.fromPct}% – {t.toPct}%)</option>
-            ))}
-          </select>
-        )}
+        <div className="relative">
+          <button className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300" onClick={() => setFilterOpen((v) => !v)}>
+            <Filter size={15} className="opacity-60" /> Filters
+            {filterCount > 0 && <span className="mono rounded-pill bg-teal-100 px-1.5 text-[11px] text-teal-700">{filterCount}</span>}
+          </button>
+          {filterOpen && (
+            <TxFilterPanel
+              onClose={() => setFilterOpen(false)}
+              channels={channels}
+              profitTiers={profitTiers}
+              countries={countries}
+              filters={filters}
+              onToggle={toggleFilter}
+              onSku={(v) => { setFilters((f) => ({ ...f, sku: v })); setPage(1); }}
+              tierName={tierName}
+            />
+          )}
+        </div>
+        <div className="w-[248px]">
+          <DateRangePicker value={dateRange} onChange={(r) => { setDateRange(r); setPage(1); }} placeholder="Date range" clearable className="h-[38px]" />
+        </div>
         <label className="inline-flex h-[38px] cursor-pointer items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700">
           <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={eurOnly} onChange={(e) => setEurOnly(e.target.checked)} />
           Show in EUR
@@ -270,6 +323,18 @@ export function SalesTransactionsPage() {
           </button>
         )}
       </div>
+
+      {activeChips.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {activeChips.map((c, i) => (
+            <span key={i} className="inline-flex items-center gap-1.5 rounded-pill border border-teal-100 bg-teal-50 px-3 py-1 text-[12.5px] font-medium text-teal-800">
+              {c.label}
+              <button onClick={c.onRemove} className="grid h-4 w-4 place-items-center rounded-full text-teal-600 hover:bg-teal-100"><X size={12} /></button>
+            </span>
+          ))}
+          <button className="text-[12.5px] font-medium text-orange-600 hover:underline" onClick={clearAllFilters}>Clear all</button>
+        </div>
+      )}
 
       {selected.size > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-2.5 rounded-lg border border-teal-200 bg-teal-50/70 px-3.5 py-2.5">
@@ -384,6 +449,85 @@ export function SalesTransactionsPage() {
           )}
         </ModalShell>
       )}
+    </div>
+  );
+}
+
+/** Combined filter dropdown for the sales-transactions list (mirrors the Products filter panel). */
+function TxFilterPanel({
+  onClose, channels, profitTiers, countries, filters, onToggle, onSku, tierName,
+}: {
+  onClose: () => void;
+  channels: { id: string; name: string }[];
+  profitTiers: ProfitTier[];
+  countries: { id: string; name: string; isoCode: string }[];
+  filters: TxFilters;
+  onToggle: (key: keyof TxFilters, id: string) => void;
+  onSku: (v: string) => void;
+  tierName: (t: ProfitTier) => string;
+}) {
+  const [countryQ, setCountryQ] = useState('');
+  const shownCountries = useMemo(() => {
+    const q = countryQ.trim().toLowerCase();
+    const list = q ? countries.filter((c) => c.name.toLowerCase().includes(q) || c.isoCode.toLowerCase().includes(q)) : countries;
+    return list.slice(0, 60);
+  }, [countries, countryQ]);
+
+  const Check = ({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) => (
+    <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 hover:bg-n-50">
+      <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={checked} onChange={onChange} />
+      <span className="truncate text-[13px] text-n-700">{label}</span>
+    </label>
+  );
+  const GroupTitle = ({ children }: { children: ReactNode }) => (
+    <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-n-500">{children}</div>
+  );
+
+  return (
+    <div
+      className="absolute left-0 top-11 z-40 grid w-[620px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-x-5 gap-y-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:left-0 max-[760px]:w-[92vw] max-[760px]:grid-cols-1"
+      onMouseLeave={onClose}
+    >
+      <div>
+        <GroupTitle>Sales channel</GroupTitle>
+        <div className="max-h-40 overflow-auto pr-1">
+          {channels.length === 0 && <p className="text-[12px] text-n-400">None</p>}
+          {channels.map((c) => <Check key={c.id} checked={filters.salesChannelId.includes(c.id)} onChange={() => onToggle('salesChannelId', c.id)} label={c.name} />)}
+        </div>
+      </div>
+
+      <div>
+        <GroupTitle>Destination country</GroupTitle>
+        <input className="input mb-1.5 h-8" placeholder="Search countries…" value={countryQ} onChange={(e) => setCountryQ(e.target.value)} />
+        <div className="max-h-32 overflow-auto pr-1">
+          {shownCountries.map((c) => <Check key={c.id} checked={filters.destinationCountryId.includes(c.id)} onChange={() => onToggle('destinationCountryId', c.id)} label={c.name} />)}
+          {shownCountries.length === 0 && <p className="text-[12px] text-n-400">No matches</p>}
+        </div>
+      </div>
+
+      <div>
+        <GroupTitle>Profit tier</GroupTitle>
+        <div className="max-h-40 overflow-auto pr-1">
+          {profitTiers.length === 0 && <p className="text-[12px] text-n-400">No tiers defined</p>}
+          {profitTiers.map((t) => <Check key={t.id} checked={filters.profitTierId.includes(t.id)} onChange={() => onToggle('profitTierId', t.id)} label={`${tierName(t)} (${t.fromPct}–${t.toPct}%)`} />)}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <div>
+          <GroupTitle>Status</GroupTitle>
+          {STATUS_OPTS.map((o) => <Check key={o.id} checked={filters.status.includes(o.id)} onChange={() => onToggle('status', o.id)} label={o.name} />)}
+        </div>
+        <div>
+          <GroupTitle>Shipment status</GroupTitle>
+          {SHIPMENT_OPTS.map((o) => <Check key={o.id} checked={filters.shipmentStatus.includes(o.id)} onChange={() => onToggle('shipmentStatus', o.id)} label={o.name} />)}
+        </div>
+      </div>
+
+      <div className="col-span-2 max-[760px]:col-span-1">
+        <GroupTitle>SKU</GroupTitle>
+        <input className="input mono h-8" placeholder="Filter by SKU (contains)…" value={filters.sku} onChange={(e) => onSku(e.target.value)} />
+      </div>
     </div>
   );
 }

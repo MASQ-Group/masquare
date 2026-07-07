@@ -836,7 +836,7 @@ export const fbaShipmentsApi = {
 };
 
 export const salesTransactionsApi = {
-  list: (params: { q?: string; companyId?: string; salesChannelId?: string; status?: string; profitTierId?: string; sortBy?: 'date' | 'profit' | 'profitPct'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
+  list: (params: { q?: string; companyId?: string; salesChannelId?: string[]; destinationCountryId?: string[]; status?: string[]; profitTierId?: string[]; shipmentStatus?: string[]; sku?: string; dateFrom?: string; dateTo?: string; sortBy?: 'date' | 'profit' | 'profitPct'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<SalesTransactionListResponse>('/sales-transactions', { params }).then((r) => r.data),
   get: (id: string) => api.get<SalesTransaction>(`/sales-transactions/${id}`).then((r) => r.data),
   create: (body: any) => api.post<SalesTransaction>('/sales-transactions', body).then((r) => r.data),
