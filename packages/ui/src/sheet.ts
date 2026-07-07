@@ -32,13 +32,20 @@ export async function parseSheetFile(
   file: File,
 ): Promise<{ columns: string[]; rows: Record<string, string>[] }> {
   const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: 'array' });
+  // cellDates parses date-formatted cells as JS Dates (not raw Excel serial numbers),
+  // so a "Ship date" column comes through as a real date instead of e.g. 46028.
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const grid = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, blankrows: false });
   const columns = (grid[0] ?? []).map((c) => String(c ?? '').trim());
+  const cell = (v: unknown): string => {
+    if (v == null) return '';
+    if (v instanceof Date) return isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10); // YYYY-MM-DD
+    return String(v).trim();
+  };
   const rows = grid.slice(1).map((r) => {
     const obj: Record<string, string> = {};
-    columns.forEach((c, i) => (obj[c] = String((r as any[])[i] ?? '').trim()));
+    columns.forEach((c, i) => (obj[c] = cell((r as any[])[i])));
     return obj;
   });
   return { columns, rows };

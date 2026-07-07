@@ -291,6 +291,26 @@ export class ShipmentsService {
     return Number.isFinite(n) ? n : null;
   }
 
+  /** Parse an import date cell → Date, or null if empty. Handles ISO strings and stray
+   *  Excel serial numbers (e.g. "46028"). Returns undefined for a non-empty, unparseable value. */
+  private parseImportDate(v: string): Date | null | undefined {
+    const s = v.trim();
+    if (!s) return null;
+    // Excel serial date (serial 25569 = 1970-01-01). Plausible range ~1954–2146.
+    if (/^\d+(\.\d+)?$/.test(s)) {
+      const serial = Number(s);
+      if (serial > 20000 && serial < 90000) {
+        const d = new Date(Math.round((serial - 25569) * 86400000));
+        return isNaN(d.getTime()) ? undefined : d;
+      }
+      return undefined;
+    }
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return undefined;
+    const y = d.getUTCFullYear();
+    return y >= 1990 && y <= 2100 ? d : undefined;
+  }
+
   /** Validate import rows: resolve each Transaction ID + shipping service, flag problems. */
   async importValidate(rows: Record<string, string>[]) {
     const services = await this.prisma.shippingService.findMany({ where: { deletedAt: null }, select: { id: true, name: true } });
@@ -315,6 +335,10 @@ export class ShipmentsService {
       for (const [k, label] of [['shippingCostEur', 'Shipping cost'], ['dutyImportEur', 'Duty/import']] as [string, string][]) {
         const v = get(k);
         if (v !== '' && !Number.isFinite(Number(v))) issues.push({ field: k, message: `${label} must be a number (got "${v}")`, severity: 'error' });
+      }
+      const dateVal = get('shipmentDate');
+      if (dateVal && this.parseImportDate(dateVal) === undefined) {
+        issues.push({ field: 'shipmentDate', message: `Ship date isn't a valid date (got "${dateVal}") — use YYYY-MM-DD`, severity: 'error' });
       }
 
       let shippingServiceId: string | null = null;
@@ -354,11 +378,12 @@ export class ShipmentsService {
         const type = (get('type') || 'outbound').toLowerCase() as 'outbound' | 'inbound';
         const markRaw = get('markShipped').toLowerCase();
         const markShipped = !(markRaw === 'no' || markRaw === 'false' || markRaw === 'n');
-        const dateStr = get('shipmentDate');
+        const parsedDate = this.parseImportDate(get('shipmentDate'));
+        if (parsedDate === undefined) throw new Error(`Invalid ship date "${get('shipmentDate')}"`);
         await this.create({
           transactionId: item.transactionId,
           type,
-          shipmentDate: dateStr ? new Date(dateStr).toISOString() : new Date().toISOString(),
+          shipmentDate: (parsedDate ?? new Date()).toISOString(),
           shippingServiceId: item.shippingServiceId ?? null,
           trackingNumber: get('trackingNumber') || null,
           shippingCostEur: this.normNum(get('shippingCostEur')),
