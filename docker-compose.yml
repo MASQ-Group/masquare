@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:16
     container_name: masquare-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: masquare
       POSTGRES_PASSWORD: masquare
@@ -19,6 +20,7 @@ services:
   minio:
     image: minio/minio
     container_name: masquare-minio
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: masquare
