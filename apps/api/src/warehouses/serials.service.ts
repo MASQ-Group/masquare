@@ -9,6 +9,8 @@ export interface SerialQuery {
   productId?: string;
   warehouseId?: string;
   status?: string;
+  /** Enforced company isolation (serials scope via their warehouse's company). */
+  companyIds?: string[];
   page?: number;
   pageSize?: number;
 }
@@ -29,6 +31,7 @@ export class SerialsService {
     const page = Math.max(1, query.page ?? 1);
     const pageSize = Math.min(200, Math.max(1, query.pageSize ?? 50));
     const where: Prisma.SerialNumberWhereInput = {
+      ...(query.companyIds ? { warehouse: { companyId: { in: query.companyIds } } } : {}),
       ...(query.productId ? { productId: query.productId } : {}),
       ...(query.warehouseId ? { warehouseId: query.warehouseId } : {}),
       ...(query.status ? { status: query.status } : {}),
@@ -77,9 +80,9 @@ export class SerialsService {
   }
 
   /** Serials on the shelf for a product — what a sale or return can pick from. */
-  async available(productId: string, warehouseId?: string) {
+  async available(productId: string, warehouseId?: string, companyIds?: string[]) {
     const rows = await this.prisma.serialNumber.findMany({
-      where: { productId, status: 'in_stock', ...(warehouseId ? { warehouseId } : {}) },
+      where: { productId, status: 'in_stock', ...(warehouseId ? { warehouseId } : {}), ...(companyIds ? { warehouse: { companyId: { in: companyIds } } } : {}) },
       include: { warehouse: { select: { id: true, name: true } } },
       orderBy: { serial: 'asc' },
     });

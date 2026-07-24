@@ -1,6 +1,7 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { VisibleCompanies } from '../common/active-company.decorator';
 import { InventoryService } from './inventory.service';
 
 @ApiTags('inventory')
@@ -13,11 +14,12 @@ export class InventoryController {
   /** The stock-owed register: sold-before-received shortfalls, open by default. */
   @Get('owed')
   owed(
+    @VisibleCompanies() companyIds: string[],
     @Query('status') status?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    return this.svc.listOwed({ status, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined });
+    return this.svc.listOwed({ status, companyIds, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined });
   }
 
   /** Per-product stock status: on hand, committed, on order, available, average cost. */

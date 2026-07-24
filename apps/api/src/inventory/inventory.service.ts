@@ -122,11 +122,13 @@ export class InventoryService {
   }
 
   /** The stock-owed register: units sold before they were in stock. */
-  async listOwed(query: { status?: string; page?: number; pageSize?: number }) {
+  async listOwed(query: { status?: string; companyIds?: string[]; page?: number; pageSize?: number }) {
     const page = Math.max(1, query.page ?? 1);
     const pageSize = Math.min(200, Math.max(1, query.pageSize ?? 50));
     const where: Prisma.StockOwedWhereInput = {
       deletedAt: null,
+      // Company isolation: scope owed stock via the sale that could not be covered.
+      ...(query.companyIds ? { salesTransaction: { companyId: { in: query.companyIds } } } : {}),
       // Default view is what still needs action; 'all' shows the history too.
       ...(query.status && query.status !== 'all' ? { status: query.status } : query.status ? {} : { status: 'open' }),
     };

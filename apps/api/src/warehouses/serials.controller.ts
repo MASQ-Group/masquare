@@ -1,6 +1,7 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { VisibleCompanies } from '../common/active-company.decorator';
 import { SerialsService } from './serials.service';
 
 @ApiTags('serials')
@@ -12,6 +13,7 @@ export class SerialsController {
 
   @Get()
   list(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('productId') productId?: string,
     @Query('warehouseId') warehouseId?: string,
@@ -20,7 +22,7 @@ export class SerialsController {
     @Query('pageSize') pageSize?: string,
   ) {
     return this.svc.list({
-      q, productId, warehouseId, status,
+      q, productId, warehouseId, status, companyIds,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });
@@ -28,7 +30,7 @@ export class SerialsController {
 
   /** Serials on the shelf — what a sale or a return can pick from. */
   @Get('available/:productId')
-  available(@Param('productId') productId: string, @Query('warehouseId') warehouseId?: string) {
-    return this.svc.available(productId, warehouseId);
+  available(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[], @Query('warehouseId') warehouseId?: string) {
+    return this.svc.available(productId, warehouseId, companyIds);
   }
 }

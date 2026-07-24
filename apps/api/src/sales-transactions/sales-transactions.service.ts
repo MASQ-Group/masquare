@@ -745,9 +745,9 @@ export class SalesTransactionsService {
   }
 
   /** All serialized transactions in a date range (for analytics/reporting). */
-  async allInRange(from: Date, to: Date, companyId?: string) {
+  async allInRange(from: Date, to: Date, companyIds?: string[]) {
     const rows = await this.prisma.salesTransaction.findMany({
-      where: { deletedAt: null, date: { gte: from, lte: to }, ...(companyId ? { companyId } : {}) },
+      where: { deletedAt: null, date: { gte: from, lte: to }, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
       include,
       orderBy: { date: 'asc' },
     });

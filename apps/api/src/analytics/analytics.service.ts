@@ -7,6 +7,8 @@ export interface AnalyticsQuery {
   compareFrom?: string;
   compareTo?: string;
   companyId?: string;
+  /** Enforced company isolation: the companies the caller may see. */
+  companyIds?: string[];
   channelId?: string; // global filter: scope the WHOLE report to one sales channel
   countryId?: string; // global filter: scope the WHOLE report to one destination country
   fulfilment?: string; // global filter: 'fbm' | 'fba' | 'local' (else all)
@@ -93,7 +95,7 @@ export class AnalyticsService {
   private async aggregateSku(sku: string, from: string, to: string, q: AnalyticsQuery) {
     const start = new Date(from + 'T00:00:00.000Z');
     const end = new Date(to + 'T23:59:59.999Z');
-    const txns = (await this.tx.allInRange(start, end, q.companyId)).filter((t) => matchesGlobal(t, q));
+    const txns = (await this.tx.allInRange(start, end, q.companyIds)).filter((t) => matchesGlobal(t, q));
 
     const totals = { revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, units: 0, orders: 0 };
     const returns = { returnedUnits: 0, refundEur: 0, orders: 0 };
@@ -156,10 +158,10 @@ export class AnalyticsService {
   }
 
   private async aggregate(from: string, to: string, q: AnalyticsQuery) {
-    const { companyId, skuChannelId, skuCountryId } = q;
+    const { skuChannelId, skuCountryId } = q;
     const start = new Date(from + 'T00:00:00.000Z');
     const end = new Date(to + 'T23:59:59.999Z');
-    const allTxns = await this.tx.allInRange(start, end, companyId);
+    const allTxns = await this.tx.allInRange(start, end, q.companyIds);
     const txns = allTxns.filter((t) => matchesGlobal(t, q));
 
     const totals = { revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, orders: 0, units: 0, shippingEur: 0, dutyEur: 0, refundEur: 0 };
