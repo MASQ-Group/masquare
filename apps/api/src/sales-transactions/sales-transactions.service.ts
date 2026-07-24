@@ -1369,8 +1369,8 @@ export class SalesTransactionsService {
     }
   }
 
-  async update(id: string, dto: UpdateSalesTransactionDto, user: AuthUser) {
-    const existing = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null }, include: { items: { where: { deletedAt: null } } } });
+  async update(id: string, dto: UpdateSalesTransactionDto, user: AuthUser, companyIds?: string[]) {
+    const existing = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) }, include: { items: { where: { deletedAt: null } } } });
     if (!existing) throw new NotFoundException('Sales transaction not found');
     this.assertCanEdit(existing, user);
 
@@ -1616,9 +1616,10 @@ export class SalesTransactionsService {
     id: string,
     dto: { resolution: string; refundAmount?: number | null; restockItems?: boolean; feeRefunded?: boolean; resolutionNotes?: string | null; returnedToStock?: boolean; returnWarehouseId?: string | null },
     user: AuthUser,
+    companyIds?: string[],
   ) {
     const existing = await this.prisma.salesTransaction.findFirst({
-      where: { id, deletedAt: null },
+      where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
       select: { id: true, status: true, unlockedForEdit: true, fulfilmentStatus: true, fulfilmentType: true, resolution: true, returnWarehouseId: true, transactionRef: true },
     });
     if (!existing) throw new NotFoundException('Sales transaction not found');
@@ -1763,8 +1764,8 @@ export class SalesTransactionsService {
     return { applied: true };
   }
 
-  async remove(id: string, user: AuthUser) {
-    const existing = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null } });
+  async remove(id: string, user: AuthUser, companyIds?: string[]) {
+    const existing = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) } });
     if (!existing) throw new NotFoundException('Sales transaction not found');
     this.assertCanEdit(existing, user);
     // Return any stock this sale had taken (and cancel its owed rows) before it disappears.

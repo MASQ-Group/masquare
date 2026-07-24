@@ -48,8 +48,8 @@ export class ExpensesController {
   }
 
   @Post(':id/amount')
-  setAmount(@Param('id') id: string, @Body() dto: SetExpenseAmountDto, @CurrentUser() user: AuthUser) {
-    return this.svc.setAmount(id, dto, user.sub);
+  setAmount(@Param('id') id: string, @Body() dto: SetExpenseAmountDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.setAmount(id, dto, user.sub, companyIds);
   }
 
   @Get(':id')
@@ -58,12 +58,12 @@ export class ExpensesController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateExpenseDto, @CurrentUser() user: AuthUser) {
-    return this.svc.update(id, dto, user.sub);
+  update(@Param('id') id: string, @Body() dto: UpdateExpenseDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.update(id, dto, user.sub, companyIds);
   }
 
   @Post(':id/cancel')
-  cancel(@Param('id') id: string, @Body() dto: CancelExpenseDto, @CurrentUser() user: AuthUser) {
-    return this.svc.cancel(id, dto, user.sub);
+  cancel(@Param('id') id: string, @Body() dto: CancelExpenseDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.cancel(id, dto, user.sub, companyIds);
   }
 }

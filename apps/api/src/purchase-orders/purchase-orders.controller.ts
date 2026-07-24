@@ -78,13 +78,13 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdatePurchaseOrderDto, @CurrentUser() user: AuthUser) {
-    return this.svc.update(id, dto, user.sub);
+  update(@Param('id') id: string, @Body() dto: UpdatePurchaseOrderDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.update(id, dto, user.sub, companyIds);
   }
 
   @Post(':id/submit')
-  submit(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    return this.svc.submit(id, user.sub);
+  submit(@Param('id') id: string, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.submit(id, user.sub, companyIds);
   }
 
   /**
@@ -92,32 +92,32 @@ export class PurchaseOrdersController {
    * up, or down as far as what has already arrived — anything beyond that is a return.
    */
   @Post(':id/amend')
-  amend(@Param('id') id: string, @Body() dto: AmendPurchaseOrderDto, @CurrentUser() user: AuthUser) {
+  amend(@Param('id') id: string, @Body() dto: AmendPurchaseOrderDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
     if (!user.isAdmin) throw new ForbiddenException('Only an admin can amend a received purchase order');
-    return this.svc.amend(id, dto, user.sub);
+    return this.svc.amend(id, dto, user.sub, companyIds);
   }
 
   /** Admins only — everyone else must go through :id/unlock-request. */
   @Post(':id/unlock')
-  unlock(@Param('id') id: string, @Body() dto: UnlockPurchaseOrderDto, @CurrentUser() user: AuthUser) {
+  unlock(@Param('id') id: string, @Body() dto: UnlockPurchaseOrderDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
     if (!user.isAdmin) throw new ForbiddenException('Only an admin can unlock a purchase order');
-    return this.svc.unlock(id, user.sub, dto.note);
+    return this.svc.unlock(id, user.sub, dto.note, companyIds);
   }
 
   @Post(':id/unlock-request')
-  requestUnlock(@Param('id') id: string, @Body() dto: RequestUnlockDto, @CurrentUser() user: AuthUser) {
-    return this.svc.requestUnlock(id, user.sub, dto.reason);
+  requestUnlock(@Param('id') id: string, @Body() dto: RequestUnlockDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.requestUnlock(id, user.sub, dto.reason, companyIds);
   }
 
   @Post(':id/cancel')
-  cancel(@Param('id') id: string, @Body() dto: CancelPurchaseOrderDto, @CurrentUser() user: AuthUser) {
-    return this.svc.cancel(id, dto.reason, user.sub);
+  cancel(@Param('id') id: string, @Body() dto: CancelPurchaseOrderDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.cancel(id, dto.reason, user.sub, companyIds);
   }
 
   /** Branded PDF of the order, ready to send to the vendor. */
   @Get(':id/pdf')
-  async pdf(@Param('id') id: string, @Res() res: Response) {
-    const { filename, pdf } = await this.svc.renderPdf(id);
+  async pdf(@Param('id') id: string, @Res() res: Response, @VisibleCompanies() companyIds: string[]) {
+    const { filename, pdf } = await this.svc.renderPdf(id, companyIds);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', pdf.length);
@@ -131,8 +131,8 @@ export class PurchaseOrdersController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    return this.svc.remove(id, user.sub);
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.remove(id, user.sub, companyIds);
   }
 }
 
@@ -170,12 +170,12 @@ export class GoodsReceiptsController {
 
   /** Record what arrived: moves stock, updates the PO and raises any backorder. */
   @Post(':id/post')
-  post(@Param('id') id: string, @Body() dto: PostGoodsReceiptDto, @CurrentUser() user: AuthUser) {
-    return this.svc.post(id, dto, user.sub);
+  post(@Param('id') id: string, @Body() dto: PostGoodsReceiptDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.post(id, dto, user.sub, companyIds);
   }
 
   @Post(':id/cancel')
-  cancel(@Param('id') id: string, @Body() dto: CancelGoodsReceiptDto, @CurrentUser() user: AuthUser) {
-    return this.svc.cancel(id, dto?.reason, user.sub);
+  cancel(@Param('id') id: string, @Body() dto: CancelGoodsReceiptDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.cancel(id, dto?.reason, user.sub, companyIds);
   }
 }

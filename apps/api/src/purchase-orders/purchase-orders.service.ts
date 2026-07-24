@@ -159,6 +159,13 @@ export class PurchaseOrdersService {
     };
   }
 
+  /** Company-isolation guard for mutations: 404 unless the PO belongs to a visible company. */
+  private async assertVisible(id: string, companyIds?: string[]) {
+    if (!companyIds) return;
+    const po = await this.prisma.purchaseOrder.findFirst({ where: { id, ...ACTIVE, companyId: { in: companyIds } }, select: { id: true } });
+    if (!po) throw new NotFoundException('Purchase order not found');
+  }
+
   async create(dto: CreatePurchaseOrderDto, actorId?: string, companyId?: string) {
     await this.assertRefs(dto);
     // The vendor's treatment is snapshotted onto the order so editing the vendor
@@ -195,7 +202,8 @@ export class PurchaseOrdersService {
   }
 
   /** Full replace of a draft's header + lines. Refused once the PO leaves draft. */
-  async update(id: string, dto: UpdatePurchaseOrderDto, actorId?: string) {
+  async update(id: string, dto: UpdatePurchaseOrderDto, actorId?: string, companyIds?: string[]) {
+    await this.assertVisible(id, companyIds);
     const existing = await this.prisma.purchaseOrder.findFirst({ where: { id, ...ACTIVE }, select: { id: true, status: true } });
     if (!existing) throw new NotFoundException('Purchase order not found');
     if (!EDITABLE_STATUSES.includes(existing.status)) {
@@ -235,7 +243,8 @@ export class PurchaseOrdersService {
    * Draft → submitted. Locks the lines and raises the pending Goods Receipt that
    * covers the whole order (PR7), both in one transaction.
    */
-  async submit(id: string, actorId?: string) {
+  async submit(id: string, actorId?: string, companyIds?: string[]) {
+    await this.assertVisible(id, companyIds);
     const po = await this.prisma.purchaseOrder.findFirst({ where: { id, ...ACTIVE }, include: { lines: true } });
     if (!po) throw new NotFoundException('Purchase order not found');
     if (po.status !== 'draft') throw new BadRequestException(`Only a draft can be submitted (this one is ${po.status.replace('_', ' ')})`);
@@ -277,7 +286,8 @@ export class PurchaseOrdersService {
   }
 
   /** Cancel — allowed only while nothing has been received. */
-  async cancel(id: string, reason?: string | null, actorId?: string) {
+  async cancel(id: string, reason?: string | null, actorId?: string, companyIds?: string[]) {
+    await this.assertVisible(id, companyIds);
     const po = await this.prisma.purchaseOrder.findFirst({ where: { id, ...ACTIVE }, include: { lines: { select: { quantityReceived: true } } } });
     if (!po) throw new NotFoundException('Purchase order not found');
     if (po.status === 'cancelled') throw new BadRequestException('This purchase order is already cancelled');
@@ -324,7 +334,8 @@ export class PurchaseOrdersService {
   }
 
   /** Reopen a submitted PO. `note` is recorded in the status history. */
-  async unlock(id: string, actorId: string, note?: string | null) {
+  async unlock(id: string, actorId: string, note?: string | null, companyIds?: string[]) {
+    await this.assertVisible(id, companyIds);
     await this.assertUnlockable(id);
 
     await this.prisma.$transaction(async (tx) => {
@@ -360,7 +371,8 @@ export class PurchaseOrdersService {
    *  - fewer than already arrived: refused — those goods physically exist, so they leave
    *    through a return to the vendor, not by editing the order that brought them in.
    */
-  async amend(id: string, dto: AmendPurchaseOrderDto, actorId: string) {
+  async amend(id: string, dto: AmendPurchaseOrderDto, actorId: string, companyIds?: string[]) {
+    await this.assertVisible(id, companyIds);
     const po = await this.prisma.purchaseOrder.findFirst({
       where: { id, ...ACTIVE },
       include: { lines: { include: { product: { select: { mainSku: true } } }, orderBy: { sortOrder: 'asc' } } },
@@ -472,7 +484,8 @@ export class PurchaseOrdersService {
   }
 
   /** Non-admin path: ask an admin to unlock. Deduped per PO. */
-  async requestUnlock(id: string, userId: string, reason?: string | null) {
+  async requestUnlock(id: string, userId: string, reason?: string | null, companyIds?: string[]) {
+    await this.assertVisible(id, companyIds);
     await this.assertUnlockable(id);
     const existing = await this.prisma.purchaseOrderUnlockRequest.findFirst({
       where: { purchaseOrderId: id, status: 'pending' },
@@ -529,7 +542,8 @@ export class PurchaseOrdersService {
    * Build the branded PDF for a purchase order. All presentation lives in
    * purchase-order-template.ts — this only gathers the data it needs.
    */
-  async renderPdf(id: string): Promise<{ filename: string; pdf: Buffer }> {
+  async renderPdf(id: string, companyIds?: string[]): Promise<{ filename: string; pdf: Buffer }> {
+    await this.assertVisible(id, companyIds);
     const po = await this.prisma.purchaseOrder.findFirst({
       where: { id, ...ACTIVE },
       include: {
@@ -586,7 +600,8 @@ export class PurchaseOrdersService {
   }
 
   /** Soft-delete a draft. Submitted or received POs are kept for the audit trail. */
-  async remove(id: string, actorId?: string) {
+  async remove(id: string, actorId?: string, companyIds?: string[]) {
+    await this.assertVisible(id, companyIds);
     const po = await this.prisma.purchaseOrder.findFirst({ where: { id, ...ACTIVE }, select: { id: true, status: true } });
     if (!po) throw new NotFoundException('Purchase order not found');
     if (po.status !== 'draft') throw new BadRequestException('Only a draft can be deleted; cancel the purchase order instead');

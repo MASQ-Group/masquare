@@ -161,17 +161,17 @@ export class SalesTransactionsController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateSalesTransactionDto, @CurrentUser() user: AuthUser) {
-    return this.svc.update(id, dto, user);
+  update(@Param('id') id: string, @Body() dto: UpdateSalesTransactionDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.update(id, dto, user, companyIds);
   }
 
   @Patch(':id/resolution')
-  resolve(@Param('id') id: string, @Body() dto: ResolveTransactionDto, @CurrentUser() user: AuthUser) {
-    return this.svc.resolve(id, dto, user);
+  resolve(@Param('id') id: string, @Body() dto: ResolveTransactionDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.resolve(id, dto, user, companyIds);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    return this.svc.remove(id, user);
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.remove(id, user, companyIds);
   }
 }

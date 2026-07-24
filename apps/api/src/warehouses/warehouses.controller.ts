@@ -45,13 +45,13 @@ export class WarehousesController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateWarehouseDto, @CurrentUser() user: AuthUser) {
-    return this.svc.update(id, dto, user.sub);
+  update(@Param('id') id: string, @Body() dto: UpdateWarehouseDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.update(id, dto, user.sub, companyIds);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    return this.svc.remove(id, user.sub);
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.remove(id, user.sub, companyIds);
   }
 }
 

@@ -210,9 +210,9 @@ export class GoodsReceiptsService {
    * Post a receipt. Atomic per §3.4: stock increments, the PO's received quantities,
    * the PO status recalculation and any backorder all commit together or not at all.
    */
-  async post(id: string, dto: PostGoodsReceiptDto, actorId?: string) {
+  async post(id: string, dto: PostGoodsReceiptDto, actorId?: string, companyIds?: string[]) {
     const receipt = await this.prisma.goodsReceipt.findFirst({
-      where: { id, ...ACTIVE },
+      where: { id, ...ACTIVE, ...(companyIds ? { purchaseOrder: { companyId: { in: companyIds } } } : {}) },
       include: {
         purchaseOrder: { include: { lines: true } },
         lines: {
@@ -500,8 +500,8 @@ export class GoodsReceiptsService {
   }
 
   /** Cancel a pending receipt (a posted one is immutable). */
-  async cancel(id: string, reason?: string | null, actorId?: string) {
-    const r = await this.prisma.goodsReceipt.findFirst({ where: { id, ...ACTIVE }, select: { id: true, status: true } });
+  async cancel(id: string, reason?: string | null, actorId?: string, companyIds?: string[]) {
+    const r = await this.prisma.goodsReceipt.findFirst({ where: { id, ...ACTIVE, ...(companyIds ? { purchaseOrder: { companyId: { in: companyIds } } } : {}) }, select: { id: true, status: true } });
     if (!r) throw new NotFoundException('Goods receipt not found');
     if (r.status === 'posted') throw new BadRequestException('A posted receipt cannot be cancelled — it has already moved stock');
     if (r.status === 'cancelled') throw new BadRequestException('This receipt is already cancelled');

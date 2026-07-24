@@ -276,8 +276,8 @@ export class ExpensesService {
   }
 
   /** Cancel a recurring expense: it stops applying after `month` (kept up to and including it). */
-  async cancel(id: string, dto: CancelExpenseDto, actorId?: string) {
-    const e = await this.prisma.expense.findFirst({ where: { id, ...ACTIVE }, select: { id: true, occurrence: true, startMonth: true, status: true } });
+  async cancel(id: string, dto: CancelExpenseDto, actorId?: string, companyIds?: string[]) {
+    const e = await this.prisma.expense.findFirst({ where: { id, ...ACTIVE, ...(companyIds ? { companyId: { in: companyIds } } : {}) }, select: { id: true, occurrence: true, startMonth: true, status: true } });
     if (!e) throw new NotFoundException('Expense not found');
     if (e.occurrence === 'once_off') throw new BadRequestException('A once-off expense has nothing to cancel');
     if (e.status === 'cancelled') throw new BadRequestException('Expense is already cancelled');
@@ -291,9 +291,9 @@ export class ExpensesService {
    *  editable; structural changes (occurrence, start month, once-off date) are only allowed
    *  while the expense still has a single baseline and no ledger overrides, so a scheduled
    *  amount history is never silently discarded. */
-  async update(id: string, dto: UpdateExpenseDto, actorId?: string) {
+  async update(id: string, dto: UpdateExpenseDto, actorId?: string, companyIds?: string[]) {
     const e = await this.prisma.expense.findFirst({
-      where: { id, ...ACTIVE },
+      where: { id, ...ACTIVE, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
       include: { amounts: { orderBy: { effectiveMonth: 'asc' } }, overrides: true },
     });
     if (!e) throw new NotFoundException('Expense not found');
@@ -395,8 +395,8 @@ export class ExpensesService {
 
   /** Edit a month's amount: 'this_month' writes a per-month override; 'all_following'
    *  sets a new effective baseline from that month and clears later overrides. */
-  async setAmount(expenseId: string, dto: SetExpenseAmountDto, actorId?: string) {
-    const e = await this.prisma.expense.findFirst({ where: { id: expenseId, ...ACTIVE }, select: { id: true, currency: true, occurrence: true, startMonth: true, endMonth: true, onceOffDate: true } });
+  async setAmount(expenseId: string, dto: SetExpenseAmountDto, actorId?: string, companyIds?: string[]) {
+    const e = await this.prisma.expense.findFirst({ where: { id: expenseId, ...ACTIVE, ...(companyIds ? { companyId: { in: companyIds } } : {}) }, select: { id: true, currency: true, occurrence: true, startMonth: true, endMonth: true, onceOffDate: true } });
     if (!e) throw new NotFoundException('Expense not found');
     const month = dto.month;
     if (e.occurrence === 'once_off') {

@@ -109,8 +109,8 @@ export class WarehousesService {
     return this.serialize(w);
   }
 
-  async update(id: string, dto: UpdateWarehouseDto, actorId?: string) {
-    const existing = await this.prisma.warehouse.findFirst({ where: { id, ...ACTIVE } });
+  async update(id: string, dto: UpdateWarehouseDto, actorId?: string, companyIds?: string[]) {
+    const existing = await this.prisma.warehouse.findFirst({ where: { id, ...ACTIVE, ...(companyIds ? { companyId: { in: companyIds } } : {}) } });
     if (!existing) throw new NotFoundException('Warehouse not found');
 
     const name = dto.name?.trim();
@@ -144,8 +144,8 @@ export class WarehousesService {
    * deleting either would strand balances or orphan the subtree. A warehouse with
    * history but no stock is deactivated instead, so its movements stay explainable.
    */
-  async remove(id: string, actorId?: string) {
-    const w = await this.prisma.warehouse.findFirst({ where: { id, ...ACTIVE } });
+  async remove(id: string, actorId?: string, companyIds?: string[]) {
+    const w = await this.prisma.warehouse.findFirst({ where: { id, ...ACTIVE, ...(companyIds ? { companyId: { in: companyIds } } : {}) } });
     if (!w) throw new NotFoundException('Warehouse not found');
 
     const [units, children, movements] = await Promise.all([
