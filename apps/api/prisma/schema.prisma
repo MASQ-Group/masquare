@@ -51,6 +51,11 @@ model Company {
   salesTransactions SalesTransaction[]
   purchaseOrders    PurchaseOrder[]
   expenses          Expense[]
+  warehouses        Warehouse[]
+  fbaShipments      FbaShipment[]
+  channelListings   ChannelListing[]
+  goodsReceipts     GoodsReceipt[]
+  vendorReturns     VendorReturn[]
 
   @@map("company")
 }
@@ -602,6 +607,8 @@ model AvailabilityLedger {
 /// pulling from the channel; drives the listings dashboard and drift detection.
 model ChannelListing {
   id               String    @id @default(uuid()) @db.Uuid
+  // Owning company. Listings are per-company (separate channel accounts).
+  companyId        String?   @map("company_id") @db.Uuid
   integrationId    String    @map("integration_id") @db.Uuid
   channelSku       String    @map("channel_sku")
   productId        String?   @map("product_id") @db.Uuid // null = unmatched to our catalogue
@@ -619,9 +626,11 @@ model ChannelListing {
 
   product     Product?           @relation(fields: [productId], references: [id], onDelete: SetNull)
   integration ChannelIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  company     Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
 
   @@unique([integrationId, channelSku])
   @@index([productId])
+  @@index([companyId])
   @@map("channel_listing")
 }
 
@@ -633,6 +642,8 @@ model ChannelListing {
 // ===========================================================================
 model Warehouse {
   id   String @id @default(uuid()) @db.Uuid
+  // Owning company. Warehouses (and all stock held in them) are company-isolated.
+  companyId String? @map("company_id") @db.Uuid
   name String
   type String @default("physical") // physical | virtual
   // Warehouses form a tree (e.g. Main Store → FBA Reserved / Damaged Goods).
@@ -650,6 +661,7 @@ model Warehouse {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
+  company  Company?    @relation(fields: [companyId], references: [id], onDelete: SetNull)
   parent   Warehouse?  @relation("WarehouseTree", fields: [parentWarehouseId], references: [id], onDelete: SetNull)
   children Warehouse[] @relation("WarehouseTree")
 
@@ -662,6 +674,7 @@ model Warehouse {
   stockOwed      StockOwed[]
 
   @@index([parentWarehouseId])
+  @@index([companyId])
   @@map("warehouse")
 }
 
@@ -822,6 +835,8 @@ model PurchaseOrderLine {
 model GoodsReceipt {
   id              String @id @default(uuid()) @db.Uuid
   receiptNumber   String @unique @map("receipt_number") // GR-YYYY-NNNNN, year-scoped
+  // Owning company (denormalised from the PO for uniform scoping).
+  companyId       String? @map("company_id") @db.Uuid
   purchaseOrderId String @map("purchase_order_id") @db.Uuid
   status          String @default("pending") // pending | posted | cancelled
   // True when this receipt covers the shortfall left by an earlier one.
@@ -862,12 +877,14 @@ model GoodsReceipt {
 
   purchaseOrder        PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   destinationWarehouse Warehouse?    @relation(fields: [destinationWarehouseId], references: [id], onDelete: SetNull)
+  company    Company?       @relation(fields: [companyId], references: [id], onDelete: SetNull)
   parent     GoodsReceipt?  @relation("ReceiptBackorder", fields: [parentReceiptId], references: [id], onDelete: SetNull)
   backorders GoodsReceipt[] @relation("ReceiptBackorder")
   lines      GoodsReceiptLine[]
 
   @@index([purchaseOrderId])
   @@index([status])
+  @@index([companyId])
   @@map("goods_receipt")
 }
 
@@ -1001,6 +1018,8 @@ model StockOwed {
 model VendorReturn {
   id           String @id @default(uuid()) @db.Uuid
   returnNumber String @unique @map("return_number") // RTV-YYYY-NNNNN, year-scoped
+  // Owning company (denormalised from the source warehouse/PO for uniform scoping).
+  companyId    String? @map("company_id") @db.Uuid
   vendorId     String @map("vendor_id") @db.Uuid
   /** Set when the return is against a specific order; standalone returns leave it null. */
   purchaseOrderId String? @map("purchase_order_id") @db.Uuid
@@ -1025,11 +1044,13 @@ model VendorReturn {
   vendor        Vendor         @relation(fields: [vendorId], references: [id])
   purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
   warehouse     Warehouse      @relation(fields: [warehouseId], references: [id])
+  company       Company?       @relation(fields: [companyId], references: [id], onDelete: SetNull)
   lines         VendorReturnLine[]
 
   @@index([vendorId])
   @@index([purchaseOrderId])
   @@index([status])
+  @@index([companyId])
   @@map("vendor_return")
 }
 
@@ -1699,6 +1720,8 @@ model SalesTransactionItem {
 // ===========================================================================
 model FbaShipment {
   id                   String  @id @default(uuid()) @db.Uuid
+  // Owning company. FBA shipments are company-isolated.
+  companyId            String? @map("company_id") @db.Uuid
   date                 DateTime
   salesChannelId       String? @map("sales_channel_id") @db.Uuid
   // Snapshot of the channel's native country at creation (the destination).
@@ -1733,10 +1756,12 @@ model FbaShipment {
   destinationCountry Country?         @relation(fields: [destinationCountryId], references: [id], onDelete: SetNull)
   shippingService    ShippingService? @relation("FbaShipmentService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
   shippingZone       ShippingZone?    @relation(fields: [shippingZoneId], references: [id], onDelete: SetNull)
+  company            Company?         @relation(fields: [companyId], references: [id], onDelete: SetNull)
   boxes              FbaShipmentBox[]
   items              FbaShipmentItem[]
 
   @@index([salesChannelId])
+  @@index([companyId])
   @@map("fba_shipment")
 }
 
