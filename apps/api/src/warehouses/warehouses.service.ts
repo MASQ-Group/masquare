@@ -28,18 +28,18 @@ export class WarehousesService {
   constructor(private readonly prisma: PrismaService) {}
 
   /** Flat list, alphabetical, used by pickers. */
-  async list(opts: { includeInactive?: boolean } = {}) {
+  async list(opts: { includeInactive?: boolean; companyIds?: string[] } = {}) {
     const rows = await this.prisma.warehouse.findMany({
-      where: { ...ACTIVE, ...(opts.includeInactive ? {} : { isActive: true }) },
+      where: { ...ACTIVE, ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : {}), ...(opts.includeInactive ? {} : { isActive: true }) },
       orderBy: { name: 'asc' },
     });
     return rows.map((w) => this.serialize(w));
   }
 
   /** The full tree with stock counts, for the Warehouses page. */
-  async tree(opts: { includeInactive?: boolean } = {}): Promise<WarehouseNode[]> {
+  async tree(opts: { includeInactive?: boolean; companyIds?: string[] } = {}): Promise<WarehouseNode[]> {
     const rows = await this.prisma.warehouse.findMany({
-      where: { ...ACTIVE, ...(opts.includeInactive ? {} : { isActive: true }) },
+      where: { ...ACTIVE, ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : {}), ...(opts.includeInactive ? {} : { isActive: true }) },
       orderBy: { name: 'asc' },
     });
 
@@ -82,19 +82,20 @@ export class WarehousesService {
     return roots;
   }
 
-  async get(id: string) {
-    const w = await this.prisma.warehouse.findFirst({ where: { id, ...ACTIVE } });
+  async get(id: string, companyIds?: string[]) {
+    const w = await this.prisma.warehouse.findFirst({ where: { id, ...ACTIVE, ...(companyIds ? { companyId: { in: companyIds } } : {}) } });
     if (!w) throw new NotFoundException('Warehouse not found');
     return this.serialize(w);
   }
 
-  async create(dto: CreateWarehouseDto, actorId?: string) {
+  async create(dto: CreateWarehouseDto, actorId?: string, companyId?: string) {
     const name = dto.name.trim();
     await this.assertNameFree(name);
     if (dto.parentWarehouseId) await this.assertExists(dto.parentWarehouseId, 'Parent warehouse not found');
 
     const w = await this.prisma.warehouse.create({
       data: {
+        companyId,
         name,
         type: dto.type ?? 'physical',
         parentWarehouseId: dto.parentWarehouseId ?? null,

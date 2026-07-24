@@ -10,6 +10,8 @@ export interface StockQuery {
   includeChildren?: boolean;
   /** Only rows with a non-zero balance. */
   nonZeroOnly?: boolean;
+  /** Enforced company isolation (stock scopes via its warehouse's company). */
+  companyIds?: string[];
   page?: number;
   pageSize?: number;
 }
@@ -59,7 +61,7 @@ export class StockService {
   }
 
   /** Per-warehouse breakdown for one product, including excluded warehouses (flagged). */
-  async byProduct(productId: string) {
+  async byProduct(productId: string, companyIds?: string[]) {
     const product = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
       select: { id: true, mainSku: true, title: true },
@@ -67,7 +69,7 @@ export class StockService {
     if (!product) throw new NotFoundException('Product not found');
 
     const levels = await this.prisma.stockLevel.findMany({
-      where: { productId, warehouse: { deletedAt: null } },
+      where: { productId, warehouse: { deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) } },
       include: { warehouse: { select: { id: true, name: true, type: true, isActive: true, includeInInventory: true } } },
       orderBy: { warehouse: { name: 'asc' } },
     });
@@ -100,7 +102,7 @@ export class StockService {
     }
 
     const where: Prisma.StockLevelWhereInput = {
-      warehouse: { deletedAt: null },
+      warehouse: { deletedAt: null, ...(query.companyIds ? { companyId: { in: query.companyIds } } : {}) },
       product: { deletedAt: null },
       ...(warehouseIds ? { warehouseId: { in: warehouseIds } } : {}),
       ...(query.nonZeroOnly ? { quantityOnHand: { not: 0 } } : {}),
@@ -149,10 +151,11 @@ export class StockService {
   }
 
   /** Movement history, newest first. */
-  async movements(query: { productId?: string; warehouseId?: string; page?: number; pageSize?: number }) {
+  async movements(query: { productId?: string; warehouseId?: string; companyIds?: string[]; page?: number; pageSize?: number }) {
     const page = Math.max(1, query.page ?? 1);
     const pageSize = Math.min(500, Math.max(1, query.pageSize ?? 50));
     const where: Prisma.StockMovementWhereInput = {
+      ...(query.companyIds ? { warehouse: { companyId: { in: query.companyIds } } } : {}),
       ...(query.productId ? { productId: query.productId } : {}),
       ...(query.warehouseId ? { warehouseId: query.warehouseId } : {}),
     };

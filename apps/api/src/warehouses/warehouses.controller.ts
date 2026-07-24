@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 import { WarehousesService } from './warehouses.service';
 import { StockService } from './stock.service';
 import {
@@ -23,24 +24,24 @@ export class WarehousesController {
   constructor(private readonly svc: WarehousesService) {}
 
   @Get()
-  list(@Query('includeInactive') includeInactive?: string) {
-    return this.svc.list({ includeInactive: isTrue(includeInactive) });
+  list(@VisibleCompanies() companyIds: string[], @Query('includeInactive') includeInactive?: string) {
+    return this.svc.list({ includeInactive: isTrue(includeInactive), companyIds });
   }
 
   // Literal paths before ":id".
   @Get('tree')
-  tree(@Query('includeInactive') includeInactive?: string) {
-    return this.svc.tree({ includeInactive: isTrue(includeInactive) });
+  tree(@VisibleCompanies() companyIds: string[], @Query('includeInactive') includeInactive?: string) {
+    return this.svc.tree({ includeInactive: isTrue(includeInactive), companyIds });
   }
 
   @Post()
-  create(@Body() dto: CreateWarehouseDto, @CurrentUser() user: AuthUser) {
-    return this.svc.create(dto, user.sub);
+  create(@Body() dto: CreateWarehouseDto, @CurrentUser() user: AuthUser, @WriteCompany() companyId: string) {
+    return this.svc.create(dto, user.sub, companyId);
   }
 
   @Get(':id')
-  get(@Param('id') id: string) {
-    return this.svc.get(id);
+  get(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.get(id, companyIds);
   }
 
   @Patch(':id')
@@ -63,6 +64,7 @@ export class StockController {
 
   @Get()
   levels(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('warehouseId') warehouseId?: string,
     @Query('includeChildren') includeChildren?: string,
@@ -73,6 +75,7 @@ export class StockController {
     return this.svc.levels({
       q,
       warehouseId,
+      companyIds,
       includeChildren: isTrue(includeChildren),
       nonZeroOnly: isTrue(nonZeroOnly),
       page: page ? Number(page) : undefined,
@@ -82,6 +85,7 @@ export class StockController {
 
   @Get('movements')
   movements(
+    @VisibleCompanies() companyIds: string[],
     @Query('productId') productId?: string,
     @Query('warehouseId') warehouseId?: string,
     @Query('page') page?: string,
@@ -90,6 +94,7 @@ export class StockController {
     return this.svc.movements({
       productId,
       warehouseId,
+      companyIds,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });
@@ -116,7 +121,7 @@ export class StockController {
   }
 
   @Get('product/:productId')
-  byProduct(@Param('productId') productId: string) {
-    return this.svc.byProduct(productId);
+  byProduct(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.byProduct(productId, companyIds);
   }
 }
