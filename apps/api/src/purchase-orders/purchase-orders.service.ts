@@ -167,6 +167,10 @@ export class PurchaseOrdersService {
   }
 
   async create(dto: CreatePurchaseOrderDto, actorId?: string, companyId?: string) {
+    // The owning company is the caller's active company (stamped server-side); the dto
+    // fallback covers internal callers. A PO must belong to exactly one company.
+    const ownerCompanyId = companyId ?? dto.companyId;
+    if (!ownerCompanyId) throw new BadRequestException('Select a company first — a purchase order must belong to one.');
     await this.assertRefs(dto);
     // The vendor's treatment is snapshotted onto the order so editing the vendor
     // later never rewrites historical VAT.
@@ -181,7 +185,7 @@ export class PurchaseOrdersService {
       const po = await tx.purchaseOrder.create({
         data: {
           poNumber,
-          companyId: companyId ?? dto.companyId,
+          companyId: ownerCompanyId,
           vendorId: dto.vendorId,
           currency,
           ...this.costColumns(dto, currency),
@@ -222,7 +226,7 @@ export class PurchaseOrdersService {
       const po = await tx.purchaseOrder.update({
         where: { id },
         data: {
-          companyId: dto.companyId,
+          // Owning company is immutable after creation — never rewritten on edit.
           vendorId: dto.vendorId,
           currency,
           ...this.costColumns(dto, currency),

@@ -29,9 +29,11 @@ export const ALLOCATION_METHODS = ['weight', 'volumetric', 'quantity', 'value'] 
 export type AllocationMethod = (typeof ALLOCATION_METHODS)[number];
 
 export class CreatePurchaseOrderDto {
-  @ApiProperty()
+  // Optional: the owning company is the caller's active company, stamped server-side.
+  @ApiProperty({ required: false })
+  @IsOptional()
   @IsUUID()
-  companyId!: string;
+  companyId?: string;
 
   @ApiProperty()
   @IsUUID()

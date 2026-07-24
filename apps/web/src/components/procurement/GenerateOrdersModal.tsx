@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell, Select } from '@masquare/ui';
-import { companiesApi, procurementApi, vendorsApi, warehousesApi, type DemandRow } from '../../lib/api';
+import { procurementApi, vendorsApi, warehousesApi, type DemandRow } from '../../lib/api';
 
 interface Props {
   rows: DemandRow[];
@@ -19,11 +19,9 @@ const money = (v: number, ccy = 'EUR') => `${ccy === 'EUR' ? '€' : ccy + ' '}$
  * the server refuses otherwise.
  */
 export function GenerateOrdersModal({ rows, onClose, onGenerated }: Props) {
-  const { data: companies = [] } = useQuery({ queryKey: ['companies'], queryFn: () => companiesApi.list() });
   const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
   const { data: warehouses = [] } = useQuery({ queryKey: ['warehouses'], queryFn: () => warehousesApi.list() });
 
-  const [companyId, setCompanyId] = useState('');
   const [warehouseId, setWarehouseId] = useState('');
   const [busy, setBusy] = useState(false);
   // Per-product overrides, keyed by productId.
@@ -35,8 +33,6 @@ export function GenerateOrdersModal({ rows, onClose, onGenerated }: Props) {
   );
   const [vendorPick, setVendorPick] = useState<Record<string, string>>({});
 
-  if (!companyId && companies.length) setCompanyId(companies[0].id);
-
   const vendorFor = (r: DemandRow) => r.vendor?.id ?? vendorPick[r.productId] ?? '';
   const unassigned = rows.filter((r) => !vendorFor(r));
 
@@ -47,7 +43,6 @@ export function GenerateOrdersModal({ rows, onClose, onGenerated }: Props) {
   );
 
   const generate = async () => {
-    if (!companyId) { toast.error('Choose the issuing company'); return; }
     if (unassigned.length) { toast.error(`Pick a vendor for ${unassigned.length} product${unassigned.length === 1 ? '' : 's'}`); return; }
     const lines = rows.map((r) => ({
       productId: r.productId,
@@ -59,7 +54,7 @@ export function GenerateOrdersModal({ rows, onClose, onGenerated }: Props) {
 
     setBusy(true);
     try {
-      const res = await procurementApi.generateOrders({ companyId, destinationWarehouseId: warehouseId || null, lines });
+      const res = await procurementApi.generateOrders({ destinationWarehouseId: warehouseId || null, lines });
       toast.success(`${res.orderCount} draft purchase order${res.orderCount === 1 ? '' : 's'} created — review and submit`);
       onGenerated(res.created);
     } catch (e: any) {
@@ -83,10 +78,6 @@ export function GenerateOrdersModal({ rows, onClose, onGenerated }: Props) {
     >
       <div className="flex flex-col gap-5">
         <div className="grid grid-cols-2 items-start gap-4 max-[560px]:grid-cols-1">
-          <div>
-            <label className="label">Issuing company</label>
-            <Select value={companyId} onChange={setCompanyId} placeholder="— select" options={companies.map((c) => ({ value: c.id, label: c.officialName }))} />
-          </div>
           <div>
             <label className="label">Receive into <span className="font-normal text-n-400">(optional)</span></label>
             <Select

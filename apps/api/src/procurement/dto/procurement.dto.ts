@@ -27,9 +27,11 @@ export class GenerateOrderLineDto {
 }
 
 export class GenerateOrdersDto {
-  @ApiProperty({ description: 'Issuing legal entity for the generated purchase orders.' })
+  // Optional: the generated POs belong to the caller's active company (stamped server-side).
+  @ApiPropertyOptional({ description: 'Owning company; defaults to the active company.' })
+  @IsOptional()
   @IsUUID()
-  companyId!: string;
+  companyId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

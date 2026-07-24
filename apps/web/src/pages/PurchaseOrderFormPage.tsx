@@ -5,7 +5,7 @@ import { ChevronLeft, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DatePicker, Select } from '@masquare/ui';
 import {
-  companiesApi, purchaseOrdersApi, vendorsApi, warehousesApi,
+  purchaseOrdersApi, vendorsApi, warehousesApi,
   ALLOCATION_LABELS,
   type AllocationMethod, type Product, type PurchaseOrderInput, type RefLite,
 } from '../lib/api';
@@ -99,12 +99,10 @@ export function PurchaseOrderFormPage() {
   const confirm = useConfirm();
   const editing = !!id;
 
-  const { data: companies = [] } = useQuery({ queryKey: ['companies'], queryFn: () => companiesApi.list() });
   const { data: warehouses = [] } = useQuery({ queryKey: ['warehouses'], queryFn: () => warehousesApi.list() });
   const { data: existing } = useQuery({ queryKey: ['purchase-order', id], queryFn: () => purchaseOrdersApi.get(id!), enabled: editing });
 
   const [busy, setBusy] = useState(false);
-  const [companyId, setCompanyId] = useState('');
   const [vendor, setVendor] = useState<RefLite | null>(null);
   const [currency, setCurrency] = useState('EUR');
   const [expectedDelivery, setExpectedDelivery] = useState('');
@@ -130,15 +128,9 @@ export function PurchaseOrderFormPage() {
     setCurrency(vendorCard.currency);
   }, [vendorCard, editing, currencyTouched]);
 
-  // Default the issuing company once the list loads (single-company shops shouldn't have to pick).
-  useEffect(() => {
-    if (!editing && !companyId && companies.length) setCompanyId(companies[0].id);
-  }, [companies, editing, companyId]);
-
   // Hydrate when editing an existing draft.
   useEffect(() => {
     if (!existing) return;
-    setCompanyId(existing.company?.id ?? '');
     setVendor(existing.vendor ? { id: existing.vendor.id, name: existing.vendor.name } : null);
     setCurrency(existing.currency);
     setExpectedDelivery(existing.expectedDeliveryDate ? existing.expectedDeliveryDate.slice(0, 10) : '');
@@ -213,7 +205,6 @@ export function PurchaseOrderFormPage() {
   const locked = editing && existing && existing.status !== 'draft';
 
   const build = (): PurchaseOrderInput | null => {
-    if (!companyId) { toast.error('Pick the issuing company'); return null; }
     if (!vendor) { toast.error('Pick a vendor'); return null; }
     const clean = lines.filter((l) => l.productId && Number(l.quantityOrdered) > 0);
     if (!clean.length) { toast.error('Add at least one line with a product and quantity'); return null; }
@@ -221,7 +212,6 @@ export function PurchaseOrderFormPage() {
       if (l.unitCost.trim() === '' || Number(l.unitCost) < 0) { toast.error(`Enter a unit cost for ${l.sku || 'each line'}`); return null; }
     }
     return {
-      companyId,
       vendorId: vendor.id,
       currency,
       expectedDeliveryDate: expectedDelivery || null,
@@ -314,15 +304,7 @@ export function PurchaseOrderFormPage() {
       <div className="flex flex-col gap-5">
         {/* Header */}
         <div className="card p-5">
-          <div className="grid grid-cols-[1.3fr_1.3fr_0.6fr_0.6fr_1fr_1.1fr] items-start gap-4 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
-            <Field label="Issuing company">
-              <Select
-                value={companyId}
-                onChange={setCompanyId}
-                placeholder="— select"
-                options={companies.map((c) => ({ value: c.id, label: c.officialName }))}
-              />
-            </Field>
+          <div className="grid grid-cols-[1.6fr_0.6fr_0.6fr_1fr_1.1fr] items-start gap-4 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
             <Field label="Vendor">
               <RefField value={vendor} placeholder="Search vendors…" list={(q) => vendorsApi.list(q)} onChange={setVendor} />
             </Field>

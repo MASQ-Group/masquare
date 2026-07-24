@@ -1377,7 +1377,8 @@ export interface PurchaseOrderUnlockRequest {
 }
 
 export interface PurchaseOrderInput {
-  companyId: string;
+  /** Omitted from the client — the API stamps the active company. */
+  companyId?: string;
   vendorId: string;
   currency?: string;
   expectedDeliveryDate?: string | null;
@@ -1553,7 +1554,7 @@ export const procurementApi = {
   demand: (params: { q?: string; salesChannelId?: string; stockStatus?: string; from?: string; to?: string; page?: number; pageSize?: number }) =>
     api.get<DemandResponse>('/procurement/demand', { params }).then((r) => r.data),
   generateOrders: (body: {
-    companyId: string;
+    companyId?: string;
     currency?: string;
     destinationWarehouseId?: string | null;
     notes?: string | null;
