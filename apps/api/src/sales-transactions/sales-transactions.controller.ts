@@ -4,6 +4,7 @@ import { SalesTransactionsService, type TxQuery } from './sales-transactions.ser
 import { CreateSalesTransactionDto, DecideUnlockDto, ResolveTransactionDto, UpdateSalesTransactionDto } from './dto/sales-transaction.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { VisibleCompanies } from '../common/active-company.decorator';
 
 @ApiTags('sales-transactions')
 @ApiBearerAuth()
@@ -14,6 +15,7 @@ export class SalesTransactionsController {
 
   @Get()
   list(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('companyId') companyId?: string,
     @Query('salesChannelId') salesChannelId?: string | string[],
@@ -36,7 +38,7 @@ export class SalesTransactionsController {
   ) {
     const arr = (v?: string | string[]) => (v == null ? undefined : Array.isArray(v) ? v : [v]);
     const query: TxQuery = {
-      q, companyId, sku, dateFrom, dateTo,
+      q, companyIds, sku, dateFrom, dateTo,
       salesChannelId: arr(salesChannelId),
       destinationCountryId: arr(destinationCountryId),
       status: arr(status),
@@ -55,6 +57,7 @@ export class SalesTransactionsController {
   // --- Bulk actions & unlock requests (literal paths declared before ":id") ---
   @Get('ids')
   async ids(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('companyId') companyId?: string,
     @Query('salesChannelId') salesChannelId?: string | string[],
@@ -71,7 +74,7 @@ export class SalesTransactionsController {
   ) {
     const arr = (v?: string | string[]) => (v == null ? undefined : Array.isArray(v) ? v : [v]);
     const ids = await this.svc.allIds({
-      q, companyId, sku, dateFrom, dateTo,
+      q, companyIds, sku, dateFrom, dateTo,
       salesChannelId: arr(salesChannelId),
       destinationCountryId: arr(destinationCountryId),
       status: arr(status),
@@ -86,6 +89,7 @@ export class SalesTransactionsController {
 
   @Get('export')
   exportRows(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('companyId') companyId?: string,
     @Query('salesChannelId') salesChannelId?: string | string[],
@@ -104,7 +108,7 @@ export class SalesTransactionsController {
   ) {
     const arr = (v?: string | string[]) => (v == null ? undefined : Array.isArray(v) ? v : [v]);
     return this.svc.exportRows({
-      q, companyId, sku, dateFrom, dateTo,
+      q, companyIds, sku, dateFrom, dateTo,
       salesChannelId: arr(salesChannelId),
       destinationCountryId: arr(destinationCountryId),
       status: arr(status),

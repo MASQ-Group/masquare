@@ -9,6 +9,8 @@ import { CreateSalesTransactionDto, SalesTransactionItemDto, UpdateSalesTransact
 export interface TxQuery {
   q?: string;
   companyId?: string;
+  /** Enforced company isolation: the companies the caller may see. */
+  companyIds?: string[];
   salesChannelId?: string[];
   destinationCountryId?: string[];
   status?: string[];
@@ -573,7 +575,8 @@ export class SalesTransactionsService {
    *  profit tier and hasAlert — which are applied in memory after serialization). */
   private buildWhere(query: TxQuery): Prisma.SalesTransactionWhereInput {
     const and: Prisma.SalesTransactionWhereInput[] = [{ deletedAt: null }];
-    if (query.companyId) and.push({ companyId: query.companyId });
+    if (query.companyIds) and.push({ companyId: { in: query.companyIds } });
+    else if (query.companyId) and.push({ companyId: query.companyId });
     if (query.salesChannelId?.length) and.push({ salesChannelId: { in: query.salesChannelId } });
     if (query.destinationCountryId?.length) and.push({ destinationCountryId: { in: query.destinationCountryId } });
     if (query.status?.length) and.push({ status: { in: query.status } });
