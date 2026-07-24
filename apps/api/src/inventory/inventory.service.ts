@@ -8,6 +8,8 @@ export interface InventoryQuery {
   vendorId?: string;
   /** all (default) | in_stock (positive on-hand) */
   filter?: string;
+  /** Enforced company isolation: stock quantities reflect only these companies' warehouses. */
+  companyIds?: string[];
   page?: number;
   pageSize?: number;
 }
@@ -62,7 +64,7 @@ export class InventoryService {
     // "In stock" restricts to products physically on a shelf right now. Computed once up
     // front so the paged query and count both see the same restricted set.
     if (query.filter === 'in_stock') {
-      const stocked = await this.stock.stockedProductIds();
+      const stocked = await this.stock.stockedProductIds(query.companyIds);
       where.id = { in: stocked };
     }
 
@@ -92,9 +94,9 @@ export class InventoryService {
 
     // Three batched aggregates for the whole page — never per row.
     const [onHand, ordered, committed] = await Promise.all([
-      this.stock.availabilityMap(ids),
-      this.openOrderedMap(ids),
-      this.committedMap(ids),
+      this.stock.availabilityMap(ids, query.companyIds),
+      this.openOrderedMap(ids, query.companyIds),
+      this.committedMap(ids, query.companyIds),
     ]);
 
     const rows = products.map((p) => {
@@ -174,11 +176,11 @@ export class InventoryService {
   }
 
   /** Outstanding units on POs still being delivered, summed per product. */
-  private async openOrderedMap(productIds: string[]): Promise<Map<string, number>> {
+  private async openOrderedMap(productIds: string[], companyIds?: string[]): Promise<Map<string, number>> {
     const lines = await this.prisma.purchaseOrderLine.findMany({
       where: {
         productId: { in: productIds },
-        purchaseOrder: { deletedAt: null, status: { in: ['submitted', 'partially_received'] } },
+        purchaseOrder: { deletedAt: null, status: { in: ['submitted', 'partially_received'] }, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
       },
       select: { productId: true, quantityOrdered: true, quantityReceived: true },
     });
@@ -192,9 +194,9 @@ export class InventoryService {
   }
 
   /** Units owed to open (unshipped, non-cancelled) sales, summed per product. */
-  private async committedMap(productIds: string[]): Promise<Map<string, number>> {
+  private async committedMap(productIds: string[], companyIds?: string[]): Promise<Map<string, number>> {
     const items = await this.prisma.salesTransactionItem.findMany({
-      where: { deletedAt: null, productId: { in: productIds }, transaction: OPEN_TRANSACTION },
+      where: { deletedAt: null, productId: { in: productIds }, transaction: { ...OPEN_TRANSACTION, ...(companyIds ? { companyId: { in: companyIds } } : {}) } },
       select: { productId: true, quantity: true },
     });
     const map = new Map<string, number>();

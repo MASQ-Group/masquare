@@ -25,6 +25,7 @@ export class InventoryController {
   /** Per-product stock status: on hand, committed, on order, available, average cost. */
   @Get()
   list(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('vendorId') vendorId?: string,
     @Query('filter') filter?: string,
@@ -35,6 +36,7 @@ export class InventoryController {
       q,
       vendorId,
       filter,
+      companyIds,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });

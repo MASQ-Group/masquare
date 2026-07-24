@@ -10,6 +10,8 @@ export interface DemandQuery {
   salesChannelId?: string;
   /** all | needs_ordering | partial | in_stock */
   stockStatus?: string;
+  /** Enforced company isolation: demand + stock reflect only these companies. */
+  companyIds?: string[];
   from?: string;
   to?: string;
   page?: number;
@@ -53,6 +55,7 @@ export class ProcurementService {
         productId: { not: null }, // unlinked SKUs can't be ordered — they surface as catalogue alerts
         transaction: {
           ...OPEN_TRANSACTION,
+          ...(query.companyIds ? { companyId: { in: query.companyIds } } : {}),
           ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
           ...(query.from || query.to
             ? { date: { ...(query.from ? { gte: new Date(query.from) } : {}), ...(query.to ? { lte: endOfDay(query.to) } : {}) } }
@@ -114,7 +117,7 @@ export class ProcurementService {
           media: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' }, take: 1, select: { url: true } },
         },
       }),
-      this.stock.availabilityMap(productIds),
+      this.stock.availabilityMap(productIds, query.companyIds),
     ]);
     const productById = new Map(products.map((p) => [p.id, p]));
 

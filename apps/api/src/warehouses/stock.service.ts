@@ -26,10 +26,15 @@ export class StockService {
 
   // ---------------------------------------------------------------- reads
 
-  /** Company-wide sellable quantity for one product. */
-  async availabilityFor(productId: string): Promise<number> {
+  /** Sellable warehouses, optionally narrowed to the companies the caller may see. */
+  private sellableWhere(companyIds?: string[]): Prisma.WarehouseWhereInput {
+    return { ...SELLABLE_WAREHOUSE, ...(companyIds ? { companyId: { in: companyIds } } : {}) };
+  }
+
+  /** Company-wide sellable quantity for one product (optionally scoped to given companies). */
+  async availabilityFor(productId: string, companyIds?: string[]): Promise<number> {
     const agg = await this.prisma.stockLevel.aggregate({
-      where: { productId, warehouse: SELLABLE_WAREHOUSE },
+      where: { productId, warehouse: this.sellableWhere(companyIds) },
       _sum: { quantityOnHand: true },
     });
     return agg._sum.quantityOnHand ?? 0;
@@ -39,21 +44,21 @@ export class StockService {
    * Sellable quantity for many products at once — one query, not N.
    * Products with no stock row are absent from the map; callers treat that as 0.
    */
-  async availabilityMap(productIds: string[]): Promise<Map<string, number>> {
+  async availabilityMap(productIds: string[], companyIds?: string[]): Promise<Map<string, number>> {
     if (productIds.length === 0) return new Map();
     const rows = await this.prisma.stockLevel.groupBy({
       by: ['productId'],
-      where: { productId: { in: productIds }, warehouse: SELLABLE_WAREHOUSE },
+      where: { productId: { in: productIds }, warehouse: this.sellableWhere(companyIds) },
       _sum: { quantityOnHand: true },
     });
     return new Map(rows.map((r) => [r.productId, r._sum.quantityOnHand ?? 0]));
   }
 
   /** Ids of products physically on a sellable shelf right now (positive on-hand). */
-  async stockedProductIds(): Promise<string[]> {
+  async stockedProductIds(companyIds?: string[]): Promise<string[]> {
     const rows = await this.prisma.stockLevel.groupBy({
       by: ['productId'],
-      where: { warehouse: SELLABLE_WAREHOUSE },
+      where: { warehouse: this.sellableWhere(companyIds) },
       _sum: { quantityOnHand: true },
       having: { quantityOnHand: { _sum: { gt: 0 } } },
     });

@@ -2,7 +2,7 @@ import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
-import { WriteCompany } from '../common/active-company.decorator';
+import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 import { ProcurementService, type DemandQuery } from './procurement.service';
 import { GenerateOrdersDto } from './dto/procurement.dto';
 
@@ -16,6 +16,7 @@ export class ProcurementController {
   /** The demand workbench: what open sales need, and whether stock covers it. */
   @Get('demand')
   demand(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('salesChannelId') salesChannelId?: string,
     @Query('stockStatus') stockStatus?: string,
@@ -25,7 +26,7 @@ export class ProcurementController {
     @Query('pageSize') pageSize?: string,
   ) {
     const query: DemandQuery = {
-      q, salesChannelId, stockStatus, from, to,
+      q, salesChannelId, stockStatus, companyIds, from, to,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     };
