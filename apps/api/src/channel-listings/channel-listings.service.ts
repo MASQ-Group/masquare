@@ -11,6 +11,8 @@ const PALETTE = ['#F59B00', '#0064D2', '#6E56CF', '#7AB55C', '#E0447B', '#14A79D
 export interface ListingsQuery {
   q?: string;
   channelId?: string;
+  /** Enforced company isolation: the companies the caller may see. */
+  companyIds?: string[];
   page?: number;
   pageSize?: number;
 }
@@ -34,9 +36,9 @@ export class ChannelListingsService {
   }
 
   /** The connected channels (Amazon marketplaces) that can carry listings. */
-  async channels() {
+  async channels(companyIds?: string[]) {
     const rows = await this.prisma.channelIntegration.findMany({
-      where: { ...ACTIVE, status: 'active', channelType: 'amazon' },
+      where: { ...ACTIVE, status: 'active', channelType: 'amazon', ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}) },
       orderBy: { name: 'asc' },
       select: { id: true, name: true, marketplace: true, channelType: true, targetSalesChannelId: true },
     });
@@ -95,8 +97,8 @@ export class ChannelListingsService {
   }
 
   /** Pull listings from the given (or all active Amazon) channels into ChannelListing. */
-  async sync(integrationIds?: string[]) {
-    const where: Prisma.ChannelIntegrationWhereInput = { ...ACTIVE, status: 'active', channelType: 'amazon', ...(integrationIds?.length ? { id: { in: integrationIds } } : {}) };
+  async sync(integrationIds?: string[], companyIds?: string[]) {
+    const where: Prisma.ChannelIntegrationWhereInput = { ...ACTIVE, status: 'active', channelType: 'amazon', ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}), ...(integrationIds?.length ? { id: { in: integrationIds } } : {}) };
     const ints = await this.prisma.channelIntegration.findMany({ where, select: { id: true, name: true } });
     const skuMap = await this.buildSkuMap();
     const now = new Date();
@@ -139,9 +141,14 @@ export class ChannelListingsService {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 25));
     const q = query.q?.trim();
+    // Company isolation: only listings owned by a company the user may see.
+    const listingScope: Prisma.ChannelListingWhereInput = {
+      ...(query.companyIds ? { companyId: { in: query.companyIds } } : {}),
+      ...(query.channelId ? { integrationId: query.channelId } : {}),
+    };
     const where: Prisma.ProductWhereInput = {
       ...ACTIVE,
-      channelListings: { some: query.channelId ? { integrationId: query.channelId } : {} },
+      channelListings: { some: listingScope },
       ...(q ? { OR: [{ mainSku: { contains: q, mode: 'insensitive' } }, { title: { contains: q, mode: 'insensitive' } }, { aliases: { some: { skuValue: { contains: q, mode: 'insensitive' } } } }] } : {}),
     };
     const [total, products] = await this.prisma.$transaction([
@@ -152,7 +159,7 @@ export class ChannelListingsService {
           id: true, mainSku: true, title: true,
           brand: { select: { name: true } },
           availability: { select: { quantity: true } },
-          channelListings: { select: { integrationId: true, channelSku: true, asin: true, listedPrice: true, currency: true, listedQuantity: true, fulfilmentChannel: true, listingStatus: true } },
+          channelListings: { where: query.companyIds ? { companyId: { in: query.companyIds } } : undefined, select: { integrationId: true, channelSku: true, asin: true, listedPrice: true, currency: true, listedQuantity: true, fulfilmentChannel: true, listingStatus: true } },
         },
       }),
     ]);
@@ -168,7 +175,7 @@ export class ChannelListingsService {
     });
 
     // Estimated profit/margin per listed cell, using the same economics as a booked sale.
-    const channels = await this.channels();
+    const channels = await this.channels(query.companyIds);
     const scByInt = new Map(channels.map((c) => [c.id, c.salesChannelId]));
     const econInputs: Array<{ key: string; productId: string; salesChannelId: string; grossNative: number | null; currency: string | null }> = [];
     for (const row of rows) {
@@ -192,7 +199,7 @@ export class ChannelListingsService {
 
   /** One product across all its channels (for the detail page). Real listing data only —
    *  performance analytics (units sold, buy box, revenue) are placeholders in the UI. */
-  async detail(productId: string) {
+  async detail(productId: string, companyIds?: string[]) {
     const p = await this.prisma.product.findFirst({
       where: { id: productId, ...ACTIVE },
       select: {
@@ -200,13 +207,14 @@ export class ChannelListingsService {
         brand: { select: { name: true } },
         availability: { select: { quantity: true, updatedAt: true } },
         channelListings: {
+          where: companyIds ? { companyId: { in: companyIds } } : undefined,
           select: { integrationId: true, channelSku: true, asin: true, listedPrice: true, currency: true, listedQuantity: true, fulfilmentChannel: true, listingStatus: true, lastPulledAt: true },
           orderBy: { integration: { name: 'asc' } },
         },
       },
     });
     if (!p) throw new NotFoundException('Product not found');
-    const channels = await this.channels();
+    const channels = await this.channels(companyIds);
     const byInt = new Map(p.channelListings.map((l) => [l.integrationId, l]));
     const econInputs = channels
       .filter((ch) => ch.salesChannelId && byInt.get(ch.id)?.listedPrice != null)
