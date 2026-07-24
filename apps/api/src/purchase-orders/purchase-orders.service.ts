@@ -11,6 +11,8 @@ export interface PurchaseOrderQuery {
   status?: string;
   vendorId?: string;
   companyId?: string;
+  /** Enforced company isolation: the companies the caller may see. */
+  companyIds?: string[];
   from?: string;
   to?: string;
   page?: number;
@@ -38,7 +40,7 @@ export class PurchaseOrdersService {
       ...ACTIVE,
       ...(query.status ? { status: query.status } : {}),
       ...(query.vendorId ? { vendorId: query.vendorId } : {}),
-      ...(query.companyId ? { companyId: query.companyId } : {}),
+      ...(query.companyIds ? { companyId: { in: query.companyIds } } : query.companyId ? { companyId: query.companyId } : {}),
       ...(query.from || query.to
         ? { createdAt: { ...(query.from ? { gte: new Date(query.from) } : {}), ...(query.to ? { lte: endOfDay(query.to) } : {}) } }
         : {}),
@@ -110,9 +112,9 @@ export class PurchaseOrdersService {
     };
   }
 
-  async get(id: string) {
+  async get(id: string, companyIds?: string[]) {
     const po = await this.prisma.purchaseOrder.findFirst({
-      where: { id, ...ACTIVE },
+      where: { id, ...ACTIVE, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
       include: {
         vendor: true,
         company: true,
@@ -157,7 +159,7 @@ export class PurchaseOrdersService {
     };
   }
 
-  async create(dto: CreatePurchaseOrderDto, actorId?: string) {
+  async create(dto: CreatePurchaseOrderDto, actorId?: string, companyId?: string) {
     await this.assertRefs(dto);
     // The vendor's treatment is snapshotted onto the order so editing the vendor
     // later never rewrites historical VAT.
@@ -172,7 +174,7 @@ export class PurchaseOrdersService {
       const po = await tx.purchaseOrder.create({
         data: {
           poNumber,
-          companyId: dto.companyId,
+          companyId: companyId ?? dto.companyId,
           vendorId: dto.vendorId,
           currency,
           ...this.costColumns(dto, currency),

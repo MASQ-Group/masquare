@@ -6,6 +6,8 @@ export interface VendorReturnQuery {
   q?: string;
   vendorId?: string;
   purchaseOrderId?: string;
+  /** Enforced company isolation. */
+  companyIds?: string[];
   page?: number;
   pageSize?: number;
 }

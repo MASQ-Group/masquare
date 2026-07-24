@@ -12,6 +12,8 @@ export interface GoodsReceiptQuery {
   status?: string;
   purchaseOrderId?: string;
   vendorId?: string;
+  /** Enforced company isolation (scoped via the parent PO's company). */
+  companyIds?: string[];
   from?: string;
   to?: string;
   page?: number;
@@ -48,7 +50,9 @@ export class GoodsReceiptsService {
       ...ACTIVE,
       ...statusWhere,
       ...(query.purchaseOrderId ? { purchaseOrderId: query.purchaseOrderId } : {}),
-      ...(query.vendorId ? { purchaseOrder: { vendorId: query.vendorId } } : {}),
+      ...(query.vendorId || query.companyIds
+        ? { purchaseOrder: { ...(query.vendorId ? { vendorId: query.vendorId } : {}), ...(query.companyIds ? { companyId: { in: query.companyIds } } : {}) } }
+        : {}),
       ...(query.from || query.to
         ? { createdAt: { ...(query.from ? { gte: new Date(query.from) } : {}), ...(query.to ? { lte: endOfDay(query.to) } : {}) } }
         : {}),
@@ -100,8 +104,8 @@ export class GoodsReceiptsService {
     };
   }
 
-  async get(id: string) {
-    const r = await this.prisma.goodsReceipt.findFirst({ where: { id, ...ACTIVE }, include: FULL_INCLUDE });
+  async get(id: string, companyIds?: string[]) {
+    const r = await this.prisma.goodsReceipt.findFirst({ where: { id, ...ACTIVE, ...(companyIds ? { purchaseOrder: { companyId: { in: companyIds } } } : {}) }, include: FULL_INCLUDE });
     if (!r) throw new NotFoundException('Goods receipt not found');
     return this.serialize(r);
   }
@@ -163,6 +167,7 @@ export class GoodsReceiptsService {
       data: {
         receiptNumber,
         purchaseOrderId,
+        companyId: po.companyId, // denormalised from the owning PO for uniform scoping
         status: 'pending',
         isBackorder: opts.isBackorder ?? false,
         parentReceiptId: opts.parentReceiptId ?? null,

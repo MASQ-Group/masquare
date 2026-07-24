@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 import { PurchaseOrdersService, type PurchaseOrderQuery } from './purchase-orders.service';
 import { GoodsReceiptsService, type GoodsReceiptQuery } from './goods-receipts.service';
 import { AmendPurchaseOrderDto, CancelPurchaseOrderDto, CreatePurchaseOrderDto, DecideUnlockDto, RequestUnlockDto, UnlockPurchaseOrderDto, UpdatePurchaseOrderDto } from './dto/purchase-order.dto';
@@ -20,16 +21,16 @@ export class PurchaseOrdersController {
 
   @Get()
   list(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('status') status?: string,
     @Query('vendorId') vendorId?: string,
-    @Query('companyId') companyId?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    const query: PurchaseOrderQuery = { q, status, vendorId, companyId, from, to, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
+    const query: PurchaseOrderQuery = { q, status, vendorId, companyIds, from, to, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
     return this.svc.list(query);
   }
 
@@ -50,14 +51,14 @@ export class PurchaseOrdersController {
   /** Every PO id matching a filter — for "select all matching" in the list. */
   @Get('ids')
   ids(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('status') status?: string,
     @Query('vendorId') vendorId?: string,
-    @Query('companyId') companyId?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    return this.svc.allIds({ q, status, vendorId, companyId, from, to });
+    return this.svc.allIds({ q, status, vendorId, companyIds, from, to });
   }
 
   /** Submit many drafts in one go; non-drafts are skipped with a reason. */
@@ -67,13 +68,13 @@ export class PurchaseOrdersController {
   }
 
   @Post()
-  create(@Body() dto: CreatePurchaseOrderDto, @CurrentUser() user: AuthUser) {
-    return this.svc.create(dto, user.sub);
+  create(@Body() dto: CreatePurchaseOrderDto, @CurrentUser() user: AuthUser, @WriteCompany() companyId: string) {
+    return this.svc.create(dto, user.sub, companyId);
   }
 
   @Get(':id')
-  get(@Param('id') id: string) {
-    return this.svc.get(id);
+  get(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.get(id, companyIds);
   }
 
   @Patch(':id')
@@ -144,6 +145,7 @@ export class GoodsReceiptsController {
 
   @Get()
   list(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('status') status?: string,
     @Query('purchaseOrderId') purchaseOrderId?: string,
@@ -154,7 +156,7 @@ export class GoodsReceiptsController {
     @Query('pageSize') pageSize?: string,
   ) {
     const query: GoodsReceiptQuery = {
-      q, status, purchaseOrderId, vendorId, from, to,
+      q, status, purchaseOrderId, vendorId, companyIds, from, to,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     };
@@ -162,8 +164,8 @@ export class GoodsReceiptsController {
   }
 
   @Get(':id')
-  get(@Param('id') id: string) {
-    return this.svc.get(id);
+  get(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.get(id, companyIds);
   }
 
   /** Record what arrived: moves stock, updates the PO and raises any backorder. */

@@ -23,6 +23,7 @@ export class VendorReturnsService {
     const pageSize = Math.min(200, Math.max(1, query.pageSize ?? 25));
     const where: Prisma.VendorReturnWhereInput = {
       ...ACTIVE,
+      ...(query.companyIds ? { companyId: { in: query.companyIds } } : {}),
       ...(query.vendorId ? { vendorId: query.vendorId } : {}),
       ...(query.purchaseOrderId ? { purchaseOrderId: query.purchaseOrderId } : {}),
       ...(query.q?.trim()
@@ -74,9 +75,9 @@ export class VendorReturnsService {
     };
   }
 
-  async get(id: string) {
+  async get(id: string, companyIds?: string[]) {
     const r = await this.prisma.vendorReturn.findFirst({
-      where: { id, ...ACTIVE },
+      where: { id, ...ACTIVE, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
       include: {
         vendor: { select: { id: true, name: true } },
         purchaseOrder: { select: { id: true, poNumber: true } },
@@ -164,7 +165,7 @@ export class VendorReturnsService {
    * back stock that is not there, and finding that out half-way through would leave the
    * ledger describing a movement that never happened.
    */
-  async create(dto: CreateVendorReturnDto, actorId?: string) {
+  async create(dto: CreateVendorReturnDto, actorId?: string, companyId?: string) {
     if (!dto.lines?.length) throw new BadRequestException('Add at least one line to return');
 
     const [vendor, warehouse] = await Promise.all([
@@ -278,6 +279,7 @@ export class VendorReturnsService {
       const created = await tx.vendorReturn.create({
         data: {
           returnNumber,
+          companyId,
           vendorId: dto.vendorId,
           purchaseOrderId: dto.purchaseOrderId ?? null,
           warehouseId: dto.warehouseId,

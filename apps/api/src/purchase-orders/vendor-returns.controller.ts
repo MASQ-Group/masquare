@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/co
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 import { VendorReturnsService } from './vendor-returns.service';
 import { CreateVendorReturnDto } from './dto/vendor-return.dto';
 
@@ -14,6 +15,7 @@ export class VendorReturnsController {
 
   @Get()
   list(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('vendorId') vendorId?: string,
     @Query('purchaseOrderId') purchaseOrderId?: string,
@@ -21,7 +23,7 @@ export class VendorReturnsController {
     @Query('pageSize') pageSize?: string,
   ) {
     return this.svc.list({
-      q, vendorId, purchaseOrderId,
+      q, vendorId, purchaseOrderId, companyIds,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });
@@ -34,13 +36,13 @@ export class VendorReturnsController {
   }
 
   @Get(':id')
-  get(@Param('id') id: string) {
-    return this.svc.get(id);
+  get(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.get(id, companyIds);
   }
 
   /** Posts immediately: stock out, cost out at average, PO reopened if it was closed. */
   @Post()
-  create(@Body() dto: CreateVendorReturnDto, @CurrentUser() user: AuthUser) {
-    return this.svc.create(dto, user.sub);
+  create(@Body() dto: CreateVendorReturnDto, @CurrentUser() user: AuthUser, @WriteCompany() companyId: string) {
+    return this.svc.create(dto, user.sub, companyId);
   }
 }
