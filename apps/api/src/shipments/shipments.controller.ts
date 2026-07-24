@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { VisibleCompanies } from '../common/active-company.decorator';
 import { ShipmentsService, type ShipmentQuery } from './shipments.service';
 import { CreateCombinedShipmentDto, CreateShipmentBatchDto, CreateShipmentDto, SetFulfilmentDto, ShipmentImportCommitDto, ShipmentImportValidateDto, UpdateShipmentDto } from './dto/shipment.dto';
 
@@ -14,43 +15,43 @@ export class ShipmentsController {
 
   @Get()
   list(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
-    @Query('companyId') companyId?: string,
     @Query('salesChannelId') salesChannelId?: string,
     @Query('type') type?: string,
     @Query('sortDir') sortDir?: 'asc' | 'desc',
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    const query: ShipmentQuery = { q, companyId, salesChannelId, type, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
+    const query: ShipmentQuery = { q, companyIds, salesChannelId, type, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
     return this.svc.list(query);
   }
 
   // Literal paths before ":id".
   @Get('pending')
   pending(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
-    @Query('companyId') companyId?: string,
     @Query('salesChannelId') salesChannelId?: string,
     @Query('channelKind') channelKind?: 'local' | 'channel',
     @Query('sortDir') sortDir?: 'asc' | 'desc',
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    const query: ShipmentQuery = { q, companyId, salesChannelId, channelKind, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
+    const query: ShipmentQuery = { q, companyIds, salesChannelId, channelKind, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
     return this.svc.pending(query);
   }
 
   @Get('export')
   exportRows(
+    @VisibleCompanies() companyIds: string[],
     @Query('scope') scope?: string,
     @Query('q') q?: string,
-    @Query('companyId') companyId?: string,
     @Query('salesChannelId') salesChannelId?: string,
     @Query('type') type?: string,
     @Query('channelKind') channelKind?: 'local' | 'channel',
   ) {
-    return this.svc.exportRows({ q, companyId, salesChannelId, type, channelKind }, scope === 'pending' ? 'pending' : 'recorded');
+    return this.svc.exportRows({ q, companyIds, salesChannelId, type, channelKind }, scope === 'pending' ? 'pending' : 'recorded');
   }
 
   @Post('import/validate')

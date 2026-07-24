@@ -7,6 +7,8 @@ import { CreateCombinedShipmentDto, CreateShipmentBatchDto, CreateShipmentDto, U
 export interface ShipmentQuery {
   q?: string;
   companyId?: string;
+  /** Enforced company isolation (scoped via the shipment's sales transaction). */
+  companyIds?: string[];
   salesChannelId?: string;
   type?: string;
   /** Pending list only: 'local' = our own delivery/pickup, 'channel' = marketplace. */
@@ -66,11 +68,11 @@ export class ShipmentsService {
     const where: Prisma.ShipmentWhereInput = {
       deletedAt: null,
       ...(query.type ? { type: query.type } : {}),
-      ...(query.q || query.companyId || query.salesChannelId
+      ...(query.q || query.companyIds || query.companyId || query.salesChannelId
         ? {
             transaction: {
               deletedAt: null,
-              ...(query.companyId ? { companyId: query.companyId } : {}),
+              ...(query.companyIds ? { companyId: { in: query.companyIds } } : query.companyId ? { companyId: query.companyId } : {}),
               ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
               ...(query.q
                 ? {
@@ -104,7 +106,7 @@ export class ShipmentsService {
       fulfilmentStatus: { notIn: ['shipped', 'cancelled'] },
       resolution: { not: 'cancelled' },
       fulfilmentType: { not: 'FBA' },
-      ...(query.companyId ? { companyId: query.companyId } : {}),
+      ...(query.companyIds ? { companyId: { in: query.companyIds } } : query.companyId ? { companyId: query.companyId } : {}),
       ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
       // Local = our own delivery/pickup (channel.kind 'local'); channel = everything else.
       ...(query.channelKind === 'local' ? { salesChannel: { is: { kind: 'local' } } } : {}),

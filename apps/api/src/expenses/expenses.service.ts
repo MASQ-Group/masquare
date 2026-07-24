@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExpenseCategoriesService } from './expense-categories.service';
 import { ExpenseDefinitionsService } from './expense-definitions.service';
@@ -92,9 +92,11 @@ export class ExpensesService {
 
   // ---- create / list / get / cancel ----
 
-  async create(dto: CreateExpenseDto, actorId?: string) {
+  async create(dto: CreateExpenseDto, actorId?: string, allowedCompanyIds?: string[]) {
     const def = await this.prisma.expenseDefinition.findFirst({ where: { id: dto.definitionId, ...ACTIVE }, select: { id: true } });
     if (!def) throw new NotFoundException('Expense name not found');
+    // Company isolation: an expense may only be booked against a company the user is granted.
+    if (allowedCompanyIds && !allowedCompanyIds.includes(dto.companyId)) throw new ForbiddenException('You do not have access to that company.');
     const company = await this.prisma.company.findFirst({ where: { id: dto.companyId, ...ACTIVE }, select: { id: true } });
     if (!company) throw new NotFoundException('Company not found');
 
@@ -240,11 +242,11 @@ export class ExpensesService {
     return { created, skipped, errors };
   }
 
-  async list(opts: { companyId?: string; includeCancelled?: boolean } = {}) {
+  async list(opts: { companyId?: string; companyIds?: string[]; includeCancelled?: boolean } = {}) {
     const rows = await this.prisma.expense.findMany({
       where: {
         ...ACTIVE,
-        ...(opts.companyId ? { companyId: opts.companyId } : {}),
+        ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : opts.companyId ? { companyId: opts.companyId } : {}),
         ...(opts.includeCancelled ? {} : { status: 'active' }),
       },
       include: {
@@ -259,9 +261,9 @@ export class ExpensesService {
     return rows.map((e) => this.serialize(e, now));
   }
 
-  async get(id: string) {
+  async get(id: string, companyIds?: string[]) {
     const e = await this.prisma.expense.findFirst({
-      where: { id, ...ACTIVE },
+      where: { id, ...ACTIVE, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
       include: {
         definition: { select: { code: true, name: true, categoryId: true, category: { select: { name: true } } } },
         tag: { select: { id: true, name: true, group: true } },
@@ -373,16 +375,16 @@ export class ExpensesService {
   // ---- monthly ledger + rollups (compute-on-read) ----
 
   /** Every expense's contribution to a single month, plus the month total (EUR). */
-  async monthly(month: string, companyId?: string) {
-    const rows = await this.loadAll(companyId);
+  async monthly(month: string, companyIds?: string[]) {
+    const rows = await this.loadAll(companyIds);
     const items = rows.map((e) => this.monthRow(e, month)).filter((x): x is NonNullable<typeof x> => x !== null)
       .sort((a, b) => b.monthEur - a.monthEur);
     return { month, totalEur: round(items.reduce((s, r) => s + r.monthEur, 0)), count: items.length, items };
   }
 
   /** A year's total plus its 12-month breakdown (EUR). Monthly ×12, annual as-is, once-off once. */
-  async annual(year: number, companyId?: string) {
-    const rows = await this.loadAll(companyId);
+  async annual(year: number, companyIds?: string[]) {
+    const rows = await this.loadAll(companyIds);
     const breakdown = Array.from({ length: 12 }, (_, i) => {
       const m = `${year}-${String(i + 1).padStart(2, '0')}`;
       const totalEur = round(rows.reduce((s, e) => { const r = this.monthRow(e, m); return s + (r ? r.monthEur : 0); }, 0));
@@ -429,9 +431,9 @@ export class ExpensesService {
     return this.get(expenseId);
   }
 
-  private async loadAll(companyId?: string) {
+  private async loadAll(companyIds?: string[]) {
     return this.prisma.expense.findMany({
-      where: { ...ACTIVE, ...(companyId ? { companyId } : {}) },
+      where: { ...ACTIVE, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
       include: { definition: { select: { code: true, name: true, category: { select: { name: true } } } }, amounts: { orderBy: { effectiveMonth: 'asc' } }, overrides: true },
     });
   }
