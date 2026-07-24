@@ -31,3 +31,7 @@ npm-debug.log*
 
 # Coverage
 coverage/
+
+# Database dumps (never commit — contains real data)
+*.dump
+*.sql
