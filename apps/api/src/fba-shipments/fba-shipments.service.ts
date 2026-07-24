@@ -369,10 +369,12 @@ export class FbaShipmentsService {
   };
 
   // --- CRUD ------------------------------------------------------------------
-  async list(query: { q?: string; salesChannelId?: string; status?: string; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) {
+  async list(query: { q?: string; salesChannelId?: string; status?: string; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number; companyIds?: string[] }) {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
     const and: any[] = [{ deletedAt: null }];
+    // Company isolation: only shipments owned by a company the user may see.
+    if (query.companyIds) and.push({ companyId: { in: query.companyIds } });
     if (query.salesChannelId) and.push({ salesChannelId: query.salesChannelId });
     if (query.status) and.push({ status: query.status });
     const q = query.q?.trim();
@@ -393,8 +395,8 @@ export class FbaShipmentsService {
     return { items: rows.map((r) => this.serialize(r)), total, page, pageSize };
   }
 
-  async get(id: string) {
-    const s = await this.prisma.fbaShipment.findFirst({ where: { id, deletedAt: null }, include: this.include });
+  async get(id: string, companyIds?: string[]) {
+    const s = await this.prisma.fbaShipment.findFirst({ where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) }, include: this.include });
     if (!s) throw new NotFoundException('FBA shipment not found');
     return this.serialize(s);
   }
@@ -441,12 +443,13 @@ export class FbaShipmentsService {
     };
   }
 
-  async create(dto: CreateFbaShipmentDto, actorId?: string) {
+  async create(dto: CreateFbaShipmentDto, actorId?: string, companyId?: string) {
     const est = await this.computeEstimate(dto);
     const created = await this.prisma.$transaction(async (tx) => {
       const shipment = await tx.fbaShipment.create({
         data: {
           date: dto.date ? new Date(dto.date) : new Date(),
+          companyId,
           ...this.headerData(dto, est),
           status: dto.status ?? 'draft',
           createdById: actorId,
@@ -461,8 +464,8 @@ export class FbaShipmentsService {
     return this.get(created);
   }
 
-  async update(id: string, dto: UpdateFbaShipmentDto, actorId?: string, isAdmin = false) {
-    const before = await this.get(id);
+  async update(id: string, dto: UpdateFbaShipmentDto, actorId?: string, isAdmin = false, companyIds?: string[]) {
+    const before = await this.get(id, companyIds);
     // A confirmed shipment is locked to non-admins (registering the actual cost is separate).
     if (before.status === 'confirmed' && !isAdmin) {
       throw new ForbiddenException('Confirmed FBA shipments can only be edited by an admin.');
@@ -495,15 +498,15 @@ export class FbaShipmentsService {
     return this.get(id);
   }
 
-  async setStatus(id: string, status: 'draft' | 'confirmed', actorId?: string) {
-    await this.get(id);
+  async setStatus(id: string, status: 'draft' | 'confirmed', actorId?: string, companyIds?: string[]) {
+    await this.get(id, companyIds);
     await this.prisma.fbaShipment.update({ where: { id }, data: { status, updatedById: actorId } });
     return this.get(id);
   }
 
   /** Register the actual shipping cost; re-allocate each line by its weight share. */
-  async setActualCost(id: string, actualCostEur: number, actorId?: string) {
-    const existing = await this.prisma.fbaShipment.findFirst({ where: { id, deletedAt: null }, include: { items: { where: { deletedAt: null } } } });
+  async setActualCost(id: string, actualCostEur: number, actorId?: string, companyIds?: string[]) {
+    const existing = await this.prisma.fbaShipment.findFirst({ where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) }, include: { items: { where: { deletedAt: null } } } });
     if (!existing) throw new NotFoundException('FBA shipment not found');
     const totalWeight = (existing.items ?? []).reduce(
       (sum: number, it: any) => sum + (it.unitWeightKg != null ? Number(it.unitWeightKg) * (it.quantity ?? 1) : 0), 0);
@@ -518,8 +521,8 @@ export class FbaShipmentsService {
     return this.get(id);
   }
 
-  async remove(id: string) {
-    await this.get(id);
+  async remove(id: string, companyIds?: string[]) {
+    await this.get(id, companyIds);
     await this.prisma.fbaShipment.update({ where: { id }, data: { deletedAt: new Date() } });
     return { ok: true };
   }

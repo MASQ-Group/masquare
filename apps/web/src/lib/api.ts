@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 const TOKEN_KEY = 'masquare.token';
+const ACTIVE_COMPANY_KEY = 'masquare.activeCompanyId';
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
@@ -11,6 +12,12 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers = config.headers ?? {};
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  // Active company scope — the API enforces it against the user's grants (company isolation).
+  const companyId = localStorage.getItem(ACTIVE_COMPANY_KEY);
+  if (companyId) {
+    config.headers = config.headers ?? {};
+    config.headers['x-company-id'] = companyId;
   }
   return config;
 });

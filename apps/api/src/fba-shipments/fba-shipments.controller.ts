@@ -6,6 +6,7 @@ import {
 } from './dto/fba-shipment.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 
 @ApiTags('fba-shipments')
 @ApiBearerAuth()
@@ -37,6 +38,7 @@ export class FbaShipmentsController {
 
   @Get()
   list(
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('salesChannelId') salesChannelId?: string,
     @Query('status') status?: string,
@@ -44,36 +46,36 @@ export class FbaShipmentsController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    return this.fba.list({ q, salesChannelId, status, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined });
+    return this.fba.list({ q, salesChannelId, status, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined, companyIds });
   }
 
   @Get(':id')
-  get(@Param('id') id: string) {
-    return this.fba.get(id);
+  get(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
+    return this.fba.get(id, companyIds);
   }
 
   @Post()
-  create(@Body() dto: CreateFbaShipmentDto, @CurrentUser() user: AuthUser) {
-    return this.fba.create(dto, user.sub);
+  create(@Body() dto: CreateFbaShipmentDto, @CurrentUser() user: AuthUser, @WriteCompany() companyId: string) {
+    return this.fba.create(dto, user.sub, companyId);
   }
 
   @Patch(':id/status')
-  setStatus(@Param('id') id: string, @Body() dto: SetStatusDto, @CurrentUser() user: AuthUser) {
-    return this.fba.setStatus(id, dto.status, user.sub);
+  setStatus(@Param('id') id: string, @Body() dto: SetStatusDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.fba.setStatus(id, dto.status, user.sub, companyIds);
   }
 
   @Patch(':id/actual-cost')
-  setActualCost(@Param('id') id: string, @Body() dto: SetActualCostDto, @CurrentUser() user: AuthUser) {
-    return this.fba.setActualCost(id, dto.actualCostEur, user.sub);
+  setActualCost(@Param('id') id: string, @Body() dto: SetActualCostDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.fba.setActualCost(id, dto.actualCostEur, user.sub, companyIds);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateFbaShipmentDto, @CurrentUser() user: AuthUser) {
-    return this.fba.update(id, dto, user.sub, user.isAdmin);
+  update(@Param('id') id: string, @Body() dto: UpdateFbaShipmentDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.fba.update(id, dto, user.sub, user.isAdmin, companyIds);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.fba.remove(id);
+  remove(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
+    return this.fba.remove(id, companyIds);
   }
 }

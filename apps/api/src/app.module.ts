@@ -1,8 +1,11 @@
 import { join } from 'path';
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ServeStaticModule } from '@nestjs/serve-static';
+import { CompanyScopeService } from './common/company-scope';
+import { CompanyScopeInterceptor } from './common/company-scope.interceptor';
 import { PrismaModule } from './prisma/prisma.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { IntegrationsModule } from './integrations/integrations.module';
@@ -65,6 +68,11 @@ import { StorageModule } from './storage/storage.module';
     AvailabilityModule,
     ChannelListingsModule,
     IntegrationsModule,
+  ],
+  providers: [
+    CompanyScopeService,
+    // Populates req.companyScope for every authenticated request (company isolation).
+    { provide: APP_INTERCEPTOR, useClass: CompanyScopeInterceptor },
   ],
 })
 export class AppModule {}
