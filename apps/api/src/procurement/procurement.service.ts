@@ -180,7 +180,7 @@ export class ProcurementService {
    * product, the quantity to order and the last known unit cost, all editable in the
    * draft. A product with no vendor must be given one in the request.
    */
-  async generateOrders(dto: GenerateOrdersDto, actorId?: string) {
+  async generateOrders(dto: GenerateOrdersDto, actorId?: string, companyId?: string) {
     if (!dto.lines?.length) throw new BadRequestException('Select at least one product to order');
 
     const productIds = [...new Set(dto.lines.map((l) => l.productId))];
@@ -231,6 +231,7 @@ export class ProcurementService {
           })),
         },
         actorId,
+        companyId, // enforced active company owns the generated POs
       );
       created.push({ id: po.id, poNumber: po.poNumber, vendorId, lineCount: lines.length });
     }

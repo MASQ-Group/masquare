@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { WriteCompany } from '../common/active-company.decorator';
 import { ProcurementService, type DemandQuery } from './procurement.service';
 import { GenerateOrdersDto } from './dto/procurement.dto';
 
@@ -33,7 +34,7 @@ export class ProcurementController {
 
   /** Turn a selection into draft purchase orders, one per vendor. */
   @Post('generate-orders')
-  generate(@Body() dto: GenerateOrdersDto, @CurrentUser() user: AuthUser) {
-    return this.svc.generateOrders(dto, user.sub);
+  generate(@Body() dto: GenerateOrdersDto, @CurrentUser() user: AuthUser, @WriteCompany() companyId: string) {
+    return this.svc.generateOrders(dto, user.sub, companyId);
   }
 }
