@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { SmartReferenceInput, type ReferenceOption } from '@masquare/ui';
 import { countriesApi } from '../../lib/api';
+import { Flag } from './Flag';
 
 interface Props {
   value: string | null;
@@ -26,11 +27,11 @@ export function CountrySelect({ value, onChange, valueKind = 'id', placeholder =
       .filter((c) => !exclude.has(keyOf(c)))
       .filter((c) => !q || c.name.toLowerCase().includes(q.toLowerCase()) || c.isoCode.toLowerCase().includes(q.toLowerCase()))
       .slice(0, 40)
-      .map((c) => ({ id: keyOf(c), label: c.name, sub: c.isoCode }));
+      .map((c) => ({ id: keyOf(c), label: c.name, sub: c.isoCode, icon: <Flag code={c.isoCode} /> }));
 
   return (
     <SmartReferenceInput
-      value={selected ? { id: value!, label: selected.name, sub: selected.isoCode } : null}
+      value={selected ? { id: value!, label: selected.name, sub: selected.isoCode, icon: <Flag code={selected.isoCode} /> } : null}
       placeholder={placeholder}
       disabled={disabled}
       fetchSuggestions={fetchSuggestions}

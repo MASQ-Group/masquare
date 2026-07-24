@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { ModalShell, Select } from '@masquare/ui';
 import { companiesApi, modulesApi, usersApi, type User } from '../lib/api';
 
 interface Props {
@@ -117,10 +117,14 @@ export function UserModal({ user, onClose, onSaved }: Props) {
           </div>
           <div>
             <label className="label">Status</label>
-            <select className="input" value={form.status} onChange={(e) => set({ status: e.target.value as any })}>
-              <option value="active">Active</option>
-              <option value="disabled">Disabled</option>
-            </select>
+            <Select
+              value={form.status}
+              onChange={(v) => set({ status: v as any })}
+              options={[
+                { value: 'active', label: 'Active' },
+                { value: 'disabled', label: 'Disabled' },
+              ]}
+            />
           </div>
           <div className="flex items-end">
             <label className="flex cursor-pointer items-center gap-2.5 pb-2.5">

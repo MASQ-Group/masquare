@@ -7,8 +7,24 @@ export interface AnalyticsQuery {
   compareFrom?: string;
   compareTo?: string;
   companyId?: string;
+  channelId?: string; // global filter: scope the WHOLE report to one sales channel
+  countryId?: string; // global filter: scope the WHOLE report to one destination country
+  fulfilment?: string; // global filter: 'fbm' | 'fba' | 'local' (else all)
   skuChannelId?: string; // scope the per-channel SKU breakdown to one channel (else global)
   skuCountryId?: string; // scope the per-country SKU breakdown to one country (else global)
+}
+
+/** Does a transaction pass the global channel/country/fulfilment filters? */
+function matchesGlobal(t: any, q: { channelId?: string; countryId?: string; fulfilment?: string }): boolean {
+  if (q.channelId && t.salesChannelId !== q.channelId) return false;
+  if (q.countryId && t.destinationCountryId !== q.countryId) return false;
+  if (q.fulfilment && q.fulfilment !== 'all') {
+    const f = String(t.fulfilmentType ?? '').toUpperCase();
+    if (q.fulfilment === 'fbm' && f !== 'FBM') return false;
+    if (q.fulfilment === 'fba' && f !== 'FBA') return false;
+    if (q.fulfilment === 'local' && (f === 'FBM' || f === 'FBA')) return false; // local = anything not Amazon-fulfilled
+  }
+  return true;
 }
 
 const round = (v: number, d = 2) => Number(v.toFixed(d));
@@ -21,19 +37,23 @@ export class AnalyticsService {
   constructor(private readonly tx: SalesTransactionsService) {}
 
   async report(q: AnalyticsQuery) {
-    const main = await this.aggregate(q.from, q.to, q.companyId, q.skuChannelId, q.skuCountryId);
+    const main = await this.aggregate(q.from, q.to, q);
     const compare = q.compareFrom && q.compareTo
-      ? await this.aggregate(q.compareFrom, q.compareTo, q.companyId, q.skuChannelId, q.skuCountryId)
+      ? await this.aggregate(q.compareFrom, q.compareTo, q)
       : null;
 
     // Merge per-channel compare figures for delta columns.
     const byChannel = main.byChannel.map((c) => {
       const prev = compare?.byChannel.find((p) => p.channelId === c.channelId);
-      return { ...c, prevRevenueExVatEur: prev?.revenueExVatEur ?? null, prevProfitEur: prev?.profitEur ?? null };
+      return { ...c, prevRevenueExVatEur: prev?.revenueExVatEur ?? null, prevProfitEur: prev?.profitEur ?? null, prevReturnedUnits: prev?.returnedUnits ?? null };
     });
     const byCountry = main.byCountry.map((c) => {
       const prev = compare?.byCountry.find((p) => p.countryId === c.countryId);
       return { ...c, prevRevenueExVatEur: prev?.revenueExVatEur ?? null, prevProfitEur: prev?.profitEur ?? null };
+    });
+    const mergeSkuPrev = (rows: any[], prevRows?: any[]) => rows.map((s) => {
+      const prev = prevRows?.find((p) => p.sku === s.sku);
+      return { ...s, prevRevenueExVatEur: prev?.revenueExVatEur ?? null, prevProfitEur: prev?.profitEur ?? null };
     });
 
     return {
@@ -43,25 +63,112 @@ export class AnalyticsService {
       compareTotals: compare?.totals ?? null,
       byChannel,
       byCountry,
-      bySku: main.bySku,
-      bySkuByCountry: main.bySkuByCountry,
+      bySku: mergeSkuPrev(main.bySku, compare?.bySku),
+      bySkuByCountry: mergeSkuPrev(main.bySkuByCountry, compare?.bySkuByCountry),
       channels: main.channels, // for the per-channel SKU selector
       countries: main.countries, // for the per-country SKU selector
       trend: main.trend,
+      compareTrend: compare?.trend ?? null, // aligned by index for the prev-period overlay
+      returns: main.returns,
+      compareReturns: compare?.returns ?? null,
     };
   }
 
-  private async aggregate(from: string, to: string, companyId?: string, skuChannelId?: string, skuCountryId?: string) {
+  /** Drill-down for one SKU: totals, per-channel breakdown, trend and a returns summary. */
+  async skuDetail(q: AnalyticsQuery & { sku: string }) {
+    const main = await this.aggregateSku(q.sku, q.from, q.to, q);
+    const compare = q.compareFrom && q.compareTo ? await this.aggregateSku(q.sku, q.compareFrom, q.compareTo, q) : null;
+    return {
+      sku: q.sku,
+      productTitle: main.productTitle,
+      range: { from: q.from, to: q.to },
+      totals: main.totals,
+      prevTotals: compare?.totals ?? null,
+      byChannel: main.byChannel,
+      trend: main.trend,
+      returns: main.returns,
+    };
+  }
+
+  private async aggregateSku(sku: string, from: string, to: string, q: AnalyticsQuery) {
     const start = new Date(from + 'T00:00:00.000Z');
     const end = new Date(to + 'T23:59:59.999Z');
-    const txns = await this.tx.allInRange(start, end, companyId);
+    const txns = (await this.tx.allInRange(start, end, q.companyId)).filter((t) => matchesGlobal(t, q));
+
+    const totals = { revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, units: 0, orders: 0 };
+    const returns = { returnedUnits: 0, refundEur: 0, orders: 0 };
+    let productTitle: string | null = null;
+    const channelMap = new Map<string, any>();
+    const trendMap = new Map<string, { revenueExVatEur: number; profitEur: number; feesEur: number; units: number }>();
+    const spanDays = (end.getTime() - start.getTime()) / 86400000;
+    const byMonth = spanDays > 92;
+
+    for (const t of txns) {
+      const items = (t.items ?? []).filter((it: any) => it.sku === sku);
+      if (!items.length) continue;
+      totals.orders += 1;
+      const isReturned = t.resolution && t.resolution !== 'none';
+
+      let orderUnits = 0;
+      for (const it of items) {
+        productTitle = productTitle ?? it.productTitle ?? null;
+        const rev = it.revenueExVatEur ?? 0;
+        totals.revenueExVatEur += rev;
+        totals.revenueIncVatEur += it.revenueIncVatEur ?? 0;
+        totals.profitEur += it.profitEur ?? 0;
+        totals.feesEur += it.feesEur ?? 0;
+        totals.units += it.quantity ?? 0;
+        orderUnits += it.quantity ?? 0;
+
+        const chId = t.salesChannelId ?? 'none';
+        if (!channelMap.has(chId)) channelMap.set(chId, { channelId: t.salesChannelId, channelName: t.salesChannel?.name ?? '— No channel', currency: t.currency ?? null, revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, units: 0, ful: new Map<string, number>() });
+        const ch = channelMap.get(chId);
+        ch.revenueExVatEur += rev;
+        ch.revenueIncVatEur += it.revenueIncVatEur ?? 0;
+        ch.profitEur += it.profitEur ?? 0;
+        ch.feesEur += it.feesEur ?? 0;
+        ch.units += it.quantity ?? 0;
+        const fLabel = (() => { const f = String(t.fulfilmentType ?? '').toUpperCase(); return f === 'FBM' ? 'FBM' : f === 'FBA' ? 'FBA' : 'Local'; })();
+        ch.ful.set(fLabel, (ch.ful.get(fLabel) ?? 0) + (it.quantity ?? 0));
+
+        const d = new Date(t.date);
+        const bucket = byMonth ? `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}` : d.toISOString().slice(0, 10);
+        if (!trendMap.has(bucket)) trendMap.set(bucket, { revenueExVatEur: 0, profitEur: 0, feesEur: 0, units: 0 });
+        const tr = trendMap.get(bucket)!;
+        tr.revenueExVatEur += rev; tr.profitEur += it.profitEur ?? 0; tr.feesEur += it.feesEur ?? 0; tr.units += it.quantity ?? 0;
+      }
+      if (isReturned) { returns.orders += 1; returns.returnedUnits += orderUnits; returns.refundEur += t.refundEur ?? 0; }
+    }
+
+    const finalTotals = {
+      ...roundObj(totals),
+      profitPct: pct(totals.profitEur, totals.revenueExVatEur),
+      avgPriceEur: totals.units ? round(totals.revenueExVatEur / totals.units) : 0,
+      feePerUnitEur: totals.units ? round(totals.feesEur / totals.units) : 0,
+    };
+    const byChannel = [...channelMap.values()].map(({ ful, ...c }) => {
+      const fArr = [...(ful as Map<string, number>).entries()].sort((a, b) => b[1] - a[1]);
+      return { ...roundObj(c), profitPct: pct(c.profitEur, c.revenueExVatEur), avgPriceEur: c.units ? round(c.revenueExVatEur / c.units) : 0, feePerUnitEur: c.units ? round(c.feesEur / c.units) : 0, fulfilment: fArr[0]?.[0] ?? 'Local' };
+    }).sort((a, b) => b.revenueExVatEur - a.revenueExVatEur);
+    const trend = [...trendMap.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([bucket, v]) => ({ bucket, ...roundObj(v), feePerUnitEur: v.units ? round(v.feesEur / v.units) : 0 }));
+
+    return { productTitle, totals: finalTotals, byChannel, trend, returns: roundObj(returns) };
+  }
+
+  private async aggregate(from: string, to: string, q: AnalyticsQuery) {
+    const { companyId, skuChannelId, skuCountryId } = q;
+    const start = new Date(from + 'T00:00:00.000Z');
+    const end = new Date(to + 'T23:59:59.999Z');
+    const allTxns = await this.tx.allInRange(start, end, companyId);
+    const txns = allTxns.filter((t) => matchesGlobal(t, q));
 
     const totals = { revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, orders: 0, units: 0, shippingEur: 0, dutyEur: 0, refundEur: 0 };
+    const returns = { returnedOrders: 0, returnedUnits: 0, refundEur: 0 };
     const channelMap = new Map<string, any>();
     const countryMap = new Map<string, any>();
     const skuMap = new Map<string, any>();
     const skuCountryMap = new Map<string, any>();
-    const trendMap = new Map<string, { revenueExVatEur: number; profitEur: number; orders: number }>();
+    const trendMap = new Map<string, { revenueExVatEur: number; revenueIncVatEur: number; profitEur: number; feesEur: number; orders: number; units: number; returnedUnits: number }>();
 
     const spanDays = (end.getTime() - start.getTime()) / 86400000;
     const byMonth = spanDays > 92; // long ranges bucket by month, else by day
@@ -72,6 +179,8 @@ export class AnalyticsService {
       const fees = t.feesEur ?? 0;
       const profit = t.profit ?? 0;
       const units = t.totals?.quantity ?? 0;
+      // A defective order that isn't just a cancellation is a return/refund.
+      const isReturn = !!t.resolution && t.resolution !== 'none' && t.resolution !== 'cancelled';
 
       totals.revenueExVatEur += revEx;
       totals.revenueIncVatEur += revInc;
@@ -82,6 +191,7 @@ export class AnalyticsService {
       totals.shippingEur += (t.shippingCostSource === 'actual' ? t.actualShippingCost ?? 0 : t.estimatedShippingCost ?? 0) + (t.returnShippingCost ?? 0);
       totals.dutyEur += t.dutyImportCost ?? 0;
       totals.refundEur += t.refundEur ?? 0;
+      if (isReturn) { returns.returnedOrders += 1; returns.returnedUnits += units; returns.refundEur += t.refundEur ?? 0; }
 
       // Per channel (native + EUR)
       const chId = t.salesChannelId ?? 'none';
@@ -89,7 +199,7 @@ export class AnalyticsService {
         channelMap.set(chId, {
           channelId: t.salesChannelId, channelName: t.salesChannel?.name ?? '— No channel', currency: t.currency ?? null,
           revenueExVatNative: 0, revenueIncVatNative: 0, revenueExVatEur: 0, revenueIncVatEur: 0,
-          profitEur: 0, feesEur: 0, orders: 0, units: 0,
+          profitEur: 0, feesEur: 0, orders: 0, units: 0, returnedUnits: 0, refundEur: 0, ful: new Map<string, any>(),
         });
       }
       const ch = channelMap.get(chId);
@@ -100,7 +210,13 @@ export class AnalyticsService {
       ch.profitEur += profit;
       ch.feesEur += fees;
       ch.orders += 1;
+      // Fulfilment split within the channel (for the expandable FBM / FBA / Local rows).
+      const fLabel = (() => { const f = String(t.fulfilmentType ?? '').toUpperCase(); return f === 'FBM' ? 'FBM' : f === 'FBA' ? 'FBA' : 'Local'; })();
+      if (!ch.ful.has(fLabel)) ch.ful.set(fLabel, { fulfilment: fLabel, revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, orders: 0, units: 0 });
+      const cf = ch.ful.get(fLabel);
+      cf.revenueExVatEur += revEx; cf.revenueIncVatEur += revInc; cf.profitEur += profit; cf.feesEur += fees; cf.orders += 1; cf.units += units;
       ch.units += units;
+      if (isReturn) { ch.returnedUnits += units; ch.refundEur += t.refundEur ?? 0; }
 
       // Per destination country (EUR — a country spans multiple channel currencies)
       const coId = t.destinationCountryId ?? 'none';
@@ -120,13 +236,14 @@ export class AnalyticsService {
 
       const addSku = (map: Map<string, any>, it: any) => {
         const key = it.sku;
-        if (!map.has(key)) map.set(key, { sku: it.sku, productTitle: it.productTitle ?? null, revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, units: 0, lines: 0 });
+        if (!map.has(key)) map.set(key, { sku: it.sku, productTitle: it.productTitle ?? null, revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, units: 0, returnedUnits: 0, lines: 0 });
         const s = map.get(key);
         s.revenueExVatEur += it.revenueExVatEur ?? 0;
         s.revenueIncVatEur += it.revenueIncVatEur ?? 0;
         s.profitEur += it.profitEur ?? 0;
         s.feesEur += it.feesEur ?? 0;
         s.units += it.quantity ?? 0;
+        s.returnedUnits += isReturn ? (it.quantity ?? 0) : 0;
         s.lines += 1;
       };
 
@@ -138,11 +255,15 @@ export class AnalyticsService {
       // Trend bucket
       const d = new Date(t.date);
       const bucket = byMonth ? `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}` : d.toISOString().slice(0, 10);
-      if (!trendMap.has(bucket)) trendMap.set(bucket, { revenueExVatEur: 0, profitEur: 0, orders: 0 });
+      if (!trendMap.has(bucket)) trendMap.set(bucket, { revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, orders: 0, units: 0, returnedUnits: 0 });
       const tr = trendMap.get(bucket)!;
       tr.revenueExVatEur += revEx;
+      tr.revenueIncVatEur += revInc;
       tr.profitEur += profit;
+      tr.feesEur += fees;
       tr.orders += 1;
+      tr.units += units;
+      tr.returnedUnits += isReturn ? units : 0;
     }
 
     const finalizeTotals = {
@@ -152,7 +273,13 @@ export class AnalyticsService {
     };
 
     const byChannel = [...channelMap.values()]
-      .map((c) => ({ ...roundObj(c), profitPct: pct(c.profitEur, c.revenueExVatEur) }))
+      .map(({ ful, ...c }) => ({
+        ...roundObj(c),
+        profitPct: pct(c.profitEur, c.revenueExVatEur),
+        fulfilments: [...(ful as Map<string, any>).values()]
+          .map((f) => ({ ...roundObj(f), profitPct: pct(f.profitEur, f.revenueExVatEur) }))
+          .sort((a, b) => b.revenueExVatEur - a.revenueExVatEur),
+      }))
       .sort((a, b) => b.revenueExVatEur - a.revenueExVatEur);
 
     const byCountry = [...countryMap.values()]
@@ -170,9 +297,19 @@ export class AnalyticsService {
 
     const trend = [...trendMap.entries()]
       .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-      .map(([bucket, v]) => ({ bucket, revenueExVatEur: round(v.revenueExVatEur), profitEur: round(v.profitEur), orders: v.orders }));
+      .map(([bucket, v]) => ({
+        bucket,
+        revenueExVatEur: round(v.revenueExVatEur),
+        revenueIncVatEur: round(v.revenueIncVatEur),
+        profitEur: round(v.profitEur),
+        feesEur: round(v.feesEur),
+        orders: v.orders,
+        units: v.units,
+        returnedUnits: v.returnedUnits,
+        avgOrderValueEur: v.orders ? round(v.revenueExVatEur / v.orders) : 0,
+      }));
 
-    return { totals: finalizeTotals, byChannel, byCountry, bySku, bySkuByCountry, channels, countries, trend };
+    return { totals: finalizeTotals, byChannel, byCountry, bySku, bySkuByCountry, channels, countries, trend, returns: roundObj(returns) };
   }
 }
 

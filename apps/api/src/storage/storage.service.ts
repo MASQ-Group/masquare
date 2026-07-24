@@ -57,6 +57,10 @@ export class StorageService {
   }
 
   publicUrl(key: string): string {
-    return `${this.endpoint.replace(/\/$/, '')}/${this.bucket}/${key}`;
+    // Cloud object stores (e.g. Cloudflare R2) serve public objects from a domain
+    // that differs from the S3 API endpoint. STORAGE_PUBLIC_URL overrides the base;
+    // it falls back to the endpoint for MinIO/local where they coincide.
+    const base = process.env.STORAGE_PUBLIC_URL ?? this.endpoint;
+    return `${base.replace(/\/$/, '')}/${this.bucket}/${key}`;
   }
 }

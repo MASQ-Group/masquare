@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
@@ -17,6 +18,23 @@ export class IntegrationsController {
   @Get('connectors')
   connectors() {
     return this.svc.connectors();
+  }
+
+  // Literal 'channel-logos' paths before the ':id' routes so they don't get captured.
+  @Get('channel-logos')
+  channelLogos() {
+    return this.svc.listChannelLogos();
+  }
+
+  @Post('channel-logos/:channelType')
+  @UseInterceptors(FileInterceptor('file'))
+  setChannelLogo(@Param('channelType') channelType: string, @UploadedFile() file: any, @CurrentUser() user: AuthUser) {
+    return this.svc.setChannelLogo(channelType, file, user.sub);
+  }
+
+  @Delete('channel-logos/:channelType')
+  removeChannelLogo(@Param('channelType') channelType: string) {
+    return this.svc.removeChannelLogo(channelType);
   }
 
   @Get()

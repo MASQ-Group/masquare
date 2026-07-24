@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell, parseSheetFile } from '@masquare/ui';
+import { ModalShell, parseSheetFile, Select } from '@masquare/ui';
 import { productsApi, type ImportRowResult } from '../../lib/api';
 import { mapHeadersToKeys } from './columns';
 
@@ -21,14 +21,33 @@ export function ProductImportModal({ onClose, onDone }: Props) {
 
   const onFile = async (file: File) => {
     setFileName(file.name);
-    const { columns, rows: raw } = await parseSheetFile(file);
-    const map = mapHeadersToKeys(columns);
-    const mapped = raw.map((r) => {
-      const o: Record<string, string> = {};
-      for (const [header, val] of Object.entries(r)) if (map[header]) o[map[header]] = val;
-      return o;
-    }).filter((r) => (r.mainSku ?? '').trim() || (r.title ?? '').trim());
-    setRows(mapped);
+    try {
+      const { columns, rows: raw } = await parseSheetFile(file);
+      const map = mapHeadersToKeys(columns);
+      if (Object.keys(map).length === 0) {
+        toast.error('None of the columns were recognised. Use the Export button to download a template with the right headers.');
+        setRows([]);
+        return;
+      }
+      const mapped = raw.map((r) => {
+        const o: Record<string, string> = {};
+        for (const [header, val] of Object.entries(r)) if (map[header]) o[map[header]] = val;
+        return o;
+      }).filter((r) => (r.mainSku ?? '').trim() || (r.title ?? '').trim());
+      if (mapped.length === 0) toast.error('No product rows found — each row needs at least a Main SKU or Title.');
+      setRows(mapped);
+    } catch {
+      setRows([]);
+      toast.error('Could not read this file. Make sure it is a valid .csv, .xls or .xlsx spreadsheet.');
+    }
+  };
+
+  // Surface the real reason instead of a generic message (handles no-response + array messages).
+  const errMsg = (e: any, fallback: string) => {
+    if (!e?.response) return `${fallback}: no response from the server — it may have restarted or the request was interrupted. Please try again.`;
+    const m = e.response.data?.message;
+    if (Array.isArray(m)) return m.join('; ');
+    return m || `${fallback} (HTTP ${e.response.status})`;
   };
 
   const runValidate = async () => {
@@ -44,7 +63,7 @@ export function ProductImportModal({ onClose, onDone }: Props) {
       }));
       setStep('review');
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Validation failed');
+      toast.error(errMsg(e, 'Validation failed'));
     } finally {
       setBusy(false);
     }
@@ -58,7 +77,7 @@ export function ProductImportModal({ onClose, onDone }: Props) {
       setSummary(res);
       setStep('done');
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Import failed');
+      toast.error(errMsg(e, 'Import failed'));
     } finally {
       setBusy(false);
     }
@@ -79,7 +98,7 @@ export function ProductImportModal({ onClose, onDone }: Props) {
       : { label: 'Done', onClick: onDone, disabled: false };
 
   return (
-    <ModalShell open title="Import products" subtitle={fileName || undefined} primaryLabel={primary.label} onPrimary={primary.onClick} primaryDisabled={primary.disabled} busy={busy} onClose={onClose}>
+    <ModalShell open title="Import Products" subtitle={fileName || undefined} primaryLabel={primary.label} onPrimary={primary.onClick} primaryDisabled={primary.disabled} busy={busy} onClose={onClose}>
       {step === 'setup' && (
         <div className="flex flex-col gap-5">
           <div>
@@ -160,14 +179,16 @@ export function ProductImportModal({ onClose, onDone }: Props) {
                       {r.status === 'error' ? (
                         <span className="font-medium text-danger">Skipped — fix required</span>
                       ) : purpose === 'add' && r.status === 'conflict' ? (
-                        <select
-                          className="h-8 rounded border border-n-200 bg-n-0 px-1.5 text-[12.5px]"
-                          value={actions[i]?.action}
-                          onChange={(e) => setActions((a) => a.map((x, idx) => idx === i ? (e.target.value === 'add' ? { action: 'add' } : { action: 'edit', productId: r.existingProductId ?? undefined }) : x))}
-                        >
-                          <option value="edit">Edit existing ({r.existingSku})</option>
-                          <option value="add">Add as new</option>
-                        </select>
+                        <Select
+                          dense
+                          className="w-48"
+                          value={actions[i]?.action ?? ''}
+                          onChange={(v) => setActions((a) => a.map((x, idx) => idx === i ? (v === 'add' ? { action: 'add' } : { action: 'edit', productId: r.existingProductId ?? undefined }) : x))}
+                          options={[
+                            { value: 'edit', label: `Edit existing (${r.existingSku})` },
+                            { value: 'add', label: 'Add as new' },
+                          ]}
+                        />
                       ) : r.status === 'missing' ? (
                         <span className="text-danger">Dropped</span>
                       ) : (
@@ -197,7 +218,7 @@ export function ProductImportModal({ onClose, onDone }: Props) {
           {summary.errors.length > 0 && (
             <div className="mt-2 w-full rounded-lg border border-danger-bd bg-danger-bg/40 p-3 text-left text-[12.5px] text-danger">
               <div className="mb-1 font-semibold">{summary.errors.length} row(s) failed:</div>
-              {summary.errors.slice(0, 8).map((e, i) => <div key={i} className="mono">{e.sku}: {e.message}</div>)}
+              {summary.errors.slice(0, 8).map((e, i) => <div key={i} className="code">{e.sku}: {e.message}</div>)}
             </div>
           )}
         </div>

@@ -21,6 +21,10 @@ export class SettingsService {
         measurementSystem: dto.measurementSystem,
         dateFormat: dto.dateFormat,
         ...(dto.salesTxStandardColumns !== undefined ? { salesTxStandardColumns: JSON.stringify(dto.salesTxStandardColumns) } : {}),
+        ...(dto.bodyFont !== undefined ? { bodyFont: dto.bodyFont } : {}),
+        ...(dto.monoFont !== undefined ? { monoFont: dto.monoFont } : {}),
+        ...(dto.deductStockOnSale !== undefined ? { deductStockOnSale: dto.deductStockOnSale } : {}),
+        ...(dto.applyChannelResolutions !== undefined ? { applyChannelResolutions: dto.applyChannelResolutions } : {}),
       },
     });
     return { ...row, salesTxStandardColumns: this.parseColumns(row.salesTxStandardColumns) };

@@ -2,10 +2,20 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
+import { StorageService } from '../storage/storage.service';
 import { SalesTransactionsService } from '../sales-transactions/sales-transactions.service';
 import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFieldKeys, type ConnectorDef } from './connectors';
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
 import { mapOnBuyOrder } from './mappings/onbuy-mapping';
+import { mapAmazonOrder } from './mappings/amazon-mapping';
+import type { MappedOrder } from './mappings/types';
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const num = (v: any) => { const x = Number(String(v ?? '').trim()); return Number.isFinite(x) ? x : 0; };
+const round2 = (x: number) => Math.round(x * 100) / 100;
+
+interface FeeBucket { bySku: Map<string, number>; total: number }
+interface AmazonFees { sales: FeeBucket; fba: FeeBucket }
 
 @Injectable()
 export class IntegrationsService {
@@ -15,6 +25,7 @@ export class IntegrationsService {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     private readonly salesTx: SalesTransactionsService,
+    private readonly storage: StorageService,
   ) {}
 
   connectors() {
@@ -25,6 +36,47 @@ export class IntegrationsService {
     const c = getConnector(type);
     if (!c) throw new BadRequestException(`Unknown channel type: ${type}`);
     return c;
+  }
+
+  // ---------------------------------------------------------------- channel logos
+
+  /** Every channel type's logo as a map { channelType: url }. Types without one are absent. */
+  async listChannelLogos(): Promise<Record<string, string>> {
+    const rows = await this.prisma.channelLogo.findMany({ select: { channelType: true, url: true } });
+    return Object.fromEntries(rows.map((r) => [r.channelType, r.url]));
+  }
+
+  /** Upload/replace the brand logo for a channel family. Keyed by the connector type. */
+  async setChannelLogo(
+    channelType: string,
+    file: { buffer: Buffer; originalname: string; mimetype: string } | undefined,
+    actorId?: string,
+  ) {
+    this.requireConnector(channelType); // only real connector types get a logo
+    if (!file?.buffer?.length) throw new BadRequestException('No image was uploaded');
+
+    const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+    const allowed = ['png', 'jpg', 'jpeg', 'webp', 'svg'];
+    if (!allowed.includes(ext)) throw new BadRequestException('Logo must be a PNG, JPG, WEBP or SVG image');
+    const MAX_BYTES = 1_000_000;
+    if (file.buffer.length > MAX_BYTES) throw new BadRequestException('Logo must be 1 MB or smaller');
+
+    const contentType = ext === 'svg' ? 'image/svg+xml' : file.mimetype || `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+    // A stable-ish key per upload avoids CDN cache collisions when a logo is replaced.
+    const key = `channel-logos/${channelType}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const url = await this.storage.putObject(key, file.buffer, contentType);
+
+    await this.prisma.channelLogo.upsert({
+      where: { channelType },
+      create: { channelType, url, updatedById: actorId ?? null },
+      update: { url, updatedById: actorId ?? null },
+    });
+    return { channelType, url };
+  }
+
+  async removeChannelLogo(channelType: string) {
+    await this.prisma.channelLogo.deleteMany({ where: { channelType } });
+    return { channelType, removed: true };
   }
 
   /** Public shape — config + which secret fields are set (masked). NEVER secrets. */
@@ -297,11 +349,334 @@ export class IntegrationsService {
     return { ...page, mode, siteId };
   }
 
-  /** Read-only: fetch a few recent OnBuy orders to validate the connection. */
+  // --- Amazon SP-API data pull ---------------------------------------------
+
+  /** LWA: exchange the refresh token for a short-lived access token (~1h).
+   *  The same token authorises every marketplace the refresh token covers. */
+  private async amazonAccessToken(config: Record<string, string>, secrets: Record<string, string>): Promise<string> {
+    const clientId = config.lwaClientId;
+    const clientSecret = secrets.lwaClientSecret;
+    const refreshToken = secrets.refreshToken;
+    if (!clientId || !clientSecret || !refreshToken) throw new BadRequestException('Amazon integration is missing LWA Client ID, Client Secret or Refresh Token.');
+    const res = await fetch('https://api.amazon.com/auth/o2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: clientId, client_secret: clientSecret }).toString(),
+      signal: AbortSignal.timeout(10000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok || !json?.access_token) throw new BadRequestException(`Amazon LWA auth failed (${res.status}${json?.error ? `: ${json.error}` : ''}).`);
+    return json.access_token as string;
+  }
+
+  /** Resolve the SP-API endpoint + marketplace id + a default destination country
+   *  (used when Amazon withholds the shipping address without Restricted Data access). */
+  private amazonMarketMeta(row: any): { endpoint: string; marketplaceId: string; defaultCountry: string } {
+    const mkt = getMarketplace(row.channelType, row.marketplace);
+    const endpoint = mkt?.meta?.endpoint;
+    const marketplaceId = mkt?.meta?.marketplaceId;
+    if (!mkt || !endpoint || !marketplaceId) throw new BadRequestException('This Amazon integration has no marketplace selected.');
+    const defaultCountry = mkt.id === 'UK' ? 'GB' : mkt.id; // our ids are ISO codes except UK→GB
+    return { endpoint, marketplaceId, defaultCountry };
+  }
+
+  /** SP-API GET with the LWA access token. Retries on 429 (rate limit) with backoff.
+   *  SP-API no longer requires AWS SigV4 signing — the access token alone authorises. */
+  private async amzFetch(url: string, token: string): Promise<Response> {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(url, { headers: { 'x-amz-access-token': token, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+      if (res.status !== 429 || attempt >= 3) return res;
+      await sleep(2000 * 2 ** attempt); // 2s, 4s, 8s
+    }
+  }
+
+  private static amzErr(json: any): string {
+    const e = json?.errors?.[0];
+    return (e?.message || e?.code || '').toString().slice(0, 200);
+  }
+
+  /** Read-only pull of all Listings Items for one Amazon integration (SKU, ASIN, title, FBM
+   *  quantity, offer price, listing status). Paginated via pageToken; capped to avoid runaway.
+   *  Feeds the Channel Listings dashboard. */
+  async fetchAmazonListings(integrationId: string, opts: { maxPages?: number } = {}): Promise<Array<{
+    sku: string; asin: string | null; title: string | null; quantity: number | null;
+    price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+  }>> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) throw new NotFoundException('Integration not found');
+    const config = (row.config ?? {}) as Record<string, string>;
+    const sellerId = config.sellerId;
+    if (!sellerId) throw new BadRequestException('This Amazon integration has no Seller ID (merchant token) stored.');
+    const meta = this.amazonMarketMeta(row);
+    const secrets = await this.decryptedSecrets(row.id);
+    const token = await this.amazonAccessToken(config, secrets);
+
+    const out: any[] = [];
+    const maxPages = opts.maxPages ?? 400;
+    let pageToken: string | null = null;
+    for (let page = 0; page < maxPages; page++) {
+      const params = new URLSearchParams({ marketplaceIds: meta.marketplaceId, includedData: 'summaries,offers,fulfillmentAvailability', pageSize: '20' });
+      if (pageToken) params.set('pageToken', pageToken);
+      const res = await this.amzFetch(`${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}?${params.toString()}`, token);
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok) throw new BadRequestException(`Amazon listings fetch failed (${res.status}${IntegrationsService.amzErr(json) ? ': ' + IntegrationsService.amzErr(json) : ''}).`);
+      for (const it of json?.items ?? []) {
+        const summ = it.summaries?.[0] ?? {};
+        const avail: any[] = it.fulfillmentAvailability ?? [];
+        const merchant = avail.filter((a) => (a.fulfillmentChannelCode || 'DEFAULT') === 'DEFAULT');
+        const isFbm = merchant.length > 0;
+        const offer = (it.offers ?? [])[0] ?? null;
+        out.push({
+          sku: it.sku,
+          asin: summ.asin ?? null,
+          title: summ.itemName ?? null,
+          quantity: isFbm ? merchant.reduce((s: number, a: any) => s + (a.quantity || 0), 0) : null,
+          price: offer?.price?.amount != null ? Number(offer.price.amount) : null,
+          currency: offer?.price?.currencyCode ?? null,
+          fulfilmentChannel: isFbm ? 'FBM' : (avail.length ? 'FBA' : null),
+          status: Array.isArray(summ.status) ? summ.status.join(',') : (summ.status ?? null),
+        });
+      }
+      pageToken = json?.pagination?.nextToken ?? null;
+      if (!pageToken) break;
+    }
+    return out;
+  }
+
+  /** One page of orders. When paging with NextToken, SP-API forbids other filters. */
+  private async amazonGetOrdersPage(endpoint: string, token: string, marketplaceId: string, opts: { createdAfter?: string; createdBefore?: string; lastUpdatedAfter?: string; nextToken?: string | null }): Promise<{ ok: boolean; status?: number; message?: string; orders: any[]; nextToken: string | null }> {
+    const params = new URLSearchParams({ MarketplaceIds: marketplaceId });
+    if (opts.nextToken) {
+      params.set('NextToken', opts.nextToken);
+    } else {
+      if (opts.createdAfter) params.set('CreatedAfter', opts.createdAfter);
+      if (opts.createdBefore) params.set('CreatedBefore', opts.createdBefore);
+      if (opts.lastUpdatedAfter) params.set('LastUpdatedAfter', opts.lastUpdatedAfter);
+    }
+    const res = await this.amzFetch(`${endpoint}/orders/v0/orders?${params.toString()}`, token);
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, status: res.status, message: IntegrationsService.amzErr(json), orders: [], nextToken: null };
+    const p = json?.payload ?? {};
+    return { ok: true, orders: p.Orders ?? [], nextToken: p.NextToken ?? null };
+  }
+
+  /** All line items for one order (paginated via its own NextToken). */
+  private async amazonGetOrderItems(endpoint: string, token: string, orderId: string): Promise<any[]> {
+    const items: any[] = [];
+    let nextToken: string | null = null;
+    do {
+      const qs = nextToken ? `?NextToken=${encodeURIComponent(nextToken)}` : '';
+      const res = await this.amzFetch(`${endpoint}/orders/v0/orders/${encodeURIComponent(orderId)}/orderItems${qs}`, token);
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(`getOrderItems ${res.status}: ${IntegrationsService.amzErr(json)}`);
+      const p = json?.payload ?? {};
+      items.push(...(p.OrderItems ?? []));
+      nextToken = p.NextToken ?? null;
+    } while (nextToken);
+    return items;
+  }
+
+  /** Best-effort per-order Amazon fees from the Finances API, keyed by SellerSKU and
+   *  split into referral/selling fees vs FBA fulfilment fees (FeeType starting "FBA").
+   *  Returns empty when the app lacks Finances access or the fees haven't posted yet —
+   *  fee data lags the sale by Amazon's settlement schedule. */
+  private async fetchAmazonOrderFees(endpoint: string, token: string, orderId: string): Promise<AmazonFees> {
+    const sales: FeeBucket = { bySku: new Map(), total: 0 };
+    const fba: FeeBucket = { bySku: new Map(), total: 0 };
+    try {
+      const res = await this.amzFetch(`${endpoint}/finances/v0/orders/${encodeURIComponent(orderId)}/financialEvents`, token);
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok) { this.logger.warn(`Amazon finances ${res.status} for ${orderId}: ${IntegrationsService.amzErr(json)}`); return { sales, fba }; }
+      const events = json?.payload?.FinancialEvents ?? {};
+      // Fees sit in each shipment item's ItemFeeList, reported as negatives — sum
+      // magnitudes. FBA fulfilment fees have FeeType starting "FBA" (FBAPerUnitFulfillmentFee,
+      // FBAWeightBasedFee, …); everything else (Commission, closing fees) is the selling fee.
+      // NB: the Finances API Currency shape is { CurrencyCode, CurrencyAmount }, unlike the
+      // Orders API which uses { CurrencyCode, Amount }.
+      const amt = (m: any) => num(m?.CurrencyAmount ?? m?.Amount);
+      const add = (bucket: FeeBucket, sku: string, v: number) => { bucket.bySku.set(sku, round2((bucket.bySku.get(sku) ?? 0) + v)); bucket.total = round2(bucket.total + v); };
+      // Marketplace-facilitator tax lines (AU GST / JP consumption tax / US sales tax on the sale,
+      // and any tax Amazon charges on its own fees) show up in ItemFeeList but are a pass-through
+      // Amazon collects & remits — NOT a selling fee. Counting them overstated the AU fee (e.g.
+      // 85.23 instead of the 63.60 referral). Exclude any tax/facilitator fee type.
+      const isTaxLine = (type: string) => /tax|facilitator|gst|\bvat\b/i.test(type);
+      const breakdown: Record<string, number> = {};
+      for (const ev of events.ShipmentEventList ?? []) {
+        for (const item of ev.ShipmentItemList ?? []) {
+          const sku = item.SellerSKU ?? '';
+          for (const f of item.ItemFeeList ?? []) {
+            const type = String(f?.FeeType ?? '');
+            const v = Math.abs(amt(f?.FeeAmount));
+            if (v <= 0) continue;
+            breakdown[type] = round2((breakdown[type] ?? 0) + v);
+            if (type.startsWith('FBA')) { add(fba, sku, v); continue; }
+            if (isTaxLine(type)) continue; // pass-through tax, not a seller fee
+            add(sales, sku, v);
+          }
+        }
+      }
+      if (Object.keys(breakdown).length) this.logger.log(`Amazon fee breakdown ${orderId}: ${JSON.stringify(breakdown)} → selling ${sales.total}, fba ${fba.total}`);
+    } catch (e: any) {
+      this.logger.warn(`Amazon finances fetch failed for ${orderId}: ${e?.message ?? e}`);
+    }
+    return { sales, fba };
+  }
+
+  /**
+   * Refunds posted in a window, from the range-level Finances API, keyed by AmazonOrderId.
+   *
+   * Uses `/finances/v0/financialEvents?PostedAfter=…` rather than the per-order endpoint because
+   * a refund can post days after the sale WITHOUT moving the order's LastUpdatedDate — so an
+   * order-driven re-fetch would miss it. This pass finds every refund event directly.
+   *
+   * Per order we sum the ex-VAT revenue returned to the buyer (Principal + ShippingCharge
+   * adjustments — the Finances API reports these already ex-tax, Tax being its own charge type)
+   * and note whether the referral fee was credited back (a net-positive fee adjustment).
+   */
+  private async fetchAmazonRefunds(endpoint: string, token: string, postedAfter: Date): Promise<Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }>> {
+    const out = new Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }>();
+    const amt = (m: any) => num(m?.CurrencyAmount ?? m?.Amount);
+    const REVENUE_CHARGES = new Set(['Principal', 'ShippingCharge']);
+    const MAX_PAGES = 50;
+    let nextToken: string | null = null;
+    try {
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const url = nextToken
+          ? `${endpoint}/finances/v0/financialEvents?NextToken=${encodeURIComponent(nextToken)}`
+          : `${endpoint}/finances/v0/financialEvents?PostedAfter=${encodeURIComponent(postedAfter.toISOString())}&MaxResultsPerPage=100`;
+        const res = await this.amzFetch(url, token);
+        const json: any = await res.json().catch(() => null);
+        if (!res.ok) { this.logger.warn(`Amazon finances range ${res.status}: ${IntegrationsService.amzErr(json)}`); break; }
+        const events = json?.payload?.FinancialEvents ?? {};
+        for (const rev of events.RefundEventList ?? []) {
+          const orderId = rev.AmazonOrderId;
+          if (!orderId) continue;
+          const acc = out.get(orderId) ?? { refundedExVat: 0, currency: null as string | null, feeReturned: false };
+          for (const adj of rev.ShipmentItemAdjustmentList ?? []) {
+            for (const c of adj.ItemChargeAdjustmentList ?? []) {
+              if (!REVENUE_CHARGES.has(String(c?.ChargeType ?? ''))) continue;
+              acc.refundedExVat += Math.abs(amt(c?.ChargeAmount)); // charges are negative (money back)
+              acc.currency = acc.currency ?? c?.ChargeAmount?.CurrencyCode ?? null;
+            }
+            // A net-positive fee adjustment = the referral fee credited back to us.
+            const netFee = (adj.ItemFeeAdjustmentList ?? []).reduce((s: number, f: any) => s + amt(f?.FeeAmount), 0);
+            if (netFee > 0) acc.feeReturned = true;
+          }
+          acc.refundedExVat = round2(acc.refundedExVat);
+          out.set(orderId, acc);
+        }
+        nextToken = events?.NextToken ?? json?.payload?.NextToken ?? null;
+        if (!nextToken) break;
+      }
+    } catch (e: any) {
+      this.logger.warn(`Amazon refund fetch failed: ${e?.message ?? e}`);
+    }
+    return out;
+  }
+
+  /** Overlay one fee bucket onto the mapped order's items (per SellerSKU; any order-level
+   *  remainder to line 1), writing `field` in both the importer payload and the review row. */
+  private applyFeeBucket(mapped: MappedOrder, bucket: FeeBucket, field: 'salesChannelSalesFeeAmount' | 'fbaFulfilmentFeeAmount'): void {
+    if (mapped.items.length === 0) return;
+    let attributed = 0;
+    for (const it of mapped.items) {
+      const fee = bucket.bySku.get(it.sku ?? '') ?? 0;
+      it.payload[field] = fee;
+      const f = it.fields.find((x) => x.target === field);
+      if (f) f.value = fee;
+      attributed = round2(attributed + fee);
+    }
+    const remainder = round2(bucket.total - attributed);
+    if (remainder > 0) {
+      const first = mapped.items[0];
+      first.payload[field] = round2(first.payload[field] + remainder);
+      const f = first.fields.find((x) => x.target === field);
+      if (f) f.value = first.payload[field];
+    }
+  }
+
+  /** Overlay Finances-API fees (referral + FBA) onto a mapped Amazon order. */
+  private applyAmazonFees(mapped: MappedOrder, fees: AmazonFees): void {
+    this.applyFeeBucket(mapped, fees.sales, 'salesChannelSalesFeeAmount');
+    this.applyFeeBucket(mapped, fees.fba, 'fbaFulfilmentFeeAmount');
+  }
+
+  /** Refresh fees for recently-imported Amazon drafts whose fees hadn't posted at
+   *  import time. Amazon posts financial events on its settlement cycle (up to ~2
+   *  weeks after the sale), and a shipped order's LastUpdatedDate may not change when
+   *  they post — so each sync re-checks zero-fee drafts from the trailing window and
+   *  fills them once available. Updates item fees directly (fee doesn't affect FX/VAT;
+   *  profit is computed on read). Returns how many transactions were filled. */
+  private async refreshRecentAmazonFees(row: any, endpoint: string, token: string, sinceDays: number): Promise<number> {
+    const since = new Date(Date.now() - sinceDays * 24 * 3600 * 1000);
+    // Any status (not just draft): FBA orders import as 'submitted', and their fees still post
+    // later on Amazon's settlement cycle. Fees are written directly on the item rows, which
+    // bypasses the submitted-edit lock, so this safely refreshes submitted orders too.
+    const txs = await this.prisma.salesTransaction.findMany({
+      where: { integrationId: row.id, deletedAt: null, date: { gte: since } },
+      select: { id: true, transactionRef: true, items: { where: { deletedAt: null }, select: { id: true, sku: true, salesChannelSalesFeeAmount: true, fbaFulfilmentFeeAmount: true } } },
+      take: 1000,
+    });
+    // Attribute a bucket across the tx's items (per SKU; remainder to line 1), returning per-item amounts.
+    const spread = (items: { id: string; sku: string }[], bucket: FeeBucket) => {
+      let attributed = 0;
+      const out = items.map((it) => { const v = bucket.bySku.get(it.sku ?? '') ?? 0; attributed = round2(attributed + v); return { id: it.id, value: v }; });
+      const remainder = round2(bucket.total - attributed);
+      if (remainder > 0 && out.length) out[0].value = round2(out[0].value + remainder);
+      return out;
+    };
+    let updated = 0;
+    for (const tx of txs) {
+      const currentFee = tx.items.reduce((s, it) => s + num(it.salesChannelSalesFeeAmount) + num(it.fbaFulfilmentFeeAmount), 0);
+      if (currentFee > 0) continue; // already has fees
+      const fees = await this.fetchAmazonOrderFees(endpoint, token, tx.transactionRef);
+      await sleep(300);
+      if (fees.sales.total <= 0 && fees.fba.total <= 0) continue; // still not posted at Amazon
+      const salesUps = new Map(spread(tx.items, fees.sales).map((u) => [u.id, u.value]));
+      const fbaUps = new Map(spread(tx.items, fees.fba).map((u) => [u.id, u.value]));
+      await this.prisma.$transaction(tx.items.map((it) =>
+        this.prisma.salesTransactionItem.update({ where: { id: it.id }, data: { salesChannelSalesFeeAmount: salesUps.get(it.id) ?? 0, fbaFulfilmentFeeAmount: fbaUps.get(it.id) ?? 0 } }),
+      ));
+      updated++;
+    }
+    return updated;
+  }
+
+  /** Fetch recent Amazon orders (read-only), mapped with fees. Shared by preview + mapping. */
+  private async fetchAmazonOrders(row: any, limit: number): Promise<{ ok: boolean; status?: number; message?: string; total: number; mapped: MappedOrder[] }> {
+    const config = (row.config ?? {}) as Record<string, string>;
+    const secrets = await this.decryptedSecrets(row.id);
+    const { endpoint, marketplaceId, defaultCountry } = this.amazonMarketMeta(row);
+    const token = await this.amazonAccessToken(config, secrets);
+    const createdAfter = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+    const page = await this.amazonGetOrdersPage(endpoint, token, marketplaceId, { createdAfter });
+    if (!page.ok) return { ok: false, status: page.status, message: page.message, total: 0, mapped: [] };
+    // Exclude Multi-Channel Fulfillment orders (SalesChannel="Non-Amazon") — not Amazon sales.
+    const sellable = page.orders.filter((o) => String(o.SalesChannel ?? '') !== 'Non-Amazon');
+    const slice = sellable.slice(0, limit);
+    const mapped: MappedOrder[] = [];
+    for (const o of slice) {
+      const items = await this.amazonGetOrderItems(endpoint, token, o.AmazonOrderId);
+      const order = mapAmazonOrder(o, items, defaultCountry);
+      this.applyAmazonFees(order, await this.fetchAmazonOrderFees(endpoint, token, o.AmazonOrderId));
+      mapped.push(order);
+      await sleep(300); // stay under the getOrderItems / finances rate limits
+    }
+    return { ok: true, total: sellable.length, mapped };
+  }
+
+  // --- Order preview / mapping ----------------------------------------------
+
+  /** Read-only: fetch a few recent orders to validate the connection. */
   async previewOrders(id: string, actorId?: string, limit = 5) {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
     if (!row) throw new NotFoundException('Integration not found');
-    if (row.channelType !== 'onbuy') throw new BadRequestException('Order preview currently supports OnBuy only.');
+    if (row.channelType === 'amazon') {
+      const r = await this.fetchAmazonOrders(row, limit);
+      await this.audit(id, actorId, 'preview', `amazon status=${r.status ?? 200}`);
+      return r.ok ? { ok: true, mode: 'live', total: r.total, count: r.mapped.length, orders: r.mapped.map((m) => m.raw) } : { ok: false, mode: 'live', status: r.status, message: r.message };
+    }
+    if (row.channelType !== 'onbuy') throw new BadRequestException('Order preview supports OnBuy and Amazon only.');
     const r = await this.fetchOnBuyOrders(row, limit);
     await this.audit(id, actorId, 'preview', `mode=${r.mode} status=${r.status ?? 200}`);
     return r.ok ? { ok: true, mode: r.mode, siteId: r.siteId, total: r.total, count: r.orders.length, orders: r.orders } : { ok: false, mode: r.mode, status: r.status, message: r.message };
@@ -312,12 +687,25 @@ export class IntegrationsService {
   async previewMapping(id: string, actorId?: string, limit = 3) {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
     if (!row) throw new NotFoundException('Integration not found');
-    if (row.channelType !== 'onbuy') throw new BadRequestException('Mapping preview currently supports OnBuy only.');
-    const r = await this.fetchOnBuyOrders(row, limit);
-    await this.audit(id, actorId, 'mapping.preview', `mode=${r.mode} status=${r.status ?? 200}`);
-    if (!r.ok) return { ok: false, mode: r.mode, status: r.status, message: r.message };
 
-    const mapped = r.orders.map((o) => mapOnBuyOrder(o));
+    // Fetch + map sample orders per connector; both yield the shared MappedOrder shape.
+    let mode = 'live';
+    let mapped: MappedOrder[];
+    if (row.channelType === 'amazon') {
+      const r = await this.fetchAmazonOrders(row, limit);
+      await this.audit(id, actorId, 'mapping.preview', `amazon status=${r.status ?? 200}`);
+      if (!r.ok) return { ok: false, mode, status: r.status, message: r.message };
+      mapped = r.mapped;
+    } else if (row.channelType === 'onbuy') {
+      const r = await this.fetchOnBuyOrders(row, limit);
+      await this.audit(id, actorId, 'mapping.preview', `mode=${r.mode} status=${r.status ?? 200}`);
+      if (!r.ok) return { ok: false, mode: r.mode, status: r.status, message: r.message };
+      mode = r.mode;
+      mapped = r.orders.map((o) => mapOnBuyOrder(o));
+    } else {
+      throw new BadRequestException('Mapping preview supports OnBuy and Amazon only.');
+    }
+
     // Resolve destination country codes to names for the review.
     const codes = [...new Set(mapped.map((m) => m.payload.destinationCountryCode).filter(Boolean) as string[])];
     const countries = codes.length ? await this.prisma.country.findMany({ where: { isoCode: { in: codes } }, select: { isoCode: true, name: true } }) : [];
@@ -328,7 +716,7 @@ export class IntegrationsService {
     }
     return {
       ok: true,
-      mode: r.mode,
+      mode,
       verifiedAt: row.mappingVerifiedAt ?? null,
       target: 'Sales transaction',
       samples: mapped.map((m) => ({ orderId: m.orderId, header: m.header, items: m.items.map((it) => ({ sku: it.sku, fields: it.fields })), raw: m.raw })),
@@ -356,13 +744,74 @@ export class IntegrationsService {
     return a?.productId ?? null;
   }
 
-  /** Import OnBuy orders into sales transactions. Incremental after the first run;
-   *  imports as drafts, deduped by (integration + order id), never touching manual
-   *  entries. Gated on a verified mapping + active status + configured target. */
+  /** Re-resolve product links for this integration's still-unlinked items. Handles the
+   *  case where a product / SKU alias was added AFTER an order was imported (a shipped
+   *  order isn't re-pulled, so it would otherwise never link). Cheap: distinct SKUs only. */
+  private async relinkUnlinkedItems(integrationId: string): Promise<number> {
+    const unlinked = await this.prisma.salesTransactionItem.findMany({
+      where: { productId: null, deletedAt: null, transaction: { integrationId, deletedAt: null } },
+      select: { id: true, sku: true },
+      take: 2000,
+    });
+    if (!unlinked.length) return 0;
+    const cache = new Map<string, string | null>();
+    let relinked = 0;
+    for (const it of unlinked) {
+      const key = (it.sku ?? '').trim().toLowerCase();
+      if (!key) continue;
+      if (!cache.has(key)) cache.set(key, await this.resolveProductId(it.sku));
+      const pid = cache.get(key);
+      if (pid) { await this.prisma.salesTransactionItem.update({ where: { id: it.id }, data: { productId: pid } }); relinked++; }
+    }
+    return relinked;
+  }
+
+  /** Build + upsert one sales transaction from a mapped order. Deduped by
+   *  (integration, transactionRef): updates the existing draft, else creates one.
+   *  Returns true when a row was written, so the caller can advance the high-water
+   *  mark. Never touches manually-entered transactions (they have no integrationId). */
+  private async importMappedOrder(row: any, mapped: MappedOrder, orderDate: Date, sysUser: any, actorId: string | undefined, counts: { created: number; updated: number; errors: number }): Promise<boolean> {
+    const destCountry = mapped.payload.destinationCountryCode
+      ? await this.prisma.country.findFirst({ where: { deletedAt: null, isoCode: mapped.payload.destinationCountryCode }, select: { id: true } })
+      : null;
+    const items = await Promise.all(mapped.items.map(async (it) => ({ ...it.payload, productId: await this.resolveProductId(it.sku) })));
+    const dto: any = {
+      date: orderDate.toISOString(),
+      transactionRef: mapped.payload.transactionRef,
+      salesChannelId: row.targetSalesChannelId,
+      destinationCountryId: destCountry?.id ?? null,
+      companyId: row.targetCompanyId,
+      // FBA orders are fulfilled by the channel with no action needed from us, so they're
+      // imported as 'submitted' (finalised). Everything else imports as an editable draft.
+      status: mapped.payload.fulfilmentType === 'FBA' ? 'submitted' : 'draft',
+      // Platform shipment status is derived from shipment registration, not the channel.
+      // Store the channel-reported status separately (for future mismatch alarms).
+      channelShipmentStatus: mapped.payload.channelShipmentStatus,
+      // Only Amazon can be FBA; anything without an explicit type is FBM.
+      fulfilmentType: mapped.payload.fulfilmentType ?? 'FBM',
+      source: row.channelType,
+      integrationId: row.id,
+      items,
+    };
+    try {
+      const existing = await this.prisma.salesTransaction.findFirst({ where: { integrationId: row.id, transactionRef: dto.transactionRef, deletedAt: null }, select: { id: true } });
+      if (existing) { await this.salesTx.update(existing.id, dto, sysUser); counts.updated++; }
+      else { await this.salesTx.create(dto, actorId); counts.created++; }
+      return true;
+    } catch (e: any) {
+      counts.errors++;
+      this.logger.warn(`Import failed for order ${dto.transactionRef}: ${e?.message ?? e}`);
+      return false;
+    }
+  }
+
+  /** Import channel orders into sales transactions. Incremental after the first
+   *  run; imports as drafts, deduped by (integration + order id), never touching
+   *  manual entries. Gated on a verified mapping + active status + configured target. */
   async syncOrders(id: string, trigger: 'manual' | 'schedule', actorId?: string, range?: { from?: string; to?: string }) {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
     if (!row) throw new NotFoundException('Integration not found');
-    if (row.channelType !== 'onbuy') throw new BadRequestException('Order import currently supports OnBuy only.');
+    if (row.channelType !== 'onbuy' && row.channelType !== 'amazon') throw new BadRequestException('Order import supports OnBuy and Amazon only.');
     if (row.status !== 'active') throw new BadRequestException('Integration is disabled.');
     if (!row.mappingVerifiedAt) throw new BadRequestException('Confirm the field mapping before importing.');
     if (!row.targetSalesChannelId || !row.targetCompanyId) throw new BadRequestException('Set the target sales channel and company in the integration settings first.');
@@ -378,72 +827,150 @@ export class IntegrationsService {
         : new Date(Date.now() - (row.backfillDays ?? 30) * 24 * 3600 * 1000);
     const upper = isRange ? (range!.to ? new Date(new Date(range!.to).setHours(23, 59, 59, 999)) : new Date()) : null;
 
-    // OnBuy date filter format: 'YYYY-MM-DD HH:MM:SS'.
-    const fmt = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
-    const dateFrom = isRange ? `${range!.from} 00:00:00` : fmt(cutoff);
-    const dateTo = isRange && range!.to ? `${range!.to} 23:59:59` : undefined;
-
-    const counts = { scanned: 0, created: 0, updated: 0, skipped: 0, cancelled: 0, errors: 0 };
+    const counts = { scanned: 0, created: 0, updated: 0, skipped: 0, cancelled: 0, cancelledUpdated: 0, cancelledImported: 0, refunded: 0, errors: 0 };
+    // Gate for applying pulled cancellations/refunds. Off keeps the sync at its pre-feature
+    // behaviour (cancels skipped, refunds not applied) so it stays dormant on live until enabled.
+    const applyResolutions = (await this.prisma.platformSettings.findFirst({ select: { applyChannelResolutions: true } }))?.applyChannelResolutions ?? false;
     let maxDate = row.lastSyncedAt ?? null; // never regresses the high-water mark
+    const advance = (d: Date) => { if (!maxDate || d > maxDate) maxDate = d; };
     const sysUser = { sub: actorId ?? 'system', email: 'system', isAdmin: true } as any;
-    const LIMIT = 100;
-    const MAX_PAGES = 100; // date-filtered + sorted desc; stop early when a partial page returns
+    let note = '';
+    let feesRefreshed = 0;
+    let mcfSkipped = 0;
 
     try {
-      const config = (row.config ?? {}) as Record<string, string>;
-      const secrets = await this.decryptedSecrets(row.id);
-      const { token, base } = await this.onbuyAccessToken(config, secrets);
-      const siteId = (config.siteIds || '').match(/\d+/)?.[0] ?? null;
+      if (row.channelType === 'onbuy') {
+        // OnBuy date filter format: 'YYYY-MM-DD HH:MM:SS'.
+        const fmt = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
+        const dateFrom = isRange ? `${range!.from} 00:00:00` : fmt(cutoff);
+        const dateTo = isRange && range!.to ? `${range!.to} 23:59:59` : undefined;
+        const config = (row.config ?? {}) as Record<string, string>;
+        const secrets = await this.decryptedSecrets(row.id);
+        const { token, base } = await this.onbuyAccessToken(config, secrets);
+        const siteId = (config.siteIds || '').match(/\d+/)?.[0] ?? null;
+        const LIMIT = 100;
+        const MAX_PAGES = 100; // date-filtered + sorted desc; stop early on a partial page
 
-      for (let pageNo = 0; pageNo < MAX_PAGES; pageNo++) {
-        const page = await this.onbuyOrdersPage(base, token, siteId, LIMIT, pageNo * LIMIT, { dateFrom, dateTo });
-        if (!page.ok) throw new Error(`OnBuy orders ${page.status}: ${page.message}`);
-        if (page.orders.length === 0) break;
-
-        for (const order of page.orders) {
-          counts.scanned++;
-          const orderDate = new Date(String(order.date ?? '').replace(' ', 'T'));
-          if (isNaN(orderDate.getTime()) || orderDate < cutoff || (upper && orderDate > upper)) { counts.skipped++; continue; }
-          const mapped = mapOnBuyOrder(order);
-          // Skip fully cancelled/refunded orders (not net sales). Partial refunds/dispatches import.
-          const st = String(order.status ?? '').toLowerCase();
-          if (mapped.payload.resolution === 'cancelled' || (st.includes('refund') && !st.includes('partial'))) { counts.cancelled++; continue; }
-
-          const destCountry = mapped.payload.destinationCountryCode
-            ? await this.prisma.country.findFirst({ where: { deletedAt: null, isoCode: mapped.payload.destinationCountryCode }, select: { id: true } })
-            : null;
-          const items = await Promise.all(mapped.items.map(async (it) => ({ ...it.payload, productId: await this.resolveProductId(it.sku) })));
-
-          const dto: any = {
-            date: orderDate.toISOString(),
-            transactionRef: mapped.payload.transactionRef,
-            salesChannelId: row.targetSalesChannelId,
-            destinationCountryId: destCountry?.id ?? null,
-            companyId: row.targetCompanyId,
-            status: 'draft',
-            // Platform shipment status is derived from shipment registration, not the channel.
-            // Store the channel-reported status separately (for future mismatch alarms).
-            channelShipmentStatus: mapped.payload.channelShipmentStatus,
-            source: 'onbuy',
-            integrationId: row.id,
-            items,
-          };
-
-          try {
-            const existing = await this.prisma.salesTransaction.findFirst({ where: { integrationId: row.id, transactionRef: dto.transactionRef, deletedAt: null }, select: { id: true } });
-            if (existing) { await this.salesTx.update(existing.id, dto, sysUser); counts.updated++; }
-            else { await this.salesTx.create(dto, actorId); counts.created++; }
-            if (!maxDate || orderDate > maxDate) maxDate = orderDate;
-          } catch (e: any) {
-            counts.errors++;
-            this.logger.warn(`Import failed for order ${dto.transactionRef}: ${e?.message ?? e}`);
+        for (let pageNo = 0; pageNo < MAX_PAGES; pageNo++) {
+          const page = await this.onbuyOrdersPage(base, token, siteId, LIMIT, pageNo * LIMIT, { dateFrom, dateTo });
+          if (!page.ok) throw new Error(`OnBuy orders ${page.status}: ${page.message}`);
+          if (page.orders.length === 0) break;
+          for (const order of page.orders) {
+            counts.scanned++;
+            const orderDate = new Date(String(order.date ?? '').replace(' ', 'T'));
+            if (isNaN(orderDate.getTime()) || orderDate < cutoff || (upper && orderDate > upper)) { counts.skipped++; continue; }
+            const mapped = mapOnBuyOrder(order);
+            // Skip fully cancelled/refunded orders (not net sales). Partial refunds/dispatches import.
+            const st = String(order.status ?? '').toLowerCase();
+            if (mapped.payload.resolution === 'cancelled' || (st.includes('refund') && !st.includes('partial'))) { counts.cancelled++; continue; }
+            if (await this.importMappedOrder(row, mapped, orderDate, sysUser, actorId, counts)) advance(orderDate);
           }
+          if (page.orders.length < LIMIT) break;
         }
-        if (page.orders.length < LIMIT) break;
+      } else {
+        // Amazon SP-API. The API does the date filtering: CreatedAfter/Before for a
+        // range or first backfill; LastUpdatedAfter for incremental (catches status
+        // changes too). Cancelled orders are skipped before the per-order item call.
+        const config = (row.config ?? {}) as Record<string, string>;
+        const secrets = await this.decryptedSecrets(row.id);
+        const { endpoint, marketplaceId, defaultCountry } = this.amazonMarketMeta(row);
+        const token = await this.amazonAccessToken(config, secrets);
+        const useUpdated = !isRange && !!row.lastSyncedAt;
+        // Amazon rejects CreatedBefore within ~2 min of now — clamp a future/too-recent bound.
+        const twoMinAgo = new Date(Date.now() - 2 * 60 * 1000);
+        const createdBefore = isRange && upper ? (upper > twoMinAgo ? twoMinAgo : upper) : undefined;
+        const filters = {
+          createdAfter: useUpdated ? undefined : cutoff.toISOString(),
+          createdBefore: createdBefore ? createdBefore.toISOString() : undefined,
+          lastUpdatedAfter: useUpdated ? cutoff.toISOString() : undefined,
+        };
+        const MAX_PAGES = 200;
+        const MAX_ORDERS = 4000; // safety cap; larger backfills should be chunked by date range
+        let nextToken: string | null = null;
+        let capped = false;
+
+        for (let pageNo = 0; pageNo < MAX_PAGES; pageNo++) {
+          const page = await this.amazonGetOrdersPage(endpoint, token, marketplaceId, pageNo === 0 ? filters : { nextToken });
+          if (!page.ok) throw new Error(`Amazon orders ${page.status}: ${page.message}`);
+          for (const order of page.orders) {
+            counts.scanned++;
+            if (counts.scanned > MAX_ORDERS) { capped = true; break; }
+            const orderDate = new Date(String(order.PurchaseDate ?? ''));
+            if (isNaN(orderDate.getTime())) { counts.skipped++; continue; }
+            // Multi-Channel Fulfillment: Amazon only SHIPPED these (from FBA stock); the sale +
+            // its revenue belong to the non-Amazon channel it was placed on. Not Amazon sales —
+            // skip whatever their status (checked before the cancel branch so MCF cancels skip too).
+            if (String(order.SalesChannel ?? '') === 'Non-Amazon') { mcfSkipped++; continue; }
+            if (String(order.OrderStatus) === 'Canceled') {
+              counts.cancelled++;
+              advance(orderDate);
+              // Gate off → pre-feature behaviour: a cancellation is simply skipped (not registered).
+              if (!applyResolutions) continue;
+              // Amazon only cancels pre-ship, so a cancellation is financially neutral — but it is
+              // still REGISTERED for reporting (per the cancelled-order requirement), not dropped.
+              const existingTx = await this.prisma.salesTransaction.findFirst({ where: { integrationId: row.id, transactionRef: order.AmazonOrderId, deletedAt: null }, select: { id: true } });
+              if (existingTx) {
+                // Cancelled after we imported it: downgrade + release any reserved stock.
+                const r = await this.salesTx.applyChannelResolution(existingTx.id, { resolution: 'cancelled' }, actorId);
+                if (r.applied) counts.cancelledUpdated++;
+              } else {
+                // Never imported: bring it in as a neutral record, then mark it cancelled. Cancelled
+                // orders come back with zeroed quantities/prices, so this carries no revenue or cost.
+                const cancelledItems = await this.amazonGetOrderItems(endpoint, token, order.AmazonOrderId);
+                const cancelledMapped = mapAmazonOrder(order, cancelledItems, defaultCountry);
+                if (await this.importMappedOrder(row, cancelledMapped, orderDate, sysUser, actorId, counts)) {
+                  const createdTx = await this.prisma.salesTransaction.findFirst({ where: { integrationId: row.id, transactionRef: order.AmazonOrderId, deletedAt: null }, select: { id: true } });
+                  // importMappedOrder counted it as a create; reclassify it as a cancellation record.
+                  if (createdTx) { await this.salesTx.applyChannelResolution(createdTx.id, { resolution: 'cancelled' }, actorId); counts.cancelledImported++; counts.created--; }
+                }
+                await sleep(300);
+              }
+              continue;
+            }
+            const items = await this.amazonGetOrderItems(endpoint, token, order.AmazonOrderId);
+            const mapped = mapAmazonOrder(order, items, defaultCountry);
+            this.applyAmazonFees(mapped, await this.fetchAmazonOrderFees(endpoint, token, order.AmazonOrderId));
+            if (await this.importMappedOrder(row, mapped, orderDate, sysUser, actorId, counts)) advance(orderDate);
+            await sleep(300); // stay under the getOrderItems / finances rate limits
+          }
+          nextToken = page.nextToken;
+          if (capped || !nextToken) break;
+        }
+        if (capped) note = ` (stopped at ${MAX_ORDERS}-order cap — narrow the date range for the rest)`;
+
+        // Fees post on Amazon's settlement cycle (up to ~2 weeks after the sale), so
+        // recent orders import with fee 0. Re-check the trailing window every sync and
+        // fill any fees that have since posted.
+        feesRefreshed = await this.refreshRecentAmazonFees(row, endpoint, token, 45);
+
+        // Refunds on already-shipped orders never change OrderStatus (it stays 'Shipped'), so
+        // they can't be caught above — pull them straight from the Finances API and mark the
+        // matched transaction. refundAmount is native currency (as stored); the profit calc
+        // converts it. This flags a "return decision needed" item for the operator.
+        // Gated: dormant until channel-resolution handling is switched on for the environment.
+        const refundsAfter = isRange ? cutoff : new Date(Date.now() - 45 * 24 * 3600 * 1000);
+        const refunds = applyResolutions ? await this.fetchAmazonRefunds(endpoint, token, refundsAfter) : new Map();
+        for (const [orderId, info] of refunds) {
+          if (info.refundedExVat <= 0) continue;
+          const tx = await this.prisma.salesTransaction.findFirst({ where: { integrationId: row.id, transactionRef: orderId, deletedAt: null }, select: { id: true } });
+          if (!tx) continue; // a refund for an order we never imported (e.g. a pre-ship cancel)
+          const r = await this.salesTx.applyChannelResolution(tx.id, { resolution: 'returned', refundAmount: info.refundedExVat, feeRefunded: info.feeReturned }, actorId);
+          if (r.applied) counts.refunded++;
+        }
       }
 
+      // Re-link any items whose product/alias was added after they were imported.
+      const relinked = await this.relinkUnlinkedItems(row.id);
+
       const rangeNote = isRange ? ` for ${range!.from}…${range!.to ?? 'now'}` : '';
-      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled/refunded skipped, ${counts.errors} errors${rangeNote}`;
+      const feeNote = feesRefreshed ? `, ${feesRefreshed} fees backfilled` : '';
+      const relinkNote = relinked ? `, ${relinked} products re-linked` : '';
+      const mcfNote = mcfSkipped ? `, ${mcfSkipped} MCF (non-Amazon) skipped` : '';
+      const cancelledDone = counts.cancelledImported + counts.cancelledUpdated;
+      const defectNote =
+        (cancelledDone ? `, ${cancelledDone} cancelled registered` : '') +
+        (counts.refunded ? `, ${counts.refunded} refunds applied` : '');
+      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled, ${counts.errors} errors${defectNote}${feeNote}${relinkNote}${mcfNote}${rangeNote}${note}`;
       await this.prisma.channelIntegration.update({ where: { id }, data: { lastSyncedAt: maxDate ?? undefined, lastSyncRunAt: new Date(), lastSyncStatus: counts.errors ? 'error' : 'ok', lastSyncMessage: message } });
       await this.audit(id, actorId, isRange ? 'sync.range' : 'sync', `${trigger}: ${message}`);
       return { ok: true, ...counts, message };
@@ -459,7 +986,7 @@ export class IntegrationsService {
   @Cron('0 5 * * *')
   async scheduledSync() {
     const rows = await this.prisma.channelIntegration.findMany({
-      where: { deletedAt: null, status: 'active', autoSyncEnabled: true, mappingVerifiedAt: { not: null }, channelType: 'onbuy' },
+      where: { deletedAt: null, status: 'active', autoSyncEnabled: true, mappingVerifiedAt: { not: null }, channelType: { in: ['onbuy', 'amazon'] } },
       select: { id: true, name: true },
     });
     for (const r of rows) {

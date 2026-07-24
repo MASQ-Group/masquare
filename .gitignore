@@ -9,6 +9,7 @@ build/
 
 # Env
 .env
+.env.demo
 .env.local
 .env.*.local
 

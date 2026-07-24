@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Plus, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell, downloadSheet, parseSheetFile } from '@masquare/ui';
+import { ModalShell, Select, downloadSheet, parseSheetFile } from '@masquare/ui';
 import { countriesApi, shippingServicesApi, type ShippingService } from '../../lib/api';
 import { CountrySelect } from '../common/CountrySelect';
 import { AddButton, RefTable, SectionHeader } from './shared';
@@ -194,11 +194,11 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
             </div>
           </div>
           <div><label className="label">Shipping service name *</label><input className="input" value={name} onChange={(e) => { setName(e.target.value); touch(); }} placeholder="Cyprus Postal Service" /></div>
-          <div><label className="label">Alias</label><input className="input mono" value={alias} onChange={(e) => { setAlias(e.target.value); touch(); }} placeholder="CPS" /></div>
+          <div><label className="label">Alias</label><input className="input code" value={alias} onChange={(e) => { setAlias(e.target.value); touch(); }} placeholder="CPS" /></div>
           <div>
             <label className="label">Tracking URL template</label>
-            <input className="input mono" value={trackingUrlTemplate} onChange={(e) => { setTrackingUrlTemplate(e.target.value); touch(); }} placeholder="https://track.courier.com/?id={tracking}" />
-            <p className="mt-1 text-[12px] text-n-400">Use <span className="mono">{'{tracking}'}</span> where the tracking number goes. Tracking numbers entered on shipments become clickable links to check status.</p>
+            <input className="input code" value={trackingUrlTemplate} onChange={(e) => { setTrackingUrlTemplate(e.target.value); touch(); }} placeholder="https://track.courier.com/?id={tracking}" />
+            <p className="mt-1 text-[12px] text-n-400">Use <span className="code">{'{tracking}'}</span> where the tracking number goes. Tracking numbers entered on shipments become clickable links to check status.</p>
           </div>
         </div>
       )}
@@ -222,12 +222,17 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
                 <div className="flex-1">
                   <CountrySelect value={null} placeholder="Add a country…" excludeIds={new Set([...assignedElsewhere(i), ...z.countryIds])} onChange={(id) => { if (id) { setZones((r) => r.map((x, idx) => idx === i && !x.countryIds.includes(id) ? { ...x, countryIds: [...x.countryIds, id] } : x)); touch(); } }} />
                 </div>
-                <select className="input w-60 max-[560px]:w-full" value="" onChange={(e) => { addGroupToZone(i, e.target.value); e.currentTarget.value = ''; }}>
-                  <option value="">Add all from…</option>
-                  <option value="__REMAINING__">All remaining countries</option>
-                  <option value="EU">European Union (EU)</option>
-                  {CONTINENTS.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <Select
+                  className="w-60 max-[560px]:w-full"
+                  value=""
+                  placeholder="Add all from…"
+                  onChange={(v) => addGroupToZone(i, v)}
+                  options={[
+                    { value: '__REMAINING__', label: 'All remaining countries' },
+                    { value: 'EU', label: 'European Union (EU)' },
+                    ...CONTINENTS.map((c) => ({ value: c, label: c })),
+                  ]}
+                />
               </div>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {z.countryIds.length > 0 && (
@@ -259,10 +264,12 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
           </div>
           {rates.map((r, i) => (
             <div key={i} className="grid grid-cols-[1fr_100px_100px_110px_36px] items-center gap-2 max-[560px]:grid-cols-1">
-              <select className="input" value={r.zoneName} onChange={(e) => { setRates((x) => x.map((y, idx) => idx === i ? { ...y, zoneName: e.target.value } : y)); touch(); }}>
-                <option value="">Zone…</option>
-                {zoneNames.map((zn) => <option key={zn} value={zn}>{zn}</option>)}
-              </select>
+              <Select
+                value={r.zoneName}
+                placeholder="Zone…"
+                onChange={(v) => { setRates((x) => x.map((y, idx) => idx === i ? { ...y, zoneName: v } : y)); touch(); }}
+                options={zoneNames.map((zn) => ({ value: zn, label: zn }))}
+              />
               <input className="input mono" inputMode="decimal" value={r.fromWeightKg} onChange={(e) => { setRates((x) => x.map((y, idx) => idx === i ? { ...y, fromWeightKg: e.target.value } : y)); touch(); }} />
               <input className="input mono" inputMode="decimal" value={r.toWeightKg} onChange={(e) => { setRates((x) => x.map((y, idx) => idx === i ? { ...y, toWeightKg: e.target.value } : y)); touch(); }} />
               <input className="input mono" inputMode="decimal" value={r.chargeEur} onChange={(e) => { setRates((x) => x.map((y, idx) => idx === i ? { ...y, chargeEur: e.target.value } : y)); touch(); }} />

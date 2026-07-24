@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell, parseSheetFile } from '@masquare/ui';
+import { ModalShell, Select, parseSheetFile } from '@masquare/ui';
 import { salesChannelsApi, type SalesChannel } from '../../lib/api';
 
 interface Props {
@@ -125,7 +125,7 @@ export function SalesChannelImportModal({ channels, resolveCountryId, onClose, o
       : { label: 'Done', onClick: onDone, disabled: false };
 
   return (
-    <ModalShell open title="Import sales channels" subtitle={fileName || undefined} primaryLabel={primary.label} onPrimary={primary.onClick} primaryDisabled={primary.disabled} busy={busy} onClose={onClose}>
+    <ModalShell open title="Import Sales Channels" subtitle={fileName || undefined} primaryLabel={primary.label} onPrimary={primary.onClick} primaryDisabled={primary.disabled} busy={busy} onClose={onClose}>
       {step === 'setup' && (
         <div className="flex flex-col gap-5">
           <div>
@@ -179,20 +179,19 @@ export function SalesChannelImportModal({ channels, resolveCountryId, onClose, o
                       </td>
                       <td className="border-t border-n-100 px-2 py-1.5">
                         {flagged ? (
-                          <select
-                            className="h-8 rounded border border-n-200 bg-n-0 px-1.5 text-[12.5px]"
-                            value={actions[i]?.action}
-                            onChange={(e) => setActions((a) => a.map((x, idx) => {
+                          <Select
+                            dense
+                            className="w-40"
+                            value={actions[i]?.action ?? ''}
+                            onChange={(v) => setActions((a) => a.map((x, idx) => {
                               if (idx !== i) return x;
-                              const v = e.target.value;
                               if (v === 'skip') return { action: 'skip' };
                               return purpose === 'add' ? { action: 'edit', existingId: r.existingId ?? undefined } : { action: 'add' };
                             }))}
-                          >
-                            {purpose === 'add'
-                              ? (<><option value="edit">Update existing</option><option value="skip">Drop</option></>)
-                              : (<><option value="add">Add as new</option><option value="skip">Drop</option></>)}
-                          </select>
+                            options={purpose === 'add'
+                              ? [{ value: 'edit', label: 'Update existing' }, { value: 'skip', label: 'Drop' }]
+                              : [{ value: 'add', label: 'Add as new' }, { value: 'skip', label: 'Drop' }]}
+                          />
                         ) : (
                           <span className="text-n-600">{actions[i]?.action === 'edit' ? 'Update existing' : 'Add new'}</span>
                         )}

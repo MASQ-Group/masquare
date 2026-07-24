@@ -25,6 +25,8 @@ const listInclude = {
   productType: { select: { id: true, name: true } },
   fulfilmentType: { select: { id: true, name: true, code: true } },
   category: { select: { id: true, name: true } },
+  vatClass: { select: { id: true, name: true, ratePct: true, taxTreatment: true } },
+  productClass: { select: { id: true, name: true } },
   media: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' as const }, take: 1 },
   aliases: {
     where: { deletedAt: null },
@@ -43,6 +45,8 @@ const fullInclude = {
   productType: { select: { id: true, name: true } },
   fulfilmentType: { select: { id: true, name: true, code: true } },
   category: { select: { id: true, name: true } },
+  vatClass: { select: { id: true, name: true, ratePct: true, taxTreatment: true } },
+  productClass: { select: { id: true, name: true } },
   aliases: {
     where: { deletedAt: null },
     orderBy: { createdAt: 'asc' as const },
@@ -84,11 +88,16 @@ export class ProductsService {
       productTypeId: p.productTypeId,
       fulfilmentTypeId: p.fulfilmentTypeId,
       categoryId: p.categoryId,
+      vatClassId: p.vatClassId,
+      productClassId: p.productClassId,
+      serialTracked: p.serialTracked ?? false,
       brand: p.brand ?? null,
       vendor: p.vendor ?? null,
       productType: p.productType ?? null,
       fulfilmentType: p.fulfilmentType ?? null,
       category: p.category ?? null,
+      vatClass: p.vatClass ? { ...p.vatClass, ratePct: Number(p.vatClass.ratePct) } : null,
+      productClass: p.productClass ?? null,
       ean: p.ean,
       upc: p.upc,
       vendorSku: p.vendorSku,
@@ -96,6 +105,10 @@ export class ProductsService {
       countryOfOrigin: p.countryOfOrigin,
       hsCode: p.hsCode,
       purchaseCost: money(p.purchaseCostAmount, p.purchaseCostCurrency),
+      // Maintained by the costing engine at goods receipt; read-only here.
+      averageCostEur: p.averageCostEur == null ? null : Number(p.averageCostEur),
+      averageCostQty: p.averageCostQty ?? 0,
+      averageCostUpdatedAt: p.averageCostUpdatedAt ?? null,
       map: money(p.mapAmount, p.mapCurrency),
       msrp: money(p.msrpAmount, p.msrpCurrency),
       productWeightKg: num(p.productWeightKg),
@@ -233,6 +246,29 @@ export class ProductsService {
     return this.serialize(product);
   }
 
+  /**
+   * Scalars for a PARTIAL update: only the keys the caller actually sent.
+   *
+   * scalarData() below is shaped for create — it coerces every absent optional to null,
+   * which is right when building a new row and catastrophic when patching an existing
+   * one, because omitting a field would silently clear it. Anything that updates a
+   * subset of a product must come through here.
+   */
+  private partialScalarData(dto: UpdateProductDto) {
+    const full = this.scalarData(dto) as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(full)) {
+      // Money and its currency travel together under different DTO names.
+      const dtoKey =
+        key === 'purchaseCostAmount' || key === 'purchaseCostCurrency' ? 'purchaseCost'
+        : key === 'mapAmount' || key === 'mapCurrency' ? 'map'
+        : key === 'msrpAmount' || key === 'msrpCurrency' ? 'msrp'
+        : key;
+      if ((dto as unknown as Record<string, unknown>)[dtoKey] !== undefined) out[key] = value;
+    }
+    return out;
+  }
+
   private scalarData(dto: CreateProductDto | UpdateProductDto) {
     const m = (v?: MoneyDto) => ({ amount: v?.amount ?? null, currency: v?.currency ?? 'EUR' });
     const pc = m(dto.purchaseCost);
@@ -246,6 +282,9 @@ export class ProductsService {
       productTypeId: dto.productTypeId ?? null,
       fulfilmentTypeId: dto.fulfilmentTypeId ?? null,
       categoryId: dto.categoryId ?? null,
+      vatClassId: dto.vatClassId ?? null,
+      productClassId: dto.productClassId ?? null,
+      serialTracked: dto.serialTracked ?? false,
       ean: dto.ean,
       upc: dto.upc,
       vendorSku: dto.vendorSku,
@@ -324,7 +363,7 @@ export class ProductsService {
       }
       return tx.product.update({
         where: { id },
-        data: { ...this.scalarData(dto), updatedById: actorId },
+        data: { ...this.partialScalarData(dto), updatedById: actorId },
         include: fullInclude,
       });
     });
@@ -362,6 +401,9 @@ export class ProductsService {
     if (dto.fulfilmentTypeId !== undefined) { (data as any).fulfilmentTypeId = dto.fulfilmentTypeId; touched = true; }
     if (dto.brandId !== undefined) { (data as any).brandId = dto.brandId; touched = true; }
     if (dto.vendorId !== undefined) { (data as any).vendorId = dto.vendorId; touched = true; }
+    if (dto.vatClassId !== undefined) { (data as any).vatClassId = dto.vatClassId; touched = true; }
+    if (dto.productClassId !== undefined) { (data as any).productClassId = dto.productClassId; touched = true; }
+    if (dto.serialTracked !== undefined) { (data as any).serialTracked = dto.serialTracked; touched = true; }
     if (touched) {
       await this.prisma.product.updateMany({ where: { id: { in: dto.ids }, deletedAt: null }, data });
     }
@@ -436,6 +478,22 @@ export class ProductsService {
       }
 
       try {
+        // Surface an unrecognised VAT class instead of silently importing the product without one.
+        const vatClassName = get('vatClass');
+        if (vatClassName) {
+          const vc = await this.prisma.vatClass.findFirst({
+            where: { name: { equals: vatClassName, mode: 'insensitive' }, deletedAt: null },
+            select: { id: true },
+          });
+          if (!vc) {
+            issues.push({
+              field: 'vatClass',
+              message: `Unknown VAT class "${vatClassName}" — create it in Global settings first, or the product will import without a VAT class`,
+              severity: 'warning',
+            });
+          }
+        }
+
         const bySku = sku
           ? await this.prisma.product.findFirst({
               where: {
@@ -496,6 +554,17 @@ export class ProductsService {
         const e = await this.prisma.productCategory.findFirst({ where: { name: insensitive, deletedAt: null } });
         return e?.id ?? (await this.prisma.productCategory.create({ data: { name: n } })).id;
       }
+      case 'vatClass': {
+        // Deliberately never auto-created, unlike the refs above: a VAT class carries a rate
+        // and a tax treatment that cannot be inferred from a name. An unknown name resolves
+        // to null and is reported as an import issue rather than inventing a tax rate.
+        const e = await this.prisma.vatClass.findFirst({ where: { name: insensitive, deletedAt: null } });
+        return e?.id ?? null;
+      }
+      case 'productClass': {
+        const e = await this.prisma.productClass.findFirst({ where: { name: insensitive, deletedAt: null } });
+        return e?.id ?? (await this.prisma.productClass.create({ data: { name: n } })).id;
+      }
       default:
         return null;
     }
@@ -518,6 +587,8 @@ export class ProductsService {
       productTypeId: await this.resolveNamed('productType', str('productType')),
       fulfilmentTypeId: await this.resolveNamed('fulfilmentType', str('fulfilmentType')),
       categoryId: await this.resolveNamed('category', str('category')),
+      vatClassId: await this.resolveNamed('vatClass', str('vatClass')),
+      productClassId: await this.resolveNamed('productClass', str('productClass')),
       ean: str('ean'), upc: str('upc'), vendorSku: str('vendorSku'), manufacturerSku: str('manufacturerSku'),
       countryOfOrigin: str('countryOfOrigin'), hsCode: str('hsCode'),
       purchaseCost: { amount: num('purchaseCost'), currency: 'EUR' },

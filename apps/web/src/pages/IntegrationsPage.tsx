@@ -1,14 +1,70 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarRange, CheckCircle2, Download, ListChecks, Pencil, Plug, Plus, RefreshCw, ShieldCheck, Trash2, XCircle } from 'lucide-react';
+import {
+  AlertTriangle, CalendarRange, CheckCircle2, ChevronRight, Download, ExternalLink, Eye, EyeOff,
+  KeyRound, ListChecks, MoreHorizontal, Pause, Pencil, Play, Plug, Plus, RefreshCw, Search, Trash2, XCircle,
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { integrationsApi, type ChannelIntegration } from '../lib/api';
+import { integrationsApi, salesChannelsApi, type ChannelIntegration } from '../lib/api';
 import { IntegrationModal } from '../components/integrations/IntegrationModal';
 import { MappingVerifyModal } from '../components/integrations/MappingVerifyModal';
 import { BackfillModal } from '../components/integrations/BackfillModal';
+import { ChannelLogoTile } from '../components/integrations/ChannelLogoTile';
+import { Flag } from '../components/common/Flag';
 
 const fmtDateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+
+/** Relative "time ago" for the last-sync cell. */
+function relTime(iso: string | null): string {
+  if (!iso) return 'Never synced';
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 1440) return `${Math.floor(mins / 60)} h ago`;
+  const d = Math.floor(mins / 1440);
+  return d === 1 ? 'Yesterday' : `${d} d ago`;
+}
+
+type ChipTone = 'teal' | 'neutral' | 'danger' | 'warning' | 'muted';
+const CHIP_TONE: Record<ChipTone, string> = {
+  teal: 'bg-teal-50 text-teal-700',
+  neutral: 'bg-n-100 text-n-600',
+  danger: 'bg-danger-bg text-danger',
+  warning: 'bg-warning-bg text-warning',
+  muted: 'bg-n-50 text-n-400',
+};
+
+/** Parse the stored last-sync summary into result chips, mirroring the design.
+ *  The message format is fixed by the sync service: "N created, N updated,
+ *  N cancelled/refunded skipped, N errors[, N fees backfilled]…". */
+function syncChips(i: ChannelIntegration): { text: string; tone: ChipTone }[] {
+  if (!i.lastSyncRunAt) return [];
+  if (i.lastSyncStatus === 'error') return [];
+  const msg = i.lastSyncMessage ?? '';
+  const num = (re: RegExp) => { const m = msg.match(re); return m ? Number(m[1]) : 0; };
+  const created = num(/(\d+) created/);
+  const updated = num(/(\d+) updated/);
+  const skipped = num(/(\d+) cancelled\/refunded skipped/);
+  const errors = num(/(\d+) errors/);
+  const fees = num(/(\d+) fees/);
+  const chips: { text: string; tone: ChipTone }[] = [];
+  if (created > 0) chips.push({ text: `+${created} new`, tone: 'teal' });
+  if (updated > 0) chips.push({ text: `~${updated} updated`, tone: 'neutral' });
+  if (skipped > 0) chips.push({ text: `${skipped} skipped`, tone: 'neutral' });
+  if (errors > 0) chips.push({ text: `${errors} errors`, tone: 'danger' });
+  if (fees > 0) chips.push({ text: `${fees} fees`, tone: 'warning' });
+  if (chips.length === 0) chips.push({ text: 'No changes', tone: 'muted' });
+  return chips;
+}
+
+// Health classification — a clean partition so the stat cards add up to the total.
+const hasError = (i: ChannelIntegration) => i.lastTestStatus === 'fail' || i.lastSyncStatus === 'error';
+const isHealthy = (i: ChannelIntegration) => !hasError(i) && !!i.mappingVerifiedAt && !!i.lastSyncRunAt && i.lastSyncStatus === 'ok' && i.status === 'active';
+const needsAttention = (i: ChannelIntegration) => !hasError(i) && !isHealthy(i);
+
+type Tab = 'all' | 'healthy' | 'attention' | 'errors';
+type ModalTarget = ChannelIntegration | null | undefined; // undefined = closed, null = new
 
 /** Group integrations by channel family (Amazon / eBay / OnBuy), preserving order. */
 function groupByFamily(rows: ChannelIntegration[]): [string, ChannelIntegration[]][] {
@@ -19,155 +75,481 @@ function groupByFamily(rows: ChannelIntegration[]): [string, ChannelIntegration[
 
 export function IntegrationsPage() {
   const qc = useQueryClient();
-  const [modal, setModal] = useState<ChannelIntegration | null | undefined>(undefined); // null = new, obj = edit
-  const [mapVerify, setMapVerify] = useState<ChannelIntegration | undefined>(undefined);
-  const [backfill, setBackfill] = useState<ChannelIntegration | undefined>(undefined);
+  const [modal, setModal] = useState<ModalTarget>(undefined);
+  const [mapVerify, setMapVerify] = useState<ChannelIntegration | undefined>();
+  const [backfill, setBackfill] = useState<ChannelIntegration | undefined>();
+
+  const [tab, setTab] = useState<Tab>('all');
+  const [query, setQuery] = useState('');
+  const [maskSecrets, setMaskSecrets] = useState(true);
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   const { data: integrations = [], isLoading } = useQuery({ queryKey: ['integrations'], queryFn: () => integrationsApi.list() });
+  const { data: channelLogos = {} } = useQuery({ queryKey: ['channel-logos'], queryFn: () => integrationsApi.channelLogos() });
+  const refetchLogos = () => qc.invalidateQueries({ queryKey: ['channel-logos'] });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['integrations'] });
+
+  // Each integration sells on a channel with a native country — that country's flag sits
+  // beside the account name. Falls back to the marketplace code (Flag aliases UK -> GB)
+  // when an integration has not been pointed at a channel yet.
+  const { data: salesChannels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
+  const countryByChannelId = useMemo(
+    () => new Map(salesChannels.map((c) => [c.id, c.nativeCountry?.isoCode ?? null])),
+    [salesChannels],
+  );
+  const countryOf = (i: ChannelIntegration) =>
+    (i.targetSalesChannelId ? countryByChannelId.get(i.targetSalesChannelId) : null) ?? i.marketplace ?? null;
+
+  const canSync = (i: ChannelIntegration) => !!i.mappingVerifiedAt && !!i.targetSalesChannelId && !!i.targetCompanyId && i.status === 'active';
+
+  // ---- mutations -------------------------------------------------------
   const del = useMutation({
     mutationFn: (id: string) => integrationsApi.remove(id),
-    onSuccess: () => { toast.success('Integration removed'); qc.invalidateQueries({ queryKey: ['integrations'] }); },
+    onSuccess: () => { toast.success('Integration removed'); invalidate(); },
   });
-  const [syncingId, setSyncingId] = useState<string | null>(null);
   const sync = useMutation({
     mutationFn: (id: string) => integrationsApi.sync(id),
     onMutate: (id) => setSyncingId(id),
     onSuccess: (res) => {
       if (res.ok) toast.success(`Sync complete — ${res.created} created, ${res.updated} updated${res.cancelled ? `, ${res.cancelled} cancelled skipped` : ''}`);
       else toast.error(res.message ?? 'Sync failed');
-      qc.invalidateQueries({ queryKey: ['integrations'] });
+      invalidate();
       qc.invalidateQueries({ queryKey: ['sales-transactions'] });
     },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Sync failed'),
     onSettled: () => setSyncingId(null),
   });
+  /** Sequential sync of a set — never hits a channel's API in parallel. Used by
+   *  "Sync all", "Sync group" and "Sync selected". */
+  const bulkSync = useMutation({
+    mutationFn: async (targets: ChannelIntegration[]) => {
+      const ready = targets.filter(canSync);
+      setBulkProgress({ done: 0, total: ready.length });
+      const results: { name: string; ok: boolean; created: number; updated: number; error?: string }[] = [];
+      for (const t of ready) {
+        try { const res = await integrationsApi.sync(t.id); results.push({ name: t.name, ok: res.ok, created: res.created, updated: res.updated, error: res.ok ? undefined : res.message }); }
+        catch (e: any) { results.push({ name: t.name, ok: false, created: 0, updated: 0, error: e?.response?.data?.message ?? 'Sync failed' }); }
+        setBulkProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
+      }
+      return results;
+    },
+    onSuccess: (results) => {
+      if (results.length === 0) { toast.info('No selected connections are ready to sync — verify mapping and target first'); return; }
+      const ok = results.filter((r) => r.ok);
+      const failed = results.filter((r) => !r.ok);
+      const tally = `${ok.reduce((s, r) => s + r.created, 0)} created, ${ok.reduce((s, r) => s + r.updated, 0)} updated`;
+      if (failed.length === 0) toast.success(`Synced ${ok.length} connection${ok.length === 1 ? '' : 's'} — ${tally}`);
+      else if (ok.length === 0) toast.error(`All ${failed.length} sync${failed.length === 1 ? '' : 's'} failed — ${failed[0].name}: ${failed[0].error}`);
+      else toast.warning(`Synced ${ok.length} of ${results.length} — ${tally}. Failed: ${failed.map((f) => f.name).join(', ')}`);
+      invalidate();
+      qc.invalidateQueries({ queryKey: ['sales-transactions'] });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Sync failed'),
+    onSettled: () => setBulkProgress(null),
+  });
+  /** Pause = disable, Resume = enable. Bulk status change over selected. */
+  const setStatus = useMutation({
+    mutationFn: async ({ ids, status }: { ids: string[]; status: 'active' | 'disabled' }) => {
+      for (const id of ids) await integrationsApi.update(id, { status });
+      return { count: ids.length, status };
+    },
+    onSuccess: ({ count, status }) => { toast.success(`${count} connection${count === 1 ? '' : 's'} ${status === 'disabled' ? 'paused' : 'resumed'}`); invalidate(); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not update'),
+  });
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['integrations'] });
-  const canSync = (i: ChannelIntegration) => !!i.mappingVerifiedAt && !!i.targetSalesChannelId && !!i.targetCompanyId && i.status === 'active';
+  // ---- derived ---------------------------------------------------------
+  const stats = useMemo(() => ({
+    total: integrations.length,
+    healthy: integrations.filter(isHealthy).length,
+    attention: integrations.filter(needsAttention).length,
+    errors: integrations.filter(hasError).length,
+  }), [integrations]);
+
+  const q = query.trim().toLowerCase();
+  const matchesQuery = (i: ChannelIntegration) =>
+    !q || [i.name, i.marketplace, i.marketplaceLabel, i.connectorLabel, ...i.secretFields.map((s) => s.fieldKey)]
+      .filter(Boolean).join(' ').toLowerCase().includes(q);
+  const matchesTab = (i: ChannelIntegration) =>
+    tab === 'all' || (tab === 'healthy' && isHealthy(i)) || (tab === 'attention' && needsAttention(i)) || (tab === 'errors' && hasError(i));
+
+  const visible = integrations.filter((i) => matchesQuery(i) && matchesTab(i));
+  const groups = groupByFamily(integrations)
+    .map(([family, all]) => ({ family, all, rows: all.filter((i) => visible.includes(i)) }))
+    .filter((g) => (q || tab !== 'all' ? g.rows.length > 0 : true));
+
+  const selectedIds = Object.keys(selected).filter((id) => selected[id]);
+  const selectedRows = integrations.filter((i) => selected[i.id]);
+  const syncableCount = integrations.filter(canSync).length;
+
+  const toggleSel = (id: string) => setSelected((s) => ({ ...s, [id]: !s[id] }));
+  const setGroupSel = (rows: ChannelIntegration[], on: boolean) =>
+    setSelected((s) => { const n = { ...s }; rows.forEach((r) => { n[r.id] = on; }); return n; });
+
+  // ---- render ----------------------------------------------------------
+  const TABS: { key: Tab; label: string; count?: number; show: boolean }[] = [
+    { key: 'all', label: 'All', show: true },
+    { key: 'attention', label: 'Needs attention', count: stats.attention, show: stats.attention > 0 },
+    { key: 'errors', label: 'Errors', count: stats.errors, show: stats.errors > 0 },
+  ];
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <div className="eyebrow mb-1.5">Operations</div>
-          <h1 className="text-[24px] font-semibold tracking-tight text-n-900">Channel integrations</h1>
-          <p className="mt-1 max-w-2xl text-[13.5px] text-n-500">Connect sales channels to pull data automatically. API keys are encrypted and never leave the platform.</p>
+      {/* Header */}
+      <div className="flex items-start gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="eyebrow mb-1.5">Integrations module</div>
+          <h1 className="text-[24px] font-semibold tracking-tight text-n-900">Marketplace integrations</h1>
+          <p className="mt-1 max-w-2xl text-[13.5px] text-n-500">Connected marketplace accounts syncing orders, fees &amp; refunds into the platform. API keys are encrypted and never leave it.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setModal(null)}><Plus size={17} /> Add integration</button>
-      </div>
-
-      <div className="mb-4 flex items-start gap-2 rounded-md border border-teal-100 bg-teal-50/60 px-3.5 py-2.5 text-[12.5px] text-n-700">
-        <ShieldCheck size={16} className="mt-0.5 shrink-0 text-teal-600" />
-        <span>Consumer/secret keys are encrypted at rest (AES-256-GCM) with a key held outside the database, are write-only (never shown again), and are decrypted only in memory when calling the channel's API.</span>
+        <div className="flex shrink-0 items-center gap-2 pt-1">
+          <button
+            className="btn btn-ghost"
+            disabled={syncableCount === 0 || bulkSync.isPending}
+            title={syncableCount === 0 ? 'No connections are ready to sync — verify mapping and set the target first' : `Sync all ${syncableCount} ready connection${syncableCount === 1 ? '' : 's'} now`}
+            onClick={() => bulkSync.mutate(integrations)}
+          >
+            <RefreshCw size={16} className={bulkSync.isPending ? 'animate-spin' : ''} />
+            {bulkProgress ? `Syncing ${bulkProgress.done}/${bulkProgress.total}…` : `Sync all${syncableCount ? ` (${syncableCount})` : ''}`}
+          </button>
+          <button className="btn btn-primary" onClick={() => setModal(null)}><Plus size={17} /> Add connection</button>
+        </div>
       </div>
 
       {isLoading && <div className="py-16 text-center text-[13px] text-n-500">Loading…</div>}
+
       {!isLoading && integrations.length === 0 && (
-        <div className="card flex flex-col items-center gap-3 py-14 text-center">
+        <div className="card mt-6 flex flex-col items-center gap-3 py-14 text-center">
           <div className="grid h-12 w-12 place-items-center rounded-full bg-n-100 text-n-400"><Plug size={22} /></div>
           <div className="text-[14px] font-medium text-n-700">No integrations yet</div>
-          <p className="max-w-sm text-[12.5px] text-n-500">Add your first channel integration to start pulling sales and inventory data automatically.</p>
-          <button className="btn btn-ghost" onClick={() => setModal(null)}><Plus size={16} /> Add integration</button>
+          <p className="max-w-sm text-[12.5px] text-n-500">Add your first channel integration to start pulling sales data automatically.</p>
+          <button className="btn btn-ghost" onClick={() => setModal(null)}><Plus size={16} /> Add connection</button>
         </div>
       )}
 
       {!isLoading && integrations.length > 0 && (
-        <div className="flex flex-col gap-6">
-          {groupByFamily(integrations).map(([family, rows]) => (
-            <div key={family}>
-              <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wide text-n-500">
-                {rows[0].connectorLabel} <span className="rounded-pill bg-n-100 px-1.5 text-[11px] font-medium text-n-500">{rows.length}</span>
-              </div>
-              <div className="grid grid-cols-2 gap-3 max-[820px]:grid-cols-1">
-          {rows.map((i) => (
-            <div key={i.id} className="card p-4">
-              <div className="flex items-start gap-3">
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-teal-50 text-teal-700"><Plug size={18} /></div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-[14.5px] font-semibold text-n-900">{i.name}</span>
-                    {i.marketplaceLabel && <span className="tag border border-n-200 bg-n-50 text-n-600">{i.marketplace}</span>}
-                    <span className={`tag ${i.status === 'active' ? 'border border-teal-100 bg-teal-50 text-teal-700' : 'border border-n-200 bg-n-100 text-n-500'}`}>{i.status}</span>
+        <>
+          {/* Health summary */}
+          <div className="mt-5 grid grid-cols-4 gap-3.5 max-[900px]:grid-cols-2">
+            <StatCard label="Connections" value={stats.total} sub="total" icon={<Plug size={17} />} tone="teal" active={tab === 'all'} onClick={() => setTab('all')} />
+            <StatCard label="Healthy" value={stats.healthy} sub="syncing OK" icon={<CheckCircle2 size={17} />} tone="teal" active={tab === 'healthy'} onClick={() => setTab('healthy')} />
+            <StatCard label="Needs attention" value={stats.attention} sub="mapping / never synced" icon={<AlertTriangle size={17} />} tone="warning" active={tab === 'attention'} onClick={() => setTab('attention')} />
+            <StatCard label="Sync errors" value={stats.errors} sub="in last run" icon={<XCircle size={17} />} tone="danger" active={tab === 'errors'} onClick={() => setTab('errors')} />
+          </div>
+
+          {/* Toolbar */}
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <div className="flex rounded-lg border border-n-200 bg-n-0 p-[3px]">
+              {TABS.filter((t) => t.show).map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setTab(t.key)}
+                  className={`flex h-[34px] items-center gap-2 rounded-md px-3 text-[13px] font-semibold transition-colors ${tab === t.key ? 'bg-teal-500 text-white' : 'text-n-600 hover:text-n-900'}`}
+                >
+                  {t.label}
+                  {t.count != null && <span className={`rounded-full px-1.5 text-[11px] font-bold ${tab === t.key ? 'bg-white/25 text-white' : 'bg-n-100 text-warning'}`}>{t.count}</span>}
+                </button>
+              ))}
+            </div>
+            <div className="flex h-[42px] min-w-[220px] flex-1 items-center gap-2.5 rounded-lg border border-n-200 bg-n-0 px-3.5">
+              <Search size={16} className="text-n-400" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search account, country, credential…" className="min-w-0 flex-1 border-none bg-transparent text-[13.5px] text-n-900 outline-none placeholder:text-n-400" />
+            </div>
+            <button
+              onClick={() => setMaskSecrets((m) => !m)}
+              className="flex h-[42px] items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-3.5 text-[12.5px] font-medium text-n-600 hover:border-n-300"
+              title={maskSecrets ? 'Reveal credential hints (last 4)' : 'Hide credential hints'}
+            >
+              {maskSecrets ? <EyeOff size={15} /> : <Eye size={15} />} Secrets
+            </button>
+          </div>
+
+          {/* Bulk bar */}
+          {selectedIds.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-teal-300 bg-teal-50 px-4 py-2.5">
+              <span className="text-[13.5px] font-semibold text-n-900">{selectedIds.length} connection{selectedIds.length === 1 ? '' : 's'} selected</span>
+              <div className="h-4 w-px bg-teal-200" />
+              <button
+                className="inline-flex h-8 items-center gap-1.5 rounded-md bg-teal-500 px-3 text-[12.5px] font-semibold text-white hover:bg-teal-600 disabled:opacity-50"
+                disabled={bulkSync.isPending}
+                onClick={() => bulkSync.mutate(selectedRows)}
+              >
+                <RefreshCw size={14} className={bulkSync.isPending ? 'animate-spin' : ''} /> Sync selected
+              </button>
+              {selectedRows.some((i) => i.status === 'active') && (
+                <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300" disabled={setStatus.isPending}
+                  onClick={() => setStatus.mutate({ ids: selectedRows.filter((i) => i.status === 'active').map((i) => i.id), status: 'disabled' })}>
+                  <Pause size={14} /> Pause
+                </button>
+              )}
+              {selectedRows.some((i) => i.status === 'disabled') && (
+                <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300" disabled={setStatus.isPending}
+                  onClick={() => setStatus.mutate({ ids: selectedRows.filter((i) => i.status === 'disabled').map((i) => i.id), status: 'active' })}>
+                  <Play size={14} /> Resume
+                </button>
+              )}
+              <div className="flex-1" />
+              <button className="inline-flex h-8 items-center px-2 text-[12.5px] font-semibold text-n-600 hover:text-n-900" onClick={() => setSelected({})}>Clear</button>
+            </div>
+          )}
+
+          {/* Groups */}
+          <div className="mt-4 flex flex-col gap-4">
+            {groups.map(({ family, all, rows }) => {
+              const open = !collapsedGroups[family];
+              const gHealthy = all.filter(isHealthy).length;
+              const gAttn = all.filter(needsAttention).length;
+              const gErr = all.filter(hasError).length;
+              const allSelected = all.length > 0 && all.every((r) => selected[r.id]);
+              return (
+                <div key={family} className="overflow-hidden rounded-xl border border-n-200 bg-n-0">
+                  {/* Group header */}
+                  <div className={`flex items-center gap-3 bg-n-25 px-4 py-3 ${open ? 'border-b border-n-100' : ''}`}>
+                    <button onClick={() => setCollapsedGroups((c) => ({ ...c, [family]: !c[family] }))} className="grid h-6 w-6 place-items-center rounded text-n-400 hover:bg-n-100 hover:text-n-700" title={open ? 'Collapse' : 'Expand'}>
+                      <ChevronRight size={16} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+                    </button>
+                    <ChannelLogoTile channelType={family} label={all[0].connectorLabel} url={channelLogos[family]} onChanged={refetchLogos} />
+                    <span className="text-[15px] font-bold text-n-900">{all[0].connectorLabel}</span>
+                    <span className="rounded-full bg-n-100 px-2 py-0.5 text-[12px] font-bold text-n-600">{all.length}</span>
+                    <div className="flex flex-1 items-center gap-3.5 pl-2">
+                      {gHealthy > 0 && <HealthChip dot="var(--teal-500)" color="text-teal-700" text={`${gHealthy} healthy`} />}
+                      {gAttn > 0 && <HealthChip dot="var(--warning)" color="text-warning" text={`${gAttn} to verify`} />}
+                      {gErr > 0 && <HealthChip dot="var(--danger)" color="text-danger" text={`${gErr} error${gErr === 1 ? '' : 's'}`} />}
+                    </div>
+                    <button
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50"
+                      disabled={bulkSync.isPending || all.filter(canSync).length === 0}
+                      title={all.filter(canSync).length === 0 ? 'No connections in this marketplace are ready to sync' : `Sync ${all.filter(canSync).length} ready connection(s)`}
+                      onClick={() => bulkSync.mutate(all)}
+                    >
+                      <RefreshCw size={14} className={bulkSync.isPending ? 'animate-spin' : ''} /> Sync group
+                    </button>
                   </div>
-                  <div className="text-[12.5px] text-n-500">{[i.connectorLabel, i.marketplaceLabel].filter(Boolean).join(' · ')}</div>
+
+                  {open && (
+                    <div className="overflow-x-auto">
+                      <div className="min-w-[900px]">
+                        {/* column header */}
+                        <div className="grid h-10 items-center border-b border-n-100 px-4 text-[11px] font-semibold uppercase tracking-wide text-n-500" style={GRID}>
+                          <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={allSelected} onChange={(e) => setGroupSel(all, e.target.checked)} title="Select all in group" />
+                          <div>Account</div>
+                          <div>Status</div>
+                          <div>Health</div>
+                          <div>Last sync</div>
+                          <div />
+                        </div>
+
+                        {rows.map((i, idx) => (
+                          <IntegrationRow
+                            key={i.id}
+                            i={i}
+                            countryCode={countryOf(i)}
+                            last={idx === rows.length - 1}
+                            selected={!!selected[i.id]}
+                            expanded={!!expanded[i.id]}
+                            syncing={syncingId === i.id && sync.isPending}
+                            maskSecrets={maskSecrets}
+                            canSync={canSync(i)}
+                            onToggleSel={() => toggleSel(i.id)}
+                            onToggleExpand={() => setExpanded((e) => ({ ...e, [i.id]: !e[i.id] }))}
+                            onSync={() => sync.mutate(i.id)}
+                            onEdit={() => setModal(i)}
+                            onBackfill={() => setBackfill(i)}
+                            onMapping={() => setMapVerify(i)}
+                            onRemove={() => confirm(`Remove integration “${i.name}”? Stored keys will be deleted.`) && del.mutate(i.id)}
+                          />
+                        ))}
+
+                        {rows.length === 0 && (
+                          <div className="px-4 py-7 text-center text-[13px] text-n-400">No connections match your filters in this marketplace.</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="flex gap-1">
-                  <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Edit" onClick={() => setModal(i)}><Pencil size={15} /></button>
-                  <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" title="Remove" onClick={() => confirm(`Remove integration “${i.name}”? Stored keys will be deleted.`) && del.mutate(i.id)}><Trash2 size={15} /></button>
-                </div>
-              </div>
+              );
+            })}
+          </div>
 
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {i.secretFields.map((s) => (
-                  <span key={s.fieldKey} className={`inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-[11px] font-medium ${s.set ? 'bg-teal-50 text-teal-700' : 'bg-n-100 text-n-400'}`} title={s.fieldKey}>
-                    {s.fieldKey}: {s.set ? `•••• ${s.last4}` : 'not set'}
-                  </span>
-                ))}
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-n-100 pt-2.5 text-[12px]">
-                {i.lastTestStatus === 'ok' && <span className="inline-flex items-center gap-1 text-success"><CheckCircle2 size={13} /> Connection OK</span>}
-                {i.lastTestStatus === 'fail' && <span className="inline-flex items-center gap-1 text-danger" title={i.lastTestMessage ?? undefined}><XCircle size={13} /> Test failed</span>}
-                {!i.lastTestStatus && <span className="text-n-400">Not tested yet</span>}
-                {i.mappingVerifiedAt
-                  ? <span className="inline-flex items-center gap-1 text-success"><CheckCircle2 size={13} /> Mapping verified</span>
-                  : <span className="inline-flex items-center gap-1 text-n-400"><ListChecks size={13} /> Mapping not verified</span>}
-                {i.autoSyncEnabled && <span className="inline-flex items-center gap-1 text-teal-700"><RefreshCw size={12} /> daily</span>}
-                <button className="ml-auto inline-flex items-center gap-1 font-medium text-teal-700 hover:underline" onClick={() => setMapVerify(i)}>
-                  <ListChecks size={13} /> {i.mappingVerifiedAt ? 'Review mapping' : 'Verify field mapping'}
-                </button>
-              </div>
-
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
-                <button
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12.5px] font-semibold text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={!canSync(i) || (sync.isPending && syncingId === i.id)}
-                  title={canSync(i) ? 'Pull orders now' : 'Verify the mapping and set the target channel/company first'}
-                  onClick={() => sync.mutate(i.id)}
-                >
-                  <Download size={14} className={sync.isPending && syncingId === i.id ? 'animate-pulse' : ''} /> {sync.isPending && syncingId === i.id ? 'Syncing…' : 'Sync now'}
-                </button>
-                <button
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-medium text-n-700 hover:border-n-300 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={!canSync(i)}
-                  title={canSync(i) ? 'Import all orders in a past date range' : 'Verify the mapping and set the target channel/company first'}
-                  onClick={() => setBackfill(i)}
-                >
-                  <CalendarRange size={14} /> Pull older orders
-                </button>
-                {i.lastSyncStatus === 'ok' && <span className="text-n-500">{i.lastSyncMessage}</span>}
-                {i.lastSyncStatus === 'error' && <span className="text-danger" title={i.lastSyncMessage ?? undefined}>Last sync failed</span>}
-                <span className="ml-auto text-n-400">{i.lastSyncRunAt ? `synced ${fmtDateTime(i.lastSyncRunAt)}` : 'never synced'}</span>
-              </div>
-            </div>
-          ))}
-              </div>
-            </div>
-          ))}
-        </div>
+          {groups.length === 0 && (
+            <div className="mt-7 text-center text-[14px] text-n-400">No connections match {query ? `“${query}”` : 'this filter'}.</div>
+          )}
+        </>
       )}
 
       {modal !== undefined && (
-        <IntegrationModal
-          integration={modal ?? undefined}
-          onClose={() => setModal(undefined)}
-          onSaved={() => { setModal(undefined); invalidate(); }}
-        />
+        <IntegrationModal integration={modal ?? undefined} onClose={() => setModal(undefined)} onSaved={() => { setModal(undefined); invalidate(); }} />
       )}
       {mapVerify && (
-        <MappingVerifyModal
-          integration={mapVerify}
-          onClose={() => setMapVerify(undefined)}
-          onVerified={() => { setMapVerify(undefined); invalidate(); }}
-        />
+        <MappingVerifyModal integration={mapVerify} onClose={() => setMapVerify(undefined)} onVerified={() => { setMapVerify(undefined); invalidate(); }} />
       )}
       {backfill && (
-        <BackfillModal
-          integration={backfill}
-          onClose={() => setBackfill(undefined)}
-          onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }}
-        />
+        <BackfillModal integration={backfill} onClose={() => setBackfill(undefined)} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }} />
       )}
     </div>
+  );
+}
+
+const GRID = { gridTemplateColumns: '36px minmax(200px,1.6fr) 110px minmax(190px,1.1fr) minmax(220px,1.2fr) 150px' } as const;
+
+function StatCard({ label, value, sub, icon, tone, active, onClick }: {
+  label: string; value: number; sub: string; icon: React.ReactNode; tone: 'teal' | 'warning' | 'danger'; active: boolean; onClick: () => void;
+}) {
+  const tint = tone === 'teal' ? 'bg-teal-50 text-teal-700' : tone === 'warning' ? 'bg-warning-bg text-warning' : 'bg-danger-bg text-danger';
+  const num = tone === 'teal' ? 'text-n-900' : tone === 'warning' ? 'text-warning' : 'text-danger';
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-xl border bg-n-0 p-4 text-left transition-shadow ${active ? 'border-teal-400 ring-1 ring-teal-400' : 'border-n-200 hover:border-n-300'}`}
+    >
+      <div className="flex items-center gap-2.5">
+        <span className={`grid h-[30px] w-[30px] place-items-center rounded-lg ${tint}`}>{icon}</span>
+        <span className="text-[12px] font-semibold text-n-600">{label}</span>
+      </div>
+      <div className="mt-2.5 flex items-baseline gap-2">
+        <span className={`text-[27px] font-bold tabular-nums tracking-tight ${num}`}>{value}</span>
+        <span className="text-[12.5px] text-n-400">{sub}</span>
+      </div>
+    </button>
+  );
+}
+
+function HealthChip({ dot, color, text }: { dot: string; color: string; text: string }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-[12px] font-semibold ${color}`}>
+      <span className="h-[7px] w-[7px] rounded-full" style={{ background: dot }} /> {text}
+    </span>
+  );
+}
+
+function IntegrationRow({
+  i, last, selected, expanded, syncing, maskSecrets, canSync, countryCode,
+  onToggleSel, onToggleExpand, onSync, onEdit, onBackfill, onMapping, onRemove,
+}: {
+  i: ChannelIntegration; last: boolean; selected: boolean; expanded: boolean; syncing: boolean; maskSecrets: boolean; canSync: boolean;
+  onToggleSel: () => void; onToggleExpand: () => void; onSync: () => void; onEdit: () => void; onBackfill: () => void; onMapping: () => void; onRemove: () => void;
+  countryCode?: string | null;
+}) {
+  const error = hasError(i);
+  const chips = syncChips(i);
+  return (
+    <div className={error ? 'shadow-[inset_3px_0_0_var(--danger)]' : selected ? 'shadow-[inset_3px_0_0_var(--teal-500)]' : ''}>
+      <div
+        className={`grid items-center px-4 ${last && !expanded ? '' : 'border-b border-n-100'} ${selected ? 'bg-teal-50/50' : error ? 'bg-danger-bg/30' : 'hover:bg-n-25'}`}
+        style={{ ...GRID, minHeight: 60 }}
+      >
+        <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={selected} onChange={onToggleSel} />
+
+        {/* account */}
+        <button onClick={onToggleExpand} className="flex min-w-0 items-center gap-2.5 pr-3 text-left">
+          <ChevronRight size={14} className={`shrink-0 text-n-400 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+          {/* Flag + name only: the group header above already says which connector this is,
+              and the country reads off the flag, so the code and sub-line were repetition. */}
+          <div className="flex min-w-0 items-center gap-2">
+            <Flag code={countryCode} className="shrink-0" />
+            <span className="truncate text-[14px] font-semibold text-n-900">{i.name}</span>
+          </div>
+        </button>
+
+        {/* status */}
+        <div>
+          {i.status === 'active'
+            ? <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-2.5 py-0.5 text-[12px] font-semibold text-teal-700"><span className="h-1.5 w-1.5 rounded-full bg-teal-500" />active</span>
+            : <span className="inline-flex items-center gap-1.5 rounded-full bg-n-100 px-2.5 py-0.5 text-[12px] font-semibold text-n-500"><span className="h-1.5 w-1.5 rounded-full bg-n-400" />paused</span>}
+        </div>
+
+        {/* health */}
+        <div className="flex flex-col gap-1 pr-2.5">
+          {i.lastTestStatus === 'ok' && <HealthLine ok text="Connection OK" />}
+          {i.lastTestStatus === 'fail' && <HealthLine text="Auth failed" tone="danger" />}
+          {!i.lastTestStatus && <HealthLine text="Not tested" tone="muted" />}
+          {i.mappingVerifiedAt ? <HealthLine ok text="Mapping verified" /> : <HealthLine text="Mapping not verified" tone="warning" />}
+        </div>
+
+        {/* last sync */}
+        <div className="min-w-0 pr-3">
+          <div className={`text-[13px] font-semibold ${syncing ? 'text-teal-700' : i.lastSyncStatus === 'error' ? 'text-danger' : !i.lastSyncRunAt ? 'text-warning' : 'text-n-700'}`}>
+            {syncing ? 'Syncing…' : relTime(i.lastSyncRunAt)}
+          </div>
+          {!syncing && i.lastSyncStatus === 'error' && <div className="mt-0.5 truncate text-[11.5px] text-danger" title={i.lastSyncMessage ?? undefined}>{i.lastSyncMessage ?? 'Last sync failed'}</div>}
+          {!syncing && chips.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {chips.map((c, n) => <span key={n} className={`rounded px-1.5 py-px text-[11px] font-semibold tabular-nums ${CHIP_TONE[c.tone]}`}>{c.text}</span>)}
+            </div>
+          )}
+        </div>
+
+        {/* actions */}
+        <div className="flex items-center justify-end gap-1.5">
+          <button
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-teal-500 px-2.5 text-[12.5px] font-semibold text-white hover:bg-teal-600 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!canSync || syncing}
+            title={canSync ? 'Pull orders now' : 'Verify the mapping and set the target channel/company first'}
+            onClick={onSync}
+          >
+            <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Syncing' : 'Sync now'}
+          </button>
+          <button className="grid h-8 w-8 place-items-center rounded-md border border-n-200 bg-n-0 text-n-500 hover:border-n-300 hover:text-n-800" title="Details" onClick={onToggleExpand}>
+            <MoreHorizontal size={16} />
+          </button>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="grid grid-cols-[1.1fr_1fr] gap-7 border-b border-n-100 bg-n-25/60 px-4 py-4 pl-[58px] max-[760px]:grid-cols-1" style={{ gridColumn: '1 / -1' }}>
+          {/* credentials */}
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Credentials</div>
+            <div className="mt-2.5 flex flex-col gap-2">
+              {i.secretFields.map((s) => (
+                <div key={s.fieldKey} className="flex items-center gap-2.5">
+                  <KeyRound size={14} className="shrink-0 text-n-400" />
+                  <span className="min-w-[130px] text-[12.5px] text-n-500">{s.fieldKey}</span>
+                  <span className="mono rounded border border-n-200 bg-n-50 px-2 py-0.5 text-[12px] text-n-700">
+                    {!s.set ? 'not set' : maskSecrets ? '••••••••' : `•••• ${s.last4}`}
+                  </span>
+                </div>
+              ))}
+              {i.secretFields.length === 0 && <div className="text-[12.5px] text-n-400">No credentials for this connector.</div>}
+            </div>
+            <p className="mt-2 text-[11px] text-n-400">Keys are encrypted at rest (AES-256-GCM) and never displayed in full.</p>
+            <div className="mt-3.5 flex flex-wrap gap-2">
+              <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300" onClick={onEdit}><Pencil size={14} /> Edit connection</button>
+              <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50" disabled={!canSync} title={canSync ? 'Import all orders in a past date range' : 'Verify the mapping and set the target first'} onClick={onBackfill}><Download size={14} /> Pull older orders</button>
+              <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-bd bg-n-0 px-3 text-[12.5px] font-semibold text-danger hover:bg-danger-bg" onClick={onRemove}><Trash2 size={14} /> Remove</button>
+            </div>
+          </div>
+
+          {/* field mapping + last result */}
+          <div>
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Field mapping</div>
+              <button className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-teal-700 hover:underline" onClick={onMapping}>
+                {i.mappingVerifiedAt ? 'Review mapping' : 'Verify field mapping'} <ExternalLink size={13} />
+              </button>
+            </div>
+            <div className={`mt-2.5 flex items-center gap-2.5 rounded-lg border px-3 py-2.5 ${i.mappingVerifiedAt ? 'border-teal-100 bg-teal-50/60' : 'border-warning-bd bg-warning-bg/50'}`}>
+              {i.mappingVerifiedAt ? <CheckCircle2 size={16} className="shrink-0 text-teal-600" /> : <ListChecks size={16} className="shrink-0 text-warning" />}
+              <span className="text-[12.5px] text-n-700">{i.mappingVerifiedAt ? 'All order fields mapped and verified.' : 'Verify the field mapping before the next sync.'}</span>
+            </div>
+            <div className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-n-500">Last sync result</div>
+            <div className="mt-1.5 text-[12.5px] leading-relaxed text-n-600">{i.lastSyncRunAt ? (i.lastSyncMessage ?? '—') : 'No sync has run yet for this connection.'}</div>
+            {i.lastSyncRunAt && <div className="mt-1 text-[12px] text-n-400">Synced {fmtDateTime(i.lastSyncRunAt)}{i.autoSyncEnabled ? ' · auto-sync daily' : ''}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HealthLine({ ok, text, tone }: { ok?: boolean; text: string; tone?: 'danger' | 'warning' | 'muted' }) {
+  const color = ok ? 'text-teal-700' : tone === 'danger' ? 'text-danger' : tone === 'warning' ? 'text-warning' : 'text-n-400';
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-[12.5px] font-medium ${color}`}>
+      {ok ? <CheckCircle2 size={14} /> : tone === 'danger' ? <XCircle size={14} /> : <AlertTriangle size={14} />} {text}
+    </span>
   );
 }

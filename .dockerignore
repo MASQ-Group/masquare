@@ -1,0 +1,25 @@
+# Keep the build context small and never ship local/secret files into the image.
+**/node_modules
+**/dist
+**/build
+*.tsbuildinfo
+
+.git
+.gitignore
+
+.env
+.env.*
+!.env.example
+
+**/*.log
+npm-debug.log*
+
+.DS_Store
+.idea
+.vscode
+
+# Local docker/minio data, scratch, coverage
+.docker-data
+coverage
+Dockerfile
+.dockerignore

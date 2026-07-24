@@ -32,6 +32,12 @@ export class VendorsController {
     return this.vendors.update(id, dto, user.sub);
   }
 
+  /** Check the vendor's VAT number against the EU VIES service. */
+  @Post(':id/verify-vat')
+  verifyVat(@Param('id') id: string) {
+    return this.vendors.verifyVat(id);
+  }
+
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.vendors.remove(id);

@@ -29,3 +29,23 @@ export const CURRENCIES: { code: string; name: string }[] = [
   { code: 'MXN', name: 'Mexican Peso' },
   { code: 'ILS', name: 'Israeli New Shekel' },
 ];
+
+/**
+ * Flag to show against a currency, as an ISO 3166-1 alpha-2 code.
+ *
+ * ISO 4217 builds a currency code from its country's ISO 3166 code plus a letter for
+ * the currency name, so the first two characters are the flag for almost everything.
+ * Only the supranational and shared currencies need spelling out.
+ */
+const CURRENCY_FLAG_OVERRIDES: Record<string, string> = {
+  EUR: 'eu', // the Union, not a country
+  XAF: 'cf',
+  XOF: 'sn',
+  XCD: 'ag',
+  XPF: 'pf',
+};
+
+export function currencyFlagCode(code: string): string {
+  const c = (code ?? '').trim().toUpperCase();
+  return CURRENCY_FLAG_OVERRIDES[c] ?? c.slice(0, 2).toLowerCase();
+}

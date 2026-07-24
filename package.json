@@ -2,7 +2,7 @@
   "name": "masquare",
   "version": "0.1.0",
   "private": true,
-  "description": "maSquare — multi-company back-office operations platform",
+  "description": "maSquare \u2014 multi-company back-office operations platform",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -16,7 +16,14 @@
     "db:migrate": "npm run db:migrate -w @masquare/api",
     "db:seed": "npm run db:seed -w @masquare/api",
     "db:reset": "npm run db:reset -w @masquare/api",
-    "lint": "echo \"(lint not configured yet)\""
+    "lint": "echo \"(lint not configured yet)\"",
+    "dev:demo": "concurrently -n api-demo,web-demo -c magenta,yellow \"npm:dev:api:demo\" \"npm:dev:web:demo\"",
+    "dev:api:demo": "npm run start:dev:demo -w @masquare/api",
+    "dev:web:demo": "npm run dev:demo -w @masquare/web",
+    "db:migrate:demo": "npm run db:migrate:demo -w @masquare/api",
+    "db:seed:demo": "npm run db:seed:demo -w @masquare/api",
+    "demo:refresh": "node scripts/demo-db.mjs refresh",
+    "demo:reset": "node scripts/demo-db.mjs reset"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { ShipmentsService, type ShipmentQuery } from './shipments.service';
-import { CreateShipmentDto, SetFulfilmentDto, ShipmentImportCommitDto, ShipmentImportValidateDto, UpdateShipmentDto } from './dto/shipment.dto';
+import { CreateCombinedShipmentDto, CreateShipmentBatchDto, CreateShipmentDto, SetFulfilmentDto, ShipmentImportCommitDto, ShipmentImportValidateDto, UpdateShipmentDto } from './dto/shipment.dto';
 
 @ApiTags('shipments')
 @ApiBearerAuth()
@@ -18,10 +18,11 @@ export class ShipmentsController {
     @Query('companyId') companyId?: string,
     @Query('salesChannelId') salesChannelId?: string,
     @Query('type') type?: string,
+    @Query('sortDir') sortDir?: 'asc' | 'desc',
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    const query: ShipmentQuery = { q, companyId, salesChannelId, type, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
+    const query: ShipmentQuery = { q, companyId, salesChannelId, type, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
     return this.svc.list(query);
   }
 
@@ -31,10 +32,12 @@ export class ShipmentsController {
     @Query('q') q?: string,
     @Query('companyId') companyId?: string,
     @Query('salesChannelId') salesChannelId?: string,
+    @Query('channelKind') channelKind?: 'local' | 'channel',
+    @Query('sortDir') sortDir?: 'asc' | 'desc',
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    const query: ShipmentQuery = { q, companyId, salesChannelId, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
+    const query: ShipmentQuery = { q, companyId, salesChannelId, channelKind, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
     return this.svc.pending(query);
   }
 
@@ -45,8 +48,9 @@ export class ShipmentsController {
     @Query('companyId') companyId?: string,
     @Query('salesChannelId') salesChannelId?: string,
     @Query('type') type?: string,
+    @Query('channelKind') channelKind?: 'local' | 'channel',
   ) {
-    return this.svc.exportRows({ q, companyId, salesChannelId, type }, scope === 'pending' ? 'pending' : 'recorded');
+    return this.svc.exportRows({ q, companyId, salesChannelId, type, channelKind }, scope === 'pending' ? 'pending' : 'recorded');
   }
 
   @Post('import/validate')
@@ -67,6 +71,23 @@ export class ShipmentsController {
   @Patch('transaction/:transactionId/fulfilment')
   setFulfilment(@Param('transactionId') transactionId: string, @Body() dto: SetFulfilmentDto) {
     return this.svc.setFulfilment(transactionId, dto.status);
+  }
+
+  @Post('transaction/:transactionId/fulfil-local')
+  fulfilLocal(@Param('transactionId') transactionId: string, @CurrentUser() user: AuthUser) {
+    return this.svc.fulfilLocal(transactionId, user.sub);
+  }
+
+  /** Several parcels sent together on one date (size-split consignment). */
+  @Post('batch')
+  createBatch(@Body() dto: CreateShipmentBatchDto, @CurrentUser() user: AuthUser) {
+    return this.svc.createBatch(dto, user.sub);
+  }
+
+  /** Several orders shipped together as one parcel, cost split across them. */
+  @Post('combine')
+  combine(@Body() dto: CreateCombinedShipmentDto, @CurrentUser() user: AuthUser) {
+    return this.svc.combine(dto, user.sub);
   }
 
   @Post()

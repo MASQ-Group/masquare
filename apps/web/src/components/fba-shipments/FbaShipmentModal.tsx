@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Boxes, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { DatePicker, ModalShell } from '@masquare/ui';
+import { DatePicker, ModalShell, Select } from '@masquare/ui';
 import {
   fbaShipmentsApi, salesChannelsApi, shippingServicesApi,
   type FbaEstimate, type FbaShipment, type FbaShipmentInput, type RefLite,
@@ -198,7 +198,7 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
                   <Field label="L (cm)"><input className="input mono" inputMode="decimal" value={box.lengthCm} onChange={(e) => setBox(bi, { lengthCm: e.target.value })} placeholder="0" /></Field>
                   <Field label="W (cm)"><input className="input mono" inputMode="decimal" value={box.widthCm} onChange={(e) => setBox(bi, { widthCm: e.target.value })} placeholder="0" /></Field>
                   <Field label="H (cm)"><input className="input mono" inputMode="decimal" value={box.heightCm} onChange={(e) => setBox(bi, { heightCm: e.target.value })} placeholder="0" /></Field>
-                  <Field label="Tracking number"><input className="input mono" value={box.trackingNumber} onChange={(e) => setBox(bi, { trackingNumber: e.target.value })} placeholder="add later" /></Field>
+                  <Field label="Tracking number"><input className="input code" value={box.trackingNumber} onChange={(e) => setBox(bi, { trackingNumber: e.target.value })} placeholder="add later" /></Field>
                 </div>
 
                 <div className="rounded-md border border-n-200 bg-n-0">
@@ -229,10 +229,12 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
           <div className="grid grid-cols-2 gap-4 max-[560px]:grid-cols-1">
             <div>
               <label className="label">Shipping service</label>
-              <select className="input" value={serviceId ?? ''} onChange={(e) => { setServiceId(e.target.value || null); touch(); }}>
-                <option value="">— select —</option>
-                {services.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.calcMethod === 'actual_weight' ? 'actual' : 'volumetric'})</option>)}
-              </select>
+              <Select
+                value={serviceId ?? ''}
+                onChange={(v) => { setServiceId(v || null); touch(); }}
+                placeholder="— select —"
+                options={services.map((s) => ({ value: s.id, label: `${s.name} (${s.calcMethod === 'actual_weight' ? 'actual' : 'volumetric'})` }))}
+              />
             </div>
             <div>
               <label className="label">Shipping zone <span className="font-normal text-n-400">(auto)</span></label>
@@ -286,7 +288,7 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
             {(estimate?.allocation ?? []).length === 0 && <div className="px-3 py-6 text-center text-[13px] text-n-500">Add SKUs and pick a service to see the allocation.</div>}
             {(estimate?.allocation ?? []).map((it, i) => (
               <div key={i} className="grid grid-cols-[1fr_70px_100px_110px_120px] gap-2 border-b border-n-100 px-3 py-2 text-[13px] last:border-b-0">
-                <span className="mono truncate text-n-800" title={it.title ?? undefined}>{it.sku}</span>
+                <span className="code truncate text-n-800" title={it.title ?? undefined}>{it.sku}</span>
                 <span className="mono text-right text-n-600">{it.quantity}</span>
                 <span className="mono text-right text-n-600">{kg(it.lineWeightKg)}</span>
                 <span className="mono text-right text-n-700">{eur(scaled(it.allocatedCostEur))}</span>

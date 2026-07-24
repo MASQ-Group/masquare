@@ -25,15 +25,26 @@ export class FbaShipmentsController {
     return this.fba.averageForProduct(productId, salesChannelId || undefined);
   }
 
+  @Get('sku-costs')
+  skuCosts(@Query('q') q?: string, @Query('salesChannelId') salesChannelId?: string) {
+    return this.fba.skuAllocatedCosts({ q, salesChannelId });
+  }
+
+  @Post('import')
+  import(@Body() body: { rows?: Record<string, string>[] }, @CurrentUser() user: AuthUser) {
+    return this.fba.importShipments(body?.rows ?? [], user.sub);
+  }
+
   @Get()
   list(
     @Query('q') q?: string,
     @Query('salesChannelId') salesChannelId?: string,
     @Query('status') status?: string,
+    @Query('sortDir') sortDir?: 'asc' | 'desc',
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    return this.fba.list({ q, salesChannelId, status, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined });
+    return this.fba.list({ q, salesChannelId, status, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined });
   }
 
   @Get(':id')

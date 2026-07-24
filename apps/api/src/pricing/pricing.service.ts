@@ -1,0 +1,563 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { PricingFxService } from './fx.service';
+import { BulkPricingDto, IndividualPricingDto } from './dto/pricing.dto';
+
+const ACTIVE = { deletedAt: null };
+const round = (v: number, dp = 2) => Number(v.toFixed(dp));
+/** The platform's volumetric divisor, matching the sales-transaction shipping estimate. */
+const VOLUMETRIC_DIVISOR = 5000;
+
+/** Display labels per tax regime, matching the sales-transaction module. */
+const TAX_LABELS: Record<string, string> = { vat: 'VAT', gst: 'GST', jct: 'Japanese Consumption Tax', sales_tax: 'Sales tax', none: 'Tax' };
+const taxLabelFor = (t: string) => TAX_LABELS[t] ?? 'Tax';
+
+/**
+ * Effective marketplace tax/reward rates for the tax-on-top Amazon markets, expressed as a
+ * percentage of the **net** (item) price so they slot straight into the net-based economics.
+ * These are empirical rates measured across the platform's own settled orders, not statutory
+ * headline rates — Amazon JP lists tax-inclusive at the reduced band, so the consumption tax
+ * lands at ~7.41% of net (≈6.9% of the buyer-paid total) rather than the 10% standard rate.
+ *   JP consumption tax : 7.41% of net  (verified across all registered Amazon JPN orders)
+ *   JP Amazon Points   : 1.00% of net  (reward deducted from our proceeds; ≈0.93% of total)
+ *   AU GST             : 10.0% of net  (≈9.09% of the buyer-paid total)
+ */
+const JCT_RATE_PCT = 7.41;
+const AMAZON_POINTS_PCT = 1.0;
+const GST_RATE_PCT = 10;
+
+/** Everything a single price calculation needs, resolved once and reused. */
+export interface CostInputs {
+  costEur: number;
+  shippingEur: number;
+  importPct: number;
+  feePct: number;
+  vatPct: number;
+  /** Amazon Points reward (JP), % of net — a deduction from proceeds. 0 elsewhere. */
+  pointsPct: number;
+  /** Destination tax regime, for labelling the tax line. */
+  taxType: string;
+}
+
+@Injectable()
+export class PricingService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fx: PricingFxService,
+  ) {}
+
+  // ---------------------------------------------------------------- shared maths
+
+  /**
+   * Profit for a listing price, in EUR.
+   *
+   * Mirrors how the sales-transaction module values a sale, including its deliberate
+   * asymmetry: profit is net of VAT, but margin is measured against the VAT-inclusive
+   * amount the buyer pays. Keeping that identical means a price set here and a sale
+   * booked later report the same margin.
+   */
+  private economics(grossEur: number, c: CostInputs) {
+    const netEur = grossEur / (1 + c.vatPct / 100);
+    const vatEur = grossEur - netEur;
+    const feeEur = grossEur * (c.feePct / 100);
+    const importEur = c.costEur * (c.importPct / 100);
+    // Amazon Points (JP) are a reward funded from our proceeds — a real cost, keyed off net.
+    const pointsEur = netEur * (c.pointsPct / 100);
+    const profit = netEur - feeEur - c.costEur - c.shippingEur - importEur - pointsEur;
+    return {
+      netEur: round(netEur),
+      vatEur: round(vatEur),
+      feeEur: round(feeEur),
+      importEur: round(importEur),
+      pointsEur: round(pointsEur),
+      taxType: c.taxType,
+      taxLabel: taxLabelFor(c.taxType),
+      costEur: round(c.costEur),
+      shippingEur: round(c.shippingEur),
+      profitEur: round(profit),
+      // Margin against what the buyer pays, matching the transaction module's base.
+      marginPct: grossEur > 0 ? round((profit / grossEur) * 100) : 0,
+    };
+  }
+
+  /**
+   * The listing price that hits a target margin.
+   *
+   * Solving profit = target × gross for gross gives
+   *   gross × (1/(1+vat) − fee − target) = cost + shipping + import
+   * A denominator at or below zero means tax and fees already consume the whole price:
+   * no price achieves that margin, so the channel is reported as unreachable rather
+   * than quoting a misleading number.
+   */
+  private solveGrossEur(target: number, c: CostInputs): number | null {
+    // Net is (1 − points%) usable after the Amazon Points reward is funded from it.
+    const denom = (1 - c.pointsPct / 100) / (1 + c.vatPct / 100) - c.feePct / 100 - target / 100;
+    if (denom <= 0) return null;
+    const costs = c.costEur + c.shippingEur + c.costEur * (c.importPct / 100);
+    const gross = costs / denom;
+    return gross > 0 && Number.isFinite(gross) ? gross : null;
+  }
+
+  /**
+   * Tax regime for a channel, from its native country. The tax-on-top Amazon markets carry
+   * effective rates verified from settled orders (JP consumption tax + Amazon Points, AU GST);
+   * everywhere else keeps the destination VAT rate and its consignment-threshold rule.
+   */
+  private resolveTax(channel: any, value: number, valueIsNet = false): { taxType: string; vatPct: number; pointsPct: number } {
+    const iso = channel?.nativeCountry?.isoCode ?? null;
+    if (iso === 'JP') return { taxType: 'jct', vatPct: JCT_RATE_PCT, pointsPct: AMAZON_POINTS_PCT };
+    if (iso === 'AU') return { taxType: 'gst', vatPct: GST_RATE_PCT, pointsPct: 0 };
+    const countryVat = channel?.nativeCountry?.vatRate != null ? Number(channel.nativeCountry.vatRate) : null;
+    return { taxType: 'vat', vatPct: this.channelVatPct(channel, value, countryVat, valueIsNet), pointsPct: 0 };
+  }
+
+  /**
+   * VAT the channel applies, as a percentage.
+   *
+   * Marketplaces with a consignment threshold (the UK's £135 is the archetype) collect
+   * VAT at the point of sale at or below it, and leave import VAT to the border above it.
+   *
+   * HMRC measures that threshold on the consignment's **intrinsic value** — "the price
+   * the goods were sold for, not including … other identifiable taxes and charges" —
+   * so the comparison is against the price EXCLUDING VAT, not the price the buyer pays.
+   * At 20% that puts the switchover at a £162.00 gross ticket: £162.00 is £135.00 net and
+   * still inside the threshold, £162.01 is outside it.
+   *
+   * `value` is in the channel's own currency. Pass the gross (buyer-paid) figure and this
+   * derives the net itself, or pass a net figure with `valueIsNet`.
+   */
+  private channelVatPct(channel: any, value: number, countryVat: number | null, valueIsNet = false): number {
+    if (channel?.vatThresholdEnabled && channel.vatThresholdAmount != null) {
+      const below = channel.vatBelowThresholdPct != null ? Number(channel.vatBelowThresholdPct) : 0;
+      const netValue = valueIsNet ? value : value / (1 + below / 100);
+      const pct =
+        netValue <= Number(channel.vatThresholdAmount) ? channel.vatBelowThresholdPct : channel.vatAboveThresholdPct;
+      if (pct != null) return Number(pct);
+    }
+    return countryVat ?? 0;
+  }
+
+  // ---------------------------------------------------------------- resolvers
+
+  /** Package weight for one unit, by the service's charging method. */
+  private unitWeightKg(product: any, calcMethod: string | null): number | null {
+    const actual =
+      product.packageWeightKg != null
+        ? Number(product.packageWeightKg)
+        : product.productWeightKg != null
+          ? Number(product.productWeightKg)
+          : null;
+    const vol =
+      product.packageLengthCm != null && product.packageWidthCm != null && product.packageHeightCm != null
+        ? (Number(product.packageLengthCm) * Number(product.packageWidthCm) * Number(product.packageHeightCm)) /
+          VOLUMETRIC_DIVISOR
+        : null;
+    if (calcMethod === 'actual_weight') return actual;
+    // Volumetric services charge the greater of the two.
+    return vol != null && actual != null ? Math.max(vol, actual) : (vol ?? actual);
+  }
+
+  /** Zone + banded rate for a service into a country. Weights outside the bands clamp. */
+  private lookupShipping(service: any, countryId: string | null, weightKg: number | null) {
+    if (!service || !countryId || weightKg == null) return { zoneName: null as string | null, costEur: null as number | null };
+    const zone = (service.zones ?? []).find((z: any) => (z.countries ?? []).some((c: any) => c.countryId === countryId));
+    if (!zone) return { zoneName: null, costEur: null };
+    const rates = (zone.rates ?? []).slice().sort((a: any, b: any) => Number(a.fromWeightKg) - Number(b.fromWeightKg));
+    if (!rates.length) return { zoneName: zone.name, costEur: null };
+    // Round the weight UP into the first band whose upper bound covers it. Carriers price bands
+    // with tiny gaps between one band's top and the next band's bottom (e.g. …–10.00, then
+    // 10.01–10.50), so a parcel that lands in a gap or exactly on a boundary must take the next
+    // band up — never fall through. Only a weight above every band clamps to the heaviest band.
+    const covering = rates.find((r: any) => weightKg <= Number(r.toWeightKg));
+    const chosen = covering ?? rates[rates.length - 1];
+    return { zoneName: zone.name, costEur: Number(chosen.chargeEur) };
+  }
+
+  /**
+   * Shipping service to price with: the user's explicit choice, else the default set on
+   * the channel's own country. Mirrors how a sales transaction picks a service, so the
+   * profit shown here starts from the same assumptions a real order would.
+   */
+  private async resolveService(explicitId: string | null | undefined, countryId: string | null) {
+    const id =
+      explicitId ??
+      (countryId
+        ? (await this.prisma.country.findUnique({ where: { id: countryId }, select: { defaultShippingServiceId: true } }))
+            ?.defaultShippingServiceId ?? null
+        : null);
+    if (!id) return null;
+    return this.prisma.shippingService.findFirst({ where: { id, ...ACTIVE }, include: this.serviceInclude });
+  }
+
+  private serviceInclude = {
+    zones: { where: ACTIVE, include: { countries: true, rates: { where: ACTIVE } } },
+  };
+
+  private async loadChannels(ids?: string[]) {
+    return this.prisma.salesChannel.findMany({
+      where: { ...ACTIVE, ...(ids?.length ? { id: { in: ids } } : {}) },
+      include: { nativeCountry: { select: { id: true, name: true, isoCode: true, vatRate: true } } },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  /**
+   * Unit cost for margin work: the moving average once the product has actually been
+   * received, otherwise the catalogue cost. Mirrors how COGS is resolved in sales
+   * transactions, so a SKU cannot be priced off one cost and then report profit off another.
+   *
+   * The average is EUR by construction; only the catalogue cost needs converting.
+   */
+  private async productCostEur(product: any): Promise<number> {
+    const avg = Number(product.averageCostEur ?? 0);
+    if (avg > 0) return avg;
+    const amount = product.purchaseCostAmount != null ? Number(product.purchaseCostAmount) : 0;
+    const ccy = product.purchaseCostCurrency ?? 'EUR';
+    if (!amount || ccy === 'EUR') return amount;
+    const rate = await this.fx.toEur(ccy);
+    return rate != null ? round(amount * rate, 4) : amount;
+  }
+
+  // ---------------------------------------------------------------- individual
+
+  async individual(dto: IndividualPricingDto) {
+    const product = await this.prisma.product.findFirst({ where: { id: dto.productId, ...ACTIVE } });
+    if (!product) throw new NotFoundException('Product not found');
+
+    const channels = await this.loadChannels();
+    const primary = channels.find((c) => c.id === dto.salesChannelId);
+    if (!primary) throw new NotFoundException('Sales channel not found');
+
+    // Defaults resolve from the channel's country, so a price is costed properly the
+    // moment a product, channel and price exist — nothing waits on manual entry.
+    const service = await this.resolveService(dto.shippingServiceId, primary.nativeCountryId);
+
+    const autoCost = await this.productCostEur(product);
+    const rates = await this.fx.ratesFor(channels.map((c) => c.nativeCurrency));
+
+    // `value` is in the channel's currency: the buyer-paid price for the channel being
+    // priced, or a net figure (valueIsNet) for the cross-channel rows, where net revenue
+    // is the fixed quantity and the gross is what we are deriving.
+    const build = async (channel: any, value: number, valueIsNet = false) => {
+      const ccy = channel.nativeCurrency ?? 'EUR';
+      const rate = ccy === 'EUR' ? 1 : rates.get(ccy.toUpperCase()) ?? null;
+      const weight = this.unitWeightKg(product, service?.calcMethod ?? null);
+      const ship = this.lookupShipping(service, channel.nativeCountryId, weight);
+      const tax = this.resolveTax(channel, value, valueIsNet);
+      const autoVat = tax.vatPct;
+      const autoFee = channel.generalSalesFeePct != null ? Number(channel.generalSalesFeePct) : 0;
+      const zeroTax = dto.taxMode === 'zero';
+
+      const inputs: CostInputs = {
+        costEur: dto.costEur ?? autoCost,
+        shippingEur: dto.shippingCostEur ?? ship.costEur ?? 0,
+        importPct: dto.importPct ?? 0,
+        feePct: dto.feePct ?? autoFee,
+        // "No tax" is an explicit choice on the form, so it wins over the resolved rate.
+        vatPct: zeroTax ? 0 : (dto.vatPct ?? autoVat),
+        // The Amazon Points estimate only applies when tax does (same JP market).
+        pointsPct: zeroTax ? 0 : tax.pointsPct,
+        taxType: tax.taxType,
+      };
+      return { ccy, rate, weight, ship, inputs, autoVat, autoFee, taxType: tax.taxType, pointsPct: inputs.pointsPct };
+    };
+
+    // --- the channel being priced -------------------------------------------
+    const p = await build(primary, dto.price);
+    if (p.rate == null) {
+      throw new BadRequestException(`No exchange rate available for ${p.ccy} — cannot price this channel right now`);
+    }
+    const grossEur = dto.price * p.rate;
+    const primaryEcon = this.economics(grossEur, p.inputs);
+
+    // --- the same net revenue restated on every other channel ---------------
+    // Holding net (ex-VAT) EUR revenue constant is what makes the comparison meaningful:
+    // it answers "what must I list at elsewhere to earn the same?", not "what if I
+    // charged the same number", which would be meaningless across tax regimes.
+    const netEurTarget = primaryEcon.netEur;
+    const comparison = await Promise.all(
+      channels.map(async (c) => {
+        const ccy = c.nativeCurrency ?? 'EUR';
+        const rate = ccy === 'EUR' ? 1 : rates.get(ccy.toUpperCase()) ?? null;
+        if (rate == null) {
+          return { channelId: c.id, channelName: c.name, currency: ccy, countryIso: c.nativeCountry?.isoCode ?? null, priceNative: null, profitEur: null, marginPct: null, unavailable: 'No exchange rate' };
+        }
+        // Resolve VAT against this channel's own gross, which the threshold rule needs.
+        const provisional = await build(c, netEurTarget / rate, true);
+        const vatPct = provisional.inputs.vatPct;
+        const grossEurHere = netEurTarget * (1 + vatPct / 100);
+        const econ = this.economics(grossEurHere, provisional.inputs);
+        return {
+          channelId: c.id,
+          channelName: c.name,
+          currency: ccy,
+          countryIso: c.nativeCountry?.isoCode ?? null,
+          priceNative: round(grossEurHere / rate, ccy === 'JPY' ? 0 : 2),
+          vatPct,
+          feePct: provisional.inputs.feePct,
+          profitEur: econ.profitEur,
+          marginPct: econ.marginPct,
+          isPrimary: c.id === primary.id,
+          unavailable: null as string | null,
+        };
+      }),
+    );
+
+    // Say plainly what could not be resolved. Shipping quietly defaulting to zero would
+    // overstate profit, and the user has no way to tell from the number alone.
+    const warnings: string[] = [];
+    if (!service) warnings.push('No shipping service for this destination — shipping is not included.');
+    else if (p.weight == null) warnings.push('This product has no weight or dimensions, so shipping could not be priced.');
+    else if (p.ship.zoneName == null) warnings.push(`${service.name} has no zone covering this destination — shipping is not included.`);
+    else if (p.ship.costEur == null) warnings.push(`${service.name} has no rate band for ${p.weight.toFixed(3)} kg — shipping is not included.`);
+
+    return {
+      product: { id: product.id, sku: product.mainSku, title: product.title },
+      warnings,
+      channel: { id: primary.id, name: primary.name, currency: p.ccy, countryIso: primary.nativeCountry?.isoCode ?? null },
+      fxRate: p.rate,
+      price: dto.price,
+      priceEur: round(grossEur),
+      // What the form shows as placeholders, so the user can see what an override replaces.
+      auto: {
+        costEur: round(autoCost),
+        shippingServiceId: service?.id ?? null,
+        shippingServiceName: service?.name ?? null,
+        shippingEur: p.ship.costEur,
+        shippingZone: p.ship.zoneName,
+        vatPct: p.autoVat,
+        taxType: p.taxType,
+        taxLabel: taxLabelFor(p.taxType),
+        pointsPct: p.pointsPct,
+        feePct: p.autoFee,
+        importPct: 0,
+        actualWeightKg: product.packageWeightKg != null ? Number(product.packageWeightKg) : product.productWeightKg != null ? Number(product.productWeightKg) : null,
+        volumetricWeightKg:
+          product.packageLengthCm != null && product.packageWidthCm != null && product.packageHeightCm != null
+            ? round((Number(product.packageLengthCm) * Number(product.packageWidthCm) * Number(product.packageHeightCm)) / VOLUMETRIC_DIVISOR, 3)
+            : null,
+        chargeableWeightKg: p.weight != null ? round(p.weight, 3) : null,
+      },
+      applied: p.inputs,
+      breakdown: primaryEcon,
+      comparison,
+    };
+  }
+
+  // ---------------------------------------------------------------- channel listings
+
+  /**
+   * Estimated profit + margin for a set of already-listed prices — one per (product, channel).
+   * Uses the exact same economics as a booked sale / the pricing calculator (channel fee, the
+   * destination tax regime, FX, product cost and the shipping estimate), so a listing's health
+   * matches what it would earn if it sold. Keyed by the caller's `key`. Batched: products,
+   * channels, FX and services are resolved once.
+   */
+  async listingEconomics(cells: Array<{ key: string; productId: string; salesChannelId: string; grossNative: number | null; currency: string | null }>): Promise<Map<string, { profitEur: number | null; marginPct: number | null; loss: boolean }>> {
+    const out = new Map<string, { profitEur: number | null; marginPct: number | null; loss: boolean }>();
+    const productIds = [...new Set(cells.map((c) => c.productId))];
+    const channelIds = [...new Set(cells.map((c) => c.salesChannelId))];
+    if (!productIds.length || !channelIds.length) return out;
+    const [products, channels] = await Promise.all([
+      this.prisma.product.findMany({ where: { id: { in: productIds }, ...ACTIVE } }),
+      this.loadChannels(channelIds),
+    ]);
+    const pById = new Map(products.map((p) => [p.id, p]));
+    const cById = new Map(channels.map((c) => [c.id, c]));
+    const rates = await this.fx.ratesFor([...new Set(cells.map((c) => c.currency ?? 'EUR'))]);
+    const serviceByChannel = new Map<string, any>();
+    for (const c of channels) serviceByChannel.set(c.id, await this.resolveService(null, c.nativeCountryId));
+    const costCache = new Map<string, number>();
+
+    for (const cell of cells) {
+      const product = pById.get(cell.productId);
+      const channel = cById.get(cell.salesChannelId);
+      const gross = cell.grossNative;
+      if (!product || !channel || gross == null || !(gross > 0)) { out.set(cell.key, { profitEur: null, marginPct: null, loss: false }); continue; }
+      const ccy = (cell.currency || channel.nativeCurrency || 'EUR').toUpperCase();
+      const rate = ccy === 'EUR' ? 1 : rates.get(ccy) ?? null;
+      if (rate == null) { out.set(cell.key, { profitEur: null, marginPct: null, loss: false }); continue; }
+      const grossEur = gross * rate;
+      if (!costCache.has(product.id)) costCache.set(product.id, await this.productCostEur(product));
+      const service = serviceByChannel.get(channel.id);
+      const weight = this.unitWeightKg(product, service?.calcMethod ?? null);
+      const ship = this.lookupShipping(service, channel.nativeCountryId, weight);
+      // Threshold rules (e.g. UK £135) compare against the price in the channel's own
+      // currency, so the tax regime is resolved from the native gross, not the EUR figure.
+      const tax = this.resolveTax(channel, gross);
+      const inputs: CostInputs = {
+        costEur: costCache.get(product.id) ?? 0,
+        shippingEur: ship.costEur ?? 0,
+        importPct: 0,
+        feePct: channel.generalSalesFeePct != null ? Number(channel.generalSalesFeePct) : 0,
+        vatPct: tax.vatPct,
+        pointsPct: tax.pointsPct,
+        taxType: tax.taxType,
+      };
+      const econ = this.economics(grossEur, inputs);
+      out.set(cell.key, { profitEur: econ.profitEur, marginPct: econ.marginPct, loss: econ.profitEur < 0 });
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- bulk
+
+  async bulk(dto: BulkPricingDto) {
+    const products = await this.resolveBulkProducts(dto);
+    if (!products.length) throw new BadRequestException('No products matched the selection');
+
+    const channels = await this.loadChannels(dto.salesChannelIds);
+    if (!channels.length) throw new BadRequestException('Pick at least one sales channel');
+
+    const rates = await this.fx.ratesFor(channels.map((c) => c.nativeCurrency));
+    const costs = new Map<string, number>();
+    for (const p of products) costs.set(p.id, await this.productCostEur(p));
+
+    // One service per channel. A per-channel override wins; otherwise the channel falls
+    // back to the default set on its own country, which is what a real order would use.
+    const overrides = dto.shippingServiceByChannel ?? {};
+    const serviceByChannel = new Map<string, any>();
+    for (const c of channels) {
+      serviceByChannel.set(c.id, await this.resolveService(overrides[c.id] ?? dto.shippingServiceId, c.nativeCountryId));
+    }
+
+    const columns = channels.map((c) => ({
+      channelId: c.id,
+      channelName: c.name,
+      currency: c.nativeCurrency ?? 'EUR',
+      countryIso: c.nativeCountry?.isoCode ?? null,
+      shippingServiceId: serviceByChannel.get(c.id)?.id ?? null,
+      shippingServiceName: serviceByChannel.get(c.id)?.name ?? null,
+      unavailable: (c.nativeCurrency ?? 'EUR') !== 'EUR' && rates.get((c.nativeCurrency ?? 'EUR').toUpperCase()) == null,
+    }));
+
+    const rows = products.map((product) => {
+      const costEur = costs.get(product.id) ?? 0;
+      const cells = channels.map((channel) => {
+        const ccy = channel.nativeCurrency ?? 'EUR';
+        const rate = ccy === 'EUR' ? 1 : rates.get(ccy.toUpperCase()) ?? null;
+        if (rate == null) return { priceNative: null, profitEur: null, marginPct: null, reason: 'No exchange rate' };
+
+        const service = serviceByChannel.get(channel.id) ?? null;
+        const weight = this.unitWeightKg(product, service?.calcMethod ?? null);
+        const ship = this.lookupShipping(service, channel.nativeCountryId, weight);
+        // A weight-based method with no weight on the product would silently price at
+        // zero shipping, so the cell is refused rather than quietly understating cost.
+        if (service && weight == null) return { priceNative: null, profitEur: null, marginPct: null, reason: 'Missing weight/dimensions' };
+
+        const tax = this.resolveTax(channel, 0);
+        const feePct = channel.generalSalesFeePct != null ? Number(channel.generalSalesFeePct) : 0;
+        const inputs: CostInputs = {
+          costEur,
+          shippingEur: dto.shippingCostEur ?? ship.costEur ?? 0,
+          importPct: dto.importPct ?? 0,
+          feePct,
+          // Threshold channels need a price to resolve VAT, and the price is what we are
+          // solving for. Solve at the below-threshold rate, then re-solve if that answer
+          // turns out to sit above the threshold. JP/AU carry their verified effective rates.
+          vatPct: tax.vatPct,
+          pointsPct: tax.pointsPct,
+          taxType: tax.taxType,
+        };
+
+        let gross = this.solveGrossEur(dto.targetMarginPct, inputs);
+        if (gross != null && channel.vatThresholdEnabled && channel.vatThresholdAmount != null) {
+          const netNative = (gross / (1 + inputs.vatPct / 100)) * rate;
+          if (netNative > Number(channel.vatThresholdAmount)) {
+            const above = channel.vatAboveThresholdPct != null ? Number(channel.vatAboveThresholdPct) : 0;
+            gross = this.solveGrossEur(dto.targetMarginPct, { ...inputs, vatPct: above });
+            inputs.vatPct = above;
+          }
+        }
+        if (gross == null) return { priceNative: null, profitEur: null, marginPct: null, reason: 'Margin unreachable after tax and fees' };
+
+        const econ = this.economics(gross, inputs);
+        return {
+          priceNative: round(gross / rate, ccy === 'JPY' ? 0 : 2),
+          profitEur: econ.profitEur,
+          marginPct: econ.marginPct,
+          reason: null as string | null,
+        };
+      });
+      return { productId: product.id, sku: product.mainSku, title: product.title, costEur: round(costEur), cells };
+    });
+
+    return { targetMarginPct: dto.targetMarginPct, columns, rows, productCount: rows.length, channelCount: columns.length };
+  }
+
+  /** Product set for a bulk run: an explicit list, or everything under a vendor/brand/type. */
+  private async resolveBulkProducts(dto: BulkPricingDto) {
+    const base = { ...ACTIVE };
+    if (dto.mode === 'specific') {
+      if (!dto.productIds?.length) throw new BadRequestException('Pick at least one product');
+      return this.prisma.product.findMany({ where: { ...base, id: { in: dto.productIds } }, orderBy: { mainSku: 'asc' } });
+    }
+    if (!dto.groupId) throw new BadRequestException(`Choose a ${dto.mode}`);
+    const key =
+      dto.mode === 'vendor' ? { vendorId: dto.groupId }
+      : dto.mode === 'brand' ? { brandId: dto.groupId }
+      : { productTypeId: dto.groupId };
+    return this.prisma.product.findMany({ where: { ...base, ...key }, orderBy: { mainSku: 'asc' } });
+  }
+
+  /**
+   * The shipping service each channel would use by default — the one set on its native
+   * country. Lets the wizard show what will be applied before anything is calculated,
+   * and makes a per-channel override an edit of a visible value rather than a blind choice.
+   */
+  async channelShippingDefaults(channelIds?: string[]) {
+    const channels = await this.loadChannels(channelIds);
+    const countryIds = [...new Set(channels.map((c) => c.nativeCountryId).filter(Boolean) as string[])];
+    const countries = countryIds.length
+      ? await this.prisma.country.findMany({
+          where: { id: { in: countryIds } },
+          select: { id: true, name: true, defaultShippingServiceId: true },
+        })
+      : [];
+    const byCountry = new Map(countries.map((c) => [c.id, c]));
+    const serviceIds = [...new Set(countries.map((c) => c.defaultShippingServiceId).filter(Boolean) as string[])];
+    const services = serviceIds.length
+      ? await this.prisma.shippingService.findMany({ where: { id: { in: serviceIds }, ...ACTIVE }, select: { id: true, name: true } })
+      : [];
+    const byService = new Map(services.map((s) => [s.id, s.name]));
+
+    return channels.map((c) => {
+      const country = c.nativeCountryId ? byCountry.get(c.nativeCountryId) : null;
+      const svcId = country?.defaultShippingServiceId ?? null;
+      return {
+        channelId: c.id,
+        channelName: c.name,
+        currency: c.nativeCurrency ?? 'EUR',
+        countryIso: c.nativeCountry?.isoCode ?? null,
+        countryName: country?.name ?? null,
+        defaultServiceId: svcId,
+        defaultServiceName: svcId ? byService.get(svcId) ?? null : null,
+      };
+    });
+  }
+
+  /** Counts per vendor/brand/type, so the picker can show "N products" without a second call. */
+  async groups(mode: 'vendor' | 'brand' | 'type') {
+    if (mode === 'vendor') {
+      const rows = await this.prisma.product.groupBy({ by: ['vendorId'], where: { ...ACTIVE, vendorId: { not: null } }, _count: true });
+      const vendors = await this.prisma.vendor.findMany({ where: { id: { in: rows.map((r) => r.vendorId!) } }, select: { id: true, name: true } });
+      return this.zip(rows, vendors, 'vendorId');
+    }
+    if (mode === 'brand') {
+      const rows = await this.prisma.product.groupBy({ by: ['brandId'], where: { ...ACTIVE, brandId: { not: null } }, _count: true });
+      const brands = await this.prisma.brand.findMany({ where: { id: { in: rows.map((r) => r.brandId!) } }, select: { id: true, name: true } });
+      return this.zip(rows, brands, 'brandId');
+    }
+    const rows = await this.prisma.product.groupBy({ by: ['productTypeId'], where: { ...ACTIVE, productTypeId: { not: null } }, _count: true });
+    const types = await this.prisma.productType.findMany({ where: { id: { in: rows.map((r) => r.productTypeId!) } }, select: { id: true, name: true } });
+    return this.zip(rows, types, 'productTypeId');
+  }
+
+  private zip(rows: any[], named: { id: string; name: string }[], key: string) {
+    const byId = new Map(named.map((n) => [n.id, n.name]));
+    return rows
+      .map((r) => ({ id: r[key] as string, name: byId.get(r[key]) ?? '—', productCount: r._count as number }))
+      .filter((r) => r.name !== '—')
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+}

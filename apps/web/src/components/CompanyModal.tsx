@@ -134,7 +134,7 @@ export function CompanyModal({ company, onClose, onSaved }: Props) {
             <div className="grid grid-cols-[120px_1fr] gap-3">
               <input className="input mono" placeholder="CY" value={row.country}
                 onChange={(e) => { setVats((r) => r.map((x, idx) => idx === i ? { ...x, country: e.target.value } : x)); setDirty(true); }} />
-              <input className="input mono" placeholder="CY10156304C" value={row.vatNumber}
+              <input className="input code" placeholder="CY10156304C" value={row.vatNumber}
                 onChange={(e) => { setVats((r) => r.map((x, idx) => idx === i ? { ...x, vatNumber: e.target.value } : x)); setDirty(true); }} />
             </div>
           )}

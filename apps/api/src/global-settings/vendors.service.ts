@@ -1,11 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ViesService } from './vies.service';
 import { CreateVendorDto, UpdateVendorDto } from './dto/vendor.dto';
 
 @Injectable()
 export class VendorsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly vies: ViesService,
+  ) {}
 
   list(q?: string) {
     const where: Prisma.VendorWhereInput = {
@@ -62,6 +66,24 @@ export class VendorsService {
         include: { contacts: { where: { deletedAt: null } } },
       });
     });
+  }
+
+  /**
+   * Re-check the vendor's VAT number against VIES and record the outcome. Advisory:
+   * an unreachable VIES stores "unknown" rather than failing the request.
+   */
+  async verifyVat(id: string) {
+    const vendor = await this.get(id);
+    const result = await this.vies.check(vendor.vatNumber);
+    await this.prisma.vendor.update({
+      where: { id },
+      data: {
+        vatNumberValid: result.valid,
+        vatNumberCheckedAt: result.checkedAt,
+        vatNumberCheckedName: result.name ?? null,
+      },
+    });
+    return { ...result, vendor: await this.get(id) };
   }
 
   async remove(id: string) {

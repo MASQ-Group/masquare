@@ -1,5 +1,6 @@
 import { SmartReferenceInput, type ReferenceOption } from '@masquare/ui';
-import { CURRENCIES } from '../../lib/currencies';
+import { CURRENCIES, currencyFlagCode } from '../../lib/currencies';
+import { Flag } from './Flag';
 
 interface Props {
   value: string | null;
@@ -7,19 +8,31 @@ interface Props {
   placeholder?: string;
 }
 
-/** ISO 4217 currency dropdown (Global Data Considerations §Currencies). Stores the code. */
+/**
+ * ISO 4217 currency dropdown (Global Data Considerations §Currencies). Stores the code.
+ *
+ * House style: every currency shows as its country flag plus the three-letter code and
+ * nothing else. The name is still searchable — you can type "sterling" — it just isn't
+ * displayed, which keeps the control narrow enough to sit beside an amount field.
+ */
 export function CurrencySelect({ value, onChange, placeholder = 'Currency…' }: Props) {
   const selected = CURRENCIES.find((c) => c.code === value);
-  const fetchSuggestions = async (q: string): Promise<ReferenceOption[]> =>
-    CURRENCIES.filter((c) => !q || c.code.toLowerCase().includes(q.toLowerCase()) || c.name.toLowerCase().includes(q.toLowerCase())).map((c) => ({
-      id: c.code,
-      label: `${c.code} — ${c.name}`,
-      sub: c.code,
-    }));
+  const option = (code: string): ReferenceOption => ({
+    id: code,
+    label: code,
+    icon: <Flag code={currencyFlagCode(code)} />,
+  });
+
+  const fetchSuggestions = async (q: string): Promise<ReferenceOption[]> => {
+    const needle = q.trim().toLowerCase();
+    return CURRENCIES.filter(
+      (c) => !needle || c.code.toLowerCase().includes(needle) || c.name.toLowerCase().includes(needle),
+    ).map((c) => option(c.code));
+  };
 
   return (
     <SmartReferenceInput
-      value={selected ? { id: value!, label: `${selected.code} — ${selected.name}`, sub: selected.code } : null}
+      value={selected ? option(selected.code) : null}
       placeholder={placeholder}
       fetchSuggestions={fetchSuggestions}
       onSelect={(o) => onChange(o.id)}

@@ -1,13 +1,18 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateShipmentDto, UpdateShipmentDto } from './dto/shipment.dto';
+import { CreateCombinedShipmentDto, CreateShipmentBatchDto, CreateShipmentDto, UpdateShipmentDto } from './dto/shipment.dto';
 
 export interface ShipmentQuery {
   q?: string;
   companyId?: string;
   salesChannelId?: string;
   type?: string;
+  /** Pending list only: 'local' = our own delivery/pickup, 'channel' = marketplace. */
+  channelKind?: 'local' | 'channel';
+  /** Date order: pending sorts on the order date, the log on the shipment date. */
+  sortDir?: 'asc' | 'desc';
   page?: number;
   pageSize?: number;
 }
@@ -49,6 +54,7 @@ export class ShipmentsService {
       costBorneBy: s.costBorneBy,
       dutyImportEur: s.dutyImportEur,
       comments: s.comments,
+      groupId: s.groupId ?? null,
       createdAt: s.createdAt,
     };
   }
@@ -80,7 +86,7 @@ export class ShipmentsService {
     };
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.shipment.count({ where }),
-      this.prisma.shipment.findMany({ where, include, orderBy: { shipmentDate: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+      this.prisma.shipment.findMany({ where, include, orderBy: { shipmentDate: query.sortDir === 'asc' ? 'asc' : 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
     ]);
     return { items: rows.map((r) => this.serialize(r)), total, page, pageSize };
   }
@@ -91,12 +97,18 @@ export class ShipmentsService {
     const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
     const where: Prisma.SalesTransactionWhereInput = {
       deletedAt: null,
-      // Pending = no outbound shipment registered in the platform (the single point of
-      // truth for "shipped"). Cancelled orders don't need fulfilment.
-      shipments: { none: { deletedAt: null, type: 'outbound' } },
+      // Pending = not yet marked fully shipped. An order can go out in several shipments, so
+      // recording one does NOT complete it — it stays here (as 'partial') until the operator
+      // ticks "fully shipped", which is what lets you come back and add the next one.
+      // Cancelled orders need no fulfilment; FBA is fulfilled by the channel.
+      fulfilmentStatus: { notIn: ['shipped', 'cancelled'] },
       resolution: { not: 'cancelled' },
+      fulfilmentType: { not: 'FBA' },
       ...(query.companyId ? { companyId: query.companyId } : {}),
       ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
+      // Local = our own delivery/pickup (channel.kind 'local'); channel = everything else.
+      ...(query.channelKind === 'local' ? { salesChannel: { is: { kind: 'local' } } } : {}),
+      ...(query.channelKind === 'channel' ? { salesChannel: { isNot: { kind: 'local' } } } : {}),
       ...(query.q
         ? {
             OR: [
@@ -110,16 +122,17 @@ export class ShipmentsService {
       this.prisma.salesTransaction.count({ where }),
       this.prisma.salesTransaction.findMany({
         where,
-        orderBy: { date: 'asc' }, // oldest first — longest outstanding at the top
+        // Order date. Defaults to oldest first — longest outstanding at the top.
+        orderBy: { date: query.sortDir === 'desc' ? 'desc' : 'asc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
         select: {
-          id: true, transactionRef: true, date: true, shippingServiceId: true,
-          salesChannel: { select: { id: true, name: true } },
+          id: true, transactionRef: true, date: true, shippingServiceId: true, deliveryMethod: true, exchangeRate: true,
+          salesChannel: { select: { id: true, name: true, kind: true, nativeCountry: { select: { isoCode: true } } } },
           company: { select: { id: true, officialName: true } },
           destinationCountry: { select: { id: true, name: true } },
           shippingService: { select: { id: true, name: true } },
-          items: { where: { deletedAt: null }, select: { sku: true, quantity: true } },
+          items: { where: { deletedAt: null }, select: { sku: true, quantity: true, shippingAmount: true } },
           shipments: { where: { deletedAt: null }, select: { id: true, type: true } },
         },
       }),
@@ -128,14 +141,23 @@ export class ShipmentsService {
       id: t.id,
       transactionRef: t.transactionRef,
       date: t.date,
-      salesChannel: t.salesChannel,
+      salesChannel: t.salesChannel ? { id: t.salesChannel.id, name: t.salesChannel.name, nativeCountryIso: t.salesChannel.nativeCountry?.isoCode ?? null } : null,
+      // Local sales need no carrier/tracking/weight — the UI offers a one-click fulfil instead.
+      isLocal: t.salesChannel?.kind === 'local',
+      deliveryMethod: t.deliveryMethod ?? null,
       company: t.company,
       destinationCountry: t.destinationCountry,
       defaultShippingService: t.shippingService,
       skus: t.items.map((i) => i.sku),
       itemCount: t.items.length,
       quantity: t.items.reduce((s, i) => s + (i.quantity ?? 0), 0),
+      // Shipping the customer was charged on this order, in EUR — the default weight when
+      // splitting a combined shipment's cost across its orders.
+      shippingEur: Number((t.items.reduce((s, i) => s + (i.shippingAmount ?? 0), 0) * (t.exchangeRate ?? 1)).toFixed(2)),
       shipmentCount: t.shipments.length,
+      // Outbound shipments already recorded. > 0 means partially shipped — the next one is
+      // an "Add shipment", not a first "Record shipment".
+      outboundCount: t.shipments.filter((s) => s.type === 'outbound').length,
     }));
     return { items, total, page, pageSize };
   }
@@ -197,10 +219,134 @@ export class ShipmentsService {
     return this.serialize(s);
   }
 
+  /** Record several parcels that all went out on the same day — one date and one duty charge,
+   *  but a separate carrier / tracking number / cost per parcel. Each becomes its own shipment
+   *  row, so the cost total and the shipments log work exactly as for a single parcel. */
+  async createBatch(dto: CreateShipmentBatchDto, actorId?: string) {
+    const tx = await this.prisma.salesTransaction.findFirst({ where: { id: dto.transactionId, deletedAt: null }, select: { id: true } });
+    if (!tx) throw new NotFoundException('Sales transaction not found');
+    const parcels = dto.parcels?.length ? dto.parcels : [{}];
+    const type = dto.type ?? 'outbound';
+
+    await this.prisma.$transaction(async (t) => {
+      for (let i = 0; i < parcels.length; i++) {
+        const p = parcels[i];
+        await t.shipment.create({
+          data: {
+            transactionId: dto.transactionId,
+            type,
+            shipmentDate: new Date(dto.shipmentDate),
+            shippingServiceId: p.shippingServiceId ?? null,
+            trackingNumber: p.trackingNumber ?? null,
+            shippingCostEur: p.shippingCostEur ?? null,
+            costBorneBy: dto.costBorneBy ?? 'company',
+            // Duty is charged once for the consignment — put it on the first parcel only so
+            // it isn't counted once per parcel.
+            dutyImportEur: i === 0 ? dto.dutyImportEur ?? null : null,
+            comments: dto.comments ?? null,
+            createdById: actorId,
+          },
+        });
+      }
+      if (type === 'outbound' && dto.markShipped !== false) {
+        await t.salesTransaction.update({ where: { id: dto.transactionId }, data: { fulfilmentStatus: 'shipped' } });
+      }
+    });
+    return { ok: true, created: parcels.length };
+  }
+
+  /** Ship several orders together as one physical parcel. Writes one outbound shipment row per
+   *  order — all sharing a fresh groupId — and splits the single real shipping cost across them
+   *  (by an explicit split if given, else proportionally to each order's own shipping charge,
+   *  equal when none charged shipping). Reusing per-order rows keeps the log, per-transaction
+   *  profit and cancel behaviour identical to a normal shipment. */
+  async combine(dto: CreateCombinedShipmentDto, actorId?: string) {
+    const ids = [...new Set(dto.transactionIds)];
+    if (ids.length < 2) throw new BadRequestException('Combine needs at least two different orders');
+
+    const txs = await this.prisma.salesTransaction.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      select: { id: true, transactionRef: true, exchangeRate: true, items: { where: { deletedAt: null }, select: { shippingAmount: true } } },
+    });
+    if (txs.length !== ids.length) throw new NotFoundException('One or more sales transactions were not found');
+
+    const round2 = (n: number) => Number(n.toFixed(2));
+    const total = dto.totalShippingCostEur ?? 0;
+
+    // Resolve each order's allocated cost.
+    let alloc = new Map<string, number>();
+    if (dto.allocations?.length) {
+      for (const a of dto.allocations) {
+        if (!ids.includes(a.transactionId)) throw new BadRequestException('An allocation refers to an order not in this shipment');
+        alloc.set(a.transactionId, round2(a.shippingCostEur ?? 0));
+      }
+      for (const id of ids) if (!alloc.has(id)) alloc.set(id, 0);
+    } else {
+      // Weight by each order's own shipping charge (EUR); equal split when none charged.
+      const weight = new Map(txs.map((t) => [t.id, t.items.reduce((s, i) => s + (i.shippingAmount ?? 0), 0) * (t.exchangeRate ?? 1)]));
+      const sum = [...weight.values()].reduce((s, w) => s + w, 0);
+      let running = 0;
+      ids.forEach((id, i) => {
+        const share = i === ids.length - 1
+          ? round2(total - running) // last row absorbs the rounding residue so the split is exact
+          : round2(sum > 0 ? total * ((weight.get(id) ?? 0) / sum) : total / ids.length);
+        running += share;
+        alloc.set(id, share);
+      });
+    }
+
+    const groupId = randomUUID();
+    const type = 'outbound';
+    await this.prisma.$transaction(async (t) => {
+      let first = true;
+      for (const id of ids) {
+        await t.shipment.create({
+          data: {
+            transactionId: id,
+            type,
+            groupId,
+            shipmentDate: new Date(dto.shipmentDate),
+            shippingServiceId: dto.shippingServiceId ?? null,
+            trackingNumber: dto.trackingNumber ?? null,
+            shippingCostEur: alloc.get(id) ?? 0,
+            costBorneBy: dto.costBorneBy ?? 'company',
+            // Duty is charged once for the whole consignment — record it on the first order only.
+            dutyImportEur: first ? dto.dutyImportEur ?? null : null,
+            comments: dto.comments ?? null,
+            createdById: actorId,
+          },
+        });
+        if (dto.markShipped !== false) {
+          await t.salesTransaction.update({ where: { id }, data: { fulfilmentStatus: 'shipped' } });
+        }
+        first = false;
+      }
+    });
+
+    return {
+      ok: true,
+      created: ids.length,
+      groupId,
+      allocations: txs.map((t) => ({ transactionId: t.id, transactionRef: t.transactionRef, shippingCostEur: alloc.get(t.id) ?? 0 })),
+    };
+  }
+
+  /** Cancel a recorded shipment. Removing an outbound one un-does the fulfilment: the order
+   *  returns to the pending worklist (as 'partial' if other parcels remain, 'pending' if none
+   *  do), so it can be shipped again. Inbound/returns don't affect fulfilment. */
   async remove(id: string) {
-    const existing = await this.prisma.shipment.findFirst({ where: { id, deletedAt: null } });
+    const existing = await this.prisma.shipment.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, type: true, transactionId: true },
+    });
     if (!existing) throw new NotFoundException('Shipment not found');
     await this.prisma.shipment.update({ where: { id }, data: { deletedAt: new Date() } });
+    if (existing.type === 'outbound') {
+      await this.prisma.salesTransaction.update({
+        where: { id: existing.transactionId },
+        data: { fulfilmentStatus: 'pending' },
+      });
+    }
     return { ok: true };
   }
 
@@ -209,6 +355,39 @@ export class ShipmentsService {
     if (!tx) throw new NotFoundException('Sales transaction not found');
     await this.prisma.salesTransaction.update({ where: { id: transactionId }, data: { fulfilmentStatus: status } });
     return { ok: true, status };
+  }
+
+  /** Fulfil a local sale in one step: no carrier, tracking, weight or zone to enter. Records a
+   *  minimal outbound shipment (a marker with no cost of its own — the delivery cost lives on
+   *  the transaction), which is what makes it "shipped" everywhere (the app's single source of
+   *  truth is an outbound shipment record). Idempotent. */
+  async fulfilLocal(transactionId: string, actorId?: string) {
+    const tx = await this.prisma.salesTransaction.findFirst({
+      where: { id: transactionId, deletedAt: null },
+      select: {
+        id: true, deliveryMethod: true,
+        salesChannel: { select: { kind: true } },
+        shipments: { where: { deletedAt: null, type: 'outbound' }, select: { id: true } },
+      },
+    });
+    if (!tx) throw new NotFoundException('Sales transaction not found');
+    if (tx.salesChannel?.kind !== 'local') {
+      throw new BadRequestException('One-click fulfil is only for local sales — record a shipment for channel orders.');
+    }
+    if (tx.shipments.length > 0) return { ok: true, alreadyFulfilled: true };
+
+    await this.prisma.shipment.create({
+      data: {
+        transactionId,
+        type: 'outbound',
+        shipmentDate: new Date(),
+        costBorneBy: 'company',
+        comments: tx.deliveryMethod === 'pickup' ? 'Local sale — picked up' : 'Local sale — delivered',
+        createdById: actorId,
+      },
+    });
+    await this.prisma.salesTransaction.update({ where: { id: transactionId }, data: { fulfilmentStatus: 'shipped' } });
+    return { ok: true };
   }
 
   // --- Export / import -----------------------------------------------------
@@ -233,8 +412,12 @@ export class ShipmentsService {
       const rows = await this.prisma.salesTransaction.findMany({
         where: {
           deletedAt: null,
-          shipments: { none: { deletedAt: null, type: 'outbound' } },
+          // Same rule as the pending list: not yet marked fully shipped.
+          fulfilmentStatus: { notIn: ['shipped', 'cancelled'] },
           resolution: { not: 'cancelled' },
+          fulfilmentType: { not: 'FBA' }, // FBA is channel-fulfilled — never pending for us
+          ...(query.channelKind === 'local' ? { salesChannel: { is: { kind: 'local' } } } : {}),
+          ...(query.channelKind === 'channel' ? { salesChannel: { isNot: { kind: 'local' } } } : {}),
           ...this.txScopeWhere(query),
         },
         orderBy: { date: 'asc' },

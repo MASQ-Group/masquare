@@ -369,7 +369,7 @@ export class FbaShipmentsService {
   };
 
   // --- CRUD ------------------------------------------------------------------
-  async list(query: { q?: string; salesChannelId?: string; status?: string; page?: number; pageSize?: number }) {
+  async list(query: { q?: string; salesChannelId?: string; status?: string; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
     const and: any[] = [{ deletedAt: null }];
@@ -388,7 +388,7 @@ export class FbaShipmentsService {
     const where = { AND: and };
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.fbaShipment.count({ where }),
-      this.prisma.fbaShipment.findMany({ where, include: this.include, orderBy: { date: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+      this.prisma.fbaShipment.findMany({ where, include: this.include, orderBy: { date: query.sortDir === 'asc' ? 'asc' : 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
     ]);
     return { items: rows.map((r) => this.serialize(r)), total, page, pageSize };
   }
@@ -525,14 +525,14 @@ export class FbaShipmentsService {
   }
 
   // --- Per-SKU average inbound cost (feeds FBA order profit later) -----------
-  /** Average allocated inbound cost per unit for a product on a sales channel,
-   *  across all CONFIRMED shipments. Uses actual cost when registered, else estimate. */
+  /** Average allocated inbound cost per unit for a product on a sales channel, across all
+   *  FBA shipments (draft + confirmed). Uses actual cost when registered, else estimate. */
   async averageForProduct(productId: string, salesChannelId?: string) {
     const items = await this.prisma.fbaShipmentItem.findMany({
       where: {
         deletedAt: null,
         productId,
-        shipment: { deletedAt: null, status: 'confirmed', ...(salesChannelId ? { salesChannelId } : {}) },
+        shipment: { deletedAt: null, ...(salesChannelId ? { salesChannelId } : {}) },
       },
     });
     let totalCost = 0;
@@ -549,5 +549,139 @@ export class FbaShipmentsService {
       totalAllocatedCostEur: round(totalCost, 4),
       averageCostPerUnitEur: totalQty > 0 ? round(totalCost / totalQty, 4) : null,
     };
+  }
+
+  /** Allocated inbound cost per SKU per sales channel, aggregated across all FBA shipments
+   *  (draft + confirmed) — the same figure that feeds FBA order profit. Searchable by SKU,
+   *  filterable by sales channel. */
+  async skuAllocatedCosts(query: { q?: string; salesChannelId?: string }) {
+    const where: any = { deletedAt: null, shipment: { deletedAt: null } };
+    if (query.salesChannelId) where.shipment.salesChannelId = query.salesChannelId;
+    if (query.q?.trim()) where.sku = { contains: query.q.trim(), mode: 'insensitive' };
+    const items = await this.prisma.fbaShipmentItem.findMany({
+      where,
+      select: {
+        sku: true, quantity: true, allocatedCostEur: true,
+        product: { select: { id: true, title: true } },
+        shipment: { select: { id: true, salesChannelId: true, salesChannel: { select: { name: true } } } },
+      },
+    });
+    const agg = new Map<string, {
+      sku: string; productId: string | null; title: string | null;
+      salesChannelId: string | null; salesChannelName: string | null;
+      totalQuantity: number; totalAllocatedCostEur: number; shipmentIds: Set<string>;
+    }>();
+    for (const it of items) {
+      const channelId = it.shipment?.salesChannelId ?? '';
+      const key = `${it.sku.trim().toLowerCase()}::${channelId}`;
+      let g = agg.get(key);
+      if (!g) {
+        g = { sku: it.sku, productId: it.product?.id ?? null, title: it.product?.title ?? null,
+          salesChannelId: channelId || null, salesChannelName: it.shipment?.salesChannel?.name ?? null,
+          totalQuantity: 0, totalAllocatedCostEur: 0, shipmentIds: new Set() };
+        agg.set(key, g);
+      }
+      g.totalQuantity += it.quantity ?? 0;
+      g.totalAllocatedCostEur += it.allocatedCostEur != null ? Number(it.allocatedCostEur) : 0;
+      if (it.shipment?.id) g.shipmentIds.add(it.shipment.id);
+    }
+    return [...agg.values()]
+      .map((g) => ({
+        sku: g.sku, productId: g.productId, title: g.title,
+        salesChannelId: g.salesChannelId, salesChannelName: g.salesChannelName,
+        totalQuantity: g.totalQuantity,
+        totalAllocatedCostEur: round(g.totalAllocatedCostEur, 2),
+        averageCostPerUnitEur: g.totalQuantity > 0 ? round(g.totalAllocatedCostEur / g.totalQuantity, 4) : null,
+        shipmentCount: g.shipmentIds.size,
+      }))
+      .sort((a, b) => a.sku.localeCompare(b.sku) || (a.salesChannelName ?? '').localeCompare(b.salesChannelName ?? ''));
+  }
+
+  /** Parse an imported date cell: Excel serial number, ISO YYYY-MM-DD, or DD/MM/YYYY. */
+  private parseImportDate(v: string): Date | null {
+    const s = (v ?? '').trim();
+    if (!s) return null;
+    if (/^\d+(\.\d+)?$/.test(s)) { // Excel serial (days since 1899-12-30)
+      const serial = Number(s);
+      if (serial > 59 && serial < 100000) { const d = new Date(Date.UTC(1899, 11, 30) + Math.round(serial) * 86400000); return isNaN(d.getTime()) ? null : d; }
+    }
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) { const d = new Date(s); return isNaN(d.getTime()) ? null : d; }
+    const m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})$/); // DD/MM/YYYY (global format)
+    if (m) {
+      const yr = Number(m[3].length === 2 ? `20${m[3]}` : m[3]);
+      const d = new Date(Date.UTC(yr, Number(m[2]) - 1, Number(m[1])));
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const any = new Date(s);
+    return isNaN(any.getTime()) ? null : any;
+  }
+
+  /** Import FBA shipments from flat rows (one row per SKU line). Rows sharing a
+   *  `fbaShipmentId` form one shipment; within it, rows sharing a `box` form a box.
+   *  Shipment/box-level fields are taken from the first row of each group. Imported as
+   *  drafts; reuses create() so the estimate + per-SKU allocation run automatically. */
+  async importShipments(rows: Record<string, string>[], actorId?: string) {
+    const channels = await this.prisma.salesChannel.findMany({ where: { deletedAt: null }, select: { id: true, name: true } });
+    const chByName = new Map(channels.map((c) => [c.name.trim().toLowerCase(), c.id]));
+    const services = await this.prisma.shippingService.findMany({ where: { deletedAt: null }, select: { id: true, name: true } });
+    const svcByName = new Map(services.map((s) => [s.name.trim().toLowerCase(), s.id]));
+    const get = (r: Record<string, string>, k: string) => (r[k] == null ? '' : String(r[k]).trim());
+
+    // Group rows into shipments (by FBA Shipment ID), preserving first-seen order.
+    const groups = new Map<string, Record<string, string>[]>();
+    for (const r of rows) {
+      const key = get(r, 'fbaShipmentId');
+      if (!key) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(r);
+    }
+
+    let created = 0;
+    const errors: { fbaRef: string; message: string }[] = [];
+    for (const [fbaId, grp] of groups) {
+      try {
+        const first = grp[0];
+        const channelName = get(first, 'salesChannel');
+        const salesChannelId = chByName.get(channelName.toLowerCase());
+        if (!salesChannelId) throw new Error(`Unknown sales channel "${channelName}"`);
+        const svcName = get(first, 'shippingService');
+        const shippingServiceId = svcName ? (svcByName.get(svcName.toLowerCase()) ?? null) : null;
+        const date = this.parseImportDate(get(first, 'date'));
+        if (!date) throw new Error(`Invalid or missing date "${get(first, 'date')}"`);
+        const pkg = Number(get(first, 'packagingPct'));
+        const packagingPct = Number.isFinite(pkg) && get(first, 'packagingPct') !== '' ? pkg : undefined;
+
+        // Group each shipment's rows into boxes.
+        const boxOrder: string[] = [];
+        const boxMap = new Map<string, any>();
+        for (const r of grp) {
+          const boxKey = get(r, 'box') || 'Box 1';
+          if (!boxMap.has(boxKey)) {
+            boxOrder.push(boxKey);
+            boxMap.set(boxKey, {
+              label: boxKey,
+              emptyWeightKg: num(get(r, 'boxEmptyWeightKg')),
+              lengthCm: num(get(r, 'boxLengthCm')),
+              widthCm: num(get(r, 'boxWidthCm')),
+              heightCm: num(get(r, 'boxHeightCm')),
+              trackingNumber: get(r, 'boxTracking') || null,
+              items: [] as { sku: string; quantity: number }[],
+            });
+          }
+          const sku = get(r, 'sku');
+          if (!sku) continue;
+          const quantity = Math.max(1, Math.floor(Number(get(r, 'quantity')) || 1));
+          boxMap.get(boxKey).items.push({ sku, quantity });
+        }
+        const boxes = boxOrder.map((k) => boxMap.get(k)).filter((b) => b.items.length > 0);
+        if (!boxes.length) throw new Error('No SKU lines');
+
+        await this.create({ date: date.toISOString(), salesChannelId, fbaShipmentRef: fbaId, shippingServiceId, packagingPct, boxes, status: 'draft' } as any, actorId);
+        created++;
+      } catch (e: any) {
+        errors.push({ fbaRef: fbaId, message: (e?.message ?? String(e)).slice(0, 200) });
+      }
+    }
+    return { created, shipments: groups.size, errors };
   }
 }

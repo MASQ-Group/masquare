@@ -1,16 +1,27 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { ModalShell, Select } from '@masquare/ui';
 import { vendorsApi, type Vendor, type VendorContact } from '../../lib/api';
 import { CountrySelect } from '../common/CountrySelect';
+import { CurrencySelect } from '../common/CurrencySelect';
 import { AddButton, ImportButton, RefTable, SectionHeader } from './shared';
 
 export function VendorsSection() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Vendor | null | undefined>(undefined);
+  const [q, setQ] = useState('');
   const { data = [], isLoading } = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
+
+  // Filtered client-side: the whole vendor list is already loaded, so this stays instant.
+  const needle = q.trim().toLowerCase();
+  const rows = needle
+    ? data.filter((v) =>
+        [v.name, v.vatNumber, v.addressCountry, v.addressCity, v.email, ...v.contacts.map((c) => c.contactName)]
+          .some((f) => (f ?? '').toLowerCase().includes(needle)),
+      )
+    : data;
   const invalidate = () => qc.invalidateQueries({ queryKey: ['vendors'] });
   const del = useMutation({ mutationFn: (id: string) => vendorsApi.remove(id), onSuccess: () => { toast.success('Removed'); invalidate(); } });
 
@@ -18,7 +29,7 @@ export function VendorsSection() {
     <div>
       <SectionHeader title="Vendors" description="Suppliers products can be purchased from.">
         <ImportButton
-          title="Import vendors"
+          title="Import Vendors"
           fields={[
             { key: 'name', label: 'Name', required: true },
             { key: 'vatNumber', label: 'VAT number' },
@@ -29,14 +40,26 @@ export function VendorsSection() {
         />
         <AddButton label="Add vendor" onClick={() => setEditing(null)} />
       </SectionHeader>
+      <div className="mb-3 flex h-[38px] w-72 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3">
+        <Search size={16} className="text-n-400" />
+        <input
+          className="h-full flex-1 text-[13px] outline-none"
+          placeholder="Search name, VAT, country, contact…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+        {needle && <button className="text-[12px] text-n-400 hover:text-n-600" onClick={() => setQ('')}>Clear</button>}
+      </div>
+
       <RefTable<Vendor>
         loading={isLoading}
-        empty="No vendors yet. Add your first vendor."
-        rows={data}
+        empty={needle ? `No vendors match "${q.trim()}".` : 'No vendors yet. Add your first vendor.'}
+        rows={rows}
         columns={[
           { key: 'name', header: 'Name', render: (r) => <span className="font-medium text-n-800">{r.name}</span> },
           { key: 'vat', header: 'VAT', className: 'mono', render: (r) => r.vatNumber ?? '—' },
           { key: 'country', header: 'Country', className: 'mono', render: (r) => r.addressCountry ?? '—' },
+          { key: 'currency', header: 'Currency', className: 'mono', render: (r) => r.currency ?? 'EUR' },
           { key: 'contacts', header: 'Contacts', render: (r) => r.contacts.length },
         ]}
         onEdit={setEditing}
@@ -51,7 +74,14 @@ export function VendorsSection() {
 
 const TABS = [
   { key: 'details', label: 'Details' },
+  { key: 'vat', label: 'Purchasing VAT' },
   { key: 'contacts', label: 'Contacts' },
+];
+
+const VAT_TREATMENTS = [
+  { value: 'standard' as const, label: 'Standard — charge VAT', hint: 'Local vendor. Each line uses its product VAT class rate.' },
+  { value: 'reverse_charge' as const, label: 'EU reverse charge — 0%', hint: 'EU vendor with a valid VAT number. VAT accounted for by us (Art. 196).' },
+  { value: 'outside_scope' as const, label: 'Outside EU — 0%', hint: 'Non-EU vendor. Import VAT and duties handled at customs.' },
 ];
 
 function VendorModal({ vendor, onClose, onSaved }: { vendor: Vendor | null; onClose: () => void; onSaved: () => void }) {
@@ -66,11 +96,36 @@ function VendorModal({ vendor, onClose, onSaved }: { vendor: Vendor | null; onCl
     phone: vendor?.phone ?? '',
     email: vendor?.email ?? '',
     website: vendor?.website ?? '',
+    vatTreatment: vendor?.vatTreatment ?? 'standard',
+    currency: vendor?.currency ?? 'EUR',
   });
+  const [vies, setVies] = useState<{ valid: boolean | null; name?: string | null; checkedAt: string; message: string } | null>(
+    vendor?.vatNumberCheckedAt
+      ? { valid: vendor.vatNumberValid ?? null, name: vendor.vatNumberCheckedName, checkedAt: vendor.vatNumberCheckedAt, message: '' }
+      : null,
+  );
+  const [checking, setChecking] = useState(false);
   const [contacts, setContacts] = useState<VendorContact[]>(vendor?.contacts ?? []);
 
   const set = (patch: Partial<typeof form>) => { setForm((f) => ({ ...f, ...patch })); setDirty(true); };
   const canSave = form.name.trim().length > 0;
+
+  const verify = async () => {
+    if (!vendor) return;
+    setChecking(true);
+    try {
+      const res = await vendorsApi.verifyVat(vendor.id);
+      setVies(res);
+      // VIES is advisory — an unreachable service is reported, never treated as invalid.
+      if (res.valid === true) toast.success(res.message);
+      else if (res.valid === false) toast.error(res.message);
+      else toast.warning(res.message);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message ?? 'VIES check failed');
+    } finally {
+      setChecking(false);
+    }
+  };
 
   const save = async () => {
     if (!canSave) { setTab('details'); toast.error('Name is required'); return; }
@@ -96,14 +151,68 @@ function VendorModal({ vendor, onClose, onSaved }: { vendor: Vendor | null; onCl
       {tab === 'details' && (
         <div className="grid grid-cols-2 gap-4 max-[560px]:grid-cols-1">
           <div className="col-span-2"><label className="label">Name *</label><input className="input" value={form.name} onChange={(e) => set({ name: e.target.value })} /></div>
-          <div><label className="label">VAT number</label><input className="input mono" value={form.vatNumber} onChange={(e) => set({ vatNumber: e.target.value })} /></div>
+          <div>
+            <label className="label">VAT number</label>
+            <input className="input code" value={form.vatNumber} onChange={(e) => set({ vatNumber: e.target.value })} />
+            {/* Sits below the input so the fields on this grid row stay top-aligned. */}
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px]">
+              <button
+                type="button"
+                className="font-medium text-teal-700 hover:text-teal-800 disabled:cursor-not-allowed disabled:text-n-300"
+                disabled={!vendor || !form.vatNumber.trim() || checking}
+                onClick={verify}
+              >
+                {checking ? 'Checking VIES…' : 'Verify with VIES'}
+              </button>
+              {!vendor && <span className="text-n-400">— save the vendor first</span>}
+              {vies && (
+                <span className={vies.valid === true ? 'text-success' : vies.valid === false ? 'text-danger' : 'text-warning'}>
+                  {vies.valid === true ? 'Valid' : vies.valid === false ? 'Not recognised' : 'Unconfirmed'}
+                  {vies.name ? ` — ${vies.name}` : ''}
+                  <span className="text-n-400"> · {new Date(vies.checkedAt).toLocaleDateString('en-GB')}</span>
+                </span>
+              )}
+            </div>
+          </div>
           <div><label className="label">Country</label><CountrySelect value={form.addressCountry || null} valueKind="code" onChange={(v) => set({ addressCountry: v ?? '' })} /></div>
+          <div>
+            <label className="label">Currency</label>
+            <CurrencySelect value={form.currency || 'EUR'} onChange={(v) => set({ currency: v ?? 'EUR' })} />
+            <div className="mt-1.5 text-[11.5px] text-n-400">Purchase orders for this vendor are priced in it.</div>
+          </div>
           <div><label className="label">City</label><input className="input" value={form.addressCity} onChange={(e) => set({ addressCity: e.target.value })} /></div>
           <div><label className="label">Phone</label><input className="input mono" value={form.phone} onChange={(e) => set({ phone: e.target.value })} /></div>
           <div><label className="label">Email</label><input className="input" value={form.email} onChange={(e) => set({ email: e.target.value })} /></div>
           <div><label className="label">Website</label><input className="input" value={form.website} onChange={(e) => set({ website: e.target.value })} /></div>
         </div>
       )}
+      {tab === 'vat' && (
+        <div className="flex flex-col gap-5">
+          <div>
+            <div className="label">VAT treatment on purchase orders</div>
+            <p className="text-xs text-n-500 mb-2">
+              Decides how VAT is calculated on this vendor's purchase orders. Standard uses each product's VAT class.
+            </p>
+            <div className="flex flex-col gap-2">
+              {VAT_TREATMENTS.map((t) => (
+                <label key={t.value} className="flex items-start gap-2.5 rounded-md border border-n-200 p-3 cursor-pointer hover:bg-n-25">
+                  <input
+                    type="radio" className="mt-0.5" name="vatTreatment"
+                    checked={form.vatTreatment === t.value}
+                    onChange={() => set({ vatTreatment: t.value })}
+                  />
+                  <span>
+                    <span className="block text-sm font-medium">{t.label}</span>
+                    <span className="block text-xs text-n-500">{t.hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+        </div>
+      )}
+
       {tab === 'contacts' && (
         <div className="flex flex-col gap-3">
           {contacts.length === 0 && <p className="text-[13px] text-n-500">No contacts yet.</p>}
@@ -111,11 +220,12 @@ function VendorModal({ vendor, onClose, onSaved }: { vendor: Vendor | null; onCl
             <div key={i} className="flex items-start gap-2">
               <div className="grid flex-1 grid-cols-2 gap-3 max-[560px]:grid-cols-1">
                 <input className="input" placeholder="Name" value={c.contactName ?? ''} onChange={(e) => { setContacts((r) => r.map((x, idx) => idx === i ? { ...x, contactName: e.target.value } : x)); setDirty(true); }} />
-                <select className="input" value={c.contactType ?? ''} onChange={(e) => { setContacts((r) => r.map((x, idx) => idx === i ? { ...x, contactType: (e.target.value || null) as any } : x)); setDirty(true); }}>
-                  <option value="">Type…</option>
-                  <option value="person">Person</option>
-                  <option value="department">Department</option>
-                </select>
+                <Select
+                  value={c.contactType ?? ''}
+                  placeholder="Type…"
+                  onChange={(v) => { setContacts((r) => r.map((x, idx) => idx === i ? { ...x, contactType: (v || null) as any } : x)); setDirty(true); }}
+                  options={[{ value: 'person', label: 'Person' }, { value: 'department', label: 'Department' }]}
+                />
                 <input className="input" placeholder="Role (e.g. Sales)" value={c.contactRole ?? ''} onChange={(e) => { setContacts((r) => r.map((x, idx) => idx === i ? { ...x, contactRole: e.target.value } : x)); setDirty(true); }} />
                 <input className="input" placeholder="Email" value={c.contactEmail ?? ''} onChange={(e) => { setContacts((r) => r.map((x, idx) => idx === i ? { ...x, contactEmail: e.target.value } : x)); setDirty(true); }} />
                 <input className="input mono" placeholder="Phone" value={c.contactPhone ?? ''} onChange={(e) => { setContacts((r) => r.map((x, idx) => idx === i ? { ...x, contactPhone: e.target.value } : x)); setDirty(true); }} />

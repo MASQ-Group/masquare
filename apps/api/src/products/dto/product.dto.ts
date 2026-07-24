@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsNumber,
   IsOptional,
   IsString,
@@ -34,6 +35,10 @@ export class CreateProductDto {
   @IsOptional() @IsUUID() productTypeId?: string | null;
   @IsOptional() @IsUUID() fulfilmentTypeId?: string | null;
   @IsOptional() @IsUUID() categoryId?: string | null;
+  @IsOptional() @IsUUID() vatClassId?: string | null;
+  @IsOptional() @IsUUID() productClassId?: string | null;
+  /** Track individual units by serial number — enforced at receiving and at sale. */
+  @IsOptional() @IsBoolean() serialTracked?: boolean;
 
   @IsOptional() @IsString() ean?: string;
   @IsOptional() @IsString() upc?: string;
@@ -80,6 +85,10 @@ export class BulkUpdateDto {
   @IsOptional() @IsUUID() fulfilmentTypeId?: string | null;
   @IsOptional() @IsUUID() brandId?: string | null;
   @IsOptional() @IsUUID() vendorId?: string | null;
+  @IsOptional() @IsUUID() vatClassId?: string | null;
+  @IsOptional() @IsUUID() productClassId?: string | null;
+  /** Track individual units by serial number — enforced at receiving and at sale. */
+  @IsOptional() @IsBoolean() serialTracked?: boolean;
   @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => ProductAttributeDto)
   attributes?: ProductAttributeDto[];
 }

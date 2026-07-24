@@ -25,7 +25,7 @@ export function FbaShipmentSummaryModal({ shipment: s, canEdit, onClose, onEdit,
   return (
     <ModalShell
       open
-      title="FBA shipment summary"
+      title="FBA Shipment Summary"
       subtitle={[s.fbaShipmentRef, s.salesChannel?.name, s.destinationCountry?.name].filter(Boolean).join(' · ') || undefined}
       initialSize={{ w: 900, h: 660 }}
       primaryLabel={canEdit ? 'Edit shipment' : 'Edit (admins only)'}
@@ -93,8 +93,8 @@ export function FbaShipmentSummaryModal({ shipment: s, canEdit, onClose, onEdit,
                       tracking{' '}
                       {b.trackingNumber
                         ? (url
-                            ? <a href={url} target="_blank" rel="noreferrer" className="mono inline-flex items-center gap-0.5 font-medium text-teal-700 hover:underline">{b.trackingNumber}<ExternalLink size={11} /></a>
-                            : <span className="mono text-n-700">{b.trackingNumber}</span>)
+                            ? <a href={url} target="_blank" rel="noreferrer" className="code inline-flex items-center gap-0.5 font-medium text-teal-700 hover:underline">{b.trackingNumber}<ExternalLink size={11} /></a>
+                            : <span className="code text-n-700">{b.trackingNumber}</span>)
                         : <span className="text-n-400">—</span>}
                     </span>
                   </div>
@@ -128,7 +128,7 @@ export function FbaShipmentSummaryModal({ shipment: s, canEdit, onClose, onEdit,
               <tbody>
                 {s.allocation.map((it, i) => (
                   <tr key={i}>
-                    <td className="mono border-b border-n-100 px-3 py-2 text-n-800" title={it.title ?? undefined}>{it.sku}</td>
+                    <td className="code border-b border-n-100 px-3 py-2 text-n-800" title={it.title ?? undefined}>{it.sku}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-600">{it.quantity}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-600">{kg(it.lineWeightKg)}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{eur(it.allocatedCostEur)}</td>

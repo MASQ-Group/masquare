@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowDownRight, ArrowUpRight, TrendingUp } from 'lucide-react';
-import { DateRangePicker } from '@masquare/ui';
+import { DateRangePicker, Select } from '@masquare/ui';
 import { analyticsApi, type AnalyticsChannelRow, type AnalyticsSkuRow, type AnalyticsTotals } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { compareRange, presetRange, prettyRange, type ComparePreset, type DateRange, type RangePreset } from '../lib/analyticsRange';
@@ -55,27 +55,38 @@ export function AnalyticsPage() {
       {/* Controls */}
       <div className="mb-5 flex flex-wrap items-end gap-3 rounded-lg border border-n-200 bg-n-0 p-3">
         <Field label="Range">
-          <select className="input h-9 w-44" value={rangePreset} onChange={(e) => setRangePreset(e.target.value as RangePreset)}>
-            <option value="mtd">Month to date</option>
-            <option value="prev_month">Previous month</option>
-            <option value="ytd">Year to date</option>
-            <option value="year">Specific year</option>
-            <option value="quarter">Specific quarter</option>
-            <option value="custom">Custom range</option>
-          </select>
+          <Select
+            dense className="w-44"
+            value={rangePreset}
+            onChange={(v) => setRangePreset(v as RangePreset)}
+            options={[
+              { value: 'mtd', label: 'Month to date' },
+              { value: 'prev_month', label: 'Previous month' },
+              { value: 'ytd', label: 'Year to date' },
+              { value: 'year', label: 'Specific year' },
+              { value: 'quarter', label: 'Specific quarter' },
+              { value: 'custom', label: 'Custom range' },
+            ]}
+          />
         </Field>
         {(rangePreset === 'year' || rangePreset === 'quarter') && (
           <Field label="Year">
-            <select className="input h-9 w-24" value={year} onChange={(e) => setYear(Number(e.target.value))}>
-              {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
-            </select>
+            <Select
+              dense className="w-24"
+              value={String(year)}
+              onChange={(v) => setYear(Number(v))}
+              options={YEARS.map((y) => ({ value: String(y), label: String(y) }))}
+            />
           </Field>
         )}
         {rangePreset === 'quarter' && (
           <Field label="Quarter">
-            <select className="input h-9 w-20" value={quarter} onChange={(e) => setQuarter(Number(e.target.value))}>
-              {[1, 2, 3, 4].map((q) => <option key={q} value={q}>Q{q}</option>)}
-            </select>
+            <Select
+              dense className="w-20"
+              value={String(quarter)}
+              onChange={(v) => setQuarter(Number(v))}
+              options={[1, 2, 3, 4].map((q) => ({ value: String(q), label: `Q${q}` }))}
+            />
           </Field>
         )}
         {rangePreset === 'custom' && (
@@ -87,13 +98,18 @@ export function AnalyticsPage() {
         <div className="mx-1 h-9 w-px self-end bg-n-200" />
 
         <Field label="Compare to">
-          <select className="input h-9 w-[17rem]" value={comparePreset} onChange={(e) => setComparePreset(e.target.value as ComparePreset)}>
-            <option value="prev_month">Same period, previous month</option>
-            <option value="prev_period">Previous period</option>
-            <option value="prev_year">Same period, previous year</option>
-            <option value="custom">Custom</option>
-            <option value="none">No comparison</option>
-          </select>
+          <Select
+            dense className="w-[17rem]"
+            value={comparePreset}
+            onChange={(v) => setComparePreset(v as ComparePreset)}
+            options={[
+              { value: 'prev_month', label: 'Same period, previous month' },
+              { value: 'prev_period', label: 'Previous period' },
+              { value: 'prev_year', label: 'Same period, previous year' },
+              { value: 'custom', label: 'Custom' },
+              { value: 'none', label: 'No comparison' },
+            ]}
+          />
         </Field>
         {comparePreset === 'custom' && (
           <Field label="Compare range">
@@ -208,20 +224,24 @@ export function AnalyticsPage() {
           {/* Per-SKU (global or by channel) */}
           <div className="mb-2 flex items-center gap-3">
             <SectionTitle>Per SKU</SectionTitle>
-            <select className="input h-8 w-56 text-[12.5px]" value={skuChannel} onChange={(e) => setSkuChannel(e.target.value)}>
-              <option value="">All channels (global)</option>
-              {data!.channels.map((ch) => <option key={ch.id} value={ch.id}>{ch.name}</option>)}
-            </select>
+            <Select
+              dense className="w-56"
+              value={skuChannel}
+              onChange={setSkuChannel}
+              options={[{ value: '', label: 'All channels (global)' }, ...data!.channels.map((ch) => ({ value: ch.id, label: ch.name }))]}
+            />
           </div>
           <div className="mb-6"><SkuTable rows={data!.bySku} incVat={incVat} /></div>
 
           {/* Per-SKU per destination country */}
           <div className="mb-2 flex items-center gap-3">
             <SectionTitle>Per SKU · per destination country</SectionTitle>
-            <select className="input h-8 w-56 text-[12.5px]" value={skuCountry} onChange={(e) => setSkuCountry(e.target.value)}>
-              <option value="">All countries (global)</option>
-              {data!.countries.map((co) => <option key={co.id} value={co.id}>{co.name}</option>)}
-            </select>
+            <Select
+              dense className="w-56"
+              value={skuCountry}
+              onChange={setSkuCountry}
+              options={[{ value: '', label: 'All countries (global)' }, ...data!.countries.map((co) => ({ value: co.id, label: co.name }))]}
+            />
           </div>
           <SkuTable rows={data!.bySkuByCountry} incVat={incVat} />
         </>
@@ -247,7 +267,7 @@ function SkuTable({ rows, incVat }: { rows: AnalyticsSkuRow[]; incVat: boolean }
             {rows.map((r) => (
               <tr key={r.sku} className="hover:bg-teal-50/40">
                 <td className="border-b border-n-100 px-3 py-2">
-                  <span className="mono font-medium text-n-800">{r.sku}</span>
+                  <span className="code font-medium text-n-800">{r.sku}</span>
                   {r.productTitle && <span className="ml-2 text-[11.5px] text-n-400">{r.productTitle.length > 40 ? r.productTitle.slice(0, 40) + '…' : r.productTitle}</span>}
                 </td>
                 <td className="mono border-b border-n-100 px-3 py-2 text-right text-n-700">{eur2(incVat ? r.revenueIncVatEur : r.revenueExVatEur)}</td>

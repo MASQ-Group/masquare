@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { CalendarRange, CheckCircle2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { DateRangePicker, ModalShell } from '@masquare/ui';
+import { DateRangePicker, ModalShell, Select } from '@masquare/ui';
 import { integrationsApi, type ChannelIntegration, type IntegrationSyncResult } from '../../lib/api';
 
 interface Props {
@@ -11,18 +11,31 @@ interface Props {
 }
 
 const YEARS = Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - i);
+const MONTHS = [
+  { value: 'all', label: 'All Months' },
+  ...['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+    .map((label, i) => ({ value: String(i + 1), label })),
+];
 const iso = (d: Date) => d.toISOString().slice(0, 10);
+const pad = (n: number) => String(n).padStart(2, '0');
 
 /** Backdated pull: import all orders in a chosen date range (e.g. all of 2026). */
 export function BackfillModal({ integration, onClose, onDone }: Props) {
   const [mode, setMode] = useState<'year' | 'custom'>('year');
   const [year, setYear] = useState(new Date().getFullYear());
+  const [month, setMonth] = useState('all');
   const [from, setFrom] = useState(`${new Date().getFullYear()}-01-01`);
   const [to, setTo] = useState(iso(new Date()));
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<IntegrationSyncResult | null>(null);
 
-  const range = useMemo(() => (mode === 'year' ? { from: `${year}-01-01`, to: `${year}-12-31` } : { from, to }), [mode, year, from, to]);
+  const range = useMemo(() => {
+    if (mode === 'custom') return { from, to };
+    if (month === 'all') return { from: `${year}-01-01`, to: `${year}-12-31` };
+    const m = Number(month);
+    const lastDay = new Date(year, m, 0).getDate(); // day 0 of next month = last day of this month
+    return { from: `${year}-${pad(m)}-01`, to: `${year}-${pad(m)}-${pad(lastDay)}` };
+  }, [mode, year, month, from, to]);
 
   const run = async () => {
     if (!range.from) { toast.error('Pick a start date'); return; }
@@ -44,7 +57,7 @@ export function BackfillModal({ integration, onClose, onDone }: Props) {
   return (
     <ModalShell
       open
-      title="Pull backdated orders"
+      title="Pull Backdated Orders"
       subtitle={[integration.connectorLabel, integration.marketplaceLabel].filter(Boolean).join(' · ')}
       initialSize={{ w: 560, h: 460 }}
       primaryLabel={busy ? 'Pulling…' : 'Pull orders'}
@@ -67,11 +80,15 @@ export function BackfillModal({ integration, onClose, onDone }: Props) {
         </div>
 
         {mode === 'year' ? (
-          <div className="max-w-[200px]">
-            <label className="label">Year</label>
-            <select className="input" value={year} onChange={(e) => setYear(Number(e.target.value))}>
-              {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
-            </select>
+          <div className="flex gap-3">
+            <div className="w-[140px]">
+              <label className="label">Year</label>
+              <Select value={String(year)} onChange={(v) => setYear(Number(v))} options={YEARS.map((y) => ({ value: String(y), label: String(y) }))} />
+            </div>
+            <div className="w-[180px]">
+              <label className="label">Month</label>
+              <Select value={month} onChange={setMonth} options={MONTHS} />
+            </div>
           </div>
         ) : (
           <div className="max-w-[320px]">

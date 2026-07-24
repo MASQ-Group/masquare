@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Coins, Download, Package, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUp, Coins, Download, Package, PackageCheck, PackagePlus, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { downloadSheet } from '@masquare/ui';
-import { fbaShipmentsApi, salesChannelsApi, shipmentsApi, type FbaShipment, type PendingShipment, type Shipment } from '../lib/api';
+import { downloadSheet, Pagination, Select } from '@masquare/ui';
+import { countriesApi, fbaShipmentsApi, salesChannelsApi, shipmentsApi, type FbaShipment, type PendingShipment, type Shipment } from '../lib/api';
+import { CountryTag } from '../components/common/Flag';
+import { ChannelChip, useChannelChips } from '../components/common/ChannelChip';
 import { useAuth } from '../lib/auth';
+import { usePersistentState } from '../lib/usePersistentState';
 import { formatDate } from '../lib/format';
 import { ShipmentModal } from '../components/shipments/ShipmentModal';
+import { CombineShipmentModal } from '../components/shipments/CombineShipmentModal';
 import { ShipmentImportModal } from '../components/shipments/ShipmentImportModal';
 import { SHIPMENT_HEADER, shipmentRowToCells } from '../components/shipments/shipmentColumns';
 import { FbaActualCostModal } from '../components/fba-shipments/FbaActualCostModal';
@@ -26,13 +30,22 @@ interface ModalCtx {
 export function ShipmentsPage() {
   const qc = useQueryClient();
   const { activeCompanyId } = useAuth();
-  const [tab, setTab] = useState<Tab>('pending');
+  const [tab, setTab] = usePersistentState<Tab>('shipments.tab', 'pending');
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
-  const [filterChannel, setFilterChannel] = useState('');
-  const [filterType, setFilterType] = useState('');
+  const [filterChannel, setFilterChannel] = usePersistentState('shipments.filterChannel', '');
+  const [filterType, setFilterType] = usePersistentState('shipments.filterType', '');
+  // Pending tab: All / Local (our own delivery/pickup) / Channel (marketplace).
+  const [pendingKind, setPendingKind] = usePersistentState<'' | 'local' | 'channel'>('shipments.pendingKind', '');
+  // Date sort per tab. Pending defaults to oldest first (longest outstanding at the top);
+  // the logs default to newest first.
+  const [pendingSort, setPendingSort] = usePersistentState<'asc' | 'desc'>('shipments.pendingSort', 'asc');
+  const [allSort, setAllSort] = usePersistentState<'asc' | 'desc'>('shipments.allSort', 'desc');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [modal, setModal] = useState<ModalCtx | null>(null);
+  const [combineOpen, setCombineOpen] = useState(false);
   const [fbaActualFor, setFbaActualFor] = useState<FbaShipment | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -49,6 +62,7 @@ export function ShipmentsPage() {
         companyId: activeCompanyId || undefined,
         salesChannelId: filterChannel || undefined,
         type: tab === 'all' && filterType ? filterType : undefined,
+        channelKind: scope === 'pending' ? (pendingKind || undefined) : undefined,
       });
       if (rows.length === 0) { toast.info(scope === 'pending' ? 'Nothing pending to export' : 'No recorded shipments to export'); return; }
       downloadSheet(`masquare-shipments-${scope}`, [SHIPMENT_HEADER, ...rows.map(shipmentRowToCells)], 'xlsx');
@@ -62,22 +76,55 @@ export function ShipmentsPage() {
   useEffect(() => { setPage(1); }, [tab]);
 
   const { data: channels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
+  const { data: allCountries = [] } = useQuery({ queryKey: ['countries'], queryFn: () => countriesApi.list() });
+  // Destination objects here carry no ISO, so resolve country flags from the reference list.
+  const countryIso = useMemo(() => new Map(allCountries.map((c) => [c.id, c.isoCode])), [allCountries]);
+  const chipFor = useChannelChips();
+  const channelCell = (ch?: { id: string; name: string } | null) => <ChannelChip name={ch?.name} {...chipFor(ch?.id)} />;
+  const countryCell = (co?: { id: string; name: string } | null) => (co ? <CountryTag code={countryIso.get(co.id)} name={co.name} /> : '—');
 
-  const commonParams = { q: q || undefined, companyId: activeCompanyId || undefined, salesChannelId: filterChannel || undefined, page, pageSize: 50 };
+  const commonParams = { q: q || undefined, companyId: activeCompanyId || undefined, salesChannelId: filterChannel || undefined, page, pageSize };
+  const pendingParams = { ...commonParams, channelKind: pendingKind || undefined, sortDir: pendingSort };
   const pendingQ = useQuery({
-    queryKey: ['shipments-pending', commonParams], queryFn: () => shipmentsApi.pending(commonParams), enabled: tab === 'pending',
+    queryKey: ['shipments-pending', pendingParams], queryFn: () => shipmentsApi.pending(pendingParams), enabled: tab === 'pending',
   });
+  const allParams = { ...commonParams, type: filterType || undefined, sortDir: allSort };
   const allQ = useQuery({
-    queryKey: ['shipments-all', { ...commonParams, type: filterType }], queryFn: () => shipmentsApi.list({ ...commonParams, type: filterType || undefined }), enabled: tab === 'all',
+    queryKey: ['shipments-all', allParams], queryFn: () => shipmentsApi.list(allParams), enabled: tab === 'all',
   });
-  const fbaParams = { q: q || undefined, salesChannelId: filterChannel || undefined, page, pageSize: 50 };
+  const fbaParams = { q: q || undefined, salesChannelId: filterChannel || undefined, sortDir: allSort, page, pageSize };
   const fbaQ = useQuery({
     queryKey: ['fba-shipments', fbaParams], queryFn: () => fbaShipmentsApi.list(fbaParams), enabled: tab === 'fba',
   });
 
   const del = useMutation({
-    mutationFn: (id: string) => shipmentsApi.remove(id),
-    onSuccess: () => { toast.success('Shipment removed'); invalidate(); },
+    mutationFn: ({ id }: { id: string; type: string }) => shipmentsApi.remove(id),
+    // Only an OUTBOUND removal sends the order back to the worklist — say what actually happened.
+    onSuccess: (_r, v) => {
+      toast.success(v.type === 'outbound' ? 'Shipment cancelled — order back in Pending fulfilment' : 'Shipment removed');
+      invalidate();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not cancel shipment'),
+  });
+
+  // Local sales carry no carrier/tracking/weight — fulfilling records a marker shipment,
+  // which is what marks the order shipped everywhere (an outbound shipment is the source of truth).
+  const fulfilLocal = useMutation({
+    mutationFn: (transactionId: string) => shipmentsApi.fulfilLocal(transactionId),
+    onSuccess: () => { toast.success('Marked as fulfilled'); setSelected(new Set()); invalidate(); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not update'),
+  });
+  // A part-shipped order whose last parcel is already recorded just needs closing off — no
+  // extra shipment to invent. The existing shipments (and their costs) stay untouched.
+  const markComplete = useMutation({
+    mutationFn: (transactionId: string) => shipmentsApi.setFulfilment(transactionId, 'shipped'),
+    onSuccess: () => { toast.success('Marked fully shipped'); setSelected(new Set()); invalidate(); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not update'),
+  });
+  const bulkFulfil = useMutation({
+    mutationFn: async (ids: string[]) => { for (const id of ids) await shipmentsApi.fulfilLocal(id); return ids.length; },
+    onSuccess: (n) => { toast.success(`Marked ${n} as fulfilled`); setSelected(new Set()); invalidate(); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Bulk fulfil failed'),
   });
 
   const invalidate = () => {
@@ -90,7 +137,7 @@ export function ShipmentsPage() {
   const data = tab === 'pending' ? pendingQ.data : tab === 'all' ? allQ.data : fbaQ.data;
   const isLoading = tab === 'pending' ? pendingQ.isLoading : tab === 'all' ? allQ.isLoading : fbaQ.isLoading;
   const total = data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / 50));
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   const ctxLine = (row: { salesChannel?: { name: string } | null; company?: { officialName: string } | null; destinationCountry?: { name: string } | null }) =>
     [row.salesChannel?.name, row.company?.officialName, row.destinationCountry?.name].filter(Boolean).join(' · ');
@@ -103,9 +150,25 @@ export function ShipmentsPage() {
     setModal({ transactionId: s.transactionId, transactionRef: s.transactionRef ?? '', contextLine: ctxLine(s) });
 
   const th = 'border-b border-n-200 bg-n-25 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap';
+  /** A clickable date header that toggles the sort direction. */
+  const SortableDate = ({ label, dir, onToggle }: { label: string; dir: 'asc' | 'desc'; onToggle: () => void }) => (
+    <th className={`${th} text-left`}>
+      <button type="button" className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-n-800" onClick={onToggle} title={`Sort ${dir === 'asc' ? 'newest' : 'oldest'} first`}>
+        {label}
+        {dir === 'asc' ? <ArrowUp size={12} className="text-teal-600" /> : <ArrowDown size={12} className="text-teal-600" />}
+      </button>
+    </th>
+  );
   const td = 'border-b border-n-100 px-4 py-2.5 text-[13px] text-n-700';
 
   const pendingRows = useMemo(() => (tab === 'pending' ? (pendingQ.data?.items ?? []) : []), [tab, pendingQ.data]);
+  const fulfilLabel = (r: PendingShipment) => (r.deliveryMethod === 'pickup' ? 'Mark picked up' : 'Mark delivered');
+  const localRows = useMemo(() => pendingRows.filter((r) => r.isLocal), [pendingRows]);
+  const selectedLocalIds = useMemo(() => localRows.filter((r) => selected.has(r.id)).map((r) => r.id), [localRows, selected]);
+  const selectedChannelOrders = useMemo(() => pendingRows.filter((r) => !r.isLocal && selected.has(r.id)), [pendingRows, selected]);
+  const selectedChannelCount = selectedChannelOrders.length;
+  // Clear stale selections when the visible rows change (page/filter switch).
+  useEffect(() => { setSelected(new Set()); }, [pendingKind, page, q]);
   const allRows = useMemo(() => (tab === 'all' ? (allQ.data?.items ?? []) : []), [tab, allQ.data]);
   const fbaRows = useMemo(() => (tab === 'fba' ? (fbaQ.data?.items ?? []) : []), [tab, fbaQ.data]);
 
@@ -153,28 +216,81 @@ export function ShipmentsPage() {
           <Search size={16} className="text-n-400" />
           <input className="h-full flex-1 text-[13px] outline-none" placeholder="Search transaction ID or SKU…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
         </div>
-        <select className="h-[38px] rounded-md border border-n-200 bg-n-0 px-2 text-[13px] text-n-700" value={filterChannel} onChange={(e) => { setFilterChannel(e.target.value); setPage(1); }}>
-          <option value="">All channels</option>
-          {channels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        <Select
+          dense className="w-40"
+          value={filterChannel}
+          onChange={(v) => { setFilterChannel(v); setPage(1); }}
+          options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]}
+        />
         {tab === 'all' && (
-          <select className="h-[38px] rounded-md border border-n-200 bg-n-0 px-2 text-[13px] text-n-700" value={filterType} onChange={(e) => { setFilterType(e.target.value); setPage(1); }}>
-            <option value="">All types</option>
-            <option value="outbound">Outbound</option>
-            <option value="inbound">Inbound</option>
-          </select>
+          <Select
+            dense className="w-36"
+            value={filterType}
+            onChange={(v) => { setFilterType(v); setPage(1); }}
+            options={[{ value: '', label: 'All types' }, { value: 'outbound', label: 'Outbound' }, { value: 'inbound', label: 'Inbound' }]}
+          />
+        )}
+        {tab === 'pending' && (
+          <Select
+            dense className="w-36"
+            value={pendingKind}
+            onChange={(v) => { setPendingKind(v as '' | 'local' | 'channel'); setPage(1); }}
+            options={[{ value: '', label: 'All sources' }, { value: 'local', label: 'Local only' }, { value: 'channel', label: 'Channel only' }]}
+          />
+        )}
+        {tab === 'pending' && selected.size > 0 && (
+          <>
+            {selectedLocalIds.length > 0 && (
+              <button
+                className="inline-flex h-[38px] items-center gap-2 rounded-md bg-primary px-3 text-[13px] font-semibold text-white hover:bg-primary-hover disabled:opacity-50"
+                disabled={bulkFulfil.isPending}
+                onClick={() => bulkFulfil.mutate(selectedLocalIds)}
+              >
+                <Truck size={15} /> Mark {selectedLocalIds.length} fulfilled
+              </button>
+            )}
+            {/* Two or more channel orders can go out together as one parcel with a shared,
+                proportionally-split cost. A single one still records individually. */}
+            {selectedChannelCount >= 2 && (
+              <button
+                className="inline-flex h-[38px] items-center gap-2 rounded-md bg-primary px-3 text-[13px] font-semibold text-white hover:bg-primary-hover"
+                onClick={() => setCombineOpen(true)}
+              >
+                <PackagePlus size={15} /> Combine {selectedChannelCount} into one shipment
+              </button>
+            )}
+            {selectedChannelCount === 1 && (
+              <span className="text-[12.5px] text-n-500">
+                1 channel order selected — record a shipment for it individually, or select another to combine.
+              </span>
+            )}
+            <button className="text-[12.5px] font-medium text-teal-700 hover:underline" onClick={() => setSelected(new Set())}>
+              Clear
+            </button>
+          </>
         )}
       </div>
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           {tab === 'pending' ? (
-            <table className="w-full min-w-[880px] border-collapse">
+            <table className="w-full min-w-[1000px] border-collapse">
               <thead>
                 <tr>
-                  <th className={`${th} text-left`}>Order date</th>
+                  <th className={`${th} w-8 text-center`}>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-[var(--teal-500)] align-middle"
+                      title="Select all on this page"
+                      checked={pendingRows.length > 0 && selected.size === pendingRows.length}
+                      ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < pendingRows.length; }}
+                      onChange={(e) => setSelected(e.target.checked ? new Set(pendingRows.map((r) => r.id)) : new Set())}
+                    />
+                  </th>
+                  <SortableDate label="Order date" dir={pendingSort} onToggle={() => { setPendingSort(pendingSort === 'asc' ? 'desc' : 'asc'); setPage(1); }} />
                   <th className={`${th} text-left`}>Transaction ID</th>
                   <th className={`${th} text-left`}>Sales channel</th>
+                  <th className={`${th} text-left`}>Delivery</th>
                   <th className={`${th} text-left`}>Company</th>
                   <th className={`${th} text-left`}>Destination</th>
                   <th className={`${th} text-left`}>SKUs</th>
@@ -183,15 +299,43 @@ export function ShipmentsPage() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading && <tr><td colSpan={8} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
-                {!isLoading && pendingRows.length === 0 && <tr><td colSpan={8} className="px-4 py-12 text-center text-[13px] text-n-500">Nothing pending — every transaction has been shipped. 🎉</td></tr>}
+                {isLoading && <tr><td colSpan={10} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
+                {!isLoading && pendingRows.length === 0 && <tr><td colSpan={10} className="px-4 py-12 text-center text-[13px] text-n-500">Nothing pending — every transaction has been shipped. 🎉</td></tr>}
                 {pendingRows.map((r) => (
-                  <tr key={r.id} className="cursor-pointer hover:bg-teal-50" onClick={() => openForPending(r)}>
+                  <tr key={r.id} className={`hover:bg-teal-50 ${r.isLocal ? '' : 'cursor-pointer'}`} onClick={() => { if (!r.isLocal) openForPending(r); }}>
+                    <td className="border-b border-n-100 px-4 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-[var(--teal-500)] align-middle"
+                        checked={selected.has(r.id)}
+                        onChange={(e) => setSelected((s) => { const n = new Set(s); e.target.checked ? n.add(r.id) : n.delete(r.id); return n; })}
+                      />
+                    </td>
                     <td className={`${td} mono`}>{formatDate(r.date)}</td>
-                    <td className={td}><span className="font-medium text-n-800">{r.transactionRef}</span></td>
-                    <td className={td}>{r.salesChannel?.name ?? '—'}</td>
+                    <td className={td}>
+                      <span className="font-medium text-n-800">{r.transactionRef}</span>
+                      {/* Already part-shipped: say how many are out so the operator knows
+                          this is a follow-on shipment, not a first one. */}
+                      {r.outboundCount > 0 && (
+                        <span
+                          className="ml-2 rounded-pill border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-700"
+                          title={`${r.outboundCount} shipment${r.outboundCount === 1 ? '' : 's'} already recorded — not yet fully shipped`}
+                        >
+                          {r.outboundCount} sent
+                        </span>
+                      )}
+                    </td>
+                    <td className={td}>{channelCell(r.salesChannel)}</td>
+                    <td className={td}>
+                      {r.isLocal
+                        ? <span className="inline-flex items-center gap-1.5 rounded-pill bg-teal-50 px-2 py-0.5 text-[11.5px] font-medium text-teal-700">
+                            {r.deliveryMethod === 'pickup' ? <PackageCheck size={13} /> : <Truck size={13} />}
+                            {r.deliveryMethod === 'pickup' ? 'Pickup' : r.deliveryMethod === 'own_delivery' ? 'Own delivery' : 'Local'}
+                          </span>
+                        : <span className="text-n-400">—</span>}
+                    </td>
                     <td className={td}>{r.company?.officialName ?? '—'}</td>
-                    <td className={td}>{r.destinationCountry?.name ?? '—'}</td>
+                    <td className={td}>{countryCell(r.destinationCountry)}</td>
                     <td className={td}>
                       <div className="flex flex-wrap gap-1">
                         {r.skus.slice(0, 3).map((s, i) => <span key={i} className="mono rounded bg-n-100 px-1.5 py-0.5 text-[11px] text-n-600">{s}</span>)}
@@ -200,9 +344,32 @@ export function ShipmentsPage() {
                     </td>
                     <td className={`${td} mono text-right`}>{r.quantity}</td>
                     <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
-                      <button className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12.5px] font-semibold text-white hover:bg-primary-hover" onClick={() => openForPending(r)}>
-                        <Truck size={14} /> Record shipment
-                      </button>
+                      {r.isLocal ? (
+                        <button
+                          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12.5px] font-semibold text-white hover:bg-primary-hover disabled:opacity-50"
+                          disabled={fulfilLocal.isPending}
+                          title="No carrier or tracking needed for a local sale — this just marks it fulfilled"
+                          onClick={() => fulfilLocal.mutate(r.id)}
+                        >
+                          <PackageCheck size={14} /> {fulfilLabel(r)}
+                        </button>
+                      ) : (
+                        <div className="flex justify-end gap-1.5">
+                          <button className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12.5px] font-semibold text-white hover:bg-primary-hover" onClick={() => openForPending(r)}>
+                            <Truck size={14} /> {r.outboundCount > 0 ? 'Add shipment' : 'Record shipment'}
+                          </button>
+                          {r.outboundCount > 0 && (
+                            <button
+                              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:border-teal-300 hover:text-teal-700 disabled:opacity-50"
+                              title="Everything has shipped — close this order off without adding another shipment"
+                              disabled={markComplete.isPending}
+                              onClick={() => markComplete.mutate(r.id)}
+                            >
+                              <PackageCheck size={14} /> Complete
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -212,7 +379,7 @@ export function ShipmentsPage() {
             <table className="w-full min-w-[1000px] border-collapse">
               <thead>
                 <tr>
-                  <th className={`${th} text-left`}>Ship date</th>
+                  <SortableDate label="Ship date" dir={allSort} onToggle={() => { setAllSort(allSort === 'asc' ? 'desc' : 'asc'); setPage(1); }} />
                   <th className={`${th} text-left`}>Transaction ID</th>
                   <th className={`${th} text-left`}>Channel</th>
                   <th className={`${th} text-left`}>Type</th>
@@ -231,15 +398,22 @@ export function ShipmentsPage() {
                 {allRows.map((s) => (
                   <tr key={s.id} className="hover:bg-teal-50/50">
                     <td className={`${td} mono`}>{formatDate(s.shipmentDate)}</td>
-                    <td className={td}><span className="font-medium text-n-800">{s.transactionRef}</span></td>
-                    <td className={td}>{s.salesChannel?.name ?? '—'}</td>
+                    <td className={td}>
+                      <span className="font-medium text-n-800">{s.transactionRef}</span>
+                      {s.groupId && (
+                        <span className="ml-2 rounded-pill border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-violet-700" title="Shipped together with other orders as one parcel — cost split across them">
+                          Combined
+                        </span>
+                      )}
+                    </td>
+                    <td className={td}>{channelCell(s.salesChannel)}</td>
                     <td className={td}>
                       {s.type === 'outbound'
                         ? <span className="tag border border-teal-100 bg-teal-50 text-teal-700">Outbound</span>
                         : <span className="tag border border-orange-100 bg-orange-50 text-orange-700">Inbound</span>}
                     </td>
                     <td className={td}>{s.shippingService?.name ?? '—'}</td>
-                    <td className={`${td} mono`}>{s.trackingNumber ?? '—'}</td>
+                    <td className={`${td} code`}>{s.trackingNumber ?? '—'}</td>
                     <td className={`${td} mono text-right`}>{eur(s.shippingCostEur)}</td>
                     <td className={td}>{s.costBorneBy === 'company' ? 'Company' : 'Customer'}</td>
                     <td className={`${td} mono text-right`}>{s.dutyImportEur != null && s.dutyImportEur !== 0 ? eur(s.dutyImportEur) : '—'}</td>
@@ -248,7 +422,19 @@ export function ShipmentsPage() {
                       <div className="flex justify-end gap-1">
                         <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Add another shipment for this transaction" onClick={() => openAddFor(s)}><Package size={15} /></button>
                         <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Edit" onClick={() => openForEdit(s)}><Pencil size={15} /></button>
-                        <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" title="Remove" onClick={() => confirm(`Remove this shipment for ${s.transactionRef}?`) && del.mutate(s.id)}><Trash2 size={15} /></button>
+                        <button
+                          className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger"
+                          title={s.type === 'outbound' ? 'Cancel this shipment — the order returns to Pending fulfilment' : 'Remove this shipment'}
+                          onClick={() =>
+                            confirm(
+                              s.type === 'outbound'
+                                ? `Cancel this shipment for ${s.transactionRef}?\n\nIts tracking number and cost are removed, and the order goes back to Pending fulfilment so it can be shipped again.`
+                                : `Remove this inbound shipment for ${s.transactionRef}?`,
+                            ) && del.mutate({ id: s.id, type: s.type })
+                          }
+                        >
+                          <Trash2 size={15} />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -259,7 +445,7 @@ export function ShipmentsPage() {
             <table className="w-full min-w-[1000px] border-collapse">
               <thead>
                 <tr>
-                  <th className={`${th} text-left`}>Date</th>
+                  <SortableDate label="Date" dir={allSort} onToggle={() => { setAllSort(allSort === 'asc' ? 'desc' : 'asc'); setPage(1); }} />
                   <th className={`${th} text-left`}>FBA ID</th>
                   <th className={`${th} text-left`}>Channel</th>
                   <th className={`${th} text-left`}>Destination</th>
@@ -277,8 +463,8 @@ export function ShipmentsPage() {
                   <tr key={s.id} className="cursor-pointer hover:bg-teal-50" onClick={() => setFbaActualFor(s)}>
                     <td className={`${td} mono`}>{formatDate(s.date)}</td>
                     <td className={td}><span className="mono font-medium text-n-800">{s.fbaShipmentRef ?? '—'}</span></td>
-                    <td className={td}>{s.salesChannel?.name ?? '—'}</td>
-                    <td className={td}>{s.destinationCountry?.name ?? '—'}</td>
+                    <td className={td}>{channelCell(s.salesChannel)}</td>
+                    <td className={td}>{countryCell(s.destinationCountry)}</td>
                     <td className={td}>{s.shippingService?.name ?? '—'}{s.shippingZone ? <span className="text-n-400"> · {s.shippingZone.name}</span> : ''}</td>
                     <td className={`${td} mono text-right`}>{eur(s.estimatedCostEur)}</td>
                     <td className={`${td} mono text-right ${s.actualCostEur != null ? 'font-semibold text-n-900' : 'text-n-400'}`}>{eur(s.actualCostEur)}</td>
@@ -300,20 +486,17 @@ export function ShipmentsPage() {
         </div>
       </div>
 
-      <div className="mt-3 flex items-center justify-between">
-        <span className="text-[13px] text-n-500">
-          {tab === 'pending' ? 'Awaiting shipment' : tab === 'all' ? 'Recorded shipments' : 'FBA shipments'}: <span className="mono">{total}</span>
-        </span>
-        <div className="flex gap-1">
-          <button disabled={page <= 1} className="mono grid h-8 w-8 place-items-center rounded-md border border-n-200 bg-n-0 text-[13px] text-n-600 disabled:opacity-40" onClick={() => setPage((p) => p - 1)}>‹</button>
-          <span className="mono grid h-8 min-w-8 place-items-center px-2 text-[13px] text-n-600">{page} / {pageCount}</span>
-          <button disabled={page >= pageCount} className="mono grid h-8 w-8 place-items-center rounded-md border border-n-200 bg-n-0 text-[13px] text-n-600 disabled:opacity-40" onClick={() => setPage((p) => p + 1)}>›</button>
-        </div>
-      </div>
+      <Pagination
+        page={page}
+        pageCount={pageCount}
+        onPageChange={setPage}
+        pageSize={pageSize}
+        onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
+      />
 
       {tab === 'pending' && pendingRows.length > 0 && (
         <p className="mt-3 inline-flex items-center gap-1.5 text-[12px] text-n-400">
-          <ArrowRight size={13} /> Click a row to record its shipment. Uncheck “fully shipped” if an order ships in parts.
+          <ArrowRight size={13} /> Channel orders: click a row to record a shipment — untick “fully shipped” if more will follow, and the order stays here so you can add the next one. Local sales: mark picked up / delivered in one click.
         </p>
       )}
       {tab === 'fba' && fbaRows.length > 0 && (
@@ -343,6 +526,13 @@ export function ShipmentsPage() {
       )}
       {importOpen && (
         <ShipmentImportModal onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); invalidate(); }} />
+      )}
+      {combineOpen && selectedChannelOrders.length >= 2 && (
+        <CombineShipmentModal
+          orders={selectedChannelOrders}
+          onClose={() => setCombineOpen(false)}
+          onSaved={() => { setCombineOpen(false); setSelected(new Set()); invalidate(); }}
+        />
       )}
     </div>
   );

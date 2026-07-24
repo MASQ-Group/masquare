@@ -165,10 +165,18 @@ export function ImportButton({
 export interface SimpleField {
   key: string;
   label: string;
-  type?: 'text' | 'checkbox';
+  type?: 'text' | 'checkbox' | 'number' | 'select';
   mono?: boolean;
   required?: boolean;
   placeholder?: string;
+  /** select only */
+  options?: { value: string; label: string }[];
+  /** number only */
+  step?: string;
+  min?: number;
+  max?: number;
+  suffix?: string;
+  hint?: string;
 }
 
 export function SimpleRefModal({
@@ -228,6 +236,32 @@ export function SimpleRefModal({
               <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={!!values[f.key]} onChange={(e) => set(f.key, e.target.checked)} />
               <span className="text-[13.5px] text-n-700">{f.label}</span>
             </label>
+          ) : f.type === 'select' ? (
+            <div key={f.key}>
+              <label className="label">{f.label}{f.required && ' *'}</label>
+              <select className="input" value={values[f.key] ?? ''} onChange={(e) => set(f.key, e.target.value)}>
+                {f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              {f.hint && <div className="mt-1 text-[11.5px] text-n-500">{f.hint}</div>}
+            </div>
+          ) : f.type === 'number' ? (
+            <div key={f.key}>
+              <label className="label">{f.label}{f.required && ' *'}</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  className={`input ${f.suffix ? 'pr-8' : ''}`}
+                  value={values[f.key] ?? ''}
+                  step={f.step}
+                  min={f.min}
+                  max={f.max}
+                  placeholder={f.placeholder}
+                  onChange={(e) => set(f.key, e.target.value === '' ? '' : Number(e.target.value))}
+                />
+                {f.suffix && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12.5px] text-n-500">{f.suffix}</span>}
+              </div>
+              {f.hint && <div className="mt-1 text-[11.5px] text-n-500">{f.hint}</div>}
+            </div>
           ) : (
             <div key={f.key}>
               <label className="label">{f.label}{f.required && ' *'}</label>
@@ -237,6 +271,7 @@ export function SimpleRefModal({
                 placeholder={f.placeholder}
                 onChange={(e) => set(f.key, e.target.value)}
               />
+              {f.hint && <div className="mt-1 text-[11.5px] text-n-500">{f.hint}</div>}
             </div>
           ),
         )}

@@ -33,7 +33,7 @@ export function FbaActualCostModal({ shipment, contextLine, onClose, onSaved }: 
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(12,16,20,0.5)] p-4" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
       <div className="w-[440px] max-w-full rounded-lg bg-n-0 shadow-lg">
         <div className="border-b border-n-200 px-5 py-3.5">
-          <h2 className="text-[15px] font-semibold text-n-900">Register actual shipping cost</h2>
+          <h2 className="text-[15px] font-semibold text-n-900">Register Actual Shipping Cost</h2>
           <p className="mt-0.5 text-[12.5px] text-n-500">{shipment.fbaShipmentRef ?? 'FBA shipment'}{contextLine ? ` · ${contextLine}` : ''} · estimate {eur(shipment.estimatedCostEur)}</p>
         </div>
         <div className="px-5 py-4">

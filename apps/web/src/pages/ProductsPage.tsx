@@ -3,12 +3,13 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Columns3, Download, Filter, Grid, List, Package, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { downloadSheet } from '@masquare/ui';
+import { downloadSheet, Pagination } from '@masquare/ui';
 import {
   brandsApi, categoriesApi, fulfilmentTypesApi, productsApi, productTypesApi, vendorsApi,
   type Product, type ProductListParams,
 } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { usePersistentState } from '../lib/usePersistentState';
 import { formatMoney } from '../lib/format';
 import { ProductModal } from '../components/products/ProductModal';
 import { ExportModal } from '../components/products/ExportModal';
@@ -35,6 +36,9 @@ const OPTIONAL_COLUMNS: { key: string; label: string; render: (p: Product) => Re
   { key: 'hsCode', label: 'HS Code', render: (p) => p.hsCode ?? '—', mono: true },
   { key: 'map', label: 'MAP', render: (p) => formatMoney(p.map), mono: true, right: true },
   { key: 'msrp', label: 'MSRP', render: (p) => formatMoney(p.msrp), mono: true, right: true },
+  // Moving average landed cost. A bare EUR number (not a {amount,currency} object), and
+  // em-dash until the product has been received at least once.
+  { key: 'averageCost', label: 'Avg cost', render: (p) => (p.averageCostEur != null ? `€${p.averageCostEur.toFixed(2)}` : '—'), mono: true, right: true },
   { key: 'volumetricWeightKg', label: 'Volumetric', render: (p) => p.volumetricWeightKg ?? '—', mono: true, right: true },
 ];
 
@@ -54,9 +58,10 @@ export function ProductsPage() {
   // Deep link from the global search: /products?q=… applies (and re-applies) the search.
   useEffect(() => { if (urlQ) { setQInput(urlQ); setQ(urlQ); setPage(1); } }, [urlQ]);
   const [field, setField] = useState('');
-  const [filters, setFilters] = useState<Filters>(EMPTY);
+  // Filters persist across reloads until the user clears them.
+  const [filters, setFilters] = usePersistentState<Filters>('products.filters', EMPTY);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize] = useState(25);
   const [selectingAll, setSelectingAll] = useState(false);
   const [cols, setCols] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<Product | null | undefined>(undefined);
@@ -270,30 +275,24 @@ export function ProductsPage() {
       {view === 'list' ? (
         <ListView items={items} loading={isLoading} cols={cols} selected={selected} allSelected={allSelected} onToggleAll={toggleAll} onToggleOne={toggleOne} onEdit={setEditing} onDelete={(p) => setPendingDelete({ kind: 'single', product: p })} />
       ) : (
-        <GridView items={items} loading={isLoading} onEdit={setEditing} />
+        <GridView
+          items={items}
+          loading={isLoading}
+          selected={selected}
+          onToggleOne={toggleOne}
+          onEdit={setEditing}
+          rangeStart={(page - 1) * pageSize + 1}
+          total={total}
+        />
       )}
 
-      {/* Pagination */}
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="text-[13px] text-n-500">Showing <span className="mono">{items.length}</span> of <span className="mono">{total}</span> products</span>
-          <label className="inline-flex items-center gap-1.5 text-[12.5px] text-n-500">
-            Per page
-            <select
-              className="h-8 rounded-md border border-n-200 bg-n-0 px-1.5 text-[12.5px] text-n-700"
-              value={pageSize}
-              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-            >
-              {[50, 100, 200, 300, 500].map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </label>
-        </div>
-        <div className="flex gap-1">
-          <button disabled={page <= 1} className="mono grid h-8 w-8 place-items-center rounded-md border border-n-200 bg-n-0 text-[13px] text-n-600 disabled:opacity-40" onClick={() => setPage((p) => p - 1)}>‹</button>
-          <span className="mono grid h-8 min-w-8 place-items-center px-2 text-[13px] text-n-600">{page} / {pageCount}</span>
-          <button disabled={page >= pageCount} className="mono grid h-8 w-8 place-items-center rounded-md border border-n-200 bg-n-0 text-[13px] text-n-600 disabled:opacity-40" onClick={() => setPage((p) => p + 1)}>›</button>
-        </div>
-      </div>
+      <Pagination
+        page={page}
+        pageCount={pageCount}
+        onPageChange={setPage}
+        pageSize={pageSize}
+        onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
+      />
 
       {editing !== undefined && (
         <ProductModal product={editing} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); qc.invalidateQueries({ queryKey: ['products'] }); }} />
@@ -358,12 +357,12 @@ function ListView({ items, loading, cols, selected, allSelected, onToggleAll, on
                     {p.featuredImage ? <img src={p.featuredImage} alt="" className="h-full w-full object-cover" /> : <Package size={18} />}
                   </div>
                 </td>
-                <td className="border-b border-n-100 px-4 py-2.5"><div className="mono font-medium text-n-800">{p.mainSku}</div></td>
+                <td className="border-b border-n-100 px-4 py-2.5"><div className="code font-medium text-n-800">{p.mainSku}</div></td>
                 <td className="border-b border-n-100 px-4 py-2.5">
                   <div className="flex flex-wrap gap-1">
                     {p.aliases.length === 0 && <span className="text-n-300">—</span>}
                     {p.aliases.slice(0, 4).map((a) => (
-                      <span key={a.id ?? a.skuValue} className="mono inline-flex items-center gap-1 rounded bg-n-100 px-1.5 py-0.5 text-[11px] text-n-600" title={a.label ?? undefined}>
+                      <span key={a.id ?? a.skuValue} className="code inline-flex items-center gap-1 rounded bg-n-100 px-1.5 py-0.5 text-[11px] text-n-600" title={a.label ?? undefined}>
                         {a.skuValue}
                         {a.fulfilmentType?.code && <span className="text-[9px] font-semibold text-teal-700">{a.fulfilmentType.code}</span>}
                       </span>
@@ -376,7 +375,14 @@ function ListView({ items, loading, cols, selected, allSelected, onToggleAll, on
                 <td className="border-b border-n-100 px-4 py-2.5 text-[13.5px] text-n-700">{p.vendor?.name ?? '—'}</td>
                 <td className="border-b border-n-100 px-4 py-2.5">{p.fulfilmentType ? <span className={`tag ${p.fulfilmentType.code === 'FBA' ? 'border border-info-bd bg-info-bg text-info' : 'border border-n-200 bg-n-100 text-n-600'}`}>{p.fulfilmentType.code ?? p.fulfilmentType.name}</span> : '—'}</td>
                 <td className="border-b border-n-100 px-4 py-2.5 text-[13.5px] text-n-700">{p.category?.name ?? '—'}</td>
-                <td className="border-b border-n-100 px-4 py-2.5"><div className="flex flex-wrap gap-1">{p.attributes.slice(0, 3).map((a) => <span key={a.id} className="mono rounded bg-n-100 px-1.5 py-0.5 text-[11px] text-n-600">{a.value}</span>)}</div></td>
+                <td className="border-b border-n-100 px-4 py-2.5">
+                  {p.attributes.length === 0 ? <span className="text-n-400">—</span> : (
+                    <div className="flex max-w-[190px] items-center gap-1" title={p.attributes.map((a) => a.value).join(', ')}>
+                      <span className="truncate rounded bg-n-100 px-1.5 py-0.5 text-[11px] text-n-600">{p.attributes[0].value}</span>
+                      {p.attributes.length > 1 && <span className="shrink-0 rounded bg-n-100 px-1.5 py-0.5 text-[11px] font-semibold text-n-500">+{p.attributes.length - 1}</span>}
+                    </div>
+                  )}
+                </td>
                 {extra.map((c) => <td key={c.key} className={`border-b border-n-100 px-4 py-2.5 text-[13px] text-n-700 ${c.mono ? 'mono' : ''} ${c.right ? 'text-right' : ''}`}>{c.render(p)}</td>)}
                 <td className="border-b border-n-100 px-4 py-2.5 text-right"><span className="mono font-medium text-n-800">{formatMoney(p.purchaseCost)}</span></td>
                 <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
@@ -394,24 +400,61 @@ function ListView({ items, loading, cols, selected, allSelected, onToggleAll, on
   );
 }
 
-function GridView({ items, loading, onEdit }: { items: Product[]; loading: boolean; onEdit: (p: Product) => void }) {
+function GridView({ items, loading, selected, onToggleOne, onEdit, rangeStart, total }: {
+  items: Product[];
+  loading: boolean;
+  selected: Set<string>;
+  onToggleOne: (id: string) => void;
+  onEdit: (p: Product) => void;
+  rangeStart: number;
+  total: number;
+}) {
   if (loading) return <div className="card px-4 py-12 text-center text-[13px] text-n-500">Loading…</div>;
   if (items.length === 0) return <div className="card px-4 py-12 text-center text-[13px] text-n-500">No products match. Add your first product, or import a .csv.</div>;
   return (
-    <div className="grid grid-cols-4 gap-4 max-[1100px]:grid-cols-3 max-[760px]:grid-cols-2">
-      {items.map((p) => (
-        <button key={p.id} onClick={() => onEdit(p)} className="card overflow-hidden text-left transition-shadow hover:shadow-md">
-          <div className="grid aspect-square place-items-center bg-n-100 text-n-300">
-            {p.featuredImage ? <img src={p.featuredImage} alt="" className="h-full w-full object-cover" /> : <Package size={32} />}
+    <>
+      <p className="mb-3 text-[13px] text-n-500">
+        Showing <span className="font-medium text-n-800">{rangeStart}–{rangeStart + items.length - 1}</span> of{' '}
+        <span className="font-medium text-n-800">{total.toLocaleString()}</span> products
+      </p>
+      <div className="grid grid-cols-5 gap-4 max-[1400px]:grid-cols-4 max-[1100px]:grid-cols-3 max-[760px]:grid-cols-2">
+        {items.map((p) => (
+          <div
+            key={p.id}
+            onClick={() => onEdit(p)}
+            className={`cursor-pointer overflow-hidden rounded-lg border bg-n-0 transition-shadow hover:shadow-md ${selected.has(p.id) ? 'border-teal-300 ring-1 ring-teal-200' : 'border-n-200'}`}
+          >
+            {/* Image, with the select box and fulfilment badge overlaid on it. */}
+            <div className="relative grid aspect-[5/3] place-items-center border-b border-n-100 bg-n-50 text-n-300">
+              {p.featuredImage ? <img src={p.featuredImage} alt="" className="h-full w-full object-cover" /> : <Package size={30} strokeWidth={1.5} />}
+              <div className="absolute left-2.5 top-2.5" onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-[var(--teal-500)]"
+                  checked={selected.has(p.id)}
+                  onChange={() => onToggleOne(p.id)}
+                />
+              </div>
+              {p.fulfilmentType && (
+                <span className={`tag absolute right-2.5 top-2.5 ${p.fulfilmentType.code === 'FBA' ? 'border border-info-bd bg-info-bg text-info' : 'border border-n-200 bg-n-100 text-n-600'}`}>
+                  {p.fulfilmentType.code ?? p.fulfilmentType.name}
+                </span>
+              )}
+            </div>
+
+            <div className="p-3">
+              <div className="code truncate text-[11.5px] text-teal-700">{p.mainSku}</div>
+              {/* Fixed two-line title so every card in a row lines up. */}
+              <div className="mt-1 line-clamp-2 min-h-[2.25rem] text-[13px] font-medium leading-[1.15rem] text-n-800">{p.title}</div>
+              <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-n-100 pt-2.5">
+                <span className="truncate text-[12px] text-n-500">{p.brand?.name ?? '—'}</span>
+                <span className="mono shrink-0 text-[13px] font-semibold text-n-800">{formatMoney(p.purchaseCost)}</span>
+              </div>
+            </div>
           </div>
-          <div className="p-3">
-            <div className="mono text-[12px] font-medium text-n-800">{p.mainSku}</div>
-            <div className="mt-0.5 line-clamp-2 text-[13px] text-n-700">{p.title}</div>
-            <div className="mt-1 text-[12px] text-n-500">{p.brand?.name ?? '—'}</div>
-          </div>
-        </button>
-      ))}
-    </div>
+        ))}
+      </div>
+    </>
   );
 }
 

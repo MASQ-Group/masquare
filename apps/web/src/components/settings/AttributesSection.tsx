@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { ModalShell, Select } from '@masquare/ui';
 import { attributesApi, type Attribute } from '../../lib/api';
 import { AddButton, RefTable, SectionHeader } from './shared';
 
@@ -89,10 +89,14 @@ function AttributeModal({ attribute, onClose, onSaved }: { attribute: Attribute 
         </div>
         <div>
           <label className="label">Input type *</label>
-          <select className="input" value={inputType} onChange={(e) => { setInputType(e.target.value as any); setDirty(true); }}>
-            <option value="predefined">Predefined — choose from a fixed set</option>
-            <option value="free_text">Free text — type any value</option>
-          </select>
+          <Select
+            value={inputType}
+            onChange={(v) => { setInputType(v as any); setDirty(true); }}
+            options={[
+              { value: 'predefined', label: 'Predefined — choose from a fixed set' },
+              { value: 'free_text', label: 'Free text — type any value' },
+            ]}
+          />
         </div>
         <div>
           <label className="label">{valuesLabel}</label>

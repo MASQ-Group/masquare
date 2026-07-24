@@ -10,6 +10,8 @@ import { VendorsSection } from '../components/settings/VendorsSection';
 import { BrandsSection, ProductTypesSection, FulfilmentTypesSection } from '../components/settings/SimpleSections';
 import { CategoriesSection } from '../components/settings/CategoriesSection';
 import { AttributesSection } from '../components/settings/AttributesSection';
+import { VatClassesSection } from '../components/settings/VatClassesSection';
+import { ProductClassesSection } from '../components/settings/ProductClassesSection';
 
 type TopTab = 'general' | 'countries' | 'products' | 'sales-channels' | 'shipping-services' | 'profit-tiers' | 'customs-fx';
 
@@ -26,10 +28,12 @@ const TOP_TABS: [TopTab, string][] = [
 const PRODUCT_SECTIONS = [
   { key: 'vendors', label: 'Vendors', Component: VendorsSection },
   { key: 'brands', label: 'Brands', Component: BrandsSection },
+  { key: 'product-classes', label: 'Product Classes', Component: ProductClassesSection },
   { key: 'product-types', label: 'Product Types', Component: ProductTypesSection },
   { key: 'fulfilment-types', label: 'Fulfilment Types', Component: FulfilmentTypesSection },
   { key: 'categories', label: 'Categories', Component: CategoriesSection },
   { key: 'attributes', label: 'Attributes', Component: AttributesSection },
+  { key: 'vat-classes', label: 'VAT Classes', Component: VatClassesSection },
 ] as const;
 
 const isTopTab = (v: string | null): v is TopTab => TOP_TABS.some(([key]) => key === v);

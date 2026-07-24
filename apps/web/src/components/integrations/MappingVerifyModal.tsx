@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { ModalShell, Select } from '@masquare/ui';
 import { integrationsApi, type ChannelIntegration, type MappedField } from '../../lib/api';
 
 interface Props {
@@ -41,7 +41,7 @@ export function MappingVerifyModal({ integration, onClose, onVerified }: Props) 
   return (
     <ModalShell
       open
-      title="Verify field mapping"
+      title="Verify Field Mapping"
       subtitle={[integration.connectorLabel, integration.marketplaceLabel].filter(Boolean).join(' · ')}
       initialSize={{ w: 860, h: 680 }}
       primaryLabel={alreadyVerified ? 'Re-confirm mapping' : 'Confirm mapping is correct'}
@@ -72,9 +72,13 @@ export function MappingVerifyModal({ integration, onClose, onVerified }: Props) 
           <>
             <div className="flex flex-wrap items-center gap-2.5">
               <span className="text-[12px] font-medium text-n-500">Sample order</span>
-              <select className="input h-8 w-40 text-[12.5px]" value={sampleIdx} onChange={(e) => setSampleIdx(Number(e.target.value))}>
-                {samples.map((s, i) => <option key={s.orderId} value={i}>{s.orderId}</option>)}
-              </select>
+              <Select
+                dense
+                className="w-40"
+                value={String(sampleIdx)}
+                onChange={(v) => setSampleIdx(Number(v))}
+                options={samples.map((s, i) => ({ value: String(i), label: s.orderId }))}
+              />
               <span className="rounded-pill bg-teal-50 px-2 py-0.5 text-[11px] font-semibold text-teal-700">{data?.mode === 'live' ? 'live data' : 'test data'}</span>
               {alreadyVerified && <span className="inline-flex items-center gap-1 text-[12px] font-medium text-success"><CheckCircle2 size={13} /> Previously verified</span>}
             </div>

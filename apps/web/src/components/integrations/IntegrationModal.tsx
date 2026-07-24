@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, Download, KeyRound, ShieldCheck, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { ModalShell, Select } from '@masquare/ui';
 import { integrationsApi, salesChannelsApi, type ChannelIntegration, type ConnectorField } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 
@@ -120,23 +120,23 @@ export function IntegrationModal({ integration, onClose, onSaved }: Props) {
             {editing ? (
               <input className="input" value={integration!.connectorLabel} disabled />
             ) : (
-              <select className="input" value={channelType} onChange={(e) => { setChannelType(e.target.value); setMarketplace(''); touch(); }}>
-                <option value="">Select…</option>
-                {connectors.map((c) => <option key={c.type} value={c.type}>{c.label}</option>)}
-              </select>
+              <Select
+                value={channelType}
+                onChange={(v) => { setChannelType(v); setMarketplace(''); touch(); }}
+                placeholder="Select…"
+                options={connectors.map((c) => ({ value: c.type, label: c.label }))}
+              />
             )}
           </div>
           <div>
             <label className="label">Marketplace / sub-channel</label>
-            <select
-              className="input"
+            <Select
               value={marketplace}
               disabled={!connector || connector.marketplaces.length === 0}
-              onChange={(e) => { setMarketplace(e.target.value); touch(); }}
-            >
-              <option value="">{connector ? 'Select…' : '—'}</option>
-              {connector?.marketplaces.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-            </select>
+              onChange={(v) => { setMarketplace(v); touch(); }}
+              placeholder={connector ? 'Select…' : '—'}
+              options={connector?.marketplaces.map((m) => ({ value: m.id, label: m.label })) ?? []}
+            />
           </div>
         </div>
 
@@ -173,9 +173,11 @@ export function IntegrationModal({ integration, onClose, onSaved }: Props) {
                               {st?.set && !secrets[f.key] && <p className="mt-1 text-[11px] text-n-400">Stored securely. Type a new value to replace it.</p>}
                             </>
                           ) : f.type === 'select' ? (
-                            <select className="input" value={config[f.key] ?? f.options?.[0]?.value ?? ''} onChange={(e) => setCfg(f.key, e.target.value)}>
-                              {f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                            </select>
+                            <Select
+                              value={config[f.key] ?? f.options?.[0]?.value ?? ''}
+                              onChange={(v) => setCfg(f.key, v)}
+                              options={f.options?.map((o) => ({ value: o.value, label: o.label })) ?? []}
+                            />
                           ) : (
                             <input
                               className={`input ${f.type === 'url' ? 'mono' : ''}`}
@@ -206,17 +208,21 @@ export function IntegrationModal({ integration, onClose, onSaved }: Props) {
                 <div className="grid grid-cols-2 gap-3 max-[520px]:grid-cols-1">
                   <div>
                     <label className="label">Imported orders → sales channel</label>
-                    <select className="input" value={targetSalesChannelId} onChange={(e) => { setTargetSalesChannelId(e.target.value); touch(); }}>
-                      <option value="">Select…</option>
-                      {channels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
+                    <Select
+                      value={targetSalesChannelId}
+                      onChange={(v) => { setTargetSalesChannelId(v); touch(); }}
+                      placeholder="Select…"
+                      options={channels.map((c) => ({ value: c.id, label: c.name }))}
+                    />
                   </div>
                   <div>
                     <label className="label">Imported orders → company</label>
-                    <select className="input" value={targetCompanyId} onChange={(e) => { setTargetCompanyId(e.target.value); touch(); }}>
-                      <option value="">Select…</option>
-                      {companies.map((c) => <option key={c.id} value={c.id}>{c.officialName}</option>)}
-                    </select>
+                    <Select
+                      value={targetCompanyId}
+                      onChange={(v) => { setTargetCompanyId(v); touch(); }}
+                      placeholder="Select…"
+                      options={companies.map((c) => ({ value: c.id, label: c.officialName }))}
+                    />
                   </div>
                   <div>
                     <label className="label">First-run backfill (days)</label>
@@ -235,10 +241,13 @@ export function IntegrationModal({ integration, onClose, onSaved }: Props) {
               <div className="flex flex-wrap items-center gap-3 rounded-md border border-n-200 bg-n-25 px-3 py-2.5">
                 <span className="text-[12.5px] font-medium text-n-700">Test connection</span>
                 {onlyTest && (
-                  <select className="input h-8 w-28 text-[12.5px]" value={testMode} onChange={(e) => setTestMode(e.target.value as 'live' | 'test')}>
-                    <option value="test">Test keys</option>
-                    <option value="live">Live keys</option>
-                  </select>
+                  <Select
+                    dense
+                    className="w-28"
+                    value={testMode}
+                    onChange={(v) => setTestMode(v as 'live' | 'test')}
+                    options={[{ value: 'test', label: 'Test keys' }, { value: 'live', label: 'Live keys' }]}
+                  />
                 )}
                 {testResult && (
                   <span className={`inline-flex items-center gap-1.5 text-[12.5px] font-medium ${testResult.ok ? 'text-success' : 'text-danger'}`}>

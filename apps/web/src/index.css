@@ -31,11 +31,52 @@
 }
 
 @layer components {
-  /* The "data in mono" rule — every machine-assigned value. */
+  /* Numeric values — the platform's primary/body font, with tabular figures so
+     columns of numbers line up. (Historically this used the mono font; numbers now
+     use the body font per settings, while machine codes use `.code`.) */
   .mono {
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* Machine codes — SKUs, transaction IDs, tracking/PO/VAT numbers. Uses the
+     configurable monospace font so codes stay fixed-width and scannable. */
+  .code {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
+  }
+
+  /* Slim, trackless scrollbar. The browser default is bulky and paints a light
+     track, which reads as a container against a dark surface — this is just the
+     thumb: a thin translucent grey bar, brightening on hover.
+     Chromium honours `scrollbar-width` and then IGNORES ::-webkit-scrollbar, and its
+     "thin" is ~10px — so the standard properties are scoped to engines without the
+     pseudo-elements (Firefox), letting Chromium/Safari use the true 6px rules. */
+  .scrollbar-slim::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.32);
+  }
+  /* Chromium paints a faint corner square where the two bars would meet. */
+  .scrollbar-slim::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    .scrollbar-slim {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+    }
   }
 
   .btn {

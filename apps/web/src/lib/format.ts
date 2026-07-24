@@ -6,13 +6,22 @@ export function initials(name: string): string {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
-const CURRENCY_SYMBOL: Record<string, string> = { EUR: '€', USD: '$', GBP: '£' };
+const CURRENCY_SYMBOL: Record<string, string> = {
+  EUR: '€', USD: '$', GBP: '£', JPY: '¥', AUD: 'A$', CAD: 'C$', NZD: 'NZ$', SGD: 'S$',
+};
+
+/** Currency symbol for a code, e.g. EUR→€, JPY→¥, AUD→A$; unknown codes fall back to "AED ". */
+export const currencySymbol = (currency?: string | null) =>
+  currency ? CURRENCY_SYMBOL[currency] ?? `${currency} ` : '';
+
+/** An amount with its currency symbol, e.g. ¥7788.00 / A$795.00. */
+export const formatAmount = (amount: number, currency?: string | null) =>
+  `${currencySymbol(currency)}${amount.toFixed(2)}`;
 
 /** Money as a right-aligned mono string, e.g. €50.00. Null amount renders as "—". */
 export function formatMoney(money?: { amount: number | null; currency: string } | null): string {
   if (!money || money.amount == null) return '—';
-  const symbol = CURRENCY_SYMBOL[money.currency] ?? `${money.currency} `;
-  return `${symbol}${money.amount.toFixed(2)}`;
+  return formatAmount(money.amount, money.currency);
 }
 
 /** dd/mm/yyyy — the platform default (Global Settings will make this configurable). */

@@ -140,10 +140,26 @@ export interface VendorContact {
   contactType?: 'person' | 'department' | null;
   contactRole?: string | null;
 }
+export type VendorVatTreatment = 'standard' | 'reverse_charge' | 'outside_scope';
+/** How an ancillary cost is spread over the received lines. */
+export type AllocationMethod = 'weight' | 'volumetric' | 'quantity' | 'value';
+export const ALLOCATION_LABELS: Record<AllocationMethod, string> = {
+  weight: 'Actual weight',
+  volumetric: 'Volumetric weight',
+  quantity: 'Quantity',
+  value: 'Value',
+};
 export interface Vendor {
   id: string;
   name: string;
   vatNumber?: string | null;
+  /** Decides whether this vendor's purchase orders carry VAT. */
+  vatTreatment?: VendorVatTreatment;
+  /** Currency this vendor invoices in — new POs default to it. */
+  currency?: string;
+  vatNumberValid?: boolean | null;
+  vatNumberCheckedAt?: string | null;
+  vatNumberCheckedName?: string | null;
   addressLine1?: string | null;
   addressCity?: string | null;
   addressCountry?: string | null;
@@ -168,6 +184,27 @@ export interface PlatformSettings {
   measurementSystem: 'metric' | 'imperial';
   dateFormat: 'ddmmyyyy' | 'mmddyyyy' | 'yyyymmdd';
   salesTxStandardColumns: string[] | null;
+  bodyFont: string;
+  monoFont: string;
+  deductStockOnSale: boolean;
+  applyChannelResolutions: boolean;
+}
+export type VatTaxTreatment = 'standard' | 'reduced' | 'zero' | 'exempt';
+export interface VatClass {
+  id: string;
+  name: string;
+  ratePct: number;
+  /** Zero-rated and Exempt are both 0% but stay distinct on a VAT return. */
+  taxTreatment: VatTaxTreatment;
+  sortOrder: number;
+  isDefault: boolean;
+}
+export type VatClassLite = Pick<VatClass, 'id' | 'name' | 'ratePct' | 'taxTreatment'>;
+export interface ProductClass {
+  id: string;
+  name: string;
+  sortOrder: number;
+  isDefault: boolean;
 }
 
 const crud = <T,>(path: string) => ({
@@ -177,10 +214,75 @@ const crud = <T,>(path: string) => ({
   remove: (id: string) => api.delete(`${path}/${id}`).then((r) => r.data),
 });
 
-export const vendorsApi = crud<Vendor>('/vendors');
+export const vendorsApi = {
+  ...crud<Vendor>('/vendors'),
+  get: (id: string) => api.get<Vendor>(`/vendors/${id}`).then((r) => r.data),
+  /** Advisory EU VIES check — never blocks saving. */
+  verifyVat: (id: string) =>
+    api
+      .post<{ valid: boolean | null; name?: string | null; checkedAt: string; message: string }>(`/vendors/${id}/verify-vat`, {})
+      .then((r) => r.data),
+};
 export const brandsApi = crud<Brand>('/brands');
 export const productTypesApi = crud<ProductType>('/product-types');
+
+// ---- Channel listings (what's live on each marketplace) ----
+export interface ChannelListingChannel {
+  id: string; name: string; marketplace: string | null; channelType: string;
+  salesChannelId: string | null; countryIso: string | null;
+  currency: string | null; color: string; listingCount: number; lastPulledAt: string | null;
+}
+export interface ChannelListingCell {
+  integrationId: string; channelSku: string; asin: string | null; listed: boolean;
+  price: number | null; currency: string | null; quantity: number | null; fulfilmentChannel: string | null; status: string;
+  profitEur: number | null; marginPct: number | null; loss: boolean;
+}
+export interface ChannelListingRow {
+  productId: string; sku: string; title: string; brand: string | null;
+  masterStock: number | null; listedCount: number; cells: Record<string, ChannelListingCell>;
+}
+export interface ChannelListingsDashboard { items: ChannelListingRow[]; total: number; page: number; pageSize: number }
+export interface ChannelListingDetailChannel {
+  integrationId: string; name: string; color: string; currency: string | null; countryIso: string | null; listed: boolean;
+  price: number | null; priceCurrency: string | null; quantity: number | null; fulfilmentChannel: string | null; status: string | null;
+  profitEur: number | null; marginPct: number | null; loss: boolean; lastPulledAt: string | null;
+}
+export interface ChannelListingDetail {
+  productId: string; sku: string; title: string; brand: string | null;
+  masterStock: number | null; listedCount: number; channelCount: number; unitsLive: number; lastSyncedAt: string | null;
+  channels: ChannelListingDetailChannel[];
+}
+export interface ChannelSyncResult { channels: { integrationId: string; name: string; ok: boolean; pulled?: number; message?: string }[]; total: number }
+export const channelListingsApi = {
+  channels: () => api.get<ChannelListingChannel[]>('/channel-listings/channels').then((r) => r.data),
+  dashboard: (params: { q?: string; channelId?: string; page?: number; pageSize?: number } = {}) =>
+    api.get<ChannelListingsDashboard>('/channel-listings', { params }).then((r) => r.data),
+  sync: (integrationIds?: string[]) =>
+    api.post<ChannelSyncResult>('/channel-listings/sync', integrationIds?.length ? { integrationIds } : {}).then((r) => r.data),
+  detail: (productId: string) => api.get<ChannelListingDetail>(`/channel-listings/product/${productId}`).then((r) => r.data),
+};
+
+// ---- Channel availability (sellable quantity broadcast to sales channels) ----
+export interface AvailabilityRow {
+  productId: string; mainSku: string; title: string;
+  brand: string | null; vendor: string | null; productType: string | null;
+  quantity: number | null; lastSource: string | null; updatedAt: string | null;
+}
+export interface AvailabilityLedgerRow {
+  id: string; delta: number; newQuantity: number; reason: string; note: string | null; refType: string | null; createdAt: string;
+}
+export interface AvailabilityListResponse { items: AvailabilityRow[]; total: number; page: number; pageSize: number }
+export const availabilityApi = {
+  list: (params: { q?: string; brandId?: string; vendorId?: string; productTypeId?: string; unset?: boolean; page?: number; pageSize?: number } = {}) =>
+    api.get<AvailabilityListResponse>('/availability', { params }).then((r) => r.data),
+  get: (productId: string) =>
+    api.get<AvailabilityRow & { ledger: AvailabilityLedgerRow[] }>(`/availability/${productId}`).then((r) => r.data),
+  setQuantity: (productId: string, quantity: number, note?: string) =>
+    api.post<AvailabilityRow & { ledger: AvailabilityLedgerRow[] }>(`/availability/${productId}`, { quantity, note }).then((r) => r.data),
+};
 export const fulfilmentTypesApi = crud<FulfilmentType>('/fulfilment-types');
+export const vatClassesApi = crud<VatClass>('/vat-classes');
+export const productClassesApi = crud<ProductClass>('/product-classes');
 
 export const categoriesApi = {
   list: () => api.get<Category[]>('/categories').then((r) => r.data),
@@ -236,11 +338,15 @@ export interface Product {
   productTypeId: string | null;
   fulfilmentTypeId: string | null;
   categoryId: string | null;
+  vatClassId: string | null;
+  productClassId: string | null;
   brand: RefLite | null;
   vendor: RefLite | null;
   productType: RefLite | null;
   fulfilmentType: RefLite | null;
   category: RefLite | null;
+  vatClass: VatClassLite | null;
+  productClass: RefLite | null;
   ean: string | null;
   upc: string | null;
   vendorSku: string | null;
@@ -248,6 +354,12 @@ export interface Product {
   countryOfOrigin: string | null;
   hsCode: string | null;
   purchaseCost: Money;
+  /** Individual units tracked by serial number; enforced at receiving and at sale. */
+  serialTracked: boolean;
+  /** Moving weighted average landed cost, maintained by receiving. Read-only. */
+  averageCostEur: number | null;
+  averageCostQty: number;
+  averageCostUpdatedAt: string | null;
   map: Money;
   msrp: Money;
   productWeightKg: number | null;
@@ -314,7 +426,7 @@ export const productsApi = {
   byIds: (ids: string[]) => api.post<Product[]>('/products/by-ids', { ids }).then((r) => r.data),
   ids: (params: Omit<ProductListParams, 'page' | 'pageSize'>) => api.get<string[]>('/products/ids', { params }).then((r) => r.data),
   bulkDelete: (ids: string[]) => api.post('/products/bulk/delete', { ids }).then((r) => r.data),
-  bulkUpdate: (body: { ids: string[]; productTypeId?: string; categoryId?: string; fulfilmentTypeId?: string; brandId?: string; vendorId?: string; attributes?: { attributeId: string; value: string }[] }) =>
+  bulkUpdate: (body: { ids: string[]; productTypeId?: string; categoryId?: string; fulfilmentTypeId?: string; brandId?: string; vendorId?: string; vatClassId?: string; productClassId?: string; attributes?: { attributeId: string; value: string }[] }) =>
     api.post('/products/bulk/update', body).then((r) => r.data),
   importValidate: (purpose: 'add' | 'edit', rows: Record<string, string>[]) =>
     api.post<{ rows: ImportRowResult[] }>('/products/import/validate', { purpose, rows }).then((r) => r.data),
@@ -363,10 +475,21 @@ export interface ShippingService {
   calcMethod: 'actual_weight' | 'volumetric_weight';
   zones: ShippingZone[];
 }
+export type SalesChannelKind = 'online' | 'local';
 export interface SalesChannel {
   id: string;
   name: string;
   description: string | null;
+  /** 'local' is our own direct/walk-in sales: EUR, FX 1, no fee, VAT charged by us.
+   *  Structural — seeded, not editable through the API. */
+  kind: SalesChannelKind;
+  /** Show a transaction Total (net + VAT + buyer-paid shipping + its VAT) for this channel.
+   *  Off for marketplaces by default, where the channel's own tax reporting makes a single
+   *  total misleading; on for our local sales. */
+  showTransactionTotal: boolean;
+  /** Chip colours for the channel name; seeded from the native flag, editable in settings. */
+  chipBgColor: string | null;
+  chipTextColor: string | null;
   nativeCountryId: string | null;
   nativeCurrency: string | null;
   generalSalesFeePct: number | null;
@@ -465,6 +588,15 @@ export const integrationsApi = {
   previewMapping: (id: string) => api.post<MappingPreview>(`/integrations/${id}/preview-mapping`, {}).then((r) => r.data),
   verifyMapping: (id: string, confirmed: boolean) => api.post<ChannelIntegration>(`/integrations/${id}/verify-mapping`, { confirmed }).then((r) => r.data),
   remove: (id: string) => api.delete(`/integrations/${id}`).then((r) => r.data),
+  /** Brand logos per channel family, as { channelType: url }. */
+  channelLogos: () => api.get<Record<string, string>>('/integrations/channel-logos').then((r) => r.data),
+  uploadChannelLogo: (channelType: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post<{ channelType: string; url: string }>(`/integrations/channel-logos/${channelType}`, fd).then((r) => r.data);
+  },
+  removeChannelLogo: (channelType: string) =>
+    api.delete<{ channelType: string; removed: boolean }>(`/integrations/channel-logos/${channelType}`).then((r) => r.data),
 };
 
 // ---- Sales analytics / reporting ----
@@ -473,11 +605,17 @@ export interface AnalyticsTotals {
   orders: number; units: number; shippingEur: number; dutyEur: number; refundEur: number;
   profitPct: number | null; avgOrderValueEur: number;
 }
+export interface AnalyticsFulfilmentRow {
+  fulfilment: string; revenueExVatEur: number; revenueIncVatEur: number; profitEur: number;
+  feesEur: number; orders: number; units: number; profitPct: number | null;
+}
 export interface AnalyticsChannelRow {
   channelId: string | null; channelName: string; currency: string | null;
   revenueExVatNative: number; revenueIncVatNative: number; revenueExVatEur: number; revenueIncVatEur: number;
   profitEur: number; feesEur: number; orders: number; units: number; profitPct: number | null;
-  prevRevenueExVatEur: number | null; prevProfitEur: number | null;
+  returnedUnits: number; refundEur: number;
+  prevRevenueExVatEur: number | null; prevProfitEur: number | null; prevReturnedUnits: number | null;
+  fulfilments: AnalyticsFulfilmentRow[];
 }
 export interface AnalyticsCountryRow {
   countryId: string | null; countryName: string;
@@ -487,9 +625,15 @@ export interface AnalyticsCountryRow {
 }
 export interface AnalyticsSkuRow {
   sku: string; productTitle: string | null; revenueExVatEur: number; revenueIncVatEur: number;
-  profitEur: number; feesEur: number; units: number; lines: number; profitPct: number | null; avgFeeEur: number;
+  profitEur: number; feesEur: number; units: number; returnedUnits: number; lines: number; profitPct: number | null; avgFeeEur: number;
+  prevRevenueExVatEur: number | null; prevProfitEur: number | null;
 }
-export interface AnalyticsTrendPoint { bucket: string; revenueExVatEur: number; profitEur: number; orders: number }
+export interface AnalyticsTrendPoint {
+  bucket: string;
+  revenueExVatEur: number; revenueIncVatEur: number; profitEur: number; feesEur: number;
+  orders: number; units: number; returnedUnits: number; avgOrderValueEur: number;
+}
+export interface AnalyticsReturnsTotals { returnedOrders: number; returnedUnits: number; refundEur: number }
 export interface AnalyticsReport {
   range: { from: string; to: string };
   compareRange: { from: string; to: string } | null;
@@ -502,11 +646,43 @@ export interface AnalyticsReport {
   channels: { id: string; name: string }[];
   countries: { id: string; name: string }[];
   trend: AnalyticsTrendPoint[];
+  compareTrend: AnalyticsTrendPoint[] | null;
+  returns: AnalyticsReturnsTotals;
+  compareReturns: AnalyticsReturnsTotals | null;
+}
+
+export interface AnalyticsSalesParams {
+  from: string; to: string; compareFrom?: string; compareTo?: string; companyId?: string;
+  channelId?: string; countryId?: string; fulfilment?: string;
+  skuChannelId?: string; skuCountryId?: string;
+}
+
+export interface AnalyticsSkuTotals {
+  revenueExVatEur: number; revenueIncVatEur: number; profitEur: number; feesEur: number;
+  units: number; orders: number; profitPct: number | null; avgPriceEur: number; feePerUnitEur: number;
+}
+export interface AnalyticsSkuChannelRow {
+  channelId: string | null; channelName: string; currency: string | null; fulfilment: string;
+  revenueExVatEur: number; revenueIncVatEur: number; profitEur: number; feesEur: number;
+  units: number; profitPct: number | null; avgPriceEur: number; feePerUnitEur: number;
+}
+export interface AnalyticsSkuTrendPoint { bucket: string; revenueExVatEur: number; profitEur: number; feesEur: number; units: number; feePerUnitEur: number }
+export interface AnalyticsSkuDetail {
+  sku: string; productTitle: string | null; range: { from: string; to: string };
+  totals: AnalyticsSkuTotals; prevTotals: AnalyticsSkuTotals | null;
+  byChannel: AnalyticsSkuChannelRow[]; trend: AnalyticsSkuTrendPoint[];
+  returns: { returnedUnits: number; refundEur: number; orders: number };
+}
+export interface AnalyticsSkuParams {
+  sku: string; from: string; to: string; compareFrom?: string; compareTo?: string;
+  companyId?: string; channelId?: string; countryId?: string; fulfilment?: string;
 }
 
 export const analyticsApi = {
-  sales: (params: { from: string; to: string; compareFrom?: string; compareTo?: string; companyId?: string; skuChannelId?: string; skuCountryId?: string }) =>
+  sales: (params: AnalyticsSalesParams) =>
     api.get<AnalyticsReport>('/analytics/sales', { params }).then((r) => r.data),
+  sku: (params: AnalyticsSkuParams) =>
+    api.get<AnalyticsSkuDetail>('/analytics/sku', { params }).then((r) => r.data),
 };
 
 // ---- Customs FX (Cyprus Customs monthly exchange rates) ----
@@ -564,11 +740,22 @@ export const profitTiersApi = {
 
 // ---- Sales Transactions ----
 export interface SalesTransactionItem {
+  /** Units consumed by this line, for serial-tracked products. */
+  serials?: string[];
   id?: string;
   productId?: string | null;
   productTitle?: string | null;
   productMatched?: boolean;
+  /** Catalogue purchase cost. Shown for reference — not necessarily what COGS used. */
   productCost?: number | null;
+  /** Moving average cost, once the product has been received at least once. */
+  averageCostEur?: number | null;
+  /** Per-line unit purchase cost override (EUR); replaces the product's cost in the profit calc. */
+  unitNetCostEur?: number | null;
+  /** The unit cost the profit figure was actually calculated from. Prefer this when displaying cost. */
+  unitCostEur?: number | null;
+  /** Which of the three sources `unitCostEur` came from. */
+  costSource?: 'override' | 'average' | 'catalogue' | 'none';
   productWeightKg?: number | null;
   sku: string;
   quantity: number;
@@ -577,13 +764,42 @@ export interface SalesTransactionItem {
   shippingAmount?: number | null;
   shippingAmountVat?: number | null;
   salesChannelSalesFeeAmount?: number | null;
+  fbaFulfilmentFeeAmount?: number | null;
+  amazonPointsAmount?: number | null;
+  salesTaxAmount?: number | null;
+  /** Local sales: the VAT class applied and the rate snapshotted at the time of sale. */
+  vatClassId?: string | null;
+  vatClass?: { id: string; name: string; taxTreatment: VatTaxTreatment } | null;
+  vatRatePct?: number | null;
+}
+export interface TransactionAlert {
+  code: string;
+  severity: 'warning' | 'error';
+  message: string;
+  /** For list alerts (e.g. unmatched SKUs): rendered one per row under the message. */
+  items?: string[];
 }
 export interface SalesTransaction {
   id: string;
   date: string;
   transactionRef: string;
+  alerts: TransactionAlert[];
+  hasAlerts: boolean;
   salesChannelId: string | null;
-  salesChannel: { id: string; name: string } | null;
+  salesChannel: { id: string; name: string; kind?: SalesChannelKind; showTransactionTotal?: boolean; nativeCountryIso?: string | null } | null;
+  /** True when the sale went through a channel of kind 'local' (server-derived). */
+  isLocal?: boolean;
+  deliveryMethod?: 'pickup' | 'own_delivery' | null;
+  localShippingCostEur?: number | null;
+  /** Sale-level discount as entered. Line nets are already net of it; the server spreads it
+   *  across the lines in proportion to their net. */
+  discountType?: 'percentage' | 'fixed' | null;
+  discountValue?: number | null;
+  discountBase?: 'net' | 'gross' | null;
+  /** Server-computed: net + VAT + buyer-paid shipping + its VAT, in the transaction currency.
+   *  Null when the channel has the Total turned off. */
+  showTransactionTotal?: boolean;
+  transactionTotal?: number | null;
   destinationCountryId: string | null;
   destinationCountry: { id: string; name: string; isoCode: string } | null;
   shippingServiceId: string | null;
@@ -592,20 +808,37 @@ export interface SalesTransaction {
   currency: string | null;
   feeCurrency: string | null;
   exchangeRate: number | null;
+  exchangeRateEstimated: boolean;
   feeExchangeRate: number | null;
   status: 'draft' | 'submitted';
   unlockedForEdit: boolean;
   hasPendingUnlock: boolean;
   salesFeePct: number | null;
+  estimatedSalesFee: number;
+  estimatedSalesFeeEur: number | null;
+  effectiveSalesFee: number;
+  salesFeeEstimated: boolean;
+  amazonPoints: number;
+  amazonPointsEur: number | null;
+  salesTax: number;
+  salesTaxEur: number | null;
   destinationCountryVatPct: number | null;
+  taxType: string | null;
+  taxLabel: string;
   vatOverridden: boolean;
   overallPackageWeight: number | null;
+  fulfilmentType: 'FBA' | 'FBM' | null;
   estimatedShippingCost: number | null;
   actualShippingCost: number | null;
   shippingCostSource: 'actual' | 'estimated';
+  fbaInboundCostEur: number | null;
+  fbaFeeEur: number | null;
   returnShippingCost: number;
   dutyImportCost: number;
-  fulfilmentStatus: 'pending' | 'shipped' | 'cancelled';
+  /** 'partial' = some outbound shipments recorded, but not yet marked fully shipped. */
+  fulfilmentStatus: 'pending' | 'partial' | 'shipped' | 'cancelled';
+  /** Outbound shipments recorded against this order so far. */
+  outboundShipmentCount: number;
   channelShipmentStatus: 'shipped' | 'not_shipped' | null;
   resolution: 'none' | 'cancelled' | 'returned' | 'replaced';
   refundAmount: number | null;
@@ -613,6 +846,11 @@ export interface SalesTransaction {
   restockItems: boolean;
   feeRefunded: boolean;
   resolutionNotes: string | null;
+  resolvedAt: string | null;
+  returnWarehouseId: string | null;
+  returnHandled: boolean;
+  resolutionSource: 'manual' | 'amazon' | null;
+  integrationId: string | null;
   shipped: boolean;
   shipments: TransactionShipment[];
   profit: number | null;
@@ -658,6 +896,7 @@ export interface Shipment {
   costBorneBy: CostBorneBy;
   dutyImportEur: number | null;
   comments: string | null;
+  groupId: string | null;
   createdAt: string;
 }
 
@@ -665,14 +904,21 @@ export interface PendingShipment {
   id: string;
   transactionRef: string;
   date: string;
-  salesChannel: { id: string; name: string } | null;
+  salesChannel: { id: string; name: string; nativeCountryIso?: string | null } | null;
+  /** Local sales (our own delivery/pickup) fulfil in one click — no carrier/tracking needed. */
+  isLocal: boolean;
+  deliveryMethod: 'pickup' | 'own_delivery' | null;
   company: { id: string; officialName: string } | null;
   destinationCountry: { id: string; name: string } | null;
   defaultShippingService: { id: string; name: string } | null;
   skus: string[];
   itemCount: number;
   quantity: number;
+  /** Shipping charged to the customer on this order (EUR) — default weight for a combined split. */
+  shippingEur: number;
   shipmentCount: number;
+  /** Outbound shipments already recorded; > 0 means this order is partially shipped. */
+  outboundCount: number;
 }
 
 export interface ShipmentListResponse { items: Shipment[]; total: number; page: number; pageSize: number }
@@ -689,17 +935,36 @@ export interface ShipmentImportRowResult {
 }
 
 export const shipmentsApi = {
-  list: (params: { q?: string; companyId?: string; salesChannelId?: string; type?: string; page?: number; pageSize?: number }) =>
+  list: (params: { q?: string; companyId?: string; salesChannelId?: string; type?: string; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<ShipmentListResponse>('/shipments', { params }).then((r) => r.data),
-  pending: (params: { q?: string; companyId?: string; salesChannelId?: string; page?: number; pageSize?: number }) =>
+  pending: (params: { q?: string; companyId?: string; salesChannelId?: string; channelKind?: 'local' | 'channel'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<PendingListResponse>('/shipments/pending', { params }).then((r) => r.data),
   forTransaction: (transactionId: string) => api.get<TransactionShipment[]>(`/shipments/transaction/${transactionId}`).then((r) => r.data),
   create: (body: any) => api.post<Shipment>('/shipments', body).then((r) => r.data),
+  /** Several parcels sent together on one date — one row per parcel, each with its own
+   *  carrier / tracking / cost. */
+  createBatch: (body: {
+    transactionId: string; type?: 'outbound' | 'inbound'; shipmentDate: string;
+    costBorneBy?: 'company' | 'customer'; dutyImportEur?: number | null; comments?: string | null;
+    markShipped?: boolean;
+    parcels: { shippingServiceId?: string | null; trackingNumber?: string | null; shippingCostEur?: number | null }[];
+  }) => api.post<{ ok: boolean; created: number }>('/shipments/batch', body).then((r) => r.data),
+  /** Ship several orders together as one parcel; the single cost is split across them
+   *  (explicit allocations, or by each order's own shipping charge). */
+  combine: (body: {
+    transactionIds: string[]; shipmentDate: string; shippingServiceId?: string | null;
+    trackingNumber?: string | null; totalShippingCostEur?: number | null;
+    allocations?: { transactionId: string; shippingCostEur: number }[];
+    costBorneBy?: 'company' | 'customer'; dutyImportEur?: number | null; comments?: string | null; markShipped?: boolean;
+  }) => api.post<{ ok: boolean; created: number; groupId: string; allocations: { transactionId: string; transactionRef: string; shippingCostEur: number }[] }>('/shipments/combine', body).then((r) => r.data),
   update: (id: string, body: any) => api.patch<Shipment>(`/shipments/${id}`, body).then((r) => r.data),
   remove: (id: string) => api.delete(`/shipments/${id}`).then((r) => r.data),
   setFulfilment: (transactionId: string, status: 'pending' | 'shipped' | 'cancelled') =>
     api.patch(`/shipments/transaction/${transactionId}/fulfilment`, { status }).then((r) => r.data),
-  export: (params: { scope: 'recorded' | 'pending'; q?: string; companyId?: string; salesChannelId?: string; type?: string }) =>
+  /** One-click fulfil for a local sale — records a marker shipment (no carrier/tracking). */
+  fulfilLocal: (transactionId: string) =>
+    api.post(`/shipments/transaction/${transactionId}/fulfil-local`, {}).then((r) => r.data),
+  export: (params: { scope: 'recorded' | 'pending'; q?: string; companyId?: string; salesChannelId?: string; type?: string; channelKind?: 'local' | 'channel' }) =>
     api.get<ShipmentExportRow[]>('/shipments/export', { params }).then((r) => r.data),
   importValidate: (rows: Record<string, string>[]) =>
     api.post<{ rows: ShipmentImportRowResult[] }>('/shipments/import/validate', { rows }).then((r) => r.data),
@@ -812,6 +1077,17 @@ export interface FbaShipment {
   updatedAt: string;
 }
 export interface FbaShipmentListResponse { items: FbaShipment[]; total: number; page: number; pageSize: number }
+export interface FbaSkuCost {
+  sku: string;
+  productId: string | null;
+  title: string | null;
+  salesChannelId: string | null;
+  salesChannelName: string | null;
+  totalQuantity: number;
+  totalAllocatedCostEur: number;
+  averageCostPerUnitEur: number | null;
+  shipmentCount: number;
+}
 export interface FbaShipmentInput {
   date?: string;
   salesChannelId?: string | null;
@@ -824,7 +1100,7 @@ export interface FbaShipmentInput {
 }
 
 export const fbaShipmentsApi = {
-  list: (params: { q?: string; salesChannelId?: string; status?: string; page?: number; pageSize?: number }) =>
+  list: (params: { q?: string; salesChannelId?: string; status?: string; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<FbaShipmentListResponse>('/fba-shipments', { params }).then((r) => r.data),
   get: (id: string) => api.get<FbaShipment>(`/fba-shipments/${id}`).then((r) => r.data),
   estimate: (body: Omit<FbaShipmentInput, 'status'>) => api.post<FbaEstimate>('/fba-shipments/estimate', body).then((r) => r.data),
@@ -833,20 +1109,712 @@ export const fbaShipmentsApi = {
   setStatus: (id: string, status: 'draft' | 'confirmed') => api.patch<FbaShipment>(`/fba-shipments/${id}/status`, { status }).then((r) => r.data),
   setActualCost: (id: string, actualCostEur: number) => api.patch<FbaShipment>(`/fba-shipments/${id}/actual-cost`, { actualCostEur }).then((r) => r.data),
   remove: (id: string) => api.delete(`/fba-shipments/${id}`).then((r) => r.data),
+  skuCosts: (params: { q?: string; salesChannelId?: string }) =>
+    api.get<FbaSkuCost[]>('/fba-shipments/sku-costs', { params }).then((r) => r.data),
+  importShipments: (rows: Record<string, string>[]) =>
+    api.post<{ created: number; shipments: number; errors: { fbaRef: string; message: string }[] }>('/fba-shipments/import', { rows }).then((r) => r.data),
 };
 
 export const salesTransactionsApi = {
-  list: (params: { q?: string; companyId?: string; salesChannelId?: string[]; destinationCountryId?: string[]; status?: string[]; profitTierId?: string[]; shipmentStatus?: string[]; sku?: string; dateFrom?: string; dateTo?: string; sortBy?: 'date' | 'profit' | 'profitPct'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
+  list: (params: { q?: string; companyId?: string; salesChannelId?: string[]; destinationCountryId?: string[]; status?: string[]; profitTierId?: string[]; shipmentStatus?: string[]; fulfilmentType?: string[]; feeType?: string[]; sku?: string; hasAlert?: boolean; needsReturn?: boolean; resolution?: string[]; dateFrom?: string; dateTo?: string; sortBy?: 'date' | 'profit' | 'profitPct'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<SalesTransactionListResponse>('/sales-transactions', { params }).then((r) => r.data),
   get: (id: string) => api.get<SalesTransaction>(`/sales-transactions/${id}`).then((r) => r.data),
   create: (body: any) => api.post<SalesTransaction>('/sales-transactions', body).then((r) => r.data),
   update: (id: string, body: any) => api.patch<SalesTransaction>(`/sales-transactions/${id}`, body).then((r) => r.data),
   remove: (id: string) => api.delete(`/sales-transactions/${id}`).then((r) => r.data),
-  resolve: (id: string, body: { resolution: 'none' | 'cancelled' | 'returned' | 'replaced'; refundAmount?: number | null; restockItems?: boolean; feeRefunded?: boolean; resolutionNotes?: string | null }) =>
+  resolve: (id: string, body: { resolution: 'none' | 'cancelled' | 'returned' | 'replaced'; refundAmount?: number | null; restockItems?: boolean; feeRefunded?: boolean; resolutionNotes?: string | null; returnedToStock?: boolean; returnWarehouseId?: string | null }) =>
     api.patch<SalesTransaction>(`/sales-transactions/${id}/resolution`, body).then((r) => r.data),
+  allIds: (params: { q?: string; companyId?: string; salesChannelId?: string[]; destinationCountryId?: string[]; status?: string[]; profitTierId?: string[]; shipmentStatus?: string[]; fulfilmentType?: string[]; feeType?: string[]; sku?: string; hasAlert?: boolean; dateFrom?: string; dateTo?: string }) =>
+    api.get<{ ids: string[]; total: number }>('/sales-transactions/ids', { params }).then((r) => r.data),
+  export: (params: { q?: string; companyId?: string; salesChannelId?: string[]; destinationCountryId?: string[]; status?: string[]; profitTierId?: string[]; shipmentStatus?: string[]; fulfilmentType?: string[]; feeType?: string[]; sku?: string; hasAlert?: boolean; dateFrom?: string; dateTo?: string; sortBy?: 'date' | 'profit' | 'profitPct'; sortDir?: 'asc' | 'desc' }) =>
+    api.get<SalesTransaction[]>('/sales-transactions/export', { params }).then((r) => r.data),
   bulkStatus: (ids: string[], status: 'draft' | 'submitted') =>
     api.post<{ updated: number; skipped: number }>('/sales-transactions/bulk/status', { ids, status }).then((r) => r.data),
+  /** Re-derive stored fields from the current catalogue/settings. Pass `ids` to recalculate
+   *  only those transactions (faster); omit for a full sweep. */
+  recalculate: (ids?: string[]) =>
+    api.post<{ checked: number; updated: number; relinkedItems: number; vattedItems: number }>('/sales-transactions/recalculate', ids?.length ? { ids } : {}).then((r) => r.data),
   requestUnlock: (id: string) => api.post(`/sales-transactions/${id}/unlock-request`, {}).then((r) => r.data),
   listUnlockRequests: () => api.get<UnlockRequest[]>('/sales-transactions/unlock-requests').then((r) => r.data),
   decideUnlock: (requestId: string, grant: boolean) => api.post(`/sales-transactions/unlock-requests/${requestId}/decide`, { grant }).then((r) => r.data),
 };
+
+// ---------------------------------------------------------------- warehouses & stock
+
+export interface Warehouse {
+  id: string;
+  name: string;
+  type: 'physical' | 'virtual';
+  parentWarehouseId: string | null;
+  includeInInventory: boolean;
+  isActive: boolean;
+  notes: string | null;
+}
+
+export interface WarehouseNode extends Warehouse {
+  depth: number;
+  productCount: number;
+  unitCount: number;
+  rollupUnitCount: number;
+  children: WarehouseNode[];
+}
+
+export interface StockLevelRow {
+  productId: string;
+  sku: string;
+  productName: string;
+  warehouseId: string;
+  warehouseName: string;
+  includeInInventory: boolean;
+  quantityOnHand: number;
+}
+
+export interface StockMovementRow {
+  id: string;
+  createdAt: string;
+  sku: string;
+  productName: string;
+  warehouseName: string;
+  qtyDelta: number;
+  balanceAfter: number;
+  reason: string;
+  reference: string | null;
+  notes: string | null;
+}
+
+export interface ProductStock {
+  product: { id: string; mainSku: string; title: string };
+  rows: {
+    warehouseId: string; warehouseName: string; warehouseType: string;
+    includeInInventory: boolean; isActive: boolean; quantityOnHand: number;
+  }[];
+  /** Sum over warehouses flagged include_in_inventory — what we can actually sell. */
+  available: number;
+  /** Everything we physically hold, including excluded warehouses. */
+  total: number;
+}
+
+export interface StockImportRowResult {
+  row: number;
+  sku: string;
+  productId: string | null;
+  productName: string | null;
+  warehouse: string;
+  warehouseId: string | null;
+  quantityOnHand: number | null;
+  errors: string[];
+  valid: boolean;
+}
+
+export const warehousesApi = {
+  list: (params: { includeInactive?: boolean } = {}) => api.get<Warehouse[]>('/warehouses', { params }).then((r) => r.data),
+  tree: (params: { includeInactive?: boolean } = {}) => api.get<WarehouseNode[]>('/warehouses/tree', { params }).then((r) => r.data),
+  create: (body: Partial<Warehouse>) => api.post<Warehouse>('/warehouses', body).then((r) => r.data),
+  update: (id: string, body: Partial<Warehouse>) => api.patch<Warehouse>(`/warehouses/${id}`, body).then((r) => r.data),
+  /** Refused while stock or children remain; deactivates instead of deleting once it has history. */
+  remove: (id: string) => api.delete<{ deleted: boolean; deactivated: boolean }>(`/warehouses/${id}`).then((r) => r.data),
+};
+
+export interface InventoryRow {
+  productId: string;
+  sku: string;
+  title: string;
+  imageUrl: string | null;
+  vendor: { id: string; name: string } | null;
+  onHand: number;
+  committed: number;
+  onOrder: number;
+  available: number;
+  averageCostEur: number | null;
+  averageCostQty: number;
+  stockValueEur: number | null;
+}
+
+export interface StockOwedRow {
+  id: string;
+  productId: string;
+  sku: string;
+  productName: string;
+  salesTransactionId: string;
+  transactionRef: string | null;
+  warehouse: { id: string; name: string } | null;
+  quantity: number;
+  quantitySettled: number;
+  status: 'open' | 'settled' | 'cancelled';
+  reason: string;
+  openedAt: string;
+  settledAt: string | null;
+}
+
+export const inventoryApi = {
+  list: (params: { q?: string; vendorId?: string; filter?: string; page?: number; pageSize?: number }) =>
+    api
+      .get<{ rows: InventoryRow[]; total: number; page: number; pageSize: number; pageCount: number }>('/inventory', { params })
+      .then((r) => r.data),
+  owed: (params: { status?: string; page?: number; pageSize?: number }) =>
+    api
+      .get<{ rows: StockOwedRow[]; total: number; page: number; pageSize: number; pageCount: number; totalOpenUnits: number }>('/inventory/owed', { params })
+      .then((r) => r.data),
+};
+
+export const stockApi = {
+  levels: (params: { q?: string; warehouseId?: string; includeChildren?: boolean; nonZeroOnly?: boolean; page?: number; pageSize?: number }) =>
+    api.get<{ rows: StockLevelRow[]; total: number; page: number; pageSize: number; pageCount: number }>('/stock', { params }).then((r) => r.data),
+  movements: (params: { productId?: string; warehouseId?: string; page?: number; pageSize?: number }) =>
+    api.get<{ rows: StockMovementRow[]; total: number; page: number; pageSize: number; pageCount: number }>('/stock/movements', { params }).then((r) => r.data),
+  byProduct: (productId: string) => api.get<ProductStock>(`/stock/product/${productId}`).then((r) => r.data),
+  /** Signed change (+/-). Writes a movement; never lets a balance go negative. */
+  adjust: (body: { productId: string; warehouseId: string; qtyDelta: number; reason: string; reference?: string | null; notes?: string | null }) =>
+    api.post<{ quantityOnHand: number; qtyDelta: number }>('/stock/adjust', body).then((r) => r.data),
+  /** Absolute count (stocktake) — the server derives the delta. */
+  setLevel: (body: { productId: string; warehouseId: string; quantityOnHand: number; reason: string; notes?: string | null }) =>
+    api.post<{ changed: boolean; quantityOnHand: number }>('/stock/set', body).then((r) => r.data),
+  importValidate: (rows: { sku?: string; warehouse?: string; quantity?: string | number }[]) =>
+    api.post<{ rows: StockImportRowResult[]; validCount: number; errorCount: number }>('/stock/import/validate', { rows }).then((r) => r.data),
+  importCommit: (items: { productId: string; warehouseId: string; quantityOnHand: number }[], reason = 'opening_balance') =>
+    api.post<{ applied: number; unchanged: number; total: number }>('/stock/import/commit', { items, reason }).then((r) => r.data),
+};
+
+// ---------------------------------------------------------------- purchase orders
+
+export type PurchaseOrderStatus = 'draft' | 'submitted' | 'partially_received' | 'received' | 'cancelled';
+
+export interface PurchaseOrderLine {
+  id?: string;
+  productId: string;
+  sku?: string | null;
+  productName?: string | null;
+  quantityOrdered: number;
+  quantityReceived?: number;
+  unitCost: number;
+  lineTotal?: number;
+  vatClassId?: string | null;
+  vatClassName?: string | null;
+  vatRatePct?: number;
+  vatAmount?: number;
+  notes?: string | null;
+}
+
+export interface PurchaseOrderListRow {
+  id: string;
+  poNumber: string;
+  status: PurchaseOrderStatus;
+  currency: string;
+  vendor: { id: string; name: string };
+  company: { id: string; officialName: string };
+  expectedDeliveryDate: string | null;
+  createdAt: string;
+  submittedAt: string | null;
+  lineCount: number;
+  totalQuantity: number;
+  totalReceived: number;
+  total: number;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  poNumber: string;
+  status: PurchaseOrderStatus;
+  currency: string;
+  company: {
+    id: string; officialName: string; registrationNumber: string | null;
+    addressLine1: string | null; addressLine2: string | null; addressCity: string | null;
+    addressPostalCode: string | null; addressCountry: string | null;
+  } | null;
+  vendor: {
+    id: string; name: string; vatNumber: string | null; email: string | null;
+    phone: string | null; addressCity: string | null; addressCountry: string | null;
+  } | null;
+  destinationWarehouse: { id: string; name: string } | null;
+  expectedDeliveryDate: string | null;
+  vatTreatment: VendorVatTreatment;
+  fxRate: number | null;
+  amountPaidEur: number | null;
+  /** Rate costing will actually use (EUR per 1 unit of the order currency). */
+  effectiveFxRate: number | null;
+  shippingCost: number | null;
+  shippingCurrency: string;
+  shippingAllocation: AllocationMethod;
+  customsDuty: number | null;
+  customsDutyCurrency: string;
+  customsDutyAllocation: AllocationMethod;
+  importHandling: number | null;
+  importHandlingCurrency: string;
+  importHandlingAllocation: AllocationMethod;
+  importVat: number | null;
+  importVatCurrency: string;
+  notes: string | null;
+  submittedAt: string | null;
+  cancelledAt: string | null;
+  receivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lines: PurchaseOrderLine[];
+  totalQuantity: number;
+  totalReceived: number;
+  total: number;
+  totalNet: number;
+  totalVat: number;
+  totalGross: number;
+  statusHistory: { status: string; note: string | null; at: string }[];
+}
+
+export interface PurchaseOrderUnlockRequest {
+  id: string;
+  purchaseOrderId: string;
+  poNumber: string;
+  status: PurchaseOrderStatus;
+  reason: string | null;
+  requestedBy: string;
+  createdAt: string;
+}
+
+export interface PurchaseOrderInput {
+  companyId: string;
+  vendorId: string;
+  currency?: string;
+  expectedDeliveryDate?: string | null;
+  vatTreatment?: VendorVatTreatment;
+  fxRate?: number | null;
+  amountPaidEur?: number | null;
+  shippingCost?: number | null;
+  shippingCurrency?: string;
+  shippingAllocation?: AllocationMethod;
+  customsDuty?: number | null;
+  customsDutyCurrency?: string;
+  customsDutyAllocation?: AllocationMethod;
+  importHandling?: number | null;
+  importHandlingCurrency?: string;
+  importHandlingAllocation?: AllocationMethod;
+  importVat?: number | null;
+  importVatCurrency?: string;
+  destinationWarehouseId?: string | null;
+  notes?: string | null;
+  lines: { productId: string; quantityOrdered: number; unitCost: number; notes?: string | null }[];
+}
+
+export const purchaseOrdersApi = {
+  list: (params: { q?: string; status?: string; vendorId?: string; companyId?: string; from?: string; to?: string; page?: number; pageSize?: number }) =>
+    api.get<{ rows: PurchaseOrderListRow[]; total: number; page: number; pageSize: number; pageCount: number }>('/purchase-orders', { params }).then((r) => r.data),
+  get: (id: string) => api.get<PurchaseOrder>(`/purchase-orders/${id}`).then((r) => r.data),
+  create: (body: PurchaseOrderInput) => api.post<PurchaseOrder>('/purchase-orders', body).then((r) => r.data),
+  update: (id: string, body: PurchaseOrderInput) => api.patch<PurchaseOrder>(`/purchase-orders/${id}`, body).then((r) => r.data),
+  submit: (id: string) => api.post<PurchaseOrder>(`/purchase-orders/${id}/submit`, {}).then((r) => r.data),
+  allIds: (params: { q?: string; status?: string; vendorId?: string; companyId?: string; from?: string; to?: string }) =>
+    api.get<{ ids: string[]; total: number }>('/purchase-orders/ids', { params }).then((r) => r.data),
+  bulkSubmit: (ids: string[]) =>
+    api.post<{ submitted: number; skipped: { id: string; reason: string }[]; requested: number }>('/purchase-orders/bulk/submit', { ids }).then((r) => r.data),
+  /** Admin only — reopens a submitted PO as a draft and voids its pending receipt. */
+  /** Admin-only: restate quantities / add lines on an order that has already arrived. */
+  amend: (id: string, body: { lines: AmendLineInput[]; note?: string }) =>
+    api.post<PurchaseOrder>(`/purchase-orders/${id}/amend`, body).then((r) => r.data),
+  unlock: (id: string, note?: string) => api.post<PurchaseOrder>(`/purchase-orders/${id}/unlock`, { note }).then((r) => r.data),
+  requestUnlock: (id: string, reason?: string) =>
+    api.post<{ ok: boolean; alreadyRequested: boolean }>(`/purchase-orders/${id}/unlock-request`, { reason }).then((r) => r.data),
+  listUnlockRequests: () => api.get<PurchaseOrderUnlockRequest[]>('/purchase-orders/unlock-requests').then((r) => r.data),
+  decideUnlock: (requestId: string, grant: boolean, note?: string) =>
+    api.post<{ ok: boolean; granted: boolean }>(`/purchase-orders/unlock-requests/${requestId}/decide`, { grant, note }).then((r) => r.data),
+  cancel: (id: string, reason?: string) => api.post<PurchaseOrder>(`/purchase-orders/${id}/cancel`, { reason }).then((r) => r.data),
+  remove: (id: string) => api.delete<{ deleted: boolean }>(`/purchase-orders/${id}`).then((r) => r.data),
+  /** Fetch the branded PDF (auth header required) and save it to disk. */
+  downloadPdf: async (id: string, poNumber: string) => {
+    const res = await api.get(`/purchase-orders/${id}/pdf`, { responseType: 'blob' });
+    const url = URL.createObjectURL(res.data as Blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${poNumber}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+};
+
+// ---------------------------------------------------------------- goods receipts
+
+export type GoodsReceiptStatus = 'pending' | 'posted' | 'cancelled';
+
+export interface GoodsReceiptListRow {
+  id: string;
+  receiptNumber: string;
+  status: GoodsReceiptStatus;
+  isBackorder: boolean;
+  purchaseOrder: { id: string; poNumber: string } | null;
+  vendor: { id: string; name: string } | null;
+  destinationWarehouse: { id: string; name: string } | null;
+  createdAt: string;
+  postedAt: string | null;
+  lineCount: number;
+  expectedQuantity: number;
+  receivedQuantity: number;
+}
+
+export interface GoodsReceiptLine {
+  id: string;
+  purchaseOrderLineId: string;
+  productId: string | null;
+  sku: string | null;
+  productName: string | null;
+  quantityOrdered: number;
+  quantityAlreadyReceived: number;
+  quantityExpected: number;
+  quantityReceived: number;
+  unitCost: number;
+}
+
+export interface GoodsReceipt {
+  id: string;
+  receiptNumber: string;
+  status: GoodsReceiptStatus;
+  isBackorder: boolean;
+  parentReceiptId: string | null;
+  notes: string | null;
+  createdAt: string;
+  postedAt: string | null;
+  destinationWarehouse: { id: string; name: string } | null;
+  purchaseOrder: {
+    id: string; poNumber: string; status: string; currency: string;
+    expectedDeliveryDate: string | null; destinationWarehouseId: string | null;
+    vendor: { id: string; name: string } | null;
+  } | null;
+  lines: GoodsReceiptLine[];
+  expectedQuantity: number;
+  receivedQuantity: number;
+}
+
+/** Extra fields returned by post() on top of the receipt. */
+export interface PostReceiptResult extends GoodsReceipt {
+  overReceipt: string[] | null;
+  backorder: { id: string; receiptNumber: string } | null;
+  shortfall: number;
+  closedShort: boolean;
+  purchaseOrderStatus: string;
+}
+
+/** Compact receipt summary shown on a PO's detail page. */
+export interface PoReceiptSummary {
+  id: string; receiptNumber: string; status: GoodsReceiptStatus; isBackorder: boolean;
+  createdAt: string; postedAt: string | null; expectedQuantity: number; receivedQuantity: number;
+}
+
+export const goodsReceiptsApi = {
+  /** status: 'open' (pending incl. backorders, default) | 'all' | pending|posted|cancelled */
+  list: (params: { q?: string; status?: string; purchaseOrderId?: string; vendorId?: string; from?: string; to?: string; page?: number; pageSize?: number }) =>
+    api.get<{ rows: GoodsReceiptListRow[]; total: number; page: number; pageSize: number; pageCount: number }>('/goods-receipts', { params }).then((r) => r.data),
+  get: (id: string) => api.get<GoodsReceipt>(`/goods-receipts/${id}`).then((r) => r.data),
+  post: (id: string, body: {
+    lines: { lineId: string; quantityReceived: number }[];
+    destinationWarehouseId?: string | null;
+    allowOverReceipt?: boolean;
+    closeShort?: boolean;
+    notes?: string | null;
+  }) => api.post<PostReceiptResult>(`/goods-receipts/${id}/post`, body).then((r) => r.data),
+  cancel: (id: string, reason?: string) => api.post<GoodsReceipt>(`/goods-receipts/${id}/cancel`, { reason }).then((r) => r.data),
+  forPurchaseOrder: (poId: string) => api.get<PoReceiptSummary[]>(`/purchase-orders/${poId}/receipts`).then((r) => r.data),
+};
+
+// ---------------------------------------------------------------- procurement
+
+export type StockStatus = 'in_stock' | 'partial' | 'needs_ordering';
+
+export interface DemandRow {
+  productId: string;
+  sku: string;
+  productName: string;
+  imageUrl: string | null;
+  vendor: { id: string; name: string } | null;
+  lastPurchaseCost: number | null;
+  purchaseCostCurrency: string;
+  requiredQuantity: number;
+  availableQuantity: number;
+  shortfall: number;
+  stockStatus: StockStatus;
+  orderCount: number;
+  channels: { id: string; name: string }[];
+  orderRefs: { id: string; ref: string; date: string; quantity: number }[];
+  firstSaleDate: string;
+  lastSaleDate: string;
+}
+
+export interface DemandResponse {
+  rows: DemandRow[];
+  total: number; page: number; pageSize: number; pageCount: number;
+  summary: { needsOrdering: number; partial: number; inStock: number };
+}
+
+export const procurementApi = {
+  demand: (params: { q?: string; salesChannelId?: string; stockStatus?: string; from?: string; to?: string; page?: number; pageSize?: number }) =>
+    api.get<DemandResponse>('/procurement/demand', { params }).then((r) => r.data),
+  generateOrders: (body: {
+    companyId: string;
+    currency?: string;
+    destinationWarehouseId?: string | null;
+    notes?: string | null;
+    lines: { productId: string; quantity: number; vendorId?: string | null; unitCost?: number | null }[];
+  }) => api.post<{ created: { id: string; poNumber: string; vendorId: string; lineCount: number }[]; orderCount: number }>(
+    '/procurement/generate-orders', body,
+  ).then((r) => r.data),
+};
+
+// ---- Pricing module ----
+export interface PricingBreakdown {
+  netEur: number; vatEur: number; feeEur: number; importEur: number;
+  pointsEur: number; taxType: string; taxLabel: string;
+  costEur: number; shippingEur: number; profitEur: number; marginPct: number;
+}
+export interface PricingComparisonRow {
+  channelId: string; channelName: string; currency: string; countryIso: string | null;
+  priceNative: number | null; vatPct?: number; feePct?: number;
+  profitEur: number | null; marginPct: number | null;
+  isPrimary?: boolean; unavailable: string | null;
+}
+export interface IndividualPricingResult {
+  product: { id: string; sku: string; title: string };
+  /** Anything that could not be auto-resolved and is therefore excluded from profit. */
+  warnings: string[];
+  channel: { id: string; name: string; currency: string; countryIso: string | null };
+  fxRate: number;
+  price: number;
+  priceEur: number;
+  auto: {
+    costEur: number; shippingServiceId: string | null; shippingServiceName: string | null;
+    shippingEur: number | null; shippingZone: string | null;
+    vatPct: number; taxType: string; taxLabel: string; pointsPct: number; feePct: number; importPct: number;
+    actualWeightKg: number | null; volumetricWeightKg: number | null; chargeableWeightKg: number | null;
+  };
+  applied: { costEur: number; shippingEur: number; importPct: number; feePct: number; vatPct: number; pointsPct: number; taxType: string };
+  breakdown: PricingBreakdown;
+  comparison: PricingComparisonRow[];
+}
+export interface IndividualPricingInput {
+  productId: string; salesChannelId: string; price: number;
+  taxMode?: 'include' | 'zero'; shippingServiceId?: string | null;
+  costEur?: number; shippingCostEur?: number; vatPct?: number; feePct?: number; importPct?: number;
+}
+export interface BulkPricingCell {
+  priceNative: number | null; profitEur: number | null; marginPct: number | null; reason: string | null;
+}
+export interface BulkPricingResult {
+  targetMarginPct: number;
+  columns: {
+    channelId: string; channelName: string; currency: string; countryIso: string | null;
+    shippingServiceId: string | null; shippingServiceName: string | null; unavailable: boolean;
+  }[];
+  rows: { productId: string; sku: string; title: string; costEur: number; cells: BulkPricingCell[] }[];
+  productCount: number; channelCount: number;
+}
+export interface BulkPricingInput {
+  mode: 'specific' | 'vendor' | 'brand' | 'type';
+  productIds?: string[]; groupId?: string;
+  salesChannelIds: string[]; targetMarginPct: number;
+  shippingServiceId?: string | null;
+  /** salesChannelId -> shippingServiceId; anything absent uses that channel's country default. */
+  shippingServiceByChannel?: Record<string, string>;
+  shippingCostEur?: number; importPct?: number;
+}
+
+export interface ChannelShippingDefault {
+  channelId: string; channelName: string; currency: string;
+  countryIso: string | null; countryName: string | null;
+  defaultServiceId: string | null; defaultServiceName: string | null;
+}
+export interface PricingGroup { id: string; name: string; productCount: number }
+
+export interface ProductCostEvent {
+  id: string;
+  reason: 'opening' | 'goods_receipt' | 'vendor_return' | 'adjustment' | string;
+  reference: string | null;
+  refType: string | null;
+  refId: string | null;
+  qtyDelta: number;
+  unitCostEur: number;
+  landedAddOnEur: number;
+  goodsUnitEur: number;
+  qtyBefore: number;
+  avgBeforeEur: number | null;
+  qtyAfter: number;
+  avgAfterEur: number;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface SerialNumberRow {
+  id: string; serial: string; status: string;
+  product: { id: string; mainSku: string; title: string } | null;
+  warehouse: { id: string; name: string } | null;
+  receivedAt: string | null; dispatchedAt: string | null;
+  salesTransactionId: string | null; vendorReturnId: string | null; notes: string | null;
+}
+export interface AvailableSerial { id: string; serial: string; warehouse: { id: string; name: string } | null; receivedAt: string | null }
+
+export const serialsApi = {
+  list: (params: { q?: string; productId?: string; warehouseId?: string; status?: string; page?: number; pageSize?: number }) =>
+    api.get<{ rows: SerialNumberRow[]; total: number; page: number; pageSize: number; pageCount: number }>('/serials', { params }).then((r) => r.data),
+  available: (productId: string, warehouseId?: string) =>
+    api.get<AvailableSerial[]>(`/serials/available/${productId}`, { params: warehouseId ? { warehouseId } : undefined }).then((r) => r.data),
+};
+
+export const costingApi = {
+  history: (productId: string, limit?: number) =>
+    api.get<ProductCostEvent[]>(`/costing/products/${productId}/history`, { params: limit ? { limit } : undefined }).then((r) => r.data),
+  uncosted: (limit?: number) =>
+    api
+      .get<{ id: string; sku: string; title: string; purchaseCostAmount: number | null; seedable: boolean }[]>('/costing/uncosted', {
+        params: limit ? { limit } : undefined,
+      })
+      .then((r) => r.data),
+  seedOpening: (body: { productIds?: string[]; dryRun?: boolean }) =>
+    api.post<{ dryRun: boolean; seeded?: number; wouldSeed?: number; skippedNonEurCost: number }>('/costing/seed-opening', body).then((r) => r.data),
+  lastPurchaseCost: (productId: string) =>
+    api.get<LastPurchaseCost>(`/costing/products/${productId}/last-purchase-cost`).then((r) => r.data),
+};
+
+export type LastPurchaseCost =
+  | { found: false }
+  | { found: true; unitCost: number; currency: string; poNumber: string; poId: string; submittedAt: string | null };
+
+export const pricingApi = {
+  individual: (body: IndividualPricingInput) =>
+    api.post<IndividualPricingResult>('/pricing/individual', body).then((r) => r.data),
+  bulk: (body: BulkPricingInput) => api.post<BulkPricingResult>('/pricing/bulk', body).then((r) => r.data),
+  channelShippingDefaults: (channelIds: string[]) =>
+    api
+      .get<ChannelShippingDefault[]>('/pricing/channel-shipping-defaults', { params: { channelIds: channelIds.join(',') } })
+      .then((r) => r.data),
+  groups: (mode: 'vendor' | 'brand' | 'type') =>
+    api.get<PricingGroup[]>('/pricing/groups', { params: { mode } }).then((r) => r.data),
+};
+
+// ---- Vendor returns (goods sent back) ----
+export interface VendorReturnLine {
+  id: string; productId: string; sku: string; productName: string;
+  purchaseOrderLineId: string | null; quantity: number; unitCostEur: number; lineCostEur: number;
+}
+export interface VendorReturn {
+  id: string; returnNumber: string; status: string;
+  vendor: { id: string; name: string } | null;
+  purchaseOrder: { id: string; poNumber: string } | null;
+  warehouse: { id: string; name: string } | null;
+  reason: string; creditNoteRef: string | null; notes: string | null;
+  totalQuantity: number; totalCostEur: number;
+  postedAt: string; createdAt: string; lines: VendorReturnLine[];
+}
+export interface VendorReturnRow {
+  id: string; returnNumber: string; status: string;
+  vendor: { id: string; name: string } | null;
+  purchaseOrder: { id: string; poNumber: string } | null;
+  warehouse: { id: string; name: string } | null;
+  reason: string; creditNoteRef: string | null;
+  totalQuantity: number; totalCostEur: number; lineCount: number; postedAt: string;
+}
+export interface ReturnableLine {
+  purchaseOrderLineId: string; productId: string; sku: string; productName: string;
+  quantityReceived: number; quantityReturned: number; returnable: number; averageCostEur: number | null;
+}
+export interface ReturnablePo {
+  purchaseOrderId: string; poNumber: string; vendorId: string;
+  warehouseId: string | null; lines: ReturnableLine[];
+}
+export interface VendorReturnInput {
+  vendorId: string; purchaseOrderId?: string; warehouseId: string;
+  reason: string; creditNoteRef?: string; notes?: string;
+  lines: { productId: string; purchaseOrderLineId?: string; quantity: number }[];
+}
+
+export const vendorReturnsApi = {
+  list: (params: { q?: string; vendorId?: string; purchaseOrderId?: string; page?: number; pageSize?: number }) =>
+    api.get<{ rows: VendorReturnRow[]; total: number; page: number; pageSize: number; pageCount: number }>('/vendor-returns', { params }).then((r) => r.data),
+  get: (id: string) => api.get<VendorReturn>(`/vendor-returns/${id}`).then((r) => r.data),
+  returnable: (purchaseOrderId: string) => api.get<ReturnablePo>(`/vendor-returns/returnable/${purchaseOrderId}`).then((r) => r.data),
+  create: (body: VendorReturnInput) => api.post<VendorReturn>('/vendor-returns', body).then((r) => r.data),
+};
+
+/** Admin amendment of an already-received purchase order. */
+export interface AmendLineInput {
+  purchaseOrderLineId?: string; productId: string; quantityOrdered: number; unitCost: number; notes?: string | null;
+}
+
+// ---- Expenses ----
+export interface ExpenseCategory { id: string; name: string; parentId: string | null }
+export interface ExpenseCategoryNode extends ExpenseCategory {
+  depth: number; definitionCount: number; rollupDefinitionCount: number; children: ExpenseCategoryNode[];
+}
+export const expenseCategoriesApi = {
+  list: () => api.get<ExpenseCategory[]>('/expense-categories').then((r) => r.data),
+  tree: () => api.get<ExpenseCategoryNode[]>('/expense-categories/tree').then((r) => r.data),
+  create: (body: { name: string; parentId?: string | null }) => api.post<ExpenseCategory>('/expense-categories', body).then((r) => r.data),
+  update: (id: string, body: { name?: string; parentId?: string | null }) => api.patch<ExpenseCategory>(`/expense-categories/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete<{ deleted: boolean }>(`/expense-categories/${id}`).then((r) => r.data),
+};
+
+export type ExpenseOccurrence = 'monthly' | 'annual' | 'once_off';
+export interface ExpenseDefinition {
+  id: string; code: string; name: string; categoryId: string | null; categoryName: string | null;
+  defaultOccurrence: ExpenseOccurrence | null; isActive: boolean;
+}
+export interface ExpenseDefinitionInput {
+  name: string; categoryId?: string | null; defaultOccurrence?: ExpenseOccurrence | null; isActive?: boolean;
+}
+export const expenseDefinitionsApi = {
+  list: (params: { q?: string; categoryId?: string; includeInactive?: boolean } = {}) =>
+    api.get<ExpenseDefinition[]>('/expense-definitions', { params }).then((r) => r.data),
+  create: (body: ExpenseDefinitionInput) => api.post<ExpenseDefinition>('/expense-definitions', body).then((r) => r.data),
+  update: (id: string, body: Partial<ExpenseDefinitionInput>) => api.patch<ExpenseDefinition>(`/expense-definitions/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete<{ deleted: boolean; deactivated: boolean }>(`/expense-definitions/${id}`).then((r) => r.data),
+};
+
+export interface Expense {
+  id: string; definitionId: string; definitionCode: string | null; definitionName: string; categoryId: string | null; categoryName: string | null;
+  companyId: string; occurrence: ExpenseOccurrence; currency: string;
+  startMonth: string; endMonth: string | null; onceOffDate: string | null;
+  status: 'active' | 'cancelled'; note: string | null; hasSchedule: boolean; registeredAt: string | null;
+  tagId: string | null; tagName: string | null; tagGroup: string | null;
+  currentAmount: number; currentAmountEur: number; fxRate: number;
+  monthlyEur: number; annualEur: number;
+}
+export interface CreateExpenseInput {
+  definitionId: string; companyId: string; occurrence: ExpenseOccurrence; currency?: string;
+  amount: number; startMonth?: string; onceOffDate?: string; note?: string | null; tagId?: string | null;
+}
+export interface UpdateExpenseInput {
+  definitionId?: string; occurrence?: ExpenseOccurrence; currency?: string; amount?: number;
+  startMonth?: string; onceOffDate?: string; note?: string | null; tagId?: string | null;
+}
+
+export interface ExpenseTag { id: string; name: string; group: string | null; description: string | null; isActive: boolean }
+export interface ExpenseTagInput { name: string; group?: string | null; description?: string | null; isActive?: boolean }
+export const expenseTagsApi = {
+  list: (params: { q?: string; group?: string; includeInactive?: boolean } = {}) => api.get<ExpenseTag[]>('/expense-tags', { params }).then((r) => r.data),
+  groups: () => api.get<string[]>('/expense-tags/groups').then((r) => r.data),
+  create: (body: ExpenseTagInput) => api.post<ExpenseTag>('/expense-tags', body).then((r) => r.data),
+  update: (id: string, body: Partial<ExpenseTagInput>) => api.patch<ExpenseTag>(`/expense-tags/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete<{ deleted: boolean; deactivated: boolean }>(`/expense-tags/${id}`).then((r) => r.data),
+};
+export interface ExpenseMonthRow {
+  expenseId: string; definitionCode: string | null; definitionName: string; categoryName: string | null;
+  occurrence: ExpenseOccurrence; currency: string; status: 'active' | 'cancelled';
+  baseAmount: number; baseAmountEur: number; monthNative: number; monthEur: number; hasOverride: boolean;
+}
+export interface ExpenseMonthly { month: string; totalEur: number; count: number; items: ExpenseMonthRow[] }
+export interface ExpenseAnnual { year: number; totalEur: number; breakdown: { month: string; totalEur: number }[] }
+export type AmountScope = 'this_month' | 'all_following';
+
+export const expensesApi = {
+  list: (params: { companyId?: string; includeCancelled?: boolean } = {}) => api.get<Expense[]>('/expenses', { params }).then((r) => r.data),
+  get: (id: string) => api.get<Expense>(`/expenses/${id}`).then((r) => r.data),
+  create: (body: CreateExpenseInput) => api.post<Expense>('/expenses', body).then((r) => r.data),
+  update: (id: string, body: UpdateExpenseInput) => api.patch<Expense>(`/expenses/${id}`, body).then((r) => r.data),
+  cancel: (id: string, month?: string) => api.post<Expense>(`/expenses/${id}/cancel`, { month }).then((r) => r.data),
+  monthly: (month: string, companyId?: string) => api.get<ExpenseMonthly>('/expenses/monthly', { params: { month, companyId } }).then((r) => r.data),
+  annual: (year: number, companyId?: string) => api.get<ExpenseAnnual>('/expenses/annual', { params: { year, companyId } }).then((r) => r.data),
+  setAmount: (id: string, body: { month: string; amount: number; scope: AmountScope }) => api.post<Expense>(`/expenses/${id}/amount`, body).then((r) => r.data),
+  importValidate: (rows: Record<string, string>[]) =>
+    api.post<{ rows: ExpenseImportRowResult[] }>('/expenses/import/validate', { rows }).then((r) => r.data),
+  importCommit: (rows: Record<string, string>[], companyId: string) =>
+    api.post<{ created: number; skipped: number; errors: { name: string; message: string }[] }>('/expenses/import/commit', { rows, companyId }).then((r) => r.data),
+};
+export interface ExpenseImportRowResult {
+  index: number; name: string; status: 'new' | 'error'; occurrence: ExpenseOccurrence | null;
+  willCreateDefinition: boolean; willCreateCategory: boolean; willCreateTag: boolean;
+  issues: { field: string; message: string; severity: 'error' | 'warning' }[];
+}

@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Pencil, Search, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell, downloadSheet } from '@masquare/ui';
+import { ModalShell, Select, downloadSheet } from '@masquare/ui';
 import { countriesApi, shippingServicesApi, type Country, type ShippingService } from '../../lib/api';
 import { AddButton, SectionHeader } from './shared';
 import { CountryImportModal } from './CountryImportModal';
+import { CountryTag } from '../common/Flag';
 
 const EXPORT_HEADERS = ['Country Name', 'ISO Code', 'Continent', 'EU VAT Zone', 'VAT Rate', 'Default Shipping Service'];
 
@@ -96,7 +97,7 @@ export function CountriesTab() {
                   <td className="border-b border-n-100 px-3 py-2">
                     <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={selected.has(c.id)} onChange={() => toggleOne(c.id)} />
                   </td>
-                  <td className="border-b border-n-100 px-4 py-2 text-[13.5px] font-medium text-n-800">{c.name}</td>
+                  <td className="border-b border-n-100 px-4 py-2 text-[13.5px] font-medium text-n-800"><CountryTag code={c.isoCode} name={c.name} /></td>
                   <td className="mono border-b border-n-100 px-4 py-2 text-[13px] text-n-700">{c.isoCode}</td>
                   <td className="border-b border-n-100 px-4 py-2 text-[13px] text-n-600">{c.continent}</td>
                   <td className="border-b border-n-100 px-4 py-2">
@@ -106,10 +107,13 @@ export function CountriesTab() {
                   </td>
                   <td className="mono border-b border-n-100 px-4 py-2 text-[13px] text-n-700">{c.vatRate}%</td>
                   <td className="border-b border-n-100 px-3 py-2">
-                    <select className="h-8 w-44 rounded border border-n-200 bg-n-0 px-1.5 text-[12.5px]" value={c.defaultShippingServiceId ?? ''} onChange={(e) => setDefault.mutate({ id: c.id, serviceId: e.target.value || null })}>
-                      <option value="">—</option>
-                      {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
+                    <Select
+                      dense
+                      className="w-44"
+                      value={c.defaultShippingServiceId ?? ''}
+                      onChange={(v) => setDefault.mutate({ id: c.id, serviceId: v || null })}
+                      options={[{ value: '', label: '—' }, ...services.map((s) => ({ value: s.id, label: s.name }))]}
+                    />
                   </td>
                   <td className="border-b border-n-100 px-4 py-2">
                     {defaultZoneName(c)
@@ -180,10 +184,11 @@ function CountryModal({ country, services, onClose, onSaved }: { country: Countr
         <div><label className="label">VAT rate %</label><input className="input mono" inputMode="decimal" value={form.vatRate} onChange={(e) => set({ vatRate: e.target.value })} /></div>
         <div className="flex items-end"><label className="flex cursor-pointer items-center gap-2.5 pb-2.5"><input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={form.euVatZone} onChange={(e) => set({ euVatZone: e.target.checked })} /><span className="text-[13.5px] text-n-700">In EU VAT zone</span></label></div>
         <div className="col-span-2"><label className="label">Default shipping service</label>
-          <select className="input" value={form.defaultShippingServiceId} onChange={(e) => set({ defaultShippingServiceId: e.target.value })}>
-            <option value="">—</option>
-            {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          <Select
+            value={form.defaultShippingServiceId}
+            onChange={(v) => set({ defaultShippingServiceId: v })}
+            options={[{ value: '', label: '—' }, ...services.map((s) => ({ value: s.id, label: s.name }))]}
+          />
         </div>
       </div>
     </ModalShell>

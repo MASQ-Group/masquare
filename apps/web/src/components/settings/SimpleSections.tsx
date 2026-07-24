@@ -23,7 +23,7 @@ export function BrandsSection() {
   return (
     <div>
       <SectionHeader title="Brands / Manufacturers" description="Brand and manufacturer names used across products.">
-        <ImportButton title="Import brands" fields={[{ key: 'name', label: 'Name', required: true }, { key: 'website', label: 'Website' }]}
+        <ImportButton title="Import Brands" fields={[{ key: 'name', label: 'Name', required: true }, { key: 'website', label: 'Website' }]}
           onCommit={async (rows) => { for (const r of rows) await brandsApi.create(r as any); invalidate(); }} />
         <AddButton label="Add brand" onClick={() => setEditing(null)} />
       </SectionHeader>
@@ -66,7 +66,7 @@ export function ProductTypesSection() {
   return (
     <div>
       <SectionHeader title="Product Types" description="Types selected on a product (e.g. Hair Straightener, Shaver).">
-        <ImportButton title="Import product types" fields={[{ key: 'name', label: 'Name', required: true }]}
+        <ImportButton title="Import Product Types" fields={[{ key: 'name', label: 'Name', required: true }]}
           onCommit={async (rows) => { for (const r of rows) await productTypesApi.create(r as any); invalidate(); }} />
         <AddButton label="Add type" onClick={() => setEditing(null)} />
       </SectionHeader>

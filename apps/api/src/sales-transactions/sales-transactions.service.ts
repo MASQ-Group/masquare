@@ -1,8 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SerialsService } from '../warehouses/serials.service';
+import { StockService } from '../warehouses/stock.service';
 import type { AuthUser } from '../common/current-user.decorator';
-import { CreateSalesTransactionDto, UpdateSalesTransactionDto } from './dto/sales-transaction.dto';
+import { CreateSalesTransactionDto, SalesTransactionItemDto, UpdateSalesTransactionDto } from './dto/sales-transaction.dto';
 
 export interface TxQuery {
   q?: string;
@@ -12,7 +14,12 @@ export interface TxQuery {
   status?: string[];
   profitTierId?: string[];
   shipmentStatus?: string[]; // 'shipped' | 'not_shipped'
+  fulfilmentType?: string[]; // 'FBA' | 'FBM'
+  feeType?: string[]; // 'actual' | 'estimated' — actual = a posted/entered fee, estimated = Amazon fee not yet posted
   sku?: string;
+  hasAlert?: boolean; // only transactions with an active alert (e.g. unresolved SKU)
+  needsReturn?: boolean; // defective (cancel/refund) orders still awaiting the operator's return decision
+  resolution?: string[]; // filter by resolution state: none | cancelled | returned | replaced
   dateFrom?: string;
   dateTo?: string;
   sortBy?: 'date' | 'profit' | 'profitPct';
@@ -22,13 +29,18 @@ export interface TxQuery {
 }
 
 const include = {
-  salesChannel: { select: { id: true, name: true } },
-  destinationCountry: { select: { id: true, name: true, isoCode: true, vatRate: true, defaultShippingServiceId: true } },
+  // kind drives the local-sale branches below (pricing, shipping and alerts all differ);
+  // showTransactionTotal decides whether a transaction Total is meaningful for this channel.
+  salesChannel: { select: { id: true, name: true, kind: true, showTransactionTotal: true, nativeCountry: { select: { isoCode: true } } } },
+  destinationCountry: { select: { id: true, name: true, isoCode: true, vatRate: true, euVatZone: true, defaultShippingServiceId: true } },
   shippingService: { select: { id: true, name: true, calcMethod: true } },
   items: {
     where: { deletedAt: null },
     orderBy: { createdAt: 'asc' as const },
-    include: { product: { select: { title: true, packageWeightKg: true, productWeightKg: true, packageLengthCm: true, packageWidthCm: true, packageHeightCm: true, purchaseCostAmount: true, purchaseCostCurrency: true } } },
+    include: {
+      product: { select: { title: true, packageWeightKg: true, productWeightKg: true, packageLengthCm: true, packageWidthCm: true, packageHeightCm: true, purchaseCostAmount: true, purchaseCostCurrency: true, averageCostEur: true, fulfilmentType: { select: { code: true, name: true } } } },
+      vatClass: { select: { id: true, name: true, taxTreatment: true } },
+    },
   },
   unlockRequests: { where: { status: 'pending' }, orderBy: { createdAt: 'desc' as const } },
   shipments: {
@@ -38,15 +50,73 @@ const include = {
   },
 } satisfies Prisma.SalesTransactionInclude;
 
+/** Destination tax regime, so VAT-submission reports never pull in GST/JCT/US sales tax.
+ *  Derived from the destination country; snapshotted on the transaction at sale time. */
+export function taxTypeForCountry(c: { isoCode?: string | null; euVatZone?: boolean | null } | null | undefined): string {
+  if (!c) return 'none';
+  const iso = (c.isoCode ?? '').toUpperCase();
+  if (iso === 'JP') return 'jct'; // Japanese Consumption Tax
+  if (iso === 'AU') return 'gst'; // Goods and Services Tax
+  if (iso === 'US' || iso === 'CA' || iso === 'MX') return 'sales_tax';
+  return 'vat'; // EU VAT zone, GB and other VAT markets
+}
+const TAX_LABELS: Record<string, string> = { vat: 'VAT', gst: 'GST', jct: 'Japanese Consumption Tax', sales_tax: 'Sales tax', none: 'Tax' };
+export const taxLabelFor = (taxType: string | null | undefined) => TAX_LABELS[taxType ?? 'vat'] ?? 'VAT';
+
 const n = (v: any) => Number(v ?? 0);
+
+/** Normalise a product/alias fulfilment type (code or name) to FBA/FBM, or null if neither. */
+const normFulfil = (ft?: { code?: string | null; name?: string | null } | null): 'FBA' | 'FBM' | null => {
+  if (!ft) return null;
+  const s = `${ft.code ?? ''} ${ft.name ?? ''}`.toUpperCase();
+  if (s.includes('FBA') || s.includes('AMAZON')) return 'FBA';
+  if (s.includes('FBM') || s.includes('MERCHANT')) return 'FBM';
+  return null;
+};
 const round = (v: number, d: number) => Number(v.toFixed(d));
 
 @Injectable()
 export class SalesTransactionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly serials: SerialsService,
+    private readonly stock: StockService,
+  ) {}
 
-  private serialize(t: any, serviceMap: Map<string, any>) {
+  private serialize(t: any, serviceMap: Map<string, any>, fbaAvgMap: Map<string, number> = new Map(), skuFulfilmentMap: Map<string, 'FBA' | 'FBM'> = new Map(), feePctMap: { bySku: Map<string, number>; byChannel: Map<string, number> } = { bySku: new Map(), byChannel: new Map() }, fxFallback: Map<string, number> = new Map()) {
     const items = t.items ?? [];
+    // FBA: Amazon collects the buyer-paid shipping (it's not the seller's revenue), and there's
+    // no seller-paid outbound leg. So for FBA the shipping charged to the buyer is excluded from
+    // revenue. `sellShip(it)` is the shipping that counts as seller revenue for this order.
+    const isFba = t.fulfilmentType === 'FBA';
+    // Unit cost used for COGS, in preference order:
+    //   1. the line's explicit override — a deliberate act, so it outranks everything;
+    //   2. the product's moving average — what the goods have actually cost us;
+    //   3. the catalogue purchase cost — the best estimate until the first receipt lands.
+    //
+    // Resolved at read time rather than snapshotted, so a transaction submitted before its
+    // product was ever received picks up the real average on the next recalculation.
+    //
+    // An average of exactly zero is treated as "no average": the costing engine seeds the
+    // average from the receipt's unit cost, so a PO booked with no cost would otherwise
+    // wipe out a perfectly good catalogue cost and silently report a 100% margin.
+    const costSourceOf = (it: any): 'override' | 'average' | 'catalogue' | 'none' =>
+      it.unitNetCostEur != null ? 'override'
+      : Number(it.product?.averageCostEur ?? 0) > 0 ? 'average'
+      : it.product?.purchaseCostAmount != null ? 'catalogue' : 'none';
+    const unitCostOf = (it: any) => {
+      switch (costSourceOf(it)) {
+        case 'override': return Number(it.unitNetCostEur);
+        case 'average': return Number(it.product.averageCostEur);
+        case 'catalogue': return Number(it.product.purchaseCostAmount);
+        default: return 0;
+      }
+    };
+    // Local sale: our own direct sale. No carrier, weight or zone to estimate from — the
+    // delivery cost is entered per transaction — and no marketplace fee or FX.
+    const isLocal = t.salesChannel?.kind === 'local';
+    const sellShip = (it: any) => (isFba ? 0 : n(it.shippingAmount));
+    const sellShipVat = (it: any) => (isFba ? 0 : n(it.shippingAmountVat));
     const totals = items.reduce(
       (acc: any, it: any) => ({
         quantity: acc.quantity + (it.quantity ?? 0),
@@ -59,13 +129,48 @@ export class SalesTransactionsService {
       { quantity: 0, netSales: 0, vat: 0, shipping: 0, shippingVat: 0, fee: 0 },
     );
 
+    // --- Sales fee: actual, else estimated ------------------------------------
+    // Amazon doesn't post the referral fee until settlement (~2 weeks). Until it does, we
+    // estimate it per line so revenue/profit aren't overstated: the effective fee % this SKU
+    // has actually incurred on this channel (from settled orders), else the channel average,
+    // else 15%. Only estimated for Amazon lines with no posted fee; replaced by the real fee
+    // once it backfills. `feeInfos[i]` aligns with `items[i]`.
+    const chId = t.salesChannelId ?? '';
+    const estFeePct = (sku: string) =>
+      feePctMap.bySku.get(`${(sku ?? '').trim().toLowerCase()}:${chId}`) ?? feePctMap.byChannel.get(chId) ?? 0.15;
+    const feeInfos = items.map((it: any) => {
+      const actual = n(it.salesChannelSalesFeeAmount);
+      if (actual > 0 || t.source !== 'amazon') return { fee: actual, estimated: 0, isEst: false };
+      const estimated = round(n(it.netSalesAmount) * estFeePct(it.sku), 2);
+      return { fee: estimated, estimated, isEst: estimated > 0 };
+    });
+    const effectiveSalesFee = round(feeInfos.reduce((s: number, f: any) => s + f.fee, 0), 2);
+    const estimatedSalesFee = round(feeInfos.reduce((s: number, f: any) => s + f.estimated, 0), 2);
+    const salesFeeEstimated = feeInfos.some((f: any) => f.isEst);
+    // Amazon Points awarded (JP): seller-funded loyalty points — a deduction from our proceeds.
+    const amazonPoints = round(items.reduce((s: number, it: any) => s + n(it.amazonPointsAmount), 0), 2);
+    // Total tax the channel charged — recorded for reporting/statements only; never used in calcs.
+    const salesTax = round(items.reduce((s: number, it: any) => s + n(it.salesTaxAmount), 0), 2);
+
     // --- Calculated fields ---
-    // Sales Fee % = total fee / total (net + vat + shipping + shipping vat).
+    // Sales Fee % = effective fee (actual or estimated) / total (net + vat + shipping + shipping vat).
     const feeBase = items.reduce((s: number, it: any) => s + n(it.netSalesAmount) + n(it.vatAmount) + n(it.shippingAmount) + n(it.shippingAmountVat), 0);
-    const salesFeePct = feeBase > 0 ? round((totals.fee / feeBase) * 100, 2) : null;
+    const salesFeePct = feeBase > 0 ? round((effectiveSalesFee / feeBase) * 100, 2) : null;
 
     // Destination VAT % — the (editable) stored value, falling back to the country rate.
     const destinationCountryVatPct = t.destinationVatPct ?? (t.destinationCountry ? Number(t.destinationCountry.vatRate) : null);
+    // Tax regime: stored snapshot, else derived from the destination country (covers rows
+    // saved before the column existed, so the label is always right).
+    const taxType = t.taxType ?? taxTypeForCountry(t.destinationCountry);
+
+    // Japan is the one market where the seller KEEPS the destination tax: Amazon pays out the
+    // full tax-inclusive amount (net + JCT) and never remits the JCT itself, so the JCT counts
+    // as revenue. Under VAT/GST/sales-tax regimes the tax is remitted or collected elsewhere and
+    // is excluded from revenue. `revNativeOf` is the per-line revenue (native currency) used
+    // everywhere profit is computed, so the treatment stays consistent.
+    const keepsDestinationTax = taxType === 'jct';
+    const revNativeOf = (it: any) =>
+      n(it.netSalesAmount) + sellShip(it) + (keepsDestinationTax ? n(it.vatAmount) + sellShipVat(it) : 0);
 
     // Overall package weight: sum of per-SKU weight × quantity, by the service's cost basis.
     const method: string | null = t.shippingService?.calcMethod ?? null;
@@ -98,10 +203,19 @@ export class SalesTransactionsService {
     // Products are usually listed free-shipping for the buyer, but shipping still costs us —
     // so we always apply this estimate (later overridden by the actual from Shipments).
     let estimatedShippingCost: number | null = null;
+    // Why the estimate came out empty, so the gap can be reported rather than read as
+    // "shipping was free". Null once an estimate is produced.
+    let shippingGap: 'no_zone' | 'no_rates' | null = null;
     const svc = t.shippingServiceId ? serviceMap.get(t.shippingServiceId) : null;
-    if (svc && t.destinationCountryId && overallPackageWeight != null) {
+    if (isLocal) {
+      // We delivered it ourselves (or the buyer collected): the cost is whatever was entered,
+      // and a pickup with nothing entered genuinely costs us nothing.
+      estimatedShippingCost = n(t.localShippingCostEur);
+    } else if (svc && t.destinationCountryId && overallPackageWeight != null) {
       const zone = (svc.zones ?? []).find((z: any) => (z.countries ?? []).some((c: any) => c.countryId === t.destinationCountryId));
       const rates: any[] = (zone?.rates ?? []).slice().sort((a: any, b: any) => Number(a.fromWeightKg) - Number(b.fromWeightKg));
+      if (!zone) shippingGap = 'no_zone';
+      else if (!rates.length) shippingGap = 'no_rates';
       if (rates.length) {
         const w = overallPackageWeight;
         // Exact band, else clamp to the nearest: under the lightest → lightest band;
@@ -113,24 +227,57 @@ export class SalesTransactionsService {
       }
     }
 
+    // --- FBA orders: shipping cost = average inbound-to-Amazon cost + FBA fulfilment fee ---
+    // FBA orders aren't shipped via our own services (Amazon fulfils), so the FBM estimate
+    // above doesn't apply. Instead: the SKU's average allocated inbound cost to this sales
+    // channel (from confirmed FBA Shipments) plus Amazon's FBA fulfilment fee. This becomes
+    // the order's "estimated shipping" and feeds the profit calc as the shipping cost.
+    let fbaInboundCostEur = 0;
+    let fbaFeeEur = 0;
+    if (isFba) {
+      const fx = t.exchangeRate;
+      const feeFxR = t.feeExchangeRate ?? t.exchangeRate;
+      for (const it of items) {
+        const avg = fbaAvgMap.get(`${it.productId ?? ''}:${t.salesChannelId ?? ''}`) ?? 0;
+        fbaInboundCostEur += avg * (it.quantity ?? 1);
+        if (fx != null) fbaFeeEur += n(it.fbaFulfilmentFeeAmount) * (feeFxR ?? fx);
+      }
+      fbaInboundCostEur = round(fbaInboundCostEur, 2);
+      fbaFeeEur = round(fbaFeeEur, 2);
+      estimatedShippingCost = round(fbaInboundCostEur + fbaFeeEur, 2);
+    }
+
     // --- Actual shipment costs (operations records these; they override the estimate) ---
     // Actual shipping cost = company-borne outbound shipments (in EUR). Duty and any
     // company-borne inbound (return) shipping are added as extra costs.
     const shipments = t.shipments ?? [];
     const hasOutbound = shipments.some((s: any) => s.type === 'outbound');
+    const outboundCount = shipments.filter((s: any) => s.type === 'outbound').length;
+    // An order can go out in several shipments (different tracking, different cost). It is
+    // only DONE when the operator says so — the stored status carries that intent, so an
+    // order with one shipment of two recorded stays 'partial' and keeps its place in the
+    // fulfilment worklist. FBA is fulfilled by the channel, so it's always complete.
+    const fullyShipped = isFba || (t.fulfilmentStatus ?? 'pending') === 'shipped';
     const actualShippingCost = hasOutbound
       ? round(shipments.filter((s: any) => s.type === 'outbound' && s.costBorneBy === 'company').reduce((sum: number, s: any) => sum + n(s.shippingCostEur), 0), 2)
       : null;
     const returnShippingCost = round(shipments.filter((s: any) => s.type === 'inbound' && s.costBorneBy === 'company').reduce((sum: number, s: any) => sum + n(s.shippingCostEur), 0), 2);
     const dutyImportCost = round(shipments.reduce((sum: number, s: any) => sum + n(s.dutyImportEur), 0), 2);
     // The shipping cost used in the profit calc: actual (when a shipment exists) else estimated.
-    const shippingCostSource: 'actual' | 'estimated' = actualShippingCost != null ? 'actual' : 'estimated';
-    const effectiveShippingCost = actualShippingCost != null ? actualShippingCost : estimatedShippingCost;
+    // Local sales are the exception: the delivery cost lives on the transaction
+    // (localShippingCostEur), and fulfilling one creates a marker shipment with no cost of its
+    // own — so the entered cost must always win, never the marker's €0.
+    const shippingCostSource: 'actual' | 'estimated' = isLocal ? 'estimated' : actualShippingCost != null ? 'actual' : 'estimated';
+    const effectiveShippingCost = isLocal ? estimatedShippingCost : actualShippingCost != null ? actualShippingCost : estimatedShippingCost;
 
     // --- Order resolution (returns / cancellations / refunds) ---
     const resolution: string = t.resolution ?? 'none';
-    const fxRate = t.exchangeRate;
-    const feeFx = t.feeExchangeRate ?? t.exchangeRate;
+    // Effective FX: the stored historical rate, or — when it couldn't be fetched at save time —
+    // the last known rate for this currency so profit still computes (flagged as an estimate).
+    const storedFx = t.exchangeRate;
+    const fxRate = storedFx ?? (fxFallback.get((t.currency ?? '').toUpperCase()) ?? null);
+    const fxEstimated = storedFx == null && fxRate != null;
+    const feeFx = t.feeExchangeRate ?? fxRate;
     // Refund reverses our revenue (net + shipping portion, exc VAT), in native currency.
     const refundEur = t.refundAmount != null && fxRate != null ? round(n(t.refundAmount) * fxRate, 2) : 0;
     // Cancelled before anything shipped → goods never left: no COGS, no shipping.
@@ -146,50 +293,161 @@ export class SalesTransactionsService {
       let revenue = 0;
       let cost = 0;
       for (const it of items) {
-        revenue += (n(it.netSalesAmount) + n(it.shippingAmount)) * fxRate;
+        revenue += revNativeOf(it) * fxRate;
         if (!cogsReversed) {
-          const unitCost = it.product?.purchaseCostAmount != null ? Number(it.product.purchaseCostAmount) : 0;
-          cost += unitCost * (it.quantity ?? 1);
+          cost += unitCostOf(it) * (it.quantity ?? 1);
         }
-        if (!t.feeRefunded) cost += n(it.salesChannelSalesFeeAmount) * (feeFx ?? fxRate);
       }
+      if (!t.feeRefunded) cost += effectiveSalesFee * (feeFx ?? fxRate); // actual fee, or estimate while unposted
+      cost += amazonPoints * (feeFx ?? fxRate); // Amazon Points (JP) — seller-funded deduction
       revenue -= refundEur;
       if (shippingApplies) cost += effectiveShippingCost ?? 0;
       cost += returnShippingCost + dutyImportCost; // real spends regardless of resolution
       profit = round(revenue - cost, 2);
     }
 
-    // Profit (%): profit € / total transaction amount in € (net + VAT + shipping + shipping VAT).
-    const totalEur = fxRate != null ? feeBase * fxRate : null;
+    // Profit (%): profit € / seller revenue in € (net + VAT + shipping + shipping VAT).
+    // For FBA the buyer-paid shipping isn't seller revenue, so it's excluded from the base too.
+    const sellerBaseNative = totals.netSales + totals.vat + (isFba ? 0 : totals.shipping + totals.shippingVat);
+    const totalEur = fxRate != null ? sellerBaseNative * fxRate : null;
     const profitPct = profit != null && totalEur != null && totalEur > 0 ? round((profit / totalEur) * 100, 2) : null;
 
     // EUR revenue/fee figures for analytics (revenue is gross of refunds; profit is net).
-    const revenueExVatEur = fxRate != null ? round((totals.netSales + totals.shipping) * fxRate, 2) : null;
-    const revenueIncVatEur = fxRate != null ? round(feeBase * fxRate, 2) : null;
-    const feesEur = fxRate != null ? round(totals.fee * (feeFx ?? fxRate) * (t.feeRefunded ? 0 : 1), 2) : null;
+    const revenueExVatEur = fxRate != null ? round((totals.netSales + (isFba ? 0 : totals.shipping)) * fxRate, 2) : null;
+    const revenueIncVatEur = fxRate != null ? round(sellerBaseNative * fxRate, 2) : null;
+    const feesEur = fxRate != null ? round(effectiveSalesFee * (feeFx ?? fxRate) * (t.feeRefunded ? 0 : 1), 2) : null;
+    const estimatedSalesFeeEur = fxRate != null ? round(estimatedSalesFee * (feeFx ?? fxRate), 2) : null;
+    const amazonPointsEur = fxRate != null ? round(amazonPoints * (feeFx ?? fxRate), 2) : null;
+    const salesTaxEur = fxRate != null ? round(salesTax * fxRate, 2) : null;
 
     // Per-item (SKU) economics: transaction-level shipping/duty/refund are allocated to
     // items by revenue share so per-SKU figures sum back to the transaction totals.
-    const totalRevExVatNative = items.reduce((s: number, it: any) => s + n(it.netSalesAmount) + n(it.shippingAmount), 0);
+    const totalRevExVatNative = items.reduce((s: number, it: any) => s + n(it.netSalesAmount) + sellShip(it), 0);
     const sharedCostEur = (shippingApplies ? effectiveShippingCost ?? 0 : 0) + returnShippingCost + dutyImportCost;
-    const itemEcon = items.map((it: any) => {
-      const revNative = n(it.netSalesAmount) + n(it.shippingAmount);
+    const itemEcon = items.map((it: any, idx: number) => {
+      const revNative = n(it.netSalesAmount) + sellShip(it);
       const w = totalRevExVatNative > 0 ? revNative / totalRevExVatNative : items.length ? 1 / items.length : 0;
       const revExVatEur = fxRate != null ? round(revNative * fxRate, 2) : null;
-      const revIncVatEur = fxRate != null ? round((n(it.netSalesAmount) + n(it.vatAmount) + n(it.shippingAmount) + n(it.shippingAmountVat)) * fxRate, 2) : null;
-      const fEur = fxRate != null ? round((t.feeRefunded ? 0 : n(it.salesChannelSalesFeeAmount)) * (feeFx ?? fxRate), 2) : null;
-      const unitCost = it.product?.purchaseCostAmount != null ? Number(it.product.purchaseCostAmount) : 0;
-      const cEur = cogsReversed ? 0 : round(unitCost * (it.quantity ?? 1), 2);
-      const pEur = fxRate != null ? round((revExVatEur ?? 0) - refundEur * w - cEur - (fEur ?? 0) - sharedCostEur * w, 2) : null;
+      const revIncVatEur = fxRate != null ? round((n(it.netSalesAmount) + n(it.vatAmount) + sellShip(it) + sellShipVat(it)) * fxRate, 2) : null;
+      const fEur = fxRate != null ? round((t.feeRefunded ? 0 : feeInfos[idx].fee) * (feeFx ?? fxRate), 2) : null;
+      const ptsEur = fxRate != null ? round(n(it.amazonPointsAmount) * (feeFx ?? fxRate), 2) : 0;
+      const cEur = cogsReversed ? 0 : round(unitCostOf(it) * (it.quantity ?? 1), 2);
+      // Japan keeps the JCT as revenue (see revNativeOf) — add it back into per-SKU profit so
+      // the SKU figures still sum to the transaction profit, while revExVatEur stays true ex-tax.
+      const jctKeptEur = fxRate != null && keepsDestinationTax ? round((n(it.vatAmount) + sellShipVat(it)) * fxRate, 2) : 0;
+      const pEur = fxRate != null ? round((revExVatEur ?? 0) + jctKeptEur - refundEur * w - cEur - (fEur ?? 0) - (ptsEur ?? 0) - sharedCostEur * w, 2) : null;
       return { revExVatEur, revIncVatEur, fEur, cEur, pEur };
     });
+
+    // --- Order alerts (extensible) ---------------------------------------------
+    // Each alert = { code, severity, message }; the UI highlights the row and shows
+    // the message on hover. Add future checks (price mismatch, missing weight, …) here.
+    const alerts: { code: string; severity: 'warning' | 'error'; message: string; items?: string[] }[] = [];
+    const unmatchedSkus = [...new Set(items.filter((it: any) => !it.productId).map((it: any) => it.sku).filter(Boolean))] as string[];
+    if (unmatchedSkus.length) {
+      alerts.push({ code: 'sku_not_found', severity: 'error', message: 'SKU(s) not in the product catalogue', items: unmatchedSkus });
+    }
+    // Fulfilment mismatch: a SKU labelled FBA/FBM (via its alias, else its product) that
+    // contradicts the order's fulfilment type — e.g. an FBA order containing an FBM SKU.
+    if (t.fulfilmentType) {
+      const wrong = [...new Set(items
+        .filter((it: any) => it.productId)
+        .filter((it: any) => {
+          const label = skuFulfilmentMap.get((it.sku ?? '').trim().toLowerCase()) ?? normFulfil(it.product?.fulfilmentType);
+          return label && label !== t.fulfilmentType;
+        })
+        .map((it: any) => it.sku).filter(Boolean))] as string[];
+      if (wrong.length) {
+        const other = t.fulfilmentType === 'FBA' ? 'FBM' : 'FBA';
+        alerts.push({ code: 'fulfilment_mismatch', severity: 'warning', message: `Fulfilment mismatch — order is ${t.fulfilmentType} but these SKU(s) are ${other}-labelled`, items: wrong });
+      }
+    }
+
+    // Missing calculation inputs: flag any variable a complete profit/revenue calc relies on
+    // that is empty, so silently-incomplete figures surface (unlinked SKUs are covered above).
+    const uniq = (arr: any[]): string[] => [...new Set(arr.filter(Boolean))] as string[];
+    const prodWeight = (p: any) => (p?.packageWeightKg != null ? Number(p.packageWeightKg) : p?.productWeightKg != null ? Number(p.productWeightKg) : null);
+    const linked = items.filter((it: any) => it.productId);
+    if (!t.salesChannelId) {
+      alerts.push({ code: 'no_sales_channel', severity: 'error', message: 'No sales channel — currency, fees and profit cannot be calculated' });
+    } else if (fxRate == null) {
+      alerts.push({ code: 'no_exchange_rate', severity: 'error', message: `No exchange rate for ${t.currency ?? 'the order currency'} — EUR revenue and profit cannot be calculated` });
+    } else if (fxEstimated) {
+      // The FX source was unreachable when this was saved; profit is computed on the last known
+      // rate. Recalculate once the source is back to lock in the real historical rate.
+      alerts.push({ code: 'estimated_exchange_rate', severity: 'warning', message: `Estimated FX rate for ${t.currency ?? 'this currency'} — the rate source was unavailable when saved. Profit uses the last known rate; Recalculate to finalise.` });
+    }
+    if (!t.destinationCountryId) {
+      alerts.push({ code: 'no_destination_country', severity: 'warning', message: 'No destination country — VAT and shipping zone cannot be determined' });
+    }
+    // A local sale has no carrier, so "no shipping service" is the normal state, not a gap.
+    if (!isFba && !isLocal && !t.shippingServiceId) {
+      alerts.push({ code: 'no_shipping_service', severity: 'warning', message: 'No shipping service — outbound shipping cost is not estimated' });
+    }
+    // A destination outside every zone of the chosen service yields no rate to price
+    // against, so shipping silently reads as zero and profit is overstated. Name it.
+    if (shippingGap && !isFba && !isLocal) {
+      const dest = t.destinationCountry?.name ?? 'the destination country';
+      const svcName = svc?.name ?? 'the shipping service';
+      alerts.push(
+        shippingGap === 'no_zone'
+          ? {
+              code: 'destination_not_in_zone',
+              severity: 'warning',
+              message: `${dest} is not in any ${svcName} shipping zone — outbound shipping cost is not estimated`,
+            }
+          : {
+              code: 'zone_has_no_rates',
+              severity: 'warning',
+              message: `The ${svcName} zone covering ${dest} has no weight-band rates — outbound shipping cost is not estimated`,
+            },
+      );
+    }
+
+    // Purchase cost and unlinked SKUs still matter locally — profit depends on both.
+    // "No cost" now means no source at all: no override, no average, no catalogue cost.
+    const noCost = uniq(linked.filter((it: any) => costSourceOf(it) === 'none').map((it: any) => it.sku));
+    if (noCost.length) alerts.push({ code: 'missing_cost', severity: 'warning', message: 'Missing purchase cost', items: noCost });
+    // Deliberately NOT alerted: costing from the catalogue rather than an average is the
+    // normal state until a product has been through its first goods receipt, so an alert
+    // would fire on every line of every transaction and drown the ones that need action.
+    // The distinction is carried per line as `costSource` for the UI to show quietly.
+    if (isLocal) {
+      // Weight drives the zone/weight-band estimate, which local sales don't use at all.
+    } else if (!isFba) {
+      const noWeight = uniq(linked.filter((it: any) => prodWeight(it.product) == null).map((it: any) => it.sku));
+      if (noWeight.length) alerts.push({ code: 'missing_weight', severity: 'warning', message: 'Missing product weight', items: noWeight });
+    } else {
+      const noInbound = uniq(linked.filter((it: any) => !((fbaAvgMap.get(`${it.productId}:${t.salesChannelId ?? ''}`) ?? 0) > 0)).map((it: any) => it.sku));
+      if (noInbound.length) alerts.push({ code: 'missing_fba_inbound', severity: 'warning', message: 'No FBA inbound shipment cost recorded', items: noInbound });
+    }
 
     return {
       id: t.id,
       date: t.date,
       transactionRef: t.transactionRef,
+      alerts,
+      hasAlerts: alerts.length > 0,
       salesChannelId: t.salesChannelId,
-      salesChannel: t.salesChannel ?? null,
+      salesChannel: t.salesChannel
+        ? { id: t.salesChannel.id, name: t.salesChannel.name, kind: t.salesChannel.kind, showTransactionTotal: t.salesChannel.showTransactionTotal, nativeCountryIso: t.salesChannel.nativeCountry?.isoCode ?? null }
+        : null,
+      // Local sales: the UI hides FX/fee/carrier fields and shows these instead.
+      isLocal,
+      deliveryMethod: t.deliveryMethod ?? null,
+      localShippingCostEur: t.localShippingCostEur ?? null,
+      // As keyed in. The line nets are already net of it — this is for showing it back.
+      discountType: t.discountType ?? null,
+      discountValue: t.discountValue ?? null,
+      discountBase: t.discountBase ?? 'net',
+      // What the sale came to: goods + their VAT + any buyer-paid shipping and its VAT, in the
+      // transaction currency. Null unless the channel opts in — on a marketplace the channel
+      // reports tax its own way (sales tax often overlaps VAT), so one "total" would mislead.
+      // For a local sale, shipping is our cost rather than a charge, so this equals net + VAT.
+      showTransactionTotal: !!t.salesChannel?.showTransactionTotal,
+      transactionTotal: t.salesChannel?.showTransactionTotal
+        ? round(totals.netSales + totals.vat + totals.shipping + totals.shippingVat, 2)
+        : null,
       destinationCountryId: t.destinationCountryId,
       destinationCountry: t.destinationCountry ? { id: t.destinationCountry.id, name: t.destinationCountry.name, isoCode: t.destinationCountry.isoCode } : null,
       shippingServiceId: t.shippingServiceId,
@@ -197,23 +455,53 @@ export class SalesTransactionsService {
       companyId: t.companyId,
       currency: t.currency,
       feeCurrency: t.feeCurrency,
-      exchangeRate: t.exchangeRate,
+      exchangeRate: fxRate,
+      exchangeRateEstimated: fxEstimated,
       feeExchangeRate: t.feeExchangeRate,
       status: t.status,
       unlockedForEdit: t.unlockedForEdit,
       hasPendingUnlock: (t.unlockRequests ?? []).length > 0,
       salesFeePct,
+      // Sales fee: `estimatedSalesFee` fills in for Amazon lines whose referral fee hasn't
+      // posted yet; `effectiveSalesFee` = actual (or estimate) used in the calcs; the flag
+      // tells the UI to mark it as an estimate. All in the fee currency (EUR variant too).
+      estimatedSalesFee,
+      estimatedSalesFeeEur,
+      effectiveSalesFee,
+      salesFeeEstimated,
+      // Amazon Points awarded (JP) — a deduction from proceeds (fee currency; EUR variant too).
+      amazonPoints,
+      amazonPointsEur,
+      // Total tax the channel charged (order currency + EUR) — reporting only, not in the calcs.
+      salesTax,
+      salesTaxEur,
       destinationCountryVatPct,
+      // Tax regime for this sale (vat|gst|jct|sales_tax|none) + its display label, so the UI
+      // shows "GST"/"Japanese Consumption Tax" and reports separate VAT from other taxes.
+      taxType,
+      taxLabel: taxLabelFor(taxType),
       vatOverridden: t.vatOverridden,
       overallPackageWeight,
+      fulfilmentType: t.fulfilmentType ?? null,
       estimatedShippingCost,
-      actualShippingCost,
+      // The local marker shipment carries no cost, so don't surface its €0 as an "actual".
+      actualShippingCost: isLocal ? null : actualShippingCost,
       shippingCostSource,
+      // FBA cost breakdown (null for non-FBA) — inbound-to-Amazon avg + Amazon FBA fee.
+      fbaInboundCostEur: isFba ? fbaInboundCostEur : null,
+      fbaFeeEur: isFba ? fbaFeeEur : null,
       returnShippingCost,
       dutyImportCost,
       // Platform fulfilment status is derived from shipment registration (the single point
-      // of truth), except 'cancelled' which the returns layer sets explicitly.
-      fulfilmentStatus: resolution === 'cancelled' ? 'cancelled' : hasOutbound ? 'shipped' : 'pending',
+      // of truth), except 'cancelled' which the returns layer sets explicitly. FBA orders
+      // are fulfilled by the channel (Amazon) with no action from us — always considered shipped.
+      // pending → nothing sent yet · partial → some shipments recorded, more to come ·
+      // shipped → the operator marked it complete (or FBA, fulfilled by the channel).
+      fulfilmentStatus: resolution === 'cancelled' ? 'cancelled'
+        : fullyShipped ? 'shipped'
+        : hasOutbound ? 'partial'
+        : 'pending',
+      outboundShipmentCount: outboundCount,
       // Shipment status reported by the sales channel (for future mismatch alarms).
       channelShipmentStatus: t.channelShipmentStatus ?? null,
       resolution,
@@ -222,7 +510,14 @@ export class SalesTransactionsService {
       restockItems: t.restockItems,
       feeRefunded: t.feeRefunded,
       resolutionNotes: t.resolutionNotes,
-      shipped: hasOutbound, // has a recorded outbound shipment
+      resolvedAt: t.resolvedAt ?? null,
+      // Defective-order handling: where a returned FBM unit went, whether the operator has
+      // made the return decision yet, and who set the resolution (operator vs auto-ingested).
+      returnWarehouseId: t.returnWarehouseId ?? null,
+      returnHandled: t.returnHandled ?? false,
+      resolutionSource: t.resolutionSource ?? null,
+      integrationId: t.integrationId ?? null,
+      shipped: fullyShipped, // complete — a partially-shipped order is NOT shipped yet
       shipments: shipments.map((s: any) => ({
         id: s.id,
         type: s.type,
@@ -244,12 +539,22 @@ export class SalesTransactionsService {
         productId: it.productId,
         productTitle: it.product?.title ?? null,
         productMatched: it.product != null, // did the SKU link to a product?
-        productCost: it.product?.purchaseCostAmount != null ? Number(it.product.purchaseCostAmount) : null, // unit purchase cost
+        productCost: it.product?.purchaseCostAmount != null ? Number(it.product.purchaseCostAmount) : null, // catalogue unit cost
+        averageCostEur: it.product?.averageCostEur != null ? Number(it.product.averageCostEur) : null, // moving average, once received
+        unitNetCostEur: it.unitNetCostEur != null ? Number(it.unitNetCostEur) : null, // per-line override (EUR), if any
+        unitCostEur: unitCostOf(it), // what COGS actually used
+        costSource: costSourceOf(it), // override | average | catalogue | none
+
         productWeightKg: it.product?.packageWeightKg != null ? Number(it.product.packageWeightKg) : it.product?.productWeightKg != null ? Number(it.product.productWeightKg) : null,
         sku: it.sku,
         quantity: it.quantity,
         netSalesAmount: it.netSalesAmount,
         vatAmount: it.vatAmount,
+        // Per-line VAT snapshot (local sales): the rate charged at the time of sale and the
+        // class it came from. Reporting needs the treatment to split zero-rated from exempt.
+        vatClassId: it.vatClassId ?? null,
+        vatClass: it.vatClass ?? null,
+        vatRatePct: it.vatRatePct ?? null,
         shippingAmount: it.shippingAmount,
         shippingAmountVat: it.shippingAmountVat,
         salesChannelSalesFeeAmount: it.salesChannelSalesFeeAmount,
@@ -264,23 +569,29 @@ export class SalesTransactionsService {
     };
   }
 
-  async list(query: TxQuery) {
-    const page = Math.max(1, Number(query.page) || 1);
-    const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
+  /** DB-level WHERE for a transaction query (all filters except the computed ones —
+   *  profit tier and hasAlert — which are applied in memory after serialization). */
+  private buildWhere(query: TxQuery): Prisma.SalesTransactionWhereInput {
     const and: Prisma.SalesTransactionWhereInput[] = [{ deletedAt: null }];
     if (query.companyId) and.push({ companyId: query.companyId });
     if (query.salesChannelId?.length) and.push({ salesChannelId: { in: query.salesChannelId } });
     if (query.destinationCountryId?.length) and.push({ destinationCountryId: { in: query.destinationCountryId } });
     if (query.status?.length) and.push({ status: { in: query.status } });
+    if (query.fulfilmentType?.length) and.push({ fulfilmentType: { in: query.fulfilmentType } });
     if (query.sku?.trim()) and.push({ items: { some: { deletedAt: null, sku: { contains: query.sku.trim(), mode: 'insensitive' } } } });
+    if (query.resolution?.length) and.push({ resolution: { in: query.resolution } });
+    // The return-decision worklist: a refund/cancel that the operator hasn't yet acted on.
+    if (query.needsReturn) and.push({ resolution: { not: 'none' }, returnHandled: false });
     if (query.dateFrom) and.push({ date: { gte: new Date(query.dateFrom) } });
     if (query.dateTo) and.push({ date: { lte: new Date(`${query.dateTo}T23:59:59.999Z`) } });
-    // Shipment status = whether an outbound shipment is registered. Both selected → no filter.
+    // Shipment status = a registered outbound shipment OR an FBA order (channel-fulfilled →
+    // always shipped for us). Both selected → no filter.
     const ss = query.shipmentStatus ?? [];
     if (ss.length === 1) {
-      const outbound = { deletedAt: null, type: 'outbound' } as const;
-      if (ss[0] === 'shipped') and.push({ shipments: { some: outbound } });
-      else if (ss[0] === 'not_shipped') and.push({ shipments: { none: outbound } });
+      // Matches the displayed status: an order is shipped only once marked fully shipped (or
+      // FBA). A partially-shipped order counts as not shipped — it still owes a shipment.
+      if (ss[0] === 'shipped') and.push({ OR: [{ fulfilmentStatus: 'shipped' }, { fulfilmentType: 'FBA' }] });
+      else if (ss[0] === 'not_shipped') and.push({ fulfilmentStatus: { not: 'shipped' }, fulfilmentType: { not: 'FBA' } });
     }
     if (query.q) {
       and.push({ OR: [
@@ -288,20 +599,67 @@ export class SalesTransactionsService {
         { items: { some: { deletedAt: null, sku: { contains: query.q, mode: 'insensitive' } } } },
       ] });
     }
-    const where: Prisma.SalesTransactionWhereInput = { AND: and };
+    return { AND: and };
+  }
+
+  /** All transaction IDs matching a query's filters (ignores pagination) — powers
+   *  "select all matching" in the UI. Falls back to serialize when a computed filter is set. */
+  async allIds(query: TxQuery): Promise<string[]> {
+    const where = this.buildWhere(query);
+    if (!query.profitTierId?.length && !query.hasAlert && !query.feeType?.length) {
+      const rows = await this.prisma.salesTransaction.findMany({ where, select: { id: true }, orderBy: { date: 'desc' } });
+      return rows.map((r) => r.id);
+    }
+    const rows = await this.prisma.salesTransaction.findMany({ where, include });
+    const serviceMap = await this.buildServiceMap();
+    const fbaAvgMap = await this.buildFbaAverageMap(rows);
+    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
+    const feePctMap = await this.buildSalesFeePctMap();
+    const fxFallback = await this.buildFxFallbackMap();
+    let all = rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback));
+    if (query.profitTierId?.length) {
+      const tiers = await this.prisma.profitTier.findMany({ where: { id: { in: query.profitTierId } } });
+      all = all.filter((t: any) => t.profitPct != null && tiers.some((tier) => t.profitPct >= Number(tier.fromPct) && t.profitPct <= Number(tier.toPct)));
+    }
+    if (query.hasAlert) all = all.filter((t: any) => t.hasAlerts);
+    all = this.applyFeeTypeFilter(all, query);
+    return all.map((t: any) => t.id);
+  }
+
+  /** Filter serialized rows by fee type: 'actual' = a posted/entered sales fee, 'estimated' =
+   *  Amazon referral fee not yet posted (shown with a ~). Both/none selected → no filtering. */
+  private applyFeeTypeFilter(rows: any[], query: TxQuery): any[] {
+    const want = query.feeType ?? [];
+    if (want.length === 0) return rows;
+    const wantActual = want.includes('actual');
+    const wantEstimated = want.includes('estimated');
+    if (wantActual === wantEstimated) return rows; // both or neither → no-op
+    return rows.filter((t) => (wantActual ? !t.salesFeeEstimated : t.salesFeeEstimated));
+  }
+
+  async list(query: TxQuery) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(500, Math.max(1, Number(query.pageSize) || 50));
+    const where = this.buildWhere(query);
     const dir = query.sortDir === 'asc' ? 1 : -1;
     const sortBy = query.sortBy === 'profit' || query.sortBy === 'profitPct' ? query.sortBy : 'date';
 
     // Profit / profit % are computed fields, so sorting or filtering by them happens
     // in memory over the whole filtered set before paginating.
-    if (sortBy !== 'date' || query.profitTierId?.length) {
+    if (sortBy !== 'date' || query.profitTierId?.length || query.hasAlert || query.feeType?.length) {
       const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: query.sortDir === 'asc' ? 'asc' : 'desc' } });
       const serviceMap = await this.buildServiceMap();
-      let all = rows.map((r) => this.serialize(r, serviceMap));
+      const fbaAvgMap = await this.buildFbaAverageMap(rows);
+      const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
+      const feePctMap = await this.buildSalesFeePctMap();
+      const fxFallback = await this.buildFxFallbackMap();
+      let all = rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback));
       if (query.profitTierId?.length) {
         const tiers = await this.prisma.profitTier.findMany({ where: { id: { in: query.profitTierId } } });
         all = all.filter((t: any) => t.profitPct != null && tiers.some((tier) => t.profitPct >= Number(tier.fromPct) && t.profitPct <= Number(tier.toPct)));
       }
+      if (query.hasAlert) all = all.filter((t: any) => t.hasAlerts);
+      all = this.applyFeeTypeFilter(all, query);
       if (sortBy !== 'date') {
         all.sort((a: any, b: any) => {
           const av = a[sortBy]; const bv = b[sortBy];
@@ -319,14 +677,68 @@ export class SalesTransactionsService {
       this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: dir === 1 ? 'asc' : 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
     ]);
     const serviceMap = await this.buildServiceMap();
-    return { items: rows.map((r) => this.serialize(r, serviceMap)), total, page, pageSize };
+    const fbaAvgMap = await this.buildFbaAverageMap(rows);
+    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
+    const feePctMap = await this.buildSalesFeePctMap();
+    const fxFallback = await this.buildFxFallbackMap();
+    return { items: rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback)), total, page, pageSize };
+  }
+
+  /** Every filtered transaction, fully serialized and sorted — no pagination. Backs the
+   *  export (the list endpoint caps pageSize at 500). Applies the same computed filters/sort
+   *  as list() so the file matches exactly what the filtered view shows. */
+  async exportRows(query: TxQuery) {
+    const where = this.buildWhere(query);
+    const dir = query.sortDir === 'asc' ? 1 : -1;
+    const sortBy = query.sortBy === 'profit' || query.sortBy === 'profitPct' ? query.sortBy : 'date';
+    const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: dir === 1 ? 'asc' : 'desc' } });
+    const serviceMap = await this.buildServiceMap();
+    const fbaAvgMap = await this.buildFbaAverageMap(rows);
+    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
+    const feePctMap = await this.buildSalesFeePctMap();
+    const fxFallback = await this.buildFxFallbackMap();
+    let all = rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback));
+    if (query.profitTierId?.length) {
+      const tiers = await this.prisma.profitTier.findMany({ where: { id: { in: query.profitTierId } } });
+      all = all.filter((t: any) => t.profitPct != null && tiers.some((tier) => t.profitPct >= Number(tier.fromPct) && t.profitPct <= Number(tier.toPct)));
+    }
+    if (query.hasAlert) all = all.filter((t: any) => t.hasAlerts);
+    all = this.applyFeeTypeFilter(all, query);
+    if (sortBy !== 'date') {
+      all.sort((a: any, b: any) => {
+        const av = a[sortBy]; const bv = b[sortBy];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        return (av - bv) * dir;
+      });
+    }
+    return all;
   }
 
   async get(id: string) {
     const t = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null }, include });
     if (!t) throw new NotFoundException('Sales transaction not found');
     const serviceMap = await this.buildServiceMap();
-    return this.serialize(t, serviceMap);
+    const fbaAvgMap = await this.buildFbaAverageMap([t]);
+    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
+    const feePctMap = await this.buildSalesFeePctMap();
+    const fxFallback = await this.buildFxFallbackMap();
+    const out = this.serialize(t, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback);
+
+    // Attach the units this transaction consumed, so reopening it shows what left.
+    // Only the detail view needs them, so the list paths stay untouched.
+    const assigned = await this.prisma.serialNumber.findMany({
+      where: { salesTransactionId: id },
+      select: { productId: true, serial: true },
+      orderBy: { serial: 'asc' },
+    });
+    if (assigned.length) {
+      const byProduct = new Map<string, string[]>();
+      for (const a of assigned) byProduct.set(a.productId, [...(byProduct.get(a.productId) ?? []), a.serial]);
+      out.items = out.items.map((it: any) => ({ ...it, serials: it.productId ? byProduct.get(it.productId) ?? [] : [] }));
+    }
+    return out;
   }
 
   /** All serialized transactions in a date range (for analytics/reporting). */
@@ -337,7 +749,11 @@ export class SalesTransactionsService {
       orderBy: { date: 'asc' },
     });
     const serviceMap = await this.buildServiceMap();
-    return rows.map((r) => this.serialize(r, serviceMap));
+    const fbaAvgMap = await this.buildFbaAverageMap(rows);
+    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
+    const feePctMap = await this.buildSalesFeePctMap();
+    const fxFallback = await this.buildFxFallbackMap();
+    return rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback));
   }
 
   /** Shipping services with zones (countries + rates) for shipping-cost estimation. */
@@ -347,6 +763,93 @@ export class SalesTransactionsService {
       include: { zones: { where: { deletedAt: null }, include: { countries: true, rates: { where: { deletedAt: null } } } } },
     });
     return new Map<string, any>(services.map((s) => [s.id, s]));
+  }
+
+  /** Most recent successfully-stored EUR rate per currency — the "last known rate". When a
+   *  transaction was saved while the FX source was unreachable (exchangeRate is null), the read
+   *  model falls back to this so revenue/profit still compute (flagged as an estimate); a later
+   *  Recalculate re-fetches the real historical rate once the source is back. */
+  private async buildFxFallbackMap(): Promise<Map<string, number>> {
+    const rows = await this.prisma.salesTransaction.findMany({
+      where: { deletedAt: null, exchangeRate: { not: null }, currency: { not: null } },
+      select: { currency: true, exchangeRate: true },
+      orderBy: { date: 'desc' },
+    });
+    const map = new Map<string, number>();
+    for (const r of rows) {
+      const cur = (r.currency ?? '').toUpperCase();
+      if (cur && r.exchangeRate != null && !map.has(cur)) map.set(cur, r.exchangeRate); // first = most recent
+    }
+    return map;
+  }
+
+  /** Average allocated inbound (to-Amazon) cost per unit, keyed `${productId}:${salesChannelId}`,
+   *  for the FBA orders in `rows`. Sums each SKU's allocated cost across all FBA shipments to a
+   *  channel (draft + confirmed) and divides by the total quantity sent — feeds FBA profit. */
+  private async buildFbaAverageMap(rows: any[]): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    const productIds = new Set<string>();
+    for (const r of rows) {
+      if (r.fulfilmentType !== 'FBA') continue;
+      for (const it of r.items ?? []) if (it.productId) productIds.add(it.productId);
+    }
+    if (!productIds.size) return map;
+    const items = await this.prisma.fbaShipmentItem.findMany({
+      where: { deletedAt: null, productId: { in: [...productIds] }, shipment: { deletedAt: null } },
+      select: { productId: true, quantity: true, allocatedCostEur: true, shipment: { select: { salesChannelId: true } } },
+    });
+    const agg = new Map<string, { cost: number; qty: number }>();
+    for (const it of items) {
+      const key = `${it.productId}:${it.shipment?.salesChannelId ?? ''}`;
+      const cur = agg.get(key) ?? { cost: 0, qty: 0 };
+      cur.cost += it.allocatedCostEur != null ? Number(it.allocatedCostEur) : 0;
+      cur.qty += it.quantity ?? 0;
+      agg.set(key, cur);
+    }
+    for (const [key, v] of agg) if (v.qty > 0) map.set(key, round(v.cost / v.qty, 4));
+    return map;
+  }
+
+  /** SKU (lowercased) → FBA/FBM label from its catalogue alias, when that alias carries a
+   *  fulfilment type. FBA variants are typically modelled as aliases (the base product is FBM),
+   *  so an order's SKU string, not just its product, determines the label. Products fall back
+   *  to their own fulfilment type in serialize. */
+  private async buildSkuFulfilmentMap(): Promise<Map<string, 'FBA' | 'FBM'>> {
+    const map = new Map<string, 'FBA' | 'FBM'>();
+    const aliases = await this.prisma.productSkuAlias.findMany({
+      where: { deletedAt: null, fulfilmentTypeId: { not: null } },
+      select: { skuValue: true, fulfilmentType: { select: { code: true, name: true } } },
+    });
+    for (const a of aliases) {
+      const label = normFulfil(a.fulfilmentType);
+      if (label) map.set(a.skuValue.trim().toLowerCase(), label);
+    }
+    return map;
+  }
+
+  /** Effective referral-fee % (fee ÷ net sales) that SKUs have actually incurred, keyed
+   *  `${sku}:${channelId}` and per channel, from all order lines with a POSTED fee. Feeds the
+   *  estimated sales fee for Amazon lines whose fee hasn't settled yet. */
+  private async buildSalesFeePctMap(): Promise<{ bySku: Map<string, number>; byChannel: Map<string, number> }> {
+    const rows = await this.prisma.salesTransactionItem.findMany({
+      where: { deletedAt: null, salesChannelSalesFeeAmount: { gt: 0 }, netSalesAmount: { gt: 0 }, transaction: { deletedAt: null } },
+      select: { sku: true, salesChannelSalesFeeAmount: true, netSalesAmount: true, transaction: { select: { salesChannelId: true } } },
+    });
+    const skuAgg = new Map<string, { fee: number; net: number }>();
+    const chAgg = new Map<string, { fee: number; net: number }>();
+    for (const r of rows) {
+      const ch = r.transaction?.salesChannelId ?? '';
+      const fee = Number(r.salesChannelSalesFeeAmount);
+      const net = Number(r.netSalesAmount);
+      const skuKey = `${r.sku.trim().toLowerCase()}:${ch}`;
+      const s = skuAgg.get(skuKey) ?? { fee: 0, net: 0 }; s.fee += fee; s.net += net; skuAgg.set(skuKey, s);
+      const c = chAgg.get(ch) ?? { fee: 0, net: 0 }; c.fee += fee; c.net += net; chAgg.set(ch, c);
+    }
+    const bySku = new Map<string, number>();
+    for (const [k, v] of skuAgg) if (v.net > 0) bySku.set(k, v.fee / v.net);
+    const byChannel = new Map<string, number>();
+    for (const [k, v] of chAgg) if (v.net > 0) byChannel.set(k, v.fee / v.net);
+    return { bySku, byChannel };
   }
 
   private async countryVatRate(countryId: string | null): Promise<number | null> {
@@ -366,22 +869,30 @@ export class SalesTransactionsService {
   // USD-pegged currencies the ECB (Frankfurter) doesn't publish — derived via USD.
   private static readonly USD_PEG: Record<string, number> = { AED: 3.6725, SAR: 3.75 };
 
-  /** Raw currency -> EUR from the free Frankfurter (ECB) API for a given date. */
+  /** Raw currency -> EUR from the free Frankfurter (ECB) API for a given date. Retries once —
+   *  the hosted endpoint (api.frankfurter.dev) occasionally times out on a cold date, and a
+   *  second attempt usually hits its cache. */
   private async frankfurterRate(currency: string, date: string): Promise<number | null> {
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const d = date.slice(0, 10);
-      const endpoint = d > today ? 'latest' : d;
-      const res = await fetch(`https://api.frankfurter.app/${endpoint}?from=${currency}&to=EUR`, {
-        signal: AbortSignal.timeout(4000),
-      });
-      if (!res.ok) return null;
-      const json: any = await res.json();
-      const rate = json?.rates?.EUR;
-      return typeof rate === 'number' ? rate : null;
-    } catch {
-      return null;
+    const today = new Date().toISOString().slice(0, 10);
+    const d = date.slice(0, 10);
+    const endpoint = d > today ? 'latest' : d;
+    // Frankfurter (ECB) moved from api.frankfurter.app to api.frankfurter.dev/v1 — the old host
+    // now 301-redirects and the extra hop times out, which surfaced as "No exchange rate".
+    const url = `https://api.frankfurter.dev/v1/${endpoint}?from=${currency}&to=EUR`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        if (res.ok) {
+          const json: any = await res.json();
+          const rate = json?.rates?.EUR;
+          if (typeof rate === 'number') return rate;
+        }
+      } catch {
+        // timeout / network — fall through to a short backoff and retry
+      }
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 600));
     }
+    return null;
   }
 
   /** channel currency -> EUR at the transaction date. ECB currencies come from
@@ -407,10 +918,16 @@ export class SalesTransactionsService {
     return { channel, currency, feeCurrency };
   }
 
-  /** Marketplace VAT threshold rule (e.g. UK £135): the applicable VAT % or null if off. */
-  private channelVatPct(channel: any, overallValue: number): number | null {
+  /**
+   * Marketplace VAT threshold rule (e.g. UK £135): the applicable VAT % or null if off.
+   *
+   * The comparison is against the goods' INTRINSIC value — ex-VAT, excluding shipping and
+   * other charges — as HMRC defines the consignment threshold (and as the Pricing module
+   * tests). `intrinsicValue` is the sum of the lines' net sales (net = ex-VAT, no shipping).
+   */
+  private channelVatPct(channel: any, intrinsicValue: number): number | null {
     if (!channel?.vatThresholdEnabled || channel.vatThresholdAmount == null) return null;
-    return overallValue <= Number(channel.vatThresholdAmount)
+    return intrinsicValue <= Number(channel.vatThresholdAmount)
       ? channel.vatBelowThresholdPct ?? null
       : channel.vatAboveThresholdPct ?? null;
   }
@@ -419,22 +936,179 @@ export class SalesTransactionsService {
   private async resolveDestinationVat(
     dto: { vatOverridden?: boolean; destinationVatPct?: number | null },
     channel: any,
-    overallValue: number,
+    intrinsicValue: number,
     destCountryId: string | null,
   ): Promise<{ pct: number | null; overridden: boolean }> {
     if (dto.vatOverridden && dto.destinationVatPct != null) return { pct: dto.destinationVatPct, overridden: true };
-    const ruleVat = this.channelVatPct(channel, overallValue);
+    const ruleVat = this.channelVatPct(channel, intrinsicValue);
     if (ruleVat != null) return { pct: ruleVat, overridden: false };
     return { pct: await this.countryVatRate(destCountryId), overridden: false };
   }
 
+  /** Local sales: we are the one charging VAT, so the server owns the number rather than
+   *  trusting the client. Resolves each line's class (explicit → the product's default),
+   *  computes VAT from the net, and snapshots the rate so a later rate change can't rewrite
+   *  history. Marketplace-only amounts (fee, FBA, points, channel tax) are cleared, and
+   *  shipping is transaction-level for local sales, not per line. */
+  /** What a sale-level discount is actually worth against a given base total (net or gross). */
+  private discountAmountFor(type: string | null | undefined, value: number | null | undefined, base: number) {
+    if (!type || value == null || value <= 0 || base <= 0) return 0;
+    if (type === 'percentage') {
+      if (value > 100) throw new BadRequestException('A percentage discount cannot exceed 100%');
+      return round(base * (value / 100), 2);
+    }
+    if (value > base) throw new BadRequestException(`Discount €${value.toFixed(2)} is more than the sale total of €${base.toFixed(2)}`);
+    return round(value, 2);
+  }
+
+  /** SKU (lowercased) → productId from the current catalogue; main SKU wins over an alias.
+   *  Shared by save-time re-linking and the Recalculate button so both resolve SKUs identically. */
+  private async buildSkuToProduct(): Promise<Map<string, string>> {
+    const [products, aliases] = await Promise.all([
+      this.prisma.product.findMany({ where: { deletedAt: null }, select: { id: true, mainSku: true } }),
+      this.prisma.productSkuAlias.findMany({ where: { deletedAt: null }, select: { productId: true, skuValue: true } }),
+    ]);
+    const m = new Map<string, string>();
+    for (const a of aliases) m.set(a.skuValue.trim().toLowerCase(), a.productId);
+    for (const p of products) m.set(p.mainSku.trim().toLowerCase(), p.id);
+    return m;
+  }
+
+  /** Re-link each line to a product by its SKU against the CURRENT catalogue, so saving a
+   *  transaction picks up products added since it was last saved (the same review the
+   *  Recalculate button performs). The catalogue link wins; an explicit productId is the
+   *  fallback for a SKU the catalogue doesn't know yet. */
+  private async linkItemsToCatalogue<T extends { sku: string; productId?: string | null }>(items: T[]): Promise<T[]> {
+    const skuMap = await this.buildSkuToProduct();
+    return items.map((i) => {
+      // `serials` rides along on the DTO but belongs to the serial register, not to the
+      // item row — spreading it into the item create would hand Prisma an unknown column.
+      const { serials: _ignored, ...rest } = i as T & { serials?: string[] };
+      return { ...(rest as T), productId: skuMap.get((i.sku ?? '').trim().toLowerCase()) ?? i.productId ?? null };
+    });
+  }
+
+  private async resolveLocalVat(
+    items: SalesTransactionItemDto[],
+    discount?: { type?: string | null; value?: number | null; base?: string | null },
+  ) {
+    const productIds = [...new Set(items.map((i) => i.productId).filter(Boolean) as string[])];
+    const products = productIds.length
+      ? await this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, vatClassId: true } })
+      : [];
+    const productVatClass = new Map(products.map((p) => [p.id, p.vatClassId]));
+
+    const classIdFor = (i: SalesTransactionItemDto) =>
+      i.vatClassId ?? (i.productId ? productVatClass.get(i.productId) ?? null : null);
+
+    const classIds = [...new Set(items.map(classIdFor).filter(Boolean) as string[])];
+    const classes = classIds.length
+      ? await this.prisma.vatClass.findMany({ where: { id: { in: classIds }, deletedAt: null }, select: { id: true, ratePct: true } })
+      : [];
+    const rateById = new Map(classes.map((c) => [c.id, Number(c.ratePct)]));
+
+    // Validate each line and lock in its net + VAT rate + VAT-inclusive gross up front.
+    const lineInfo = items.map((i) => {
+      const vatClassId = classIdFor(i);
+      // Refuse rather than silently charging €0 — a missing class is a real gap, not a zero rate.
+      if (!vatClassId) {
+        throw new BadRequestException(`Line “${i.sku}” has no VAT class. Choose one, or set a VAT class on the product.`);
+      }
+      const vatRatePct = rateById.get(vatClassId);
+      if (vatRatePct == null) {
+        throw new BadRequestException(`Line “${i.sku}” refers to a VAT class that no longer exists.`);
+      }
+      const net = n(i.netSalesAmount);
+      const gross = round(net * (1 + vatRatePct / 100), 2);
+      return { i, vatClassId, vatRatePct, net, gross };
+    });
+
+    // A sale-level discount is shared out in proportion to each line's weight — its net for a
+    // 'net'-base discount, its VAT-inclusive gross for a 'gross'-base one. Sharing by weight
+    // keeps the rate split correct on a VAT return; the last line absorbs the rounding
+    // remainder so the shares always add back to the discount exactly.
+    const onGross = discount?.base === 'gross';
+    const base = round(lineInfo.reduce((s, l) => s + (onGross ? l.gross : l.net), 0), 2);
+    const discountAmount = this.discountAmountFor(discount?.type, discount?.value, base);
+    let allocated = 0;
+
+    return lineInfo.map((l, idx) => {
+      const weight = onGross ? l.gross : l.net;
+      let share = 0;
+      if (discountAmount > 0 && base > 0) {
+        share = idx === lineInfo.length - 1 ? round(discountAmount - allocated, 2) : round((weight / base) * discountAmount, 2);
+        allocated = round(allocated + share, 2);
+      }
+
+      let netSalesAmount: number;
+      let vatAmount: number;
+      if (onGross) {
+        // Take the discount off the VAT-inclusive line, then back out net and VAT at its rate,
+        // so the sale total drops by exactly the discount.
+        const discountedGross = round(l.gross - share, 2);
+        netSalesAmount = round(discountedGross / (1 + l.vatRatePct / 100), 2);
+        vatAmount = round(discountedGross - netSalesAmount, 2);
+      } else {
+        // Take the discount off the net, then charge VAT on the discounted net.
+        netSalesAmount = round(l.net - share, 2);
+        vatAmount = round(netSalesAmount * (l.vatRatePct / 100), 2);
+      }
+
+      return {
+        ...l.i,
+        productId: l.i.productId ?? null,
+        vatClassId: l.vatClassId,
+        vatRatePct: l.vatRatePct,
+        netSalesAmount,
+        vatAmount,
+        shippingAmount: null,
+        shippingAmountVat: null,
+        salesChannelSalesFeeAmount: 0,
+        fbaFulfilmentFeeAmount: null,
+        amazonPointsAmount: null,
+        salesTaxAmount: null,
+      };
+    });
+  }
+
+  /** Destination tax regime for a country id, snapshotted onto the transaction. */
+  private async resolveTaxType(countryId: string | null): Promise<string> {
+    if (!countryId) return 'none';
+    const c = await this.prisma.country.findUnique({ where: { id: countryId }, select: { isoCode: true, euVatZone: true } });
+    return taxTypeForCountry(c);
+  }
+
   async create(dto: CreateSalesTransactionDto, actorId?: string) {
     const { channel, currency, feeCurrency } = await this.channelInfo(dto.salesChannelId);
-    const shippingServiceId = await this.resolveShippingService(dto.shippingServiceId, dto.destinationCountryId ?? null);
-    const exchangeRate = await this.fetchExchangeRate(currency, dto.date);
-    const feeExchangeRate = feeCurrency && feeCurrency !== currency ? await this.fetchExchangeRate(feeCurrency, dto.date) : exchangeRate;
-    const overall = (dto.items ?? []).reduce((s, i) => s + n(i.netSalesAmount) + n(i.vatAmount) + n(i.shippingAmount) + n(i.shippingAmountVat), 0);
-    const { pct: destinationVatPct, overridden: vatOverridden } = await this.resolveDestinationVat(dto, channel, overall, dto.destinationCountryId ?? null);
+    // A local sale is invoiced by us in EUR: no FX, no marketplace fee, no carrier, and VAT
+    // per line from the VAT class instead of a destination/threshold rule.
+    const isLocal = channel?.kind === 'local';
+    // Save-time review: re-link every line to a product from the current catalogue first.
+    const linked = await this.linkItemsToCatalogue(dto.items);
+    const items = isLocal
+      ? await this.resolveLocalVat(linked, { type: dto.discountType, value: dto.discountValue, base: dto.discountBase })
+      : linked;
+    const shippingServiceId = isLocal
+      ? null
+      : await this.resolveShippingService(dto.shippingServiceId, dto.destinationCountryId ?? null);
+    const exchangeRate = isLocal ? 1 : await this.fetchExchangeRate(currency, dto.date);
+    const feeExchangeRate = isLocal
+      ? 1
+      : feeCurrency && feeCurrency !== currency ? await this.fetchExchangeRate(feeCurrency, dto.date) : exchangeRate;
+    // Intrinsic (ex-VAT, goods-only) value for the marketplace VAT threshold — net sales, no VAT, no shipping.
+    const overall = (dto.items ?? []).reduce((s, i) => s + n(i.netSalesAmount), 0);
+    // Local VAT lives per line, so the transaction-level destination rate stays null.
+    const { pct: destinationVatPct, overridden: vatOverridden } = isLocal
+      ? { pct: null, overridden: false }
+      : await this.resolveDestinationVat(dto, channel, overall, dto.destinationCountryId ?? null);
+    const taxType = isLocal ? 'vat' : await this.resolveTaxType(dto.destinationCountryId ?? null);
+    // Refuse an incomplete submission before the row exists, so a rejected transaction
+    // leaves nothing behind.
+    const serialWork = await this.resolveSerialConsumption(
+      (dto.items ?? []).map((i, idx) => ({ productId: linked[idx]?.productId ?? i.productId ?? null, sku: i.sku, quantity: i.quantity, serials: i.serials })),
+      dto.status ?? 'draft',
+    );
+
     const t = await this.prisma.salesTransaction.create({
       data: {
         date: new Date(dto.date),
@@ -443,24 +1117,245 @@ export class SalesTransactionsService {
         destinationCountryId: dto.destinationCountryId ?? null,
         shippingServiceId,
         companyId: dto.companyId ?? null,
-        currency,
-        feeCurrency,
+        currency: isLocal ? 'EUR' : currency,
+        feeCurrency: isLocal ? 'EUR' : feeCurrency,
         exchangeRate,
         feeExchangeRate,
         destinationVatPct,
         vatOverridden,
+        taxType,
+        deliveryMethod: isLocal ? dto.deliveryMethod ?? null : null,
+        localShippingCostEur: isLocal ? dto.localShippingCostEur ?? null : null,
+        discountType: isLocal ? dto.discountType ?? null : null,
+        discountValue: isLocal ? dto.discountValue ?? null : null,
+        discountBase: isLocal ? dto.discountBase ?? 'net' : null,
         status: dto.status ?? 'draft',
         fulfilmentStatus: dto.fulfilmentStatus ?? 'pending',
         channelShipmentStatus: dto.channelShipmentStatus ?? null,
+        // FBA exists only on Amazon; default everything else (manual, OnBuy) to FBM.
+        fulfilmentType: dto.fulfilmentType ?? 'FBM',
         source: dto.source ?? 'manual',
         integrationId: dto.integrationId ?? null,
         unlockedForEdit: false,
         createdById: actorId,
         updatedById: actorId,
-        items: { create: dto.items.map((i) => ({ ...i, productId: i.productId ?? null })) },
+        items: { create: items },
       },
     });
+
+    await this.consumeSerials(serialWork, t.id, dto.transactionRef, actorId);
+    await this.reconcileSaleStock(t.id, actorId);
     return this.get(t.id);
+  }
+
+  /**
+   * Serial-tracked items on a submitted transaction.
+   *
+   * A tracked product is a physical unit we can point at, so a submitted sale must say
+   * which units left. Draft transactions are exempt — that is where an order sits while
+   * the detail is still being gathered.
+   *
+   * Returns the work to do once the transaction row exists; nothing is written here.
+   */
+  private async resolveSerialConsumption(
+    items: { productId?: string | null; sku: string; quantity: number; serials?: string[] }[],
+    status: string,
+  ) {
+    const productIds = items.map((i) => i.productId).filter(Boolean) as string[];
+    const tracked = await this.serials.trackedProductIds(productIds);
+    if (!tracked.size) return [];
+
+    const problems: string[] = [];
+    const work: { productId: string; sku: string; serials: string[]; quantity: number }[] = [];
+
+    for (const it of items) {
+      if (!it.productId || !tracked.has(it.productId)) continue;
+      const given = (it.serials ?? []).map((x) => x.trim()).filter(Boolean);
+      if (status !== 'submitted') continue; // a draft may still be incomplete
+      if (given.length !== it.quantity) {
+        problems.push(`${it.sku}: ${given.length} serial${given.length === 1 ? '' : 's'} for ${it.quantity} unit${it.quantity === 1 ? '' : 's'}`);
+        continue;
+      }
+      work.push({ productId: it.productId, sku: it.sku, serials: given, quantity: it.quantity });
+    }
+
+    if (problems.length) {
+      throw new BadRequestException(
+        `This transaction cannot be submitted without serial numbers — ${problems.join('; ')}.`,
+      );
+    }
+    return work;
+  }
+
+  /**
+   * Take the named units off the shelf.
+   *
+   * Serial-tracked stock is the one case where a sale moves inventory: the units are
+   * identifiable, so leaving them on hand after they have shipped would be plainly wrong.
+   * Untracked products keep the existing behaviour and do not touch stock.
+   */
+  private async consumeSerials(
+    work: { productId: string; sku: string; serials: string[]; quantity: number }[],
+    salesTransactionId: string,
+    reference: string,
+    actorId?: string,
+  ) {
+    if (!work.length) return;
+    try {
+      await this.prisma.$transaction(async (tx) => {
+      for (const w of work) {
+        // Where the units physically are decides which warehouse the stock leaves.
+        const rows = await tx.serialNumber.findMany({
+          where: { productId: w.productId, serial: { in: w.serials }, status: 'in_stock' },
+          select: { warehouseId: true },
+        });
+        const warehouseId = rows.find((r) => r.warehouseId)?.warehouseId ?? null;
+
+        await this.serials.dispatchWithin(tx, {
+          productId: w.productId,
+          serials: w.serials,
+          to: 'sold',
+          salesTransactionId,
+        });
+
+        if (warehouseId) {
+          await this.stock.applyDeltaWithin(tx, {
+            productId: w.productId,
+            warehouseId,
+            qtyDelta: -w.quantity,
+            reason: 'sale',
+            reference,
+            actorId,
+          });
+        }
+      }
+      });
+    } catch (err: any) {
+      // The transaction row already exists at this point, so a bare 500 would leave the
+      // user with a saved sale and no idea why the stock did not move. Say what failed.
+      if (err instanceof BadRequestException || err instanceof NotFoundException) throw err;
+      throw new BadRequestException(`Could not dispatch the serial numbers: ${err?.message ?? err}`);
+    }
+  }
+
+  /**
+   * Bring a sale's physical stock into line with what it should hold, when the
+   * "deduct stock on sale" setting is on. Idempotent by construction: each line records how
+   * many units it has already taken (stockDeductedQty), so this only ever moves the delta —
+   * submit deducts, un-submit or a smaller quantity puts stock back, re-submitting does
+   * nothing. Serial-tracked lines are left to the serial path, which already moves their stock.
+   *
+   * "Committed" per line = units already deducted from stock + units recorded as owed. A sale
+   * that ships more than is on hand is never blocked: the shortfall becomes a StockOwed row
+   * instead of a hard error, so a channel deadline can be met and the gap chased later.
+   *
+   * `forceRelease` treats the desired quantity as zero regardless of status — used when a sale
+   * is deleted, so its stock is returned before the row goes away.
+   */
+  private async reconcileSaleStock(txId: string, actorId?: string, opts: { forceRelease?: boolean } = {}) {
+    const settings = await this.prisma.platformSettings.findFirst({ select: { deductStockOnSale: true } });
+    // When the feature is off, never touch stock — but a delete must still return anything a
+    // previous (feature-on) submit had taken, so releases are always honoured.
+    if (!settings?.deductStockOnSale && !opts.forceRelease) return;
+
+    const tx = await this.prisma.salesTransaction.findFirst({
+      where: { id: txId },
+      select: {
+        id: true, status: true, transactionRef: true, fulfilmentType: true, resolution: true,
+        items: {
+          where: { deletedAt: null },
+          select: { id: true, productId: true, quantity: true, stockDeductedQty: true, stockWarehouseId: true, product: { select: { serialTracked: true } } },
+        },
+      },
+    });
+    if (!tx) return;
+    // FBA goods live in Amazon's fulfilment centres, never our warehouses — an FBA sale (and
+    // its cancellation) must not move local stock.
+    if (tx.fulfilmentType === 'FBA') return;
+    // A cancelled order's units were never really consumed (Amazon only cancels pre-ship), so
+    // any stock the submit reserved is released back.
+    const cancelled = tx.resolution === 'cancelled';
+
+    await this.prisma.$transaction(async (db) => {
+      for (const it of tx.items) {
+        if (!it.productId || it.product?.serialTracked) continue;
+        const desired = opts.forceRelease || cancelled || tx.status !== 'submitted' ? 0 : it.quantity;
+        await this.reconcileSaleLine(db, {
+          txId: tx.id, ref: tx.transactionRef, actorId,
+          itemId: it.id, productId: it.productId, desired,
+          deducted: it.stockDeductedQty, warehouseId: it.stockWarehouseId,
+        });
+      }
+    });
+  }
+
+  /** One line's reconciliation. See reconcileSaleStock for the model. */
+  private async reconcileSaleLine(
+    db: Prisma.TransactionClient,
+    a: { txId: string; ref: string | null; actorId?: string; itemId: string; productId: string; desired: number; deducted: number; warehouseId: string | null },
+  ) {
+    const owedRow = await db.stockOwed.findFirst({
+      where: { salesTransactionId: a.txId, productId: a.productId, status: 'open', deletedAt: null },
+    });
+    const owed = owedRow?.quantity ?? 0;
+    const committed = a.deducted + owed;
+
+    if (a.desired > committed) {
+      // Need more off the shelf. Take what stock allows; the rest becomes owed.
+      let need = a.desired - committed;
+      const wh = await this.pickDeductionWarehouse(db, a.productId, a.warehouseId);
+      const level = wh
+        ? await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: a.productId, warehouseId: wh } }, select: { quantityOnHand: true } })
+        : null;
+      const take = Math.min(Math.max(0, level?.quantityOnHand ?? 0), need);
+      if (take > 0 && wh) {
+        await this.stock.applyDeltaWithin(db, { productId: a.productId, warehouseId: wh, qtyDelta: -take, reason: 'sale', reference: a.ref, actorId: a.actorId });
+        await db.salesTransactionItem.update({ where: { id: a.itemId }, data: { stockDeductedQty: a.deducted + take, stockWarehouseId: wh } });
+        need -= take;
+      }
+      if (need > 0) {
+        if (owedRow) await db.stockOwed.update({ where: { id: owedRow.id }, data: { quantity: owed + need } });
+        else await db.stockOwed.create({
+          data: { productId: a.productId, warehouseId: wh, salesTransactionId: a.txId, transactionRef: a.ref, quantity: need, status: 'open', reason: 'sold_before_receipt', openedById: a.actorId ?? null },
+        });
+      }
+    } else if (a.desired < committed) {
+      // Give some back. Owed units never left stock, so cancel those first; only then restock
+      // what was physically taken.
+      let release = committed - a.desired;
+      if (owedRow && owed > 0) {
+        const reduce = Math.min(owed, release);
+        const remaining = owed - reduce;
+        await db.stockOwed.update({
+          where: { id: owedRow.id },
+          data: remaining > 0 ? { quantity: remaining } : { quantity: 0, status: 'cancelled', deletedAt: new Date() },
+        });
+        release -= reduce;
+      }
+      if (release > 0 && a.warehouseId) {
+        await this.stock.applyDeltaWithin(db, { productId: a.productId, warehouseId: a.warehouseId, qtyDelta: release, reason: 'sale_reversal', reference: a.ref, actorId: a.actorId });
+        await db.salesTransactionItem.update({ where: { id: a.itemId }, data: { stockDeductedQty: a.deducted - release } });
+      }
+    }
+  }
+
+  /** Where an ordinary sale takes stock from: the line's existing warehouse if it already has
+   *  one, else the sellable warehouse holding the most of this product, else — when nothing is
+   *  in stock — the first sellable warehouse, so an owed row still has a home. */
+  private async pickDeductionWarehouse(db: Prisma.TransactionClient, productId: string, preferred: string | null): Promise<string | null> {
+    if (preferred) return preferred;
+    const level = await db.stockLevel.findFirst({
+      where: { productId, quantityOnHand: { gt: 0 }, warehouse: { deletedAt: null, isActive: true, includeInInventory: true } },
+      orderBy: { quantityOnHand: 'desc' },
+      select: { warehouseId: true },
+    });
+    if (level) return level.warehouseId;
+    const wh = await db.warehouse.findFirst({
+      where: { deletedAt: null, isActive: true, includeInInventory: true },
+      orderBy: { name: 'asc' },
+      select: { id: true },
+    });
+    return wh?.id ?? null;
   }
 
   /** A submitted transaction is locked: only admins edit it, unless it's been unlocked. */
@@ -478,22 +1373,57 @@ export class SalesTransactionsService {
 
     const channelId = dto.salesChannelId === undefined ? existing.salesChannelId : dto.salesChannelId;
     const { channel, currency, feeCurrency } = await this.channelInfo(channelId);
+    const isLocal = channel?.kind === 'local';
     const nextStatus = dto.status ?? existing.status;
     // Submitting re-locks it (unless the actor is an admin, who always retains access).
     const unlockedForEdit = nextStatus === 'submitted' ? false : existing.unlockedForEdit;
     const txDate = dto.date ?? existing.date.toISOString();
-    const exchangeRate = await this.fetchExchangeRate(currency, txDate);
-    const feeExchangeRate = feeCurrency && feeCurrency !== currency ? await this.fetchExchangeRate(feeCurrency, txDate) : exchangeRate;
+    const exchangeRate = isLocal ? 1 : await this.fetchExchangeRate(currency, txDate);
+    const feeExchangeRate = isLocal
+      ? 1
+      : feeCurrency && feeCurrency !== currency ? await this.fetchExchangeRate(feeCurrency, txDate) : exchangeRate;
     const destCountryId = dto.destinationCountryId === undefined ? existing.destinationCountryId : dto.destinationCountryId;
-    const resolvedServiceId = await this.resolveShippingService(dto.shippingServiceId, destCountryId);
-    const overall = (dto.items ?? existing.items).reduce((s: number, i: any) => s + n(i.netSalesAmount) + n(i.vatAmount) + n(i.shippingAmount) + n(i.shippingAmountVat), 0);
-    const { pct: destinationVatPct, overridden: vatOverridden } = await this.resolveDestinationVat(dto, channel, overall, destCountryId);
+    const resolvedServiceId = isLocal ? null : await this.resolveShippingService(dto.shippingServiceId, destCountryId);
+    // Intrinsic (ex-VAT, goods-only) value for the marketplace VAT threshold — net sales, no VAT, no shipping.
+    const overall = (dto.items ?? existing.items).reduce((s: number, i: any) => s + n(i.netSalesAmount), 0);
+    const { pct: destinationVatPct, overridden: vatOverridden } = isLocal
+      ? { pct: null, overridden: false }
+      : await this.resolveDestinationVat(dto, channel, overall, destCountryId);
+    const taxType = isLocal ? 'vat' : await this.resolveTaxType(destCountryId);
+    // An omitted discount field means "leave as it was", not "clear it".
+    const discountType = dto.discountType === undefined ? existing.discountType : dto.discountType;
+    const discountValue = dto.discountValue === undefined ? existing.discountValue : dto.discountValue;
+    const discountBase = dto.discountBase === undefined ? (existing.discountBase ?? 'net') : dto.discountBase;
+    // Save-time review: re-link lines to the current catalogue, then (local) recompute VAT.
+    const linked = dto.items ? await this.linkItemsToCatalogue(dto.items) : undefined;
+    const items = linked && isLocal
+      ? await this.resolveLocalVat(linked, { type: discountType, value: discountValue, base: discountBase })
+      : linked;
+
+    // Submitting is the moment the units are committed, so that is where serials are
+    // demanded. Re-submitting an already-submitted transaction must not consume twice,
+    // so anything this transaction already holds is released first.
+    const serialItems = (dto.items ?? existing.items).map((i: any, idx: number) => ({
+      productId: (linked?.[idx]?.productId ?? i.productId) ?? null,
+      sku: i.sku,
+      quantity: i.quantity,
+      serials: (dto.items?.[idx] as any)?.serials,
+    }));
+    const serialWork = await this.resolveSerialConsumption(serialItems, nextStatus);
+
+    // Replacing the item rows drops their stockDeductedQty tracking, so return whatever the
+    // current items hold first; the post-update reconcile then deducts against the new lines.
+    // (No-op when the feature is off or nothing was deducted.)
+    if (items) await this.reconcileSaleStock(id, user.sub, { forceRelease: true });
 
     await this.prisma.$transaction(async (tx) => {
-      if (dto.items) {
+      if (serialWork.length) {
+        await this.serials.restockWithin(tx, { salesTransactionId: id });
+      }
+      if (items) {
         await tx.salesTransactionItem.deleteMany({ where: { transactionId: id } });
         await tx.salesTransactionItem.createMany({
-          data: dto.items.map((i) => ({ ...i, transactionId: id, productId: i.productId ?? null })),
+          data: items.map((i) => ({ ...i, transactionId: id, productId: i.productId ?? null })),
         });
       }
       await tx.salesTransaction.update({
@@ -504,20 +1434,30 @@ export class SalesTransactionsService {
           salesChannelId: dto.salesChannelId,
           destinationCountryId: dto.destinationCountryId,
           shippingServiceId: resolvedServiceId,
-          currency,
-          feeCurrency,
+          currency: isLocal ? 'EUR' : currency,
+          feeCurrency: isLocal ? 'EUR' : feeCurrency,
           exchangeRate,
           feeExchangeRate,
           destinationVatPct,
           vatOverridden,
+          taxType,
+          deliveryMethod: isLocal ? dto.deliveryMethod ?? undefined : null,
+          localShippingCostEur: isLocal ? dto.localShippingCostEur ?? undefined : null,
+          discountType: isLocal ? discountType : null,
+          discountValue: isLocal ? discountValue : null,
+          discountBase: isLocal ? discountBase : null,
           status: nextStatus,
           fulfilmentStatus: dto.fulfilmentStatus,
           channelShipmentStatus: dto.channelShipmentStatus,
+          fulfilmentType: dto.fulfilmentType,
           unlockedForEdit,
           updatedById: user.sub,
         },
       });
     });
+
+    await this.consumeSerials(serialWork, id, existing.transactionRef, user.sub);
+    await this.reconcileSaleStock(id, user.sub);
     return this.get(id);
   }
 
@@ -538,40 +1478,294 @@ export class SalesTransactionsService {
         where: { id: r.id },
         data: { status, unlockedForEdit: false, updatedById: user.sub },
       });
+      // Move stock to match the new status: submitting deducts, reverting to draft returns it.
+      await this.reconcileSaleStock(r.id, user.sub);
       updated++;
     }
     return { updated, skipped };
   }
 
+  /** Re-derive every transaction's stored snapshots from the CURRENT configuration so a
+   *  later change to a product, sales channel, destination country, shipping service, VAT
+   *  rule or FX flows through to the calculated figures. Re-resolves per line:
+   *   • product link (SKU → product/alias, case-insensitive)
+   *  and per transaction:
+   *   • sales-channel currency / fee currency
+   *   • FX + fee FX (re-fetched only when the currency changed or the rate was missing —
+   *     historical rates are immutable, so we don't re-hit the FX API needlessly)
+   *   • shipping service (keeps an explicit choice, else the destination country's default)
+   *   • destination VAT % (keeps a manual override, else the channel rule / country rate)
+   *  Revenue, profit, shipping cost, weight, FBA cost etc. are computed on read, so they
+   *  recompute automatically once the snapshots above are refreshed. Only rows that actually
+   *  changed are written. */
+  /** Re-derive stored header/link fields from the current catalogue and settings. With no
+   *  `ids`, sweeps every transaction; pass a set of ids to recalculate just those — far faster
+   *  when you know exactly which orders you changed. */
+  async recalculate(ids?: string[]) {
+    const scoped = Array.isArray(ids) && ids.length > 0;
+    const txs = await this.prisma.salesTransaction.findMany({
+      where: { deletedAt: null, ...(scoped ? { id: { in: ids } } : {}) },
+      include: { items: { where: { deletedAt: null }, select: { id: true, sku: true, productId: true, netSalesAmount: true, vatAmount: true, vatClassId: true, shippingAmount: true, shippingAmountVat: true } } },
+    });
+
+    // SKU (lowercased) → productId from the current catalogue (main SKU wins over alias).
+    const skuToProduct = await this.buildSkuToProduct();
+    // productId → its current VAT class, used to fill in local lines that never got one
+    // (e.g. imported before the product existed).
+    const products = await this.prisma.product.findMany({ where: { deletedAt: null }, select: { id: true, vatClassId: true, vatClass: { select: { ratePct: true } } } });
+    const vatByProduct = new Map<string, { vatClassId: string; ratePct: number }>();
+    for (const p of products) {
+      if (p.vatClassId && p.vatClass) vatByProduct.set(p.id, { vatClassId: p.vatClassId, ratePct: Number(p.vatClass.ratePct) });
+    }
+
+    // FX cache — one lookup per (currency, date) across the whole run.
+    const fxCache = new Map<string, number | null>();
+    const fx = async (currency: string | null, date: string): Promise<number | null> => {
+      if (!currency) return null;
+      const key = `${currency.toUpperCase()}:${date.slice(0, 10)}`;
+      if (!fxCache.has(key)) fxCache.set(key, await this.fetchExchangeRate(currency, date));
+      return fxCache.get(key) ?? null;
+    };
+    const same = (a: number | null | undefined, b: number | null | undefined) =>
+      (a == null && b == null) || (a != null && b != null && Math.abs(a - b) < 1e-9);
+
+    let checked = 0;
+    let updated = 0;
+    let relinkedItems = 0;
+    let vattedItems = 0;
+    for (const t of txs) {
+      checked++;
+      const dateIso = t.date.toISOString();
+      const { channel, currency, feeCurrency } = await this.channelInfo(t.salesChannelId);
+      // Historical FX is immutable — only re-fetch when the currency changed or was never set.
+      let exchangeRate = t.exchangeRate;
+      if (currency !== t.currency || exchangeRate == null) exchangeRate = await fx(currency, dateIso);
+      let feeExchangeRate = t.feeExchangeRate;
+      if (feeCurrency !== t.feeCurrency || feeExchangeRate == null) {
+        feeExchangeRate = feeCurrency && feeCurrency !== currency ? await fx(feeCurrency, dateIso) : exchangeRate;
+      }
+      // Imported orders never carry a manual service pick, so always re-derive theirs from the
+      // destination country's CURRENT default (a default change then propagates). Manual orders
+      // keep an explicitly-chosen service, else fall back to the country default.
+      // A local sale has no carrier at all, so it must never acquire a shipping service.
+      const isLocal = channel?.kind === 'local';
+      const shippingServiceId = isLocal
+        ? null
+        : t.source && t.source !== 'manual'
+          ? await this.resolveShippingService(null, t.destinationCountryId)
+          : await this.resolveShippingService(t.shippingServiceId, t.destinationCountryId);
+      // Intrinsic (ex-VAT, goods-only) value for the marketplace VAT threshold — net sales, no VAT, no shipping.
+      const overall = t.items.reduce((s: number, i: any) => s + n(i.netSalesAmount), 0);
+      const { pct: destinationVatPct, overridden: vatOverridden } =
+        await this.resolveDestinationVat({ vatOverridden: t.vatOverridden, destinationVatPct: t.destinationVatPct }, channel, overall, t.destinationCountryId);
+
+      const itemUpdates = t.items
+        .map((it) => ({ id: it.id, current: it.productId ?? null, next: skuToProduct.get((it.sku ?? '').trim().toLowerCase()) ?? null }))
+        .filter((u) => u.next != null && u.next !== u.current); // additive only — never clear a link
+
+      // Local lines that never got a VAT class (imported before the product existed) pick one up
+      // once the SKU resolves. Only ever fills a blank — an explicit class is never overwritten.
+      const vatUpdates: { id: string; vatClassId: string; vatRatePct: number; vatAmount: number }[] = [];
+      if (isLocal) {
+        for (const it of t.items) {
+          if (it.vatClassId != null) continue;
+          const productId = skuToProduct.get((it.sku ?? '').trim().toLowerCase()) ?? it.productId ?? null;
+          const vc = productId ? vatByProduct.get(productId) : null;
+          if (!vc) continue;
+          vatUpdates.push({
+            id: it.id,
+            vatClassId: vc.vatClassId,
+            vatRatePct: vc.ratePct,
+            vatAmount: round(n(it.netSalesAmount) * (vc.ratePct / 100), 2),
+          });
+        }
+      }
+
+      const headerChanged =
+        (currency ?? null) !== (t.currency ?? null) ||
+        (feeCurrency ?? null) !== (t.feeCurrency ?? null) ||
+        !same(exchangeRate, t.exchangeRate) || !same(feeExchangeRate, t.feeExchangeRate) ||
+        (shippingServiceId ?? null) !== (t.shippingServiceId ?? null) ||
+        !same(destinationVatPct, t.destinationVatPct) || vatOverridden !== t.vatOverridden;
+
+      if (!headerChanged && itemUpdates.length === 0 && vatUpdates.length === 0) continue;
+      await this.prisma.$transaction([
+        this.prisma.salesTransaction.update({
+          where: { id: t.id },
+          data: { currency, feeCurrency, exchangeRate, feeExchangeRate, shippingServiceId, destinationVatPct, vatOverridden },
+        }),
+        ...itemUpdates.map((u) => this.prisma.salesTransactionItem.update({ where: { id: u.id }, data: { productId: u.next } })),
+        ...vatUpdates.map((u) => this.prisma.salesTransactionItem.update({
+          where: { id: u.id },
+          data: { vatClassId: u.vatClassId, vatRatePct: u.vatRatePct, vatAmount: u.vatAmount },
+        })),
+      ]);
+      relinkedItems += itemUpdates.length;
+      vattedItems += vatUpdates.length;
+      updated++;
+    }
+    return { checked, updated, relinkedItems, vattedItems };
+  }
+
   /** Apply an order resolution (return / cancellation / refund). Cancelling also
    *  moves the transaction out of the fulfilment worklist. */
-  async resolve(id: string, dto: { resolution: string; refundAmount?: number | null; restockItems?: boolean; feeRefunded?: boolean; resolutionNotes?: string | null }, user: AuthUser) {
-    const existing = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null }, select: { id: true, status: true, unlockedForEdit: true, fulfilmentStatus: true } });
+  async resolve(
+    id: string,
+    dto: { resolution: string; refundAmount?: number | null; restockItems?: boolean; feeRefunded?: boolean; resolutionNotes?: string | null; returnedToStock?: boolean; returnWarehouseId?: string | null },
+    user: AuthUser,
+  ) {
+    const existing = await this.prisma.salesTransaction.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, status: true, unlockedForEdit: true, fulfilmentStatus: true, fulfilmentType: true, resolution: true, returnWarehouseId: true, transactionRef: true },
+    });
     if (!existing) throw new NotFoundException('Sales transaction not found');
     this.assertCanEdit(existing, user);
     const clearing = dto.resolution === 'none';
+    const isFba = existing.fulfilmentType === 'FBA';
+
+    // Decide, from the return decision, where (if anywhere) the goods go back and whether that
+    // reverses the product cost:
+    //  - FBM: the goods come back to us. The operator picks a warehouse; a warehouse that counts
+    //    as sellable inventory means the unit is resellable → reverse COGS. A "used/not-sellable"
+    //    virtual warehouse still tracks the unit but keeps the cost as a loss.
+    //  - FBA: the goods go back to Amazon, never to us — no local warehouse, no stock movement.
+    //    "Returned & resellable" is Amazon's call, taken here as a plain flag → reverse COGS.
+    let newReturnWarehouseId: string | null = null;
+    let restockItems = false;
+    if (!clearing && (dto.returnedToStock || dto.returnWarehouseId)) {
+      if (isFba) {
+        restockItems = true; // Amazon re-listed it
+      } else {
+        if (!dto.returnWarehouseId) throw new BadRequestException('Choose the warehouse the returned goods go into');
+        const wh = await this.prisma.warehouse.findFirst({ where: { id: dto.returnWarehouseId, deletedAt: null }, select: { id: true, includeInInventory: true } });
+        if (!wh) throw new NotFoundException('Return warehouse not found');
+        newReturnWarehouseId = wh.id;
+        restockItems = wh.includeInInventory; // sellable location → resellable → reverse COGS
+      }
+    } else if (!clearing && dto.restockItems != null) {
+      // Legacy path (no warehouse): honour an explicit restock flag.
+      restockItems = !!dto.restockItems;
+    }
+
     await this.prisma.salesTransaction.update({
       where: { id },
       data: {
         resolution: dto.resolution,
         refundAmount: clearing ? null : dto.refundAmount ?? null,
-        restockItems: clearing ? false : !!dto.restockItems,
+        restockItems: clearing ? false : restockItems,
         feeRefunded: clearing ? false : !!dto.feeRefunded,
         resolutionNotes: clearing ? null : dto.resolutionNotes ?? null,
         resolvedAt: clearing ? null : new Date(),
+        returnWarehouseId: newReturnWarehouseId,
+        returnHandled: !clearing, // resolving IS making the decision
+        resolutionSource: clearing ? null : 'manual',
         // Cancelling removes it from the pending worklist; clearing a cancel restores pending.
         ...(dto.resolution === 'cancelled' ? { fulfilmentStatus: 'cancelled' } : {}),
         ...(clearing && existing.fulfilmentStatus === 'cancelled' ? { fulfilmentStatus: 'pending' } : {}),
         updatedById: user.sub,
       },
     });
+
+    // Physical stock, FBM only. Move the returned-goods restock to its new state (reverse the
+    // previous return warehouse, add the new one) — a no-op when nothing changed.
+    if (existing.returnWarehouseId !== newReturnWarehouseId) {
+      await this.prisma.$transaction((db) =>
+        this.applyReturnRestock(db, { txId: id, ref: existing.transactionRef, actorId: user.sub, oldWarehouseId: existing.returnWarehouseId, newWarehouseId: newReturnWarehouseId }),
+      );
+    }
+    // Cancelling releases any stock the submit had reserved; clearing a cancel re-reserves it.
+    // reconcileSaleStock reads the resolution we just wrote.
+    if (dto.resolution === 'cancelled' || (clearing && existing.resolution === 'cancelled')) {
+      await this.reconcileSaleStock(id, user.sub);
+    }
     return this.get(id);
+  }
+
+  /**
+   * Move a returned FBM order's goods between "return warehouses". A customer return is a fresh
+   * inflow to the chosen warehouse (not a reversal of the original sale deduction — the sold
+   * unit genuinely left), so it is booked as its own movement. Changing or clearing the choice
+   * reverses the previous warehouse first. Serial-tracked lines are left to the serial register.
+   */
+  private async applyReturnRestock(
+    db: Prisma.TransactionClient,
+    a: { txId: string; ref: string | null; actorId?: string; oldWarehouseId: string | null; newWarehouseId: string | null },
+  ) {
+    if (a.oldWarehouseId === a.newWarehouseId) return;
+    const items = await db.salesTransactionItem.findMany({
+      where: { transactionId: a.txId, deletedAt: null, productId: { not: null } },
+      select: { productId: true, quantity: true, product: { select: { serialTracked: true } } },
+    });
+    for (const it of items) {
+      if (!it.productId || it.product?.serialTracked) continue;
+      if (a.oldWarehouseId) {
+        await this.stock.applyDeltaWithin(db, { productId: it.productId, warehouseId: a.oldWarehouseId, qtyDelta: -it.quantity, reason: 'customer_return_reversed', reference: a.ref, actorId: a.actorId });
+      }
+      if (a.newWarehouseId) {
+        await this.stock.applyDeltaWithin(db, { productId: it.productId, warehouseId: a.newWarehouseId, qtyDelta: it.quantity, reason: 'customer_return', reference: a.ref, actorId: a.actorId });
+      }
+    }
+  }
+
+  /**
+   * Apply a resolution the CHANNEL told us about (an Amazon cancellation or refund), rather than
+   * one the operator entered. System-driven, so it bypasses the edit-lock — but it never
+   * overwrites a decision the operator already made by hand, and it is idempotent: re-running a
+   * sync with the same figures changes nothing.
+   *
+   *  - cancelled: Amazon only cancels pre-ship → financially neutral. Releases any reserved
+   *    stock and closes it out (returnHandled true — nothing for the operator to decide).
+   *  - returned  (a refund on a shipped order): revenue is reversed by the refund and the costs
+   *    stay. The physical-return decision (did it come back, to which warehouse, who paid return
+   *    shipping) is the operator's, so it lands as a pending item (returnHandled false).
+   */
+  async applyChannelResolution(
+    txId: string,
+    args: { resolution: 'cancelled' | 'returned'; refundAmount?: number | null; feeRefunded?: boolean },
+    actorId?: string,
+  ): Promise<{ applied: boolean; reason?: string }> {
+    const existing = await this.prisma.salesTransaction.findFirst({
+      where: { id: txId, deletedAt: null },
+      select: { id: true, resolution: true, resolutionSource: true, refundAmount: true, feeRefunded: true },
+    });
+    if (!existing) return { applied: false, reason: 'not_found' };
+    // Never clobber a decision the operator made in the app.
+    if (existing.resolutionSource === 'manual') return { applied: false, reason: 'manual' };
+    // Nothing new to write — same resolution, same refund, same fee state.
+    const sameRefund = args.refundAmount == null || Math.abs(Number(existing.refundAmount ?? 0) - Number(args.refundAmount)) < 0.005;
+    if (existing.resolution === args.resolution && sameRefund && (args.resolution !== 'returned' || existing.feeRefunded === !!args.feeRefunded)) {
+      return { applied: false, reason: 'unchanged' };
+    }
+
+    const isCancel = args.resolution === 'cancelled';
+    await this.prisma.salesTransaction.update({
+      where: { id: txId },
+      data: {
+        resolution: args.resolution,
+        refundAmount: args.refundAmount ?? null,
+        feeRefunded: !!args.feeRefunded,
+        // The physical return is the operator's later call — auto-ingest never restocks.
+        restockItems: false,
+        returnWarehouseId: null,
+        returnHandled: isCancel, // cancel is neutral & done; a refund needs a return decision
+        resolutionSource: 'amazon',
+        resolvedAt: new Date(),
+        ...(isCancel ? { fulfilmentStatus: 'cancelled' } : {}),
+        updatedById: actorId ?? null,
+      },
+    });
+    // Cancelling releases any stock the submit reserved (FBA is a no-op; reconcile reads the
+    // resolution we just wrote).
+    if (isCancel) await this.reconcileSaleStock(txId, actorId);
+    return { applied: true };
   }
 
   async remove(id: string, user: AuthUser) {
     const existing = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null } });
     if (!existing) throw new NotFoundException('Sales transaction not found');
     this.assertCanEdit(existing, user);
+    // Return any stock this sale had taken (and cancel its owed rows) before it disappears.
+    await this.reconcileSaleStock(id, user.sub, { forceRelease: true });
     await this.prisma.salesTransaction.update({ where: { id }, data: { deletedAt: new Date() } });
     return { ok: true };
   }

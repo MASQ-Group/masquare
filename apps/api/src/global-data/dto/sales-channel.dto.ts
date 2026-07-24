@@ -8,6 +8,10 @@ export class CreateSalesChannelDto {
   @IsOptional() @IsNumber() generalSalesFeePct?: number | null;
   @IsOptional() @IsBoolean() feeChargedInNativeCurrency?: boolean;
   @IsOptional() @IsString() feeCurrency?: string | null;
+  @IsOptional() @IsBoolean() showTransactionTotal?: boolean;
+  /** Chip colours shown wherever this channel's name appears (CSS colours). */
+  @IsOptional() @IsString() chipBgColor?: string | null;
+  @IsOptional() @IsString() chipTextColor?: string | null;
   @IsOptional() @IsBoolean() vatThresholdEnabled?: boolean;
   @IsOptional() @IsNumber() vatThresholdAmount?: number | null;
   @IsOptional() @IsString() vatThresholdCurrency?: string | null;

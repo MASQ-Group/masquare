@@ -1,8 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Lock } from 'lucide-react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, Lock, Pencil } from 'lucide-react';
 import { ModalShell } from '@masquare/ui';
-import { profitTiersApi, type ProfitTier, type SalesTransaction } from '../../lib/api';
+import { productsApi, profitTiersApi, salesTransactionsApi, type ProfitTier, type SalesTransaction } from '../../lib/api';
 import { formatDate, formatMoney } from '../../lib/format';
+import { ProductModal } from '../products/ProductModal';
+import { CountryTag } from '../common/Flag';
+import { ChannelChip, useChannelChips } from '../common/ChannelChip';
 
 interface Props {
   transaction: SalesTransaction;
@@ -21,21 +25,41 @@ const RESOLUTION: Record<string, { label: string; cls: string }> = {
 
 const PROFIT_GREEN = '#14A79D';
 
+/** Why the cost column shows what it shows — the three sources rank override > average > catalogue. */
+const COST_SOURCE_HINT: Record<string, string> = {
+  override: 'Manual cost override entered on this line',
+  average: 'Moving average cost from goods received',
+  catalogue: 'Estimated from the registered purchase cost — this product has not been received yet, so there is no average cost',
+  none: 'No cost on record',
+};
+
 const money = (amount: number | null | undefined, currency: string | null) =>
   amount != null ? formatMoney({ amount, currency: currency ?? 'EUR' }) : '—';
 
 /** Read-only wide summary of a sales transaction, opened from the list view. */
-export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, onResolve }: Props) {
+export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit, onResolve }: Props) {
+  const qc = useQueryClient();
   const { data: profitTiers = [] } = useQuery({ queryKey: ['profit-tiers'], queryFn: () => profitTiersApi.list() });
+  // Keep a live copy so figures refresh after editing a product's cost/weight without closing this modal.
+  const { data: fresh } = useQuery({ queryKey: ['sales-transaction', t0.id], queryFn: () => salesTransactionsApi.get(t0.id), initialData: t0 });
+  const t = fresh ?? t0;
+
+  // Inline "jump to product editor" — open a linked product, edit, then return here (figures re-fetch on save).
+  const [editProductId, setEditProductId] = useState<string | null>(null);
+  const { data: editProduct } = useQuery({ queryKey: ['product', editProductId], queryFn: () => productsApi.get(editProductId!), enabled: !!editProductId });
 
   const tier = t.profitPct != null ? profitTiers.find((x: ProfitTier) => t.profitPct! >= x.fromPct && t.profitPct! <= x.toPct) : undefined;
   const ccy = t.currency ?? 'EUR';
   const feeCcy = t.feeCurrency ?? t.currency ?? 'EUR';
+  // Only channels that opt in get a Total column (Global settings → Sales Channels).
+  const showTotal = !!t.showTransactionTotal;
+  const chipFor = useChannelChips();
 
   return (
+    <>
     <ModalShell
       open
-      title="Sales transaction summary"
+      title="Sales Transaction Summary"
       subtitle={t.transactionRef}
       initialSize={{ w: 1040, h: 660 }}
       primaryLabel="Edit transaction"
@@ -72,8 +96,8 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, 
               )}
             </div>
           </div>
-          <Fact label="Sales channel" value={t.salesChannel?.name ?? '—'} />
-          <Fact label="Destination" value={t.destinationCountry?.name ?? '—'} />
+          <Fact label="Sales channel" value={<ChannelChip name={t.salesChannel?.name} {...chipFor(t.salesChannelId)} />} />
+          <Fact label="Destination" value={t.destinationCountry ? <CountryTag code={t.destinationCountry.isoCode} name={t.destinationCountry.name} /> : '—'} />
           <Fact label="Shipping service" value={t.shippingService?.name ?? '—'} />
           <Fact label="Currency / fee currency" value={`${ccy} / ${feeCcy}`} mono />
           <Fact label={`FX ${ccy}→EUR`} value={t.exchangeRate != null ? String(t.exchangeRate) : '—'} mono />
@@ -96,7 +120,11 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, 
             <table className="w-full min-w-[720px] border-collapse">
               <thead>
                 <tr>
-                  {['SKU', 'Qty', `Net sales (${ccy})`, `VAT (${ccy})`, `Shipping (${ccy})`, `Shipping VAT (${ccy})`, `Sales fee (${feeCcy})`, 'Product cost (€)'].map((h, i) => (
+                  {[
+                    'SKU', 'Qty', `Net sales (${ccy})`, `VAT (${ccy})`,
+                    ...(showTotal ? [`Total (${ccy})`] : []),
+                    `Shipping (${ccy})`, `Shipping VAT (${ccy})`, `Sales fee (${feeCcy})`, 'Product cost (€)',
+                  ].map((h, i) => (
                     <th key={h} className={`border-b border-n-200 bg-n-25 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>
                   ))}
                 </tr>
@@ -105,18 +133,46 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, 
                 {t.items.map((it, idx) => (
                   <tr key={it.id ?? idx}>
                     <td className="mono border-b border-n-100 px-3 py-2 text-[13px] font-medium text-n-800">
-                      {it.sku}
-                      {!it.productMatched && <span className="ml-1.5 inline-flex items-center gap-0.5 rounded bg-orange-50 px-1 py-0.5 text-[10px] font-medium text-orange-700" title="No matching product in Products — cost/weight not linked"><AlertTriangle size={10} /> no product</span>}
+                      {it.productMatched && it.productId ? (
+                        <button
+                          type="button"
+                          className="group inline-flex items-center gap-1 text-teal-700 hover:underline"
+                          title="Open this product to edit — you'll return here when done"
+                          onClick={() => setEditProductId(it.productId!)}
+                        >
+                          {it.sku}
+                          <Pencil size={11} className="opacity-0 transition-opacity group-hover:opacity-70" />
+                        </button>
+                      ) : (
+                        <span>
+                          {it.sku}
+                          <span className="ml-1.5 inline-flex items-center gap-0.5 rounded bg-orange-50 px-1 py-0.5 text-[10px] font-medium text-orange-700" title="No matching product in Products — cost/weight not linked"><AlertTriangle size={10} /> no product</span>
+                        </span>
+                      )}
                     </td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{it.quantity}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{money(it.netSalesAmount, ccy)}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{money(it.vatAmount, ccy)}</td>
+                    {showTotal && (
+                      <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] font-semibold text-n-800">
+                        {money((it.netSalesAmount ?? 0) + (it.vatAmount ?? 0) + (it.shippingAmount ?? 0) + (it.shippingAmountVat ?? 0), ccy)}
+                      </td>
+                    )}
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{money(it.shippingAmount, ccy)}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{money(it.shippingAmountVat, ccy)}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px] text-n-700">{money(it.salesChannelSalesFeeAmount, feeCcy)}</td>
                     <td className="mono border-b border-n-100 px-3 py-2 text-right text-[13px]">
-                      {it.productMatched && it.productCost != null
-                        ? <span className="text-n-800">€{it.productCost.toFixed(2)}</span>
+                      {/* The cost profit was actually calculated from, not the catalogue cost —
+                          otherwise this column would not reconcile to the profit shown above. */}
+                      {/* Costing from the catalogue is the normal state until a product has been
+                          received, so it gets no visual marker — that would annotate every row.
+                          The source is explained on hover instead. */}
+                      {it.productMatched && it.unitCostEur != null && it.costSource !== 'none'
+                        ? (
+                          <span className="text-n-800" title={COST_SOURCE_HINT[it.costSource ?? 'catalogue']}>
+                            €{it.unitCostEur.toFixed(2)}
+                          </span>
+                        )
                         : <span className="text-orange-600">—</span>}
                     </td>
                   </tr>
@@ -126,10 +182,13 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, 
                   <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">{t.totals.quantity}</td>
                   <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">{money(t.totals.netSales, ccy)}</td>
                   <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">{money(t.totals.vat, ccy)}</td>
+                  {showTotal && (
+                    <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-teal-700">{money(t.transactionTotal, ccy)}</td>
+                  )}
                   <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">{money(t.totals.shipping, ccy)}</td>
                   <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">{money(t.totals.shippingVat, ccy)}</td>
                   <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">{money(t.totals.fee, feeCcy)}</td>
-                  <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">€{t.items.reduce((s, it) => s + (it.productCost ?? 0) * it.quantity, 0).toFixed(2)}</td>
+                  <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">€{t.items.reduce((s, it) => s + (it.unitCostEur ?? 0) * it.quantity, 0).toFixed(2)}</td>
                 </tr>
               </tbody>
             </table>
@@ -203,7 +262,7 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, 
                             : <span className="tag border border-orange-100 bg-orange-50 text-orange-700">Inbound</span>}
                         </td>
                         <td className="border-b border-n-100 px-3 py-1.5 text-n-700">{s.shippingService?.name ?? '—'}</td>
-                        <td className="mono border-b border-n-100 px-3 py-1.5 text-n-700">{s.trackingNumber ?? '—'}</td>
+                        <td className="code border-b border-n-100 px-3 py-1.5 text-n-700">{s.trackingNumber ?? '—'}</td>
                         <td className="mono border-b border-n-100 px-3 py-1.5 text-right text-n-700">{s.shippingCostEur != null ? `€${s.shippingCostEur.toFixed(2)}` : '—'}</td>
                         <td className="border-b border-n-100 px-3 py-1.5 text-n-700">{s.costBorneBy === 'company' ? 'Company' : 'Customer'}</td>
                         <td className="mono border-b border-n-100 px-3 py-1.5 text-right text-n-700">{s.dutyImportEur ? `€${s.dutyImportEur.toFixed(2)}` : '—'}</td>
@@ -217,6 +276,21 @@ export function SalesTransactionSummaryModal({ transaction: t, onClose, onEdit, 
         )}
       </div>
     </ModalShell>
+
+    {editProductId && editProduct && (
+      <ProductModal
+        product={editProduct}
+        onClose={() => setEditProductId(null)}
+        onSaved={() => {
+          setEditProductId(null);
+          // Refresh the catalogue and this transaction so the updated cost/weight flow into the figures below.
+          qc.invalidateQueries({ queryKey: ['products'] });
+          qc.invalidateQueries({ queryKey: ['sales-transactions'] });
+          qc.invalidateQueries({ queryKey: ['sales-transaction', t0.id] });
+        }}
+      />
+    )}
+    </>
   );
 }
 
@@ -226,7 +300,7 @@ const FULFILMENT: Record<string, { label: string; cls: string }> = {
   cancelled: { label: 'Cancelled', cls: 'border border-n-200 bg-n-100 text-n-600' },
 };
 
-function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Fact({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div className="min-w-0">
       <div className="text-[11px] text-n-500">{label}</div>

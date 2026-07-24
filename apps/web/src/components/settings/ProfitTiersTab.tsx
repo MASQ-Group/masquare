@@ -58,7 +58,7 @@ export function ProfitTiersTab() {
   return (
     <div className="max-w-3xl">
       <div className="mb-4">
-        <h2 className="text-[17px] font-semibold text-n-900">Profit percentage tiers</h2>
+        <h2 className="text-[17px] font-semibold text-n-900">Profit Percentage Tiers</h2>
         <p className="mt-1 text-[13px] text-n-500">
           Define profit % bands and the colours used for the <strong>Profit (%)</strong> chip in the sales transaction list.
           A transaction's profit % falls into the first tier whose range contains it.

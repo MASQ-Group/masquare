@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, Plus, Search, X } from 'lucide-react';
 import { cn } from './cn';
+import { PickerPopover } from './datepicker-internal';
 
 export interface ReferenceOption {
   id: string;
   label: string;
   sub?: string;
+  /** Optional leading element (e.g. a country flag) shown before the label. */
+  icon?: ReactNode;
 }
 
 export interface SmartReferenceInputProps {
@@ -40,7 +43,8 @@ export function SmartReferenceInput({
   const [options, setOptions] = useState<ReferenceOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
+  const [menuW, setMenuW] = useState(0);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -61,13 +65,9 @@ export function SmartReferenceInput({
     };
   }, [query, open, fetchSuggestions]);
 
-  useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
+  // Match the dropdown to the field width when it opens. Outside-click / Escape
+  // are handled by PickerPopover (the dropdown is portalled to the body).
+  useEffect(() => { if (open) setMenuW(anchorRef.current?.offsetWidth ?? 0); }, [open]);
 
   const exactExists = options.some((o) => o.label.toLowerCase() === query.trim().toLowerCase());
   const canCreate = !!onCreate && query.trim().length > 0 && !exactExists;
@@ -94,8 +94,9 @@ export function SmartReferenceInput({
   const showSelected = !!value && !open && query.length === 0;
 
   return (
-    <div ref={boxRef} className="relative">
+    <div>
       <div
+        ref={anchorRef}
         className={cn(
           'flex h-10 items-center gap-2 rounded-md border bg-n-0 px-3',
           'border-n-200 focus-within:border-teal-400 focus-within:ring-[3px] focus-within:ring-teal-50',
@@ -113,6 +114,7 @@ export function SmartReferenceInput({
             }}
             className="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
           >
+            {value!.icon}
             <span className="truncate text-[13.5px] font-medium text-n-800">{value!.label}</span>
             {value!.sub && <span className="mono truncate text-[12px] text-n-500">{value!.sub}</span>}
           </button>
@@ -142,8 +144,8 @@ export function SmartReferenceInput({
         )}
       </div>
 
-      {open && (
-        <div className="absolute left-0 right-0 top-[44px] z-30 max-h-72 overflow-y-auto rounded-lg border border-n-200 bg-n-0 p-1 shadow-lg">
+      <PickerPopover anchorRef={anchorRef} open={open} onClose={() => setOpen(false)}>
+        <div className="max-h-72 overflow-y-auto p-1" style={{ width: menuW || undefined }}>
           {loading && <div className="px-3 py-2 text-[12px] text-n-500">Searching…</div>}
           {!loading &&
             options.map((o) => (
@@ -157,6 +159,7 @@ export function SmartReferenceInput({
                 }}
                 className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-teal-50"
               >
+                {o.icon}
                 <span className="flex-1 text-[13.5px] text-n-800">{o.label}</span>
                 {o.sub && <span className="font-mono text-[11px] text-n-500">{o.sub}</span>}
                 {value?.id === o.id && <Check size={15} className="text-teal-600" />}
@@ -179,7 +182,7 @@ export function SmartReferenceInput({
             </button>
           )}
         </div>
-      )}
+      </PickerPopover>
     </div>
   );
 }

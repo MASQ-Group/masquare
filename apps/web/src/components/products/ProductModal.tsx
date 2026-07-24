@@ -2,10 +2,12 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ImagePlus, Plus, Star, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell } from '@masquare/ui';
+import { CostHistory } from './CostHistory';
+import { ProductStockSection } from './ProductStockSection';
+import { ModalShell, Select } from '@masquare/ui';
 import {
-  attributesApi, brandsApi, categoriesApi, fulfilmentTypesApi, productsApi,
-  productTypesApi, vendorsApi,
+  attributesApi, brandsApi, categoriesApi, fulfilmentTypesApi, productClassesApi, productsApi,
+  productTypesApi, vatClassesApi, vendorsApi,
   type Product, type ProductAlias, type ProductMediaItem, type RefLite,
 } from '../../lib/api';
 import { RefField } from './RefField';
@@ -24,10 +26,14 @@ const TABS = [
   { key: 'pricing', label: 'Cost & pricing' },
   { key: 'logistics', label: 'Package & logistics' },
 ];
+// Stock levels only mean anything for a saved product, so the tab appears in edit mode only.
+const STOCK_TAB = { key: 'stock', label: 'Stock levels' };
 
 const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s));
 
 export function ProductModal({ product, onClose, onSaved }: Props) {
+  const [costHistoryOpen, setCostHistoryOpen] = useState(false);
+  const [serialTracked, setSerialTracked] = useState(product?.serialTracked ?? false);
   const [tab, setTab] = useState('general');
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -43,6 +49,10 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   const [productType, setProductType] = useState<RefLite | null>(product?.productType ?? null);
   const [fulfilmentType, setFulfilmentType] = useState<RefLite | null>(product?.fulfilmentType ?? null);
   const [category, setCategory] = useState<RefLite | null>(product?.category ?? null);
+  const [productClass, setProductClass] = useState<RefLite | null>(product?.productClass ?? null);
+  const [vatClass, setVatClass] = useState<RefLite | null>(
+    product?.vatClass ? { id: product.vatClass.id, name: product.vatClass.name, code: `${product.vatClass.ratePct}%` } : null,
+  );
 
   const [aliases, setAliases] = useState<ProductAlias[]>(product?.aliases ?? []);
   const [attrs, setAttrs] = useState<{ attributeId: string; value: string }[]>(
@@ -83,6 +93,9 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
         mainSku, title,
         brandId: brand?.id ?? null, vendorId: vendor?.id ?? null, productTypeId: productType?.id ?? null,
         fulfilmentTypeId: fulfilmentType?.id ?? null, categoryId: category?.id ?? null,
+        vatClassId: vatClass?.id ?? null,
+        serialTracked,
+        productClassId: productClass?.id ?? null,
         ean: ident.ean, upc: ident.upc, vendorSku: ident.vendorSku, manufacturerSku: ident.manufacturerSku,
         countryOfOrigin: ident.countryOfOrigin, hsCode: ident.hsCode,
         purchaseCost: { amount: numOrNull(cost.purchase), currency: 'EUR' },
@@ -133,7 +146,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   return (
     <ModalShell
       open title={product ? 'Edit product' : 'New product'} subtitle={product?.mainSku}
-      tabs={TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
+      tabs={product ? [...TABS, STOCK_TAB] : TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
       primaryLabel={product ? 'Save changes' : 'Create product'} onPrimary={save} primaryDisabled={!canSave} busy={busy} onClose={onClose}
     >
       {tab === 'general' && (
@@ -167,7 +180,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
 
           <div className="grid grid-cols-2 gap-4 max-[560px]:grid-cols-1">
             <div className="col-span-2"><label className="label">Title *</label><input className="input" value={title} onChange={(e) => { setTitle(e.target.value); touch(); }} /></div>
-            <div><label className="label">Main SKU *</label><input className="input mono" value={mainSku} onChange={(e) => { setMainSku(e.target.value); touch(); }} /></div>
+            <div><label className="label">Main SKU *</label><input className="input code" value={mainSku} onChange={(e) => { setMainSku(e.target.value); touch(); }} /></div>
             <div><label className="label">Fulfilment type</label><RefField value={fulfilmentType} placeholder="FBA, FBM…" list={(q) => fulfilmentTypesApi.list(q)} create={(name) => fulfilmentTypesApi.create({ name })} createNoun="fulfilment type" onChange={(v) => { setFulfilmentType(v); touch(); }} /></div>
             <div><label className="label">Brand</label><RefField value={brand} placeholder="Brand…" list={(q) => brandsApi.list(q)} create={(name) => brandsApi.create({ name })} createNoun="brand" onChange={(v) => { setBrand(v); touch(); }} /></div>
             <div><label className="label">Vendor</label><RefField value={vendor} placeholder="Vendor…" list={(q) => vendorsApi.list(q)} create={(name) => vendorsApi.create({ name })} createNoun="vendor" onChange={(v) => { setVendor(v); touch(); }} /></div>
@@ -185,11 +198,10 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
               )}
               {aliases.map((a, i) => (
                 <div key={i} className="grid grid-cols-[1fr_150px_150px_36px] items-center gap-2 max-[560px]:grid-cols-1">
-                  <input className="input mono" placeholder="e.g. RE-S8540-FBA" value={a.skuValue} onChange={(e) => { setAliases((r) => r.map((x, idx) => idx === i ? { ...x, skuValue: e.target.value } : x)); touch(); }} />
-                  <select className="input" value={a.fulfilmentTypeId ?? ''} onChange={(e) => { setAliases((r) => r.map((x, idx) => idx === i ? { ...x, fulfilmentTypeId: e.target.value || null } : x)); touch(); }}>
-                    <option value="">— fulfilment —</option>
-                    {ftypes.map((f) => <option key={f.id} value={f.id}>{f.code ?? f.name}</option>)}
-                  </select>
+                  <input className="input code" placeholder="e.g. RE-S8540-FBA" value={a.skuValue} onChange={(e) => { setAliases((r) => r.map((x, idx) => idx === i ? { ...x, skuValue: e.target.value } : x)); touch(); }} />
+                  <Select value={a.fulfilmentTypeId ?? ''} placeholder="— fulfilment —"
+                    onChange={(v) => { setAliases((r) => r.map((x, idx) => idx === i ? { ...x, fulfilmentTypeId: v || null } : x)); touch(); }}
+                    options={ftypes.map((f) => ({ value: f.id, label: f.code ?? f.name }))} />
                   <input className="input" placeholder="optional tag" value={a.label ?? ''} onChange={(e) => { setAliases((r) => r.map((x, idx) => idx === i ? { ...x, label: e.target.value } : x)); touch(); }} />
                   <button className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" onClick={() => { setAliases((r) => r.filter((_, idx) => idx !== i)); touch(); }}><Trash2 size={15} /></button>
                 </div>
@@ -204,6 +216,18 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
       {tab === 'classification' && (
         <div className="flex flex-col gap-4">
           <div>
+            <label className="label">Product class</label>
+            <div className="max-w-[280px]">
+              <RefField
+                value={productClass}
+                placeholder="Product class…"
+                list={(q) => productClassesApi.list(q)}
+                onChange={(v) => { setProductClass(v); touch(); }}
+              />
+            </div>
+            <p className="mt-1.5 text-[12px] text-n-400">Equipment or Service. Manage the list in Global settings → Product Classes.</p>
+          </div>
+          <div>
             <label className="label">Category</label>
             <RefField value={category} placeholder="Category…" list={async (q) => (await categoriesApi.list()).filter((c) => !q || c.name.toLowerCase().includes(q.toLowerCase())).map((c) => ({ id: c.id, name: c.name }))} create={(name) => categoriesApi.create({ name })} createNoun="category" onChange={(v) => { setCategory(v); touch(); }} />
           </div>
@@ -214,15 +238,13 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
                 const def = attributeLibrary.find((x) => x.id === a.attributeId);
                 return (
                   <div key={i} className="flex items-center gap-2">
-                    <select className="input w-48" value={a.attributeId} onChange={(e) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, attributeId: e.target.value, value: '' } : x)); touch(); }}>
-                      <option value="">Attribute…</option>
-                      {attributeLibrary.map((lib) => <option key={lib.id} value={lib.id}>{lib.name}</option>)}
-                    </select>
+                    <Select className="w-48" value={a.attributeId} placeholder="Attribute…"
+                      onChange={(v) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, attributeId: v, value: '' } : x)); touch(); }}
+                      options={attributeLibrary.map((lib) => ({ value: lib.id, label: lib.name }))} />
                     {def?.inputType === 'predefined' ? (
-                      <select className="input mono flex-1" value={a.value} onChange={(e) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, value: e.target.value } : x)); touch(); }}>
-                        <option value="">Value…</option>
-                        {def.values.map((v) => <option key={v.id} value={v.value}>{v.value}</option>)}
-                      </select>
+                      <Select className="flex-1 mono" value={a.value} placeholder="Value…"
+                        onChange={(v) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, value: v } : x)); touch(); }}
+                        options={def.values.map((v) => ({ value: v.value, label: v.value }))} />
                     ) : (
                       <input className="input mono flex-1" placeholder="Value" value={a.value} onChange={(e) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, value: e.target.value } : x)); touch(); }} />
                     )}
@@ -257,6 +279,70 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
               </div>
             </div>
           ))}
+          <div className="col-span-3 border-t border-n-100 pt-4">
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-[var(--teal-500)]"
+                checked={serialTracked}
+                onChange={(e) => { setSerialTracked(e.target.checked); touch(); }}
+              />
+              <span>
+                <span className="block text-[13px] font-semibold text-n-800">Track individual units by serial number</span>
+                <span className="block text-[12px] text-n-500">
+                  Receiving will require one serial per unit, and a sale cannot be submitted without naming which units
+                  leave. Selling a tracked product also deducts it from stock.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <div className="col-span-3 border-t border-n-100 pt-4">
+            <label className="label">VAT class</label>
+            <div className="max-w-[280px]">
+              <RefField
+                value={vatClass}
+                placeholder="VAT class…"
+                list={async (q) => (await vatClassesApi.list(q)).map((v) => ({ id: v.id, name: v.name, code: `${v.ratePct}%` }))}
+                onChange={(v) => { setVatClass(v); touch(); }}
+              />
+            </div>
+            <p className="mt-1.5 text-[12px] text-n-400">
+              Used as the default VAT rate when this product is sold locally. Manage the list in Global settings → VAT Classes.
+            </p>
+          </div>
+          {/* Average cost is produced by receiving, never typed — showing it read-only next
+              to the catalogue cost makes the difference between the two obvious. */}
+          <div className="col-span-3 border-t border-n-100 pt-4">
+            <div className="flex items-baseline justify-between">
+              <label className="label">Average cost (landed)</label>
+              {product && (
+                <button
+                  type="button"
+                  className="text-[12px] font-semibold text-teal-700 hover:text-teal-800"
+                  onClick={() => setCostHistoryOpen((v) => !v)}
+                >
+                  {costHistoryOpen ? 'Hide history' : 'View history'}
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <span className="mono text-[18px] font-bold text-n-900">
+                {product?.averageCostEur != null ? `€${product.averageCostEur.toFixed(2)}` : '—'}
+              </span>
+              <span className="text-[12px] text-n-500">
+                {product?.averageCostEur != null
+                  ? `over ${product.averageCostQty} unit${product.averageCostQty === 1 ? '' : 's'}`
+                  : 'Not costed yet — set when this product is first received.'}
+              </span>
+            </div>
+            <p className="mt-1.5 text-[12px] text-n-400">
+              Weighted average of what the stock actually cost to land, including its share of shipping, duty and
+              handling. Maintained by goods receipts — it cannot be edited here.
+            </p>
+            {costHistoryOpen && product && <CostHistory productId={product.id} />}
+          </div>
+
           <p className="col-span-3 text-[12px] text-n-400">Amounts are stored in EUR. MAP/MSRP together define the suggested retail price band.</p>
         </div>
       )}
@@ -275,6 +361,8 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
           </div>
         </div>
       )}
+
+      {tab === 'stock' && product && <ProductStockSection productId={product.id} />}
     </ModalShell>
   );
 }

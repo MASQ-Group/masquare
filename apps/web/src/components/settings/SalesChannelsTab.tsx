@@ -6,6 +6,8 @@ import { ModalShell, downloadSheet } from '@masquare/ui';
 import { countriesApi, salesChannelsApi, type SalesChannel } from '../../lib/api';
 import { CountrySelect } from '../common/CountrySelect';
 import { CurrencySelect } from '../common/CurrencySelect';
+import { CountryTag } from '../common/Flag';
+import { ChannelChip, chipForCountry, NEUTRAL_CHIP } from '../common/ChannelChip';
 import { AddButton, RefTable, SectionHeader } from './shared';
 import { SalesChannelImportModal } from './SalesChannelImportModal';
 
@@ -72,9 +74,9 @@ export function SalesChannelsTab() {
         rows={data}
         selection={{ selected, toggleOne, toggleAll, allSelected }}
         columns={[
-          { key: 'name', header: 'Name', render: (r) => <span className="font-medium text-n-800">{r.name}</span> },
+          { key: 'name', header: 'Name', render: (r) => <ChannelChip name={r.name} bg={r.chipBgColor} text={r.chipTextColor} /> },
           { key: 'description', header: 'Description', render: (r) => r.description ?? '—' },
-          { key: 'country', header: 'Native country', render: (r) => r.nativeCountry?.name ?? '—' },
+          { key: 'country', header: 'Native country', render: (r) => r.nativeCountry ? <CountryTag code={r.nativeCountry.isoCode} name={r.nativeCountry.name} /> : '—' },
           { key: 'currency', header: 'Currency', className: 'mono', render: (r) => r.nativeCurrency ?? '—' },
           { key: 'fee', header: 'Sales fee', className: 'mono', render: (r) => (r.generalSalesFeePct != null ? `${r.generalSalesFeePct}%` : '—') },
           { key: 'email', header: 'Email', render: (r) => r.email ?? '—' },
@@ -104,6 +106,9 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
     generalSalesFeePct: channel?.generalSalesFeePct?.toString() ?? '',
     feeChargedInNativeCurrency: channel?.feeChargedInNativeCurrency ?? true,
     feeCurrency: channel?.feeCurrency ?? null as string | null,
+    showTransactionTotal: channel?.showTransactionTotal ?? false,
+    chipBgColor: channel?.chipBgColor ?? '#F1F3F5',
+    chipTextColor: channel?.chipTextColor ?? '#495057',
     vatThresholdEnabled: channel?.vatThresholdEnabled ?? false,
     vatThresholdAmount: channel?.vatThresholdAmount?.toString() ?? '',
     vatThresholdCurrency: channel?.vatThresholdCurrency ?? null as string | null,
@@ -115,10 +120,24 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
   });
   const set = (patch: Partial<typeof form>) => { setForm((f) => ({ ...f, ...patch })); touch(); };
   const { data: allCountries = [] } = useQuery({ queryKey: ['countries'], queryFn: () => countriesApi.list() });
+  // Sibling channels of the chosen country, so a new chip takes a variant none of them use.
+  const { data: allChannels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
   const onNativeCountry = (v: string | null) => {
     const iso = allCountries.find((c) => c.id === v)?.isoCode;
     setForm((f) => {
       const next = { ...f, nativeCountryId: v };
+      // New channel → pre-fill the chip colours from that country's flag (editable afterwards).
+      // Only while they're still untouched defaults, so a chosen colour is never overwritten.
+      const current = channel ? { bg: channel.chipBgColor, text: channel.chipTextColor } : { bg: null, text: null };
+      const untouched = f.chipBgColor === (current.bg ?? NEUTRAL_CHIP.bg) && f.chipTextColor === (current.text ?? NEUTRAL_CHIP.text);
+      if (untouched) {
+        const siblings = allChannels
+          .filter((c) => c.nativeCountryId === v && c.id !== channel?.id)
+          .map((c) => ({ bg: c.chipBgColor, text: c.chipTextColor }));
+        const palette = chipForCountry(iso, siblings);
+        next.chipBgColor = palette.bg;
+        next.chipTextColor = palette.text;
+      }
       // UK native country → default the £135 marketplace VAT rule (editable afterwards).
       if (iso === 'GB' && !f.vatThresholdEnabled) {
         next.vatThresholdEnabled = true;
@@ -182,6 +201,36 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
               <CurrencySelect value={form.feeCurrency} onChange={(v) => set({ feeCurrency: v })} />
             </div>
           )}
+        </div>
+        <div className="col-span-2 flex flex-col gap-2 rounded-md border border-n-200 bg-n-25 p-3">
+          <span className="text-[13.5px] font-medium text-n-800">Chip colours</span>
+          <p className="text-[11.5px] text-n-500">
+            How this channel's name appears across the platform. Defaults come from the native country's flag.
+          </p>
+          <div className="flex flex-wrap items-end gap-4">
+            <div>
+              <label className="label">Background</label>
+              <input type="color" className="h-9 w-20 cursor-pointer rounded-md border border-n-200 bg-n-0 p-1" value={form.chipBgColor} onChange={(e) => set({ chipBgColor: e.target.value })} title="Chip background colour" />
+            </div>
+            <div>
+              <label className="label">Text</label>
+              <input type="color" className="h-9 w-20 cursor-pointer rounded-md border border-n-200 bg-n-0 p-1" value={form.chipTextColor} onChange={(e) => set({ chipTextColor: e.target.value })} title="Chip text colour" />
+            </div>
+            <div className="pb-1.5">
+              <div className="mb-1 text-[11px] text-n-500">Preview</div>
+              <ChannelChip name={form.name.trim() || 'Channel name'} bg={form.chipBgColor} text={form.chipTextColor} />
+            </div>
+          </div>
+        </div>
+        <div className="col-span-2 flex flex-col gap-2 rounded-md border border-n-200 bg-n-25 p-3">
+          <label className="flex cursor-pointer items-center gap-2.5">
+            <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={form.showTransactionTotal} onChange={(e) => set({ showTransactionTotal: e.target.checked })} />
+            <span className="text-[13.5px] text-n-700">Calculate and show a transaction Total for this channel</span>
+          </label>
+          <p className="pl-6 text-[11.5px] text-n-500">
+            Total = net sales + VAT + shipping paid by the customer + its VAT, in the channel's currency.
+            Leave off for marketplaces that report tax their own way, where a single total would mislead.
+          </p>
         </div>
         <div className="col-span-2 flex flex-col gap-3 rounded-md border border-n-200 bg-n-25 p-3">
           <label className="flex cursor-pointer items-center gap-2.5">

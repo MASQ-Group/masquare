@@ -19,6 +19,10 @@ export const EXPORT_COLUMNS: ExportColumn[] = [
   { key: 'productType', label: 'Product Type', sample: 'Hair Straightener', editDefault: true, get: (p) => p.productType?.name ?? '' },
   { key: 'fulfilmentType', label: 'Fulfilment Type', sample: 'FBA', editDefault: true, get: (p) => p.fulfilmentType?.code ?? p.fulfilmentType?.name ?? '' },
   { key: 'category', label: 'Category', sample: 'Straighteners', editDefault: true, get: (p) => p.category?.name ?? '' },
+  { key: 'productClass', label: 'Product Class', sample: 'Equipment', editDefault: true, get: (p) => p.productClass?.name ?? '' },
+  // Unlike the reference columns above, an unknown VAT class is never created on import — the
+  // server reports it and leaves the product's class empty.
+  { key: 'vatClass', label: 'VAT Class', sample: 'Standard', editDefault: true, get: (p) => p.vatClass?.name ?? '' },
   { key: 'ean', label: 'EAN', sample: '5011832070159', get: (p) => p.ean ?? '' },
   { key: 'upc', label: 'UPC', sample: '843096097842', get: (p) => p.upc ?? '' },
   { key: 'vendorSku', label: 'Vendor SKU', sample: 'THE-8540', get: (p) => p.vendorSku ?? '' },

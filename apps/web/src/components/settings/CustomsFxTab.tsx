@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, ExternalLink, RefreshCw, Search } from 'lucide-react';
 import { toast } from 'sonner';
+import { Select } from '@masquare/ui';
 import { customsFxApi } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 
@@ -45,7 +46,7 @@ export function CustomsFxTab() {
     <div>
       <div className="mb-4 flex items-start gap-4 max-[720px]:flex-col">
         <div className="flex-1">
-          <h2 className="text-[17px] font-semibold text-n-900">Cyprus Customs exchange rates</h2>
+          <h2 className="text-[17px] font-semibold text-n-900">Cyprus Customs Exchange Rates</h2>
           <p className="mt-1 max-w-2xl text-[13px] leading-[1.55] text-n-500">
             Official monthly foreign-currency rates against the Euro, published by the Cyprus Customs &amp; Excise Department
             for customs and tax purposes. Rates are units of the foreign currency per <strong>1&nbsp;EUR</strong>, pulled
@@ -84,13 +85,13 @@ export function CustomsFxTab() {
 
       {/* Controls */}
       <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <select
-          className="h-[38px] rounded-md border border-n-200 bg-n-0 px-2 text-[13px] text-n-700"
-          value={data?.year ?? ''}
-          onChange={(e) => setYear(Number(e.target.value))}
-        >
-          {(data?.availableYears ?? []).map((y) => <option key={y} value={y}>{y}</option>)}
-        </select>
+        <Select
+          dense
+          className="w-28"
+          value={data?.year != null ? String(data.year) : ''}
+          onChange={(v) => setYear(Number(v))}
+          options={(data?.availableYears ?? []).map((y) => ({ value: String(y), label: String(y) }))}
+        />
         <div className="flex h-[38px] min-w-[200px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3">
           <Search size={15} className="text-n-400" />
           <input

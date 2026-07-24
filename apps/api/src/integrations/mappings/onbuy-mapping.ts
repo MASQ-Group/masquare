@@ -7,38 +7,7 @@
  * so the verification UI can show target ← source = value.
  */
 
-export interface MappedField {
-  target: string; // maSquare field
-  label: string;
-  source: string; // OnBuy field / derivation
-  value: string | number | null;
-  resolved?: string | null; // e.g. country name looked up from a code
-}
-
-export interface MappedItem {
-  sku: string | null;
-  fields: MappedField[];
-  // Machine payload for the importer.
-  payload: {
-    sku: string | null; quantity: number;
-    netSalesAmount: number; vatAmount: number;
-    shippingAmount: number; shippingAmountVat: number;
-    salesChannelSalesFeeAmount: number;
-  };
-}
-
-export interface MappedOrder {
-  orderId: string;
-  header: MappedField[];
-  items: MappedItem[];
-  // Machine payload (header) for the importer.
-  payload: {
-    transactionRef: string; date: string; currency: string | null;
-    destinationCountryCode: string | null; channelShipmentStatus: 'shipped' | 'not_shipped';
-    resolution: 'none' | 'cancelled';
-  };
-  raw: any;
-}
+import type { MappedField, MappedItem, MappedOrder } from './types';
 
 const n = (v: any) => { const x = Number(String(v ?? '').trim()); return Number.isFinite(x) ? x : 0; };
 const round2 = (x: number) => Math.round(x * 100) / 100;
@@ -78,7 +47,7 @@ export function mapOnBuyOrder(o: any): MappedOrder {
         { target: 'shippingAmountVat', label: 'Shipping VAT', source: 'products[].tax.tax_delivery', value: taxDelivery },
         { target: 'salesChannelSalesFeeAmount', label: 'Sales fee (actual)', source: 'products[].fee.total_sales_fee', value: fee },
       ],
-      payload: { sku: p.sku ?? null, quantity, netSalesAmount: netSales, vatAmount: taxProduct, shippingAmount: shipping, shippingAmountVat: taxDelivery, salesChannelSalesFeeAmount: fee },
+      payload: { sku: p.sku ?? null, quantity, netSalesAmount: netSales, vatAmount: taxProduct, shippingAmount: shipping, shippingAmountVat: taxDelivery, salesChannelSalesFeeAmount: fee, fbaFulfilmentFeeAmount: 0, amazonPointsAmount: 0, salesTaxAmount: round2(taxProduct + taxDelivery) },
     };
   });
 
@@ -86,7 +55,8 @@ export function mapOnBuyOrder(o: any): MappedOrder {
     orderId: o.order_id,
     header,
     items,
-    payload: { transactionRef: o.order_id, date: o.date, currency: o.currency_code ?? null, destinationCountryCode: o.delivery_address?.country_code ?? null, channelShipmentStatus, resolution },
+    // OnBuy is always merchant-fulfilled — FBA exists only on Amazon.
+    payload: { transactionRef: o.order_id, date: o.date, currency: o.currency_code ?? null, destinationCountryCode: o.delivery_address?.country_code ?? null, channelShipmentStatus, resolution, fulfilmentType: 'FBM' },
     raw: o,
   };
 }

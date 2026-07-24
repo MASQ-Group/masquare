@@ -44,8 +44,10 @@ module.exports = {
         info: { DEFAULT: 'var(--info)', bg: 'var(--info-bg)', bd: 'var(--info-bd)' },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+        // Track the configurable CSS variables so font-sans / font-mono utilities
+        // follow the platform font settings (see index.css + lib/fonts.ts).
+        sans: ['var(--font-sans)'],
+        mono: ['var(--font-mono)'],
       },
       fontSize: {
         eyebrow: ['11px', { lineHeight: '16px', letterSpacing: '0.09em', fontWeight: '600' }],

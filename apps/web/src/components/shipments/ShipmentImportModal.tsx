@@ -71,7 +71,7 @@ export function ShipmentImportModal({ onClose, onDone }: Props) {
       : { label: 'Done', onClick: onDone, disabled: false };
 
   return (
-    <ModalShell open title="Import shipments" subtitle={fileName || undefined} primaryLabel={primary.label} onPrimary={primary.onClick} primaryDisabled={primary.disabled} busy={busy} onClose={onClose}>
+    <ModalShell open title="Import Shipments" subtitle={fileName || undefined} primaryLabel={primary.label} onPrimary={primary.onClick} primaryDisabled={primary.disabled} busy={busy} onClose={onClose}>
       {step === 'setup' && (
         <div className="flex flex-col gap-5">
           <p className="text-[13px] text-n-500">
@@ -154,7 +154,7 @@ export function ShipmentImportModal({ onClose, onDone }: Props) {
           {summary.errors.length > 0 && (
             <div className="mt-2 w-full rounded-lg border border-danger-bd bg-danger-bg/40 p-3 text-left text-[12.5px] text-danger">
               <div className="mb-1 font-semibold">{summary.errors.length} row(s) failed:</div>
-              {summary.errors.slice(0, 8).map((e, i) => <div key={i} className="mono">{e.transactionRef}: {e.message}</div>)}
+              {summary.errors.slice(0, 8).map((e, i) => <div key={i} className="code">{e.transactionRef}: {e.message}</div>)}
             </div>
           )}
         </div>

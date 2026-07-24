@@ -17,10 +17,28 @@ export class AnalyticsController {
     @Query('compareFrom') compareFrom?: string,
     @Query('compareTo') compareTo?: string,
     @Query('companyId') companyId?: string,
+    @Query('channelId') channelId?: string,
+    @Query('countryId') countryId?: string,
+    @Query('fulfilment') fulfilment?: string,
     @Query('skuChannelId') skuChannelId?: string,
     @Query('skuCountryId') skuCountryId?: string,
   ) {
-    const query: AnalyticsQuery = { from, to, compareFrom, compareTo, companyId, skuChannelId, skuCountryId };
+    const query: AnalyticsQuery = { from, to, compareFrom, compareTo, companyId, channelId, countryId, fulfilment, skuChannelId, skuCountryId };
     return this.svc.report(query);
+  }
+
+  @Get('sku')
+  sku(
+    @Query('sku') sku: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('compareFrom') compareFrom?: string,
+    @Query('compareTo') compareTo?: string,
+    @Query('companyId') companyId?: string,
+    @Query('channelId') channelId?: string,
+    @Query('countryId') countryId?: string,
+    @Query('fulfilment') fulfilment?: string,
+  ) {
+    return this.svc.skuDetail({ sku, from, to, compareFrom, compareTo, companyId, channelId, countryId, fulfilment });
   }
 }
