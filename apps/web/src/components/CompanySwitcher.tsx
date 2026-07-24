@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { useConfirm } from './ConfirmProvider';
 import { initials } from '../lib/format';
 
 /** Company switcher pinned to the top of the sidebar (Design System §5). Lists the
  *  companies the signed-in user may access; selecting one sets the active scope. */
 export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) {
   const { user, activeCompany, setActiveCompany } = useAuth();
+  const confirm = useConfirm();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -20,6 +22,26 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
 
   const companies = user?.companies ?? [];
   const current = activeCompany ?? companies[0] ?? null;
+
+  // Switching company must be deliberate (avoid entering data against the wrong company)
+  // and must fully reload so no other company's data — or an in-progress entry — carries over.
+  const switchTo = async (id: string, name: string) => {
+    setOpen(false);
+    if (id === (current?.id ?? null)) return;
+    const ok = await confirm({
+      title: 'Switch active company?',
+      message: (
+        <>
+          You are switching to <strong>{name}</strong>. The page will reload, and everything you
+          view or register from now on will belong to this company.
+        </>
+      ),
+      confirmLabel: 'Switch company',
+    });
+    if (!ok) return;
+    setActiveCompany(id);
+    window.location.reload();
+  };
 
   return (
     <div ref={ref} className={collapsed ? 'relative mx-2 mb-1.5 mt-3.5' : 'relative mx-3 mb-1.5 mt-3.5'}>
@@ -55,10 +77,7 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
           {companies.map((c) => (
             <button
               key={c.id}
-              onClick={() => {
-                setActiveCompany(c.id);
-                setOpen(false);
-              }}
+              onClick={() => { void switchTo(c.id, c.officialName); }}
               className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-teal-50"
             >
               <div className="grid h-7 w-7 flex-shrink-0 place-items-center rounded-[7px] bg-teal-600 text-[11px] font-bold text-white">
