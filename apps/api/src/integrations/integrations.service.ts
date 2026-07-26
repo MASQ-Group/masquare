@@ -277,6 +277,85 @@ export class IntegrationsService {
     }
   }
 
+  /** Read-only Sell API scopes we request at consent and on refresh (must stay a matched set). */
+  private readonly ebayScopes = [
+    'https://api.ebay.com/oauth/api_scope',
+    'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
+    'https://api.ebay.com/oauth/api_scope/sell.inventory.readonly',
+    'https://api.ebay.com/oauth/api_scope/sell.account.readonly',
+    'https://api.ebay.com/oauth/api_scope/sell.finances',
+    'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
+  ];
+
+  /** Build the eBay OAuth consent URL for an integration (state = integration id). */
+  async ebayConsentUrl(integrationId: string): Promise<string> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'ebay' } });
+    if (!row) throw new NotFoundException('eBay integration not found');
+    const config = row.config as Record<string, string>;
+    if (!config.appId || !config.ruName) throw new BadRequestException('Set the eBay App ID and RuName on the integration first.');
+    const authHost = config.env === 'sandbox' ? 'https://auth.sandbox.ebay.com' : 'https://auth.ebay.com';
+    const q = new URLSearchParams({ client_id: config.appId, response_type: 'code', redirect_uri: config.ruName, scope: this.ebayScopes.join(' '), state: row.id });
+    return `${authHost}/oauth2/authorize?${q.toString()}`;
+  }
+
+  /** Resolve which eBay integration a callback targets: the state id if valid, else the
+   *  single configured eBay integration (so the flow works without threading the prod id). */
+  private async resolveEbayIntegration(stateId?: string) {
+    if (stateId) {
+      const byId = await this.prisma.channelIntegration.findFirst({ where: { id: stateId, deletedAt: null, channelType: 'ebay' } });
+      if (byId) return byId;
+    }
+    const all = await this.prisma.channelIntegration.findMany({ where: { deletedAt: null, channelType: 'ebay' } });
+    if (all.length === 0) throw new NotFoundException('No eBay integration is configured. Add one under Integrations first (App ID, Cert ID, RuName).');
+    if (all.length > 1) throw new BadRequestException('More than one eBay integration exists — cannot tell which to connect.');
+    return all[0];
+  }
+
+  /** Exchange an eBay OAuth authorization code for a long-lived refresh token; store it. */
+  async exchangeEbayOAuthCode(integrationId: string | undefined, code: string, actorId?: string) {
+    const row = await this.resolveEbayIntegration(integrationId);
+    const connector = this.requireConnector('ebay');
+    const config = row.config as Record<string, string>;
+    const secrets = await this.decryptedSecrets(row.id);
+    const { appId, ruName } = config;
+    const certId = secrets.certId;
+    if (!appId || !certId || !ruName) throw new BadRequestException('eBay integration is missing App ID, Cert ID or RuName — set them on the integration first.');
+    const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+    const res = await fetch(`${base}/identity/v1/oauth2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${Buffer.from(`${appId}:${certId}`).toString('base64')}` },
+      body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: ruName }).toString(),
+      signal: AbortSignal.timeout(15000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok || !json?.refresh_token) {
+      const detail = (json?.error_description || json?.error || `HTTP ${res.status}`).toString().slice(0, 200);
+      throw new BadRequestException(`eBay token exchange failed: ${detail}`);
+    }
+    await this.writeSecrets(row.id, connector, { refreshToken: json.refresh_token }, actorId, false);
+    await this.prisma.channelIntegration.update({ where: { id: row.id }, data: { lastTestStatus: 'ok', lastTestMessage: 'eBay account connected (OAuth).', lastTestedAt: new Date() } });
+    await this.audit(row.id, actorId, 'oauth.connect', 'ebay');
+    return { ok: true, integrationId: row.id, name: row.name, refreshTokenExpiresInDays: json.refresh_token_expires_in ? Math.round(Number(json.refresh_token_expires_in) / 86400) : null };
+  }
+
+  /** eBay OAuth: refresh-token grant → short-lived user access token for Sell API calls. */
+  private async ebayAccessToken(config: Record<string, string>, secrets: Record<string, string>): Promise<string> {
+    const appId = config.appId;
+    const certId = secrets.certId;
+    const refreshToken = secrets.refreshToken;
+    if (!appId || !certId || !refreshToken) throw new BadRequestException('eBay integration is missing App ID, Cert ID or Refresh Token.');
+    const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+    const res = await fetch(`${base}/identity/v1/oauth2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${Buffer.from(`${appId}:${certId}`).toString('base64')}` },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, scope: this.ebayScopes.join(' ') }).toString(),
+      signal: AbortSignal.timeout(10000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok || !json?.access_token) throw new BadRequestException(`eBay token refresh failed (${res.status}${json?.error ? `: ${json.error}` : ''}).`);
+    return json.access_token as string;
+  }
+
   private async testOnBuy(config: Record<string, string>, secrets: Record<string, string>, mode: 'live' | 'test'): Promise<{ ok: boolean; message: string }> {
     const consumerKey = secrets[mode === 'live' ? 'liveConsumerKey' : 'testConsumerKey'];
     const secretKey = secrets[mode === 'live' ? 'liveSecretKey' : 'testSecretKey'];
