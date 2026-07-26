@@ -8,6 +8,7 @@ import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFi
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
 import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 import { mapAmazonOrder } from './mappings/amazon-mapping';
+import { mapEbayOrder } from './mappings/ebay-mapping';
 import type { MappedOrder } from './mappings/types';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -374,16 +375,16 @@ export class IntegrationsService {
     return { ok: true, orders: json?.orders ?? [], total: Number(json?.total ?? (json?.orders?.length ?? 0)) };
   }
 
-  /** Read-only: fetch recent eBay orders (raw) for connection + mapping validation. */
-  private async fetchEbayOrders(row: any, limit: number): Promise<{ ok: boolean; status?: number; message?: string; total: number; orders: any[] }> {
+  /** Read-only: fetch + map recent eBay orders for connection + mapping validation. */
+  private async fetchEbayOrders(row: any, limit: number): Promise<{ ok: boolean; status?: number; message?: string; total: number; mapped: MappedOrder[] }> {
     const config = (row.config ?? {}) as Record<string, string>;
     const secrets = await this.decryptedSecrets(row.id);
     const token = await this.ebayAccessToken(config, secrets);
     const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
     const from = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString().replace(/\.\d+Z$/, '.000Z');
     const page = await this.ebayGetOrdersPage(base, token, { filter: `creationdate:[${from}..]`, limit });
-    if (!page.ok) return { ok: false, status: page.status, message: page.message, total: 0, orders: [] };
-    return { ok: true, total: page.total, orders: page.orders.slice(0, limit) };
+    if (!page.ok) return { ok: false, status: page.status, message: page.message, total: 0, mapped: [] };
+    return { ok: true, total: page.total, mapped: page.orders.slice(0, limit).map((o) => mapEbayOrder(o)) };
   }
 
   private async testOnBuy(config: Record<string, string>, secrets: Record<string, string>, mode: 'live' | 'test'): Promise<{ ok: boolean; message: string }> {
@@ -788,7 +789,7 @@ export class IntegrationsService {
     if (row.channelType === 'ebay') {
       const r = await this.fetchEbayOrders(row, limit);
       await this.audit(id, actorId, 'preview', `ebay status=${r.status ?? 200}`);
-      return r.ok ? { ok: true, mode: 'live', total: r.total, count: r.orders.length, orders: r.orders } : { ok: false, mode: 'live', status: r.status, message: r.message };
+      return r.ok ? { ok: true, mode: 'live', total: r.total, count: r.mapped.length, orders: r.mapped.map((m) => m.raw) } : { ok: false, mode: 'live', status: r.status, message: r.message };
     }
     if (row.channelType !== 'onbuy') throw new BadRequestException('Order preview supports OnBuy, Amazon and eBay only.');
     const r = await this.fetchOnBuyOrders(row, limit);
@@ -816,8 +817,13 @@ export class IntegrationsService {
       if (!r.ok) return { ok: false, mode: r.mode, status: r.status, message: r.message };
       mode = r.mode;
       mapped = r.orders.map((o) => mapOnBuyOrder(o));
+    } else if (row.channelType === 'ebay') {
+      const r = await this.fetchEbayOrders(row, limit);
+      await this.audit(id, actorId, 'mapping.preview', `ebay status=${r.status ?? 200}`);
+      if (!r.ok) return { ok: false, mode, status: r.status, message: r.message };
+      mapped = r.mapped;
     } else {
-      throw new BadRequestException('Mapping preview supports OnBuy and Amazon only.');
+      throw new BadRequestException('Mapping preview supports OnBuy, Amazon and eBay only.');
     }
 
     // Resolve destination country codes to names for the review.
@@ -925,7 +931,7 @@ export class IntegrationsService {
   async syncOrders(id: string, trigger: 'manual' | 'schedule', actorId?: string, range?: { from?: string; to?: string }) {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
     if (!row) throw new NotFoundException('Integration not found');
-    if (row.channelType !== 'onbuy' && row.channelType !== 'amazon') throw new BadRequestException('Order import supports OnBuy and Amazon only.');
+    if (!['onbuy', 'amazon', 'ebay'].includes(row.channelType)) throw new BadRequestException('Order import supports OnBuy, Amazon and eBay only.');
     if (row.status !== 'active') throw new BadRequestException('Integration is disabled.');
     if (!row.mappingVerifiedAt) throw new BadRequestException('Confirm the field mapping before importing.');
     if (!row.targetSalesChannelId || !row.targetCompanyId) throw new BadRequestException('Set the target sales channel and company in the integration settings first.');
@@ -977,6 +983,33 @@ export class IntegrationsService {
             // Skip fully cancelled/refunded orders (not net sales). Partial refunds/dispatches import.
             const st = String(order.status ?? '').toLowerCase();
             if (mapped.payload.resolution === 'cancelled' || (st.includes('refund') && !st.includes('partial'))) { counts.cancelled++; continue; }
+            if (await this.importMappedOrder(row, mapped, orderDate, sysUser, actorId, counts)) advance(orderDate);
+          }
+          if (page.orders.length < LIMIT) break;
+        }
+      } else if (row.channelType === 'ebay') {
+        // eBay Sell Fulfillment API. Orders carry line items, pricing AND the eBay fee, so one
+        // call per page suffices. Date-filtered by creation date; offset-paginated.
+        const config = (row.config ?? {}) as Record<string, string>;
+        const secrets = await this.decryptedSecrets(row.id);
+        const token = await this.ebayAccessToken(config, secrets);
+        const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+        const fmt = (d: Date) => d.toISOString().replace(/\.\d+Z$/, '.000Z');
+        const filter = upper ? `creationdate:[${fmt(cutoff)}..${fmt(upper)}]` : `creationdate:[${fmt(cutoff)}..]`;
+        const LIMIT = 200;
+        const MAX_PAGES = 50; // 10k orders/run cap; larger backfills should be date-chunked
+
+        for (let pageNo = 0; pageNo < MAX_PAGES; pageNo++) {
+          const page = await this.ebayGetOrdersPage(base, token, { filter, limit: LIMIT, offset: pageNo * LIMIT });
+          if (!page.ok) throw new Error(`eBay orders ${page.status}: ${page.message}`);
+          if (page.orders.length === 0) break;
+          for (const order of page.orders) {
+            counts.scanned++;
+            const orderDate = new Date(String(order.creationDate ?? ''));
+            if (isNaN(orderDate.getTime()) || orderDate < cutoff || (upper && orderDate > upper)) { counts.skipped++; continue; }
+            const mapped = mapEbayOrder(order);
+            // Fully cancelled orders are not net sales — skip (mirrors OnBuy).
+            if (mapped.payload.resolution === 'cancelled') { counts.cancelled++; continue; }
             if (await this.importMappedOrder(row, mapped, orderDate, sysUser, actorId, counts)) advance(orderDate);
           }
           if (page.orders.length < LIMIT) break;
@@ -1100,7 +1133,7 @@ export class IntegrationsService {
   @Cron('0 5 * * *')
   async scheduledSync() {
     const rows = await this.prisma.channelIntegration.findMany({
-      where: { deletedAt: null, status: 'active', autoSyncEnabled: true, mappingVerifiedAt: { not: null }, channelType: { in: ['onbuy', 'amazon'] } },
+      where: { deletedAt: null, status: 'active', autoSyncEnabled: true, mappingVerifiedAt: { not: null }, channelType: { in: ['onbuy', 'amazon', 'ebay'] } },
       select: { id: true, name: true },
     });
     for (const r of rows) {
