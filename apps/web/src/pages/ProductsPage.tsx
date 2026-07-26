@@ -51,12 +51,24 @@ export function ProductsPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const [view, setView] = useState<'list' | 'grid'>('list');
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const urlQ = searchParams.get('q') ?? '';
   const [qInput, setQInput] = useState(urlQ);
   const [q, setQ] = useState(urlQ);
   // Deep link from the global search: /products?q=… applies (and re-applies) the search.
   useEffect(() => { if (urlQ) { setQInput(urlQ); setQ(urlQ); setPage(1); } }, [urlQ]);
+  // Deep link from Channel Listings "Edit product": /products?edit=<id> opens that product's card.
+  const editId = searchParams.get('edit');
+  const openedEdit = useRef<string | null>(null);
+  useEffect(() => {
+    if (!editId) { openedEdit.current = null; return; }
+    if (openedEdit.current === editId) return;
+    openedEdit.current = editId;
+    productsApi.get(editId)
+      .then((p) => setEditing(p))
+      .catch(() => toast.error('Product not found'))
+      .finally(() => setSearchParams((sp) => { sp.delete('edit'); return sp; }, { replace: true }));
+  }, [editId, setSearchParams]);
   const [field, setField] = useState('');
   // Filters persist across reloads until the user clears them.
   const [filters, setFilters] = usePersistentState<Filters>('products.filters', EMPTY);

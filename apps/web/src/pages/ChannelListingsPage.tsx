@@ -59,12 +59,12 @@ function Block({ label, children }: { label: string; children: ReactNode }) {
  * Data order is always Inventory → Price → Profit → Status. Square corners; the 3px left
  * accent echoes listing status. Numbers are tabular (.mono) so columns align.
  */
-function ChannelCell({ cell }: { cell?: ChannelListingCell }) {
+function ChannelCell({ cell, solo }: { cell?: ChannelListingCell; solo?: boolean }) {
   const [open, setOpen] = useState<null | 'status' | 'profit'>(null);
 
   if (!cell) {
     return (
-      <div className="chc flex flex-col justify-center gap-1 px-3 py-3" style={{ borderLeft: '3px solid #EBEEEC' }}>
+      <div className="chc flex flex-col justify-center gap-1 border-l border-n-100 px-3 py-3">
         <span className="text-[12px] text-n-300">Not listed</span>
         <button title="List on this channel (coming with push sync)" className="w-fit text-left text-[11px] font-semibold text-teal-700 hover:text-teal-600">+ List</button>
       </div>
@@ -86,7 +86,7 @@ function ChannelCell({ cell }: { cell?: ChannelListingCell }) {
   });
 
   return (
-    <div className="chc" style={{ borderLeft: `3px solid ${tone.edge}`, background: tone.bg }}>
+    <div className="chc border-l border-n-100" style={{ background: tone.bg }}>
       {/* GRID MODE — ≥200px */}
       <div className="chc-grid">
         <Block label="Inventory">
@@ -99,7 +99,7 @@ function ChannelCell({ cell }: { cell?: ChannelListingCell }) {
           <span className="mono text-[16px] font-bold leading-none text-n-900">{money(cell.price, cell.currency)}</span>
         </Block>
         <Block label="Est. profit">
-          <div className="flex flex-wrap items-baseline gap-x-1 gap-y-0.5" style={{ color: profitColor }}>
+          <div className={solo ? 'flex items-baseline gap-1.5' : 'flex flex-col gap-0.5'} style={{ color: profitColor }}>
             <span className="mono text-[16px] font-bold leading-none">{eur(cell.profitEur)}</span>
             <span className="text-[11px] font-semibold leading-tight">{pct(cell.marginPct)}</span>
           </div>
@@ -163,10 +163,11 @@ export function ChannelListingsPage() {
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Sync failed'),
   });
 
-  // Channels shown as matrix columns: those with listings, minus toggled-off ones.
-  const activeChannels = useMemo(() => channels.filter((c) => c.listingCount > 0), [channels]);
+  // Channels shown as matrix columns: every connected channel, minus toggled-off ones.
+  const activeChannels = useMemo(() => channels, [channels]);
   const shownChannels = useMemo(() => activeChannels.filter((c) => !hidden.has(c.id)), [activeChannels, hidden]);
   const connectedCount = activeChannels.length;
+  const withListingsCount = useMemo(() => channels.filter((c) => c.listingCount > 0).length, [channels]);
   const lastSynced = useMemo(() => channels.map((c) => c.lastPulledAt).filter(Boolean).sort().slice(-1)[0] ?? null, [channels]);
 
   const rows = data?.items ?? [];
@@ -200,7 +201,7 @@ export function ChannelListingsPage() {
         <div className="flex items-center gap-2.5 pt-1">
           <div className="flex items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 py-1.5">
             <span className="inline-block h-2 w-2 rounded-full bg-teal-500 shadow-[0_0_0_3px_rgba(20,167,157,.13)]" />
-            <span className="text-[12.5px] font-semibold text-n-700">{connectedCount} channel{connectedCount === 1 ? '' : 's'} with listings</span>
+            <span className="text-[12.5px] font-semibold text-n-700">{connectedCount} channel{connectedCount === 1 ? '' : 's'} · {withListingsCount} with listings</span>
             <span className="text-[12px] text-n-400">· synced {ago(lastSynced)}</span>
           </div>
           <button onClick={() => sync.mutate()} disabled={sync.isPending}
@@ -297,7 +298,7 @@ export function ChannelListingsPage() {
                         </div>
                       </Link>
                       {shownChannels.map((c) => (
-                        <ChannelCell key={c.id} cell={r.cells[c.id]} />
+                        <ChannelCell key={c.id} cell={r.cells[c.id]} solo={shownChannels.length === 1} />
                       ))}
                     </div>
                   ))}

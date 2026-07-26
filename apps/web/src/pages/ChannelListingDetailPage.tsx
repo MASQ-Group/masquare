@@ -82,7 +82,7 @@ export function ChannelListingDetailPage() {
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <button onClick={() => { qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] }); toast.success('Refreshed'); }}
             className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:bg-n-50"><RefreshCw size={15} /> Refresh</button>
-          <Link to="/products" className="inline-flex h-[38px] items-center gap-2 rounded-md bg-teal-500 px-4 text-[13px] font-semibold text-white hover:bg-teal-600"><Edit3 size={15} /> Edit product</Link>
+          <Link to={`/products?edit=${productId}`} className="inline-flex h-[38px] items-center gap-2 rounded-md bg-teal-500 px-4 text-[13px] font-semibold text-white hover:bg-teal-600"><Edit3 size={15} /> Edit product</Link>
         </div>
       </div>
 
