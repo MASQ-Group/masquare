@@ -32,8 +32,8 @@ export class FbaShipmentsController {
   }
 
   @Post('import')
-  import(@Body() body: { rows?: Record<string, string>[] }, @CurrentUser() user: AuthUser) {
-    return this.fba.importShipments(body?.rows ?? [], user.sub);
+  import(@Body() body: { rows?: Record<string, string>[] }, @CurrentUser() user: AuthUser, @WriteCompany() companyId: string) {
+    return this.fba.importShipments(body?.rows ?? [], user.sub, companyId);
   }
 
   @Get()

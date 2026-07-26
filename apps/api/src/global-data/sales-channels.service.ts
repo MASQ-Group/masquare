@@ -11,23 +11,32 @@ const include = {
 export class SalesChannelsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  list(q?: string) {
+  // Sales channels are company-owned: a company only sees its own, never another's.
+  list(q?: string, companyIds?: string[]) {
     return this.prisma.salesChannel.findMany({
-      where: { deletedAt: null, ...(q ? { name: { contains: q, mode: 'insensitive' } } : {}) },
+      where: {
+        deletedAt: null,
+        ...(companyIds ? { companyId: { in: companyIds } } : {}),
+        ...(q ? { name: { contains: q, mode: 'insensitive' } } : {}),
+      },
       orderBy: { name: 'asc' },
       include,
     });
   }
 
-  async get(id: string) {
-    const row = await this.prisma.salesChannel.findFirst({ where: { id, deletedAt: null }, include });
+  async get(id: string, companyIds?: string[]) {
+    const row = await this.prisma.salesChannel.findFirst({
+      where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      include,
+    });
     if (!row) throw new NotFoundException('Sales channel not found');
     return row;
   }
 
-  create(dto: CreateSalesChannelDto, actorId?: string) {
+  create(dto: CreateSalesChannelDto, actorId?: string, companyId?: string) {
     return this.prisma.salesChannel.create({
       data: {
+        companyId: companyId ?? null,
         name: dto.name,
         description: dto.description,
         nativeCountryId: dto.nativeCountryId ?? null,
@@ -53,8 +62,8 @@ export class SalesChannelsService {
     });
   }
 
-  async update(id: string, dto: UpdateSalesChannelDto, actorId?: string) {
-    await this.get(id);
+  async update(id: string, dto: UpdateSalesChannelDto, actorId?: string, companyIds?: string[]) {
+    await this.get(id, companyIds);
     return this.prisma.salesChannel.update({
       where: { id },
       data: {
@@ -82,8 +91,8 @@ export class SalesChannelsService {
     });
   }
 
-  async remove(id: string) {
-    await this.get(id);
+  async remove(id: string, companyIds?: string[]) {
+    await this.get(id, companyIds);
     await this.prisma.salesChannel.update({ where: { id }, data: { deletedAt: new Date() } });
     return { ok: true };
   }

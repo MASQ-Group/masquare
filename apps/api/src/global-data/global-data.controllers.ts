@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuard
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 import { CountriesService } from './countries.service';
 import { ShippingServicesService } from './shipping-services.service';
 import { SalesChannelsService } from './sales-channels.service';
@@ -43,10 +44,10 @@ export class ShippingServicesController {
 @Controller('sales-channels')
 export class SalesChannelsController {
   constructor(private readonly svc: SalesChannelsService) {}
-  @Get() list(@Query('q') q?: string) { return this.svc.list(q); }
-  @Post() create(@Body() dto: CreateSalesChannelDto, @CurrentUser() u: AuthUser) { return this.svc.create(dto, u.sub); }
-  @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateSalesChannelDto, @CurrentUser() u: AuthUser) { return this.svc.update(id, dto, u.sub); }
-  @Delete(':id') remove(@Param('id') id: string) { return this.svc.remove(id); }
+  @Get() list(@VisibleCompanies() companyIds: string[], @Query('q') q?: string) { return this.svc.list(q, companyIds); }
+  @Post() create(@Body() dto: CreateSalesChannelDto, @CurrentUser() u: AuthUser, @WriteCompany() companyId: string) { return this.svc.create(dto, u.sub, companyId); }
+  @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateSalesChannelDto, @CurrentUser() u: AuthUser, @VisibleCompanies() companyIds: string[]) { return this.svc.update(id, dto, u.sub, companyIds); }
+  @Delete(':id') remove(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) { return this.svc.remove(id, companyIds); }
 }
 
 @ApiTags('global-data')

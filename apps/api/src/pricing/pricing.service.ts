@@ -193,9 +193,9 @@ export class PricingService {
     zones: { where: ACTIVE, include: { countries: true, rates: { where: ACTIVE } } },
   };
 
-  private async loadChannels(ids?: string[]) {
+  private async loadChannels(ids?: string[], companyIds?: string[]) {
     return this.prisma.salesChannel.findMany({
-      where: { ...ACTIVE, ...(ids?.length ? { id: { in: ids } } : {}) },
+      where: { ...ACTIVE, ...(ids?.length ? { id: { in: ids } } : {}), ...(companyIds ? { companyId: { in: companyIds } } : {}) },
       include: { nativeCountry: { select: { id: true, name: true, isoCode: true, vatRate: true } } },
       orderBy: { name: 'asc' },
     });
@@ -220,11 +220,11 @@ export class PricingService {
 
   // ---------------------------------------------------------------- individual
 
-  async individual(dto: IndividualPricingDto) {
+  async individual(dto: IndividualPricingDto, companyIds?: string[]) {
     const product = await this.prisma.product.findFirst({ where: { id: dto.productId, ...ACTIVE } });
     if (!product) throw new NotFoundException('Product not found');
 
-    const channels = await this.loadChannels();
+    const channels = await this.loadChannels(undefined, companyIds);
     const primary = channels.find((c) => c.id === dto.salesChannelId);
     if (!primary) throw new NotFoundException('Sales channel not found');
 
@@ -402,11 +402,11 @@ export class PricingService {
 
   // ---------------------------------------------------------------- bulk
 
-  async bulk(dto: BulkPricingDto) {
+  async bulk(dto: BulkPricingDto, companyIds?: string[]) {
     const products = await this.resolveBulkProducts(dto);
     if (!products.length) throw new BadRequestException('No products matched the selection');
 
-    const channels = await this.loadChannels(dto.salesChannelIds);
+    const channels = await this.loadChannels(dto.salesChannelIds, companyIds);
     if (!channels.length) throw new BadRequestException('Pick at least one sales channel');
 
     const rates = await this.fx.ratesFor(channels.map((c) => c.nativeCurrency));
@@ -505,8 +505,8 @@ export class PricingService {
    * country. Lets the wizard show what will be applied before anything is calculated,
    * and makes a per-channel override an edit of a visible value rather than a blind choice.
    */
-  async channelShippingDefaults(channelIds?: string[]) {
-    const channels = await this.loadChannels(channelIds);
+  async channelShippingDefaults(channelIds?: string[], companyIds?: string[]) {
+    const channels = await this.loadChannels(channelIds, companyIds);
     const countryIds = [...new Set(channels.map((c) => c.nativeCountryId).filter(Boolean) as string[])];
     const countries = countryIds.length
       ? await this.prisma.country.findMany({

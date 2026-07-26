@@ -56,6 +56,7 @@ model Company {
   channelListings   ChannelListing[]
   goodsReceipts     GoodsReceipt[]
   vendorReturns     VendorReturn[]
+  salesChannels     SalesChannel[]
 
   @@map("company")
 }
@@ -1340,6 +1341,9 @@ model CountryShippingZone {
 
 model SalesChannel {
   id              String  @id @default(uuid()) @db.Uuid
+  // Owning company. Sales channels are company-isolated: each company keeps its own
+  // set (two companies may each have their own "Amazon IT"). Never shared across companies.
+  companyId       String? @map("company_id") @db.Uuid
   name            String
   description     String?
   // 'online'  — a marketplace/webshop; orders arrive via an integration and the channel reports tax to us.
@@ -1378,10 +1382,12 @@ model SalesChannel {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
+  company           Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
   nativeCountry     Country?           @relation(fields: [nativeCountryId], references: [id], onDelete: SetNull)
   salesTransactions SalesTransaction[]
   fbaShipments      FbaShipment[]
 
+  @@index([companyId])
   @@map("sales_channel")
 }
 

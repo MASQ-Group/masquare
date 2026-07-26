@@ -26,7 +26,7 @@ const TAKE = 5;
 export class SearchService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async search(q: string, scope: SearchScope, user: AuthUser) {
+  async search(q: string, scope: SearchScope, user: AuthUser, companyIds?: string[]) {
     const term = q.trim();
     if (term.length < 2) return { groups: [] };
     const contains = { contains: term, mode: 'insensitive' as const };
@@ -63,7 +63,7 @@ export class SearchService {
         : [],
       want('sales-channels')
         ? this.prisma.salesChannel.findMany({
-            where: { deletedAt: null, name: contains },
+            where: { deletedAt: null, name: contains, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
             select: { id: true, name: true, nativeCurrency: true },
             take: TAKE,
           })

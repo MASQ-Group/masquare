@@ -623,8 +623,8 @@ export class FbaShipmentsService {
    *  `fbaShipmentId` form one shipment; within it, rows sharing a `box` form a box.
    *  Shipment/box-level fields are taken from the first row of each group. Imported as
    *  drafts; reuses create() so the estimate + per-SKU allocation run automatically. */
-  async importShipments(rows: Record<string, string>[], actorId?: string) {
-    const channels = await this.prisma.salesChannel.findMany({ where: { deletedAt: null }, select: { id: true, name: true } });
+  async importShipments(rows: Record<string, string>[], actorId?: string, companyId?: string) {
+    const channels = await this.prisma.salesChannel.findMany({ where: { deletedAt: null, ...(companyId ? { companyId } : {}) }, select: { id: true, name: true } });
     const chByName = new Map(channels.map((c) => [c.name.trim().toLowerCase(), c.id]));
     const services = await this.prisma.shippingService.findMany({ where: { deletedAt: null }, select: { id: true, name: true } });
     const svcByName = new Map(services.map((s) => [s.name.trim().toLowerCase(), s.id]));
@@ -679,7 +679,7 @@ export class FbaShipmentsService {
         const boxes = boxOrder.map((k) => boxMap.get(k)).filter((b) => b.items.length > 0);
         if (!boxes.length) throw new Error('No SKU lines');
 
-        await this.create({ date: date.toISOString(), salesChannelId, fbaShipmentRef: fbaId, shippingServiceId, packagingPct, boxes, status: 'draft' } as any, actorId);
+        await this.create({ date: date.toISOString(), salesChannelId, fbaShipmentRef: fbaId, shippingServiceId, packagingPct, boxes, status: 'draft' } as any, actorId, companyId);
         created++;
       } catch (e: any) {
         errors.push({ fbaRef: fbaId, message: (e?.message ?? String(e)).slice(0, 200) });
