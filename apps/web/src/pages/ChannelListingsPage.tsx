@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, ChevronDown, Edit3, ExternalLink, Grid2x2, LayoutGrid, Layers, Package, Pause, RefreshCw, Search, SlidersHorizontal, TrendingDown, TrendingUp } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Edit3, ExternalLink, Eye, Grid2x2, LayoutGrid, Layers, Package, Pause, RefreshCw, Search, SlidersHorizontal, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { Pagination, Select } from '@masquare/ui';
 import { channelListingsApi, type ChannelListingCell, type ChannelListingChannel } from '../lib/api';
@@ -60,8 +60,19 @@ function Block({ label, children }: { label: string; children: ReactNode }) {
  * Data order is always Inventory → Price → Profit → Status. Square corners; the 3px left
  * accent echoes listing status. Numbers are tabular (.mono) so columns align.
  */
-function ChannelCell({ cell, solo }: { cell?: ChannelListingCell; solo?: boolean }) {
+// The per-SKU metrics a cell can show; the "Values" filter toggles which are visible.
+type CellField = 'inventory' | 'price' | 'profit' | 'status';
+const CELL_FIELDS: { key: CellField; label: string }[] = [
+  { key: 'inventory', label: 'Inventory' },
+  { key: 'price', label: 'Price' },
+  { key: 'profit', label: 'Est. Profit' },
+  { key: 'status', label: 'Status' },
+];
+const ALL_FIELDS: CellField[] = CELL_FIELDS.map((f) => f.key);
+
+function ChannelCell({ cell, solo, fields }: { cell?: ChannelListingCell; solo?: boolean; fields: Set<CellField> }) {
   const [open, setOpen] = useState<null | 'status' | 'profit'>(null);
+  const show = (f: CellField) => fields.has(f);
 
   if (!cell) {
     return (
@@ -90,50 +101,66 @@ function ChannelCell({ cell, solo }: { cell?: ChannelListingCell; solo?: boolean
     <div className="chc border-l border-n-100" style={{ background: tone.bg }}>
       {/* GRID MODE — ≥200px */}
       <div className="chc-grid">
-        <Block label="Inventory">
-          <div className="flex items-baseline gap-1">
-            <span className="mono text-[18px] font-bold leading-none text-n-900">{qty}</span>
-            <span className="text-[11px] text-n-400">units</span>
-          </div>
-        </Block>
-        <Block label="Price">
-          <span className="mono text-[16px] font-bold leading-none text-n-900">{money(cell.price, cell.currency)}</span>
-        </Block>
-        <Block label="Est. profit">
-          <div className={solo ? 'flex items-baseline gap-1.5' : 'flex flex-col gap-0.5'} style={{ color: profitColor }}>
-            <span className="mono text-[16px] font-bold leading-none">{eur(cell.profitEur)}</span>
-            <span className="text-[11px] font-semibold leading-tight">{pct(cell.marginPct)}</span>
-          </div>
-        </Block>
-        <Block label="Status">
-          <span className="inline-flex items-center gap-1.5 text-[12px] font-bold" style={{ color: st.color }}>
-            <span className="inline-block h-[7px] w-[7px] rounded-full" style={{ background: st.dot }} />{st.label}
-          </span>
-        </Block>
+        {show('inventory') && (
+          <Block label="Inventory">
+            <div className="flex items-baseline gap-1">
+              <span className="mono text-[18px] font-bold leading-none text-n-900">{qty}</span>
+              <span className="text-[11px] text-n-400">units</span>
+            </div>
+          </Block>
+        )}
+        {show('price') && (
+          <Block label="Price">
+            <span className="mono text-[16px] font-bold leading-none text-n-900">{money(cell.price, cell.currency)}</span>
+          </Block>
+        )}
+        {show('profit') && (
+          <Block label="Est. profit">
+            <div className={solo ? 'flex items-baseline gap-1.5' : 'flex flex-col gap-0.5'} style={{ color: profitColor }}>
+              <span className="mono text-[16px] font-bold leading-none">{eur(cell.profitEur)}</span>
+              <span className="text-[11px] font-semibold leading-tight">{pct(cell.marginPct)}</span>
+            </div>
+          </Block>
+        )}
+        {show('status') && (
+          <Block label="Status">
+            <span className="inline-flex items-center gap-1.5 text-[12px] font-bold" style={{ color: st.color }}>
+              <span className="inline-block h-[7px] w-[7px] rounded-full" style={{ background: st.dot }} />{st.label}
+            </span>
+          </Block>
+        )}
       </div>
 
       {/* COMPACT MODE — <200px */}
       <div className="chc-compact relative px-3 py-[11px]">
-        <div className="flex items-center justify-between gap-1.5">
-          <div className="flex items-baseline gap-0.5">
-            <span className="mono text-[18px] font-bold leading-none text-n-900">{qty}</span>
-            <span className="text-[10px] text-n-400">u</span>
+        {(show('inventory') || show('status')) && (
+          <div className="flex items-center justify-between gap-1.5">
+            {show('inventory') ? (
+              <div className="flex items-baseline gap-0.5">
+                <span className="mono text-[18px] font-bold leading-none text-n-900">{qty}</span>
+                <span className="text-[10px] text-n-400">u</span>
+              </div>
+            ) : <span />}
+            {show('status') && (
+              <span className="relative cursor-default p-0.5 outline-none" aria-label={`Status: ${st.label}`} {...discl('status')}>
+                <span className="inline-block h-[9px] w-[9px] rounded-full" style={{ background: st.dot }} />
+                {open === 'status' && (
+                  <span className="absolute right-[-4px] top-5 z-20 whitespace-nowrap rounded-md border px-2 py-1 text-[11px] font-bold shadow-lg" style={{ color: st.color, background: st.bg, borderColor: `${st.color}22` }}>{st.label}</span>
+                )}
+              </span>
+            )}
           </div>
-          <span className="relative cursor-default p-0.5 outline-none" aria-label={`Status: ${st.label}`} {...discl('status')}>
-            <span className="inline-block h-[9px] w-[9px] rounded-full" style={{ background: st.dot }} />
-            {open === 'status' && (
-              <span className="absolute right-[-4px] top-5 z-20 whitespace-nowrap rounded-md border px-2 py-1 text-[11px] font-bold shadow-lg" style={{ color: st.color, background: st.bg, borderColor: `${st.color}22` }}>{st.label}</span>
+        )}
+        {show('price') && <div className="mono mt-[7px] whitespace-nowrap text-[15px] font-bold text-n-900">{money(cell.price, cell.currency)}</div>}
+        {show('profit') && (
+          <span className="relative mt-2 inline-flex cursor-default items-center gap-1 rounded-full border py-0.5 pl-[5px] pr-[7px] outline-none" style={{ background: cell.loss ? '#FDF1EE' : '#F3FAF9', borderColor: cell.loss ? '#F0B3A2' : '#E1F0EE' }} aria-label={`Estimated profit ${eur(cell.profitEur)}, ${pct(cell.marginPct)} margin`} {...discl('profit')}>
+            {cell.loss ? <TrendingDown size={13} style={{ color: profitColor }} /> : <TrendingUp size={13} style={{ color: profitColor }} />}
+            <span className="mono text-[11px] font-bold" style={{ color: profitColor }}>{pct(cell.marginPct)}</span>
+            {open === 'profit' && (
+              <span className="absolute left-0 top-[26px] z-20 whitespace-nowrap rounded-md border px-2 py-1 text-[11px] font-bold shadow-lg" style={{ color: profitColor, background: cell.loss ? '#FBE7E1' : '#E1F3F1', borderColor: `${profitColor}22` }}>Est. profit {eur(cell.profitEur)} · {pct(cell.marginPct)}</span>
             )}
           </span>
-        </div>
-        <div className="mono mt-[7px] whitespace-nowrap text-[15px] font-bold text-n-900">{money(cell.price, cell.currency)}</div>
-        <span className="relative mt-2 inline-flex cursor-default items-center gap-1 rounded-full border py-0.5 pl-[5px] pr-[7px] outline-none" style={{ background: cell.loss ? '#FDF1EE' : '#F3FAF9', borderColor: cell.loss ? '#F0B3A2' : '#E1F0EE' }} aria-label={`Estimated profit ${eur(cell.profitEur)}, ${pct(cell.marginPct)} margin`} {...discl('profit')}>
-          {cell.loss ? <TrendingDown size={13} style={{ color: profitColor }} /> : <TrendingUp size={13} style={{ color: profitColor }} />}
-          <span className="mono text-[11px] font-bold" style={{ color: profitColor }}>{pct(cell.marginPct)}</span>
-          {open === 'profit' && (
-            <span className="absolute left-0 top-[26px] z-20 whitespace-nowrap rounded-md border px-2 py-1 text-[11px] font-bold shadow-lg" style={{ color: profitColor, background: cell.loss ? '#FBE7E1' : '#E1F3F1', borderColor: `${profitColor}22` }}>Est. profit {eur(cell.profitEur)} · {pct(cell.marginPct)}</span>
-          )}
-        </span>
+        )}
       </div>
     </div>
   );
@@ -306,6 +333,12 @@ export function ChannelListingsPage() {
   });
   const shownCount = shownChannels.length;
 
+  // Which per-SKU values render in each cell (Inventory / Price / Est. Profit / Status).
+  const [fieldsArr, setFieldsArr] = usePersistentState<CellField[]>('channelListings.cellFields', ALL_FIELDS);
+  const cellFields = useMemo(() => new Set(fieldsArr), [fieldsArr]);
+  // Keep at least one value on — an all-off cell would be blank and confusing.
+  const toggleField = (f: CellField) => setFieldsArr((a) => (a.includes(f) ? (a.length > 1 ? a.filter((x) => x !== f) : a) : [...a, f]));
+
   const rows = data?.items ?? [];
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -420,6 +453,17 @@ export function ChannelListingsPage() {
               </FilterMenu>
             )}
 
+            {/* Values filter — which metrics show in each SKU cell */}
+            <FilterMenu icon={<Eye size={15} />} label="Values" width={220}
+              summary={`${cellFields.size}/${CELL_FIELDS.length}`} active={cellFields.size < CELL_FIELDS.length}>
+              <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-n-400">Values shown per SKU</div>
+              {CELL_FIELDS.map((f) => (
+                <CheckRow key={f.key} checked={cellFields.has(f.key)} onClick={() => toggleField(f.key)}>
+                  <span className="flex-1 text-[13px] font-medium text-n-800">{f.label}</span>
+                </CheckRow>
+              ))}
+            </FilterMenu>
+
             <Select className="w-44" value={statusFilter} onChange={setStatusFilter} options={[
               { value: 'all', label: 'All statuses' }, { value: 'loss', label: 'Loss-making only' }, { value: 'issues', label: 'Issues only' },
               { value: 'oos', label: 'Out of stock' }, { value: 'low', label: 'Low stock' }, { value: 'error', label: 'Errors' }, { value: 'paused', label: 'Paused' },
@@ -462,7 +506,7 @@ export function ChannelListingsPage() {
                           <Flag code={c.countryIso} />
                           <span className="text-[12.5px] font-bold text-n-900">{c.name}</span>
                         </div>
-                        <span className="text-[11px] text-n-400">Inventory · Price {c.currency ?? ''} · Profit · Status</span>
+                        <span className="text-[11px] text-n-400">{ALL_FIELDS.filter((f) => cellFields.has(f)).map((f) => (f === 'price' ? `Price ${c.currency ?? ''}`.trim() : f === 'profit' ? 'Profit' : f === 'inventory' ? 'Inventory' : 'Status')).join(' · ')}</span>
                       </div>
                     ))}
                   </div>
@@ -476,7 +520,7 @@ export function ChannelListingsPage() {
                         </div>
                       </Link>
                       {shownChannels.map((c) => (
-                        <ChannelCell key={c.id} cell={r.cells[c.id]} solo={shownChannels.length === 1} />
+                        <ChannelCell key={c.id} cell={r.cells[c.id]} solo={shownChannels.length === 1} fields={cellFields} />
                       ))}
                     </div>
                   ))}
@@ -511,17 +555,19 @@ export function ChannelListingsPage() {
                           <div className="flex items-center gap-2">
                             <Flag code={c.countryIso} />
                             <span className="flex-1 text-[12.5px] font-bold text-n-900">{c.name}</span>
-                            {cell && st && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold" style={{ color: st.color, background: st.bg }}>{st.label}</span>}
+                            {cell && st && cellFields.has('status') && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold" style={{ color: st.color, background: st.bg }}>{st.label}</span>}
                           </div>
                           {cell ? (
                             <>
                               {/* Quantity leads; price is the supporting figure. */}
-                              <div className="mt-2 flex items-baseline gap-2">
-                                <span className="mono text-[24px] font-bold leading-none text-n-900">{cell.quantity ?? '—'}</span>
-                                <span className="text-[10.5px] font-semibold uppercase tracking-wide text-n-400">in stock</span>
-                              </div>
-                              <div className="mono mt-1 text-[13px] text-n-600">{money(cell.price, cell.currency)}</div>
-                              {cell.profitEur != null && (
+                              {cellFields.has('inventory') && (
+                                <div className="mt-2 flex items-baseline gap-2">
+                                  <span className="mono text-[24px] font-bold leading-none text-n-900">{cell.quantity ?? '—'}</span>
+                                  <span className="text-[10.5px] font-semibold uppercase tracking-wide text-n-400">in stock</span>
+                                </div>
+                              )}
+                              {cellFields.has('price') && <div className="mono mt-1 text-[13px] text-n-600">{money(cell.price, cell.currency)}</div>}
+                              {cell.profitEur != null && cellFields.has('profit') && (
                                 <div className={`mt-2 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11.5px] font-bold ${cell.loss ? 'bg-[#FBE7E1] text-[#C63B1B]' : 'bg-[#E1F3F1] text-[#0E7A73]'}`}>
                                   {cell.loss && <AlertTriangle size={12} />}
                                   <span>{cell.loss ? 'Loss' : 'Profit'}</span>
