@@ -151,7 +151,7 @@ export class ChannelListingsService {
   /** Dashboard rows: products that are listed somewhere, each with its per-channel cells. */
   async dashboard(query: ListingsQuery) {
     const page = Math.max(1, Number(query.page) || 1);
-    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 25));
+    const pageSize = Math.min(500, Math.max(1, Number(query.pageSize) || 25));
     const q = query.q?.trim();
     // Company isolation: only listings owned by a company the user may see.
     const listingScope: Prisma.ChannelListingWhereInput = {

@@ -267,10 +267,10 @@ export function ChannelListingsPage() {
   // Per-channel column visibility persists across reloads; empty = all channels shown.
   const [hiddenArr, setHiddenArr] = usePersistentState<string[]>('channelListings.hiddenChannels', []);
   const hidden = useMemo(() => new Set(hiddenArr), [hiddenArr]);
-  const pageSize = 25;
+  const [pageSize, setPageSize] = usePersistentState<number>('channelListings.pageSize', 25);
 
   const { data: channels = [] } = useQuery({ queryKey: ['channel-listings-channels'], queryFn: () => channelListingsApi.channels() });
-  const { data, isLoading } = useQuery({ queryKey: ['channel-listings', { q, page }], queryFn: () => channelListingsApi.dashboard({ q: q || undefined, page, pageSize }) });
+  const { data, isLoading } = useQuery({ queryKey: ['channel-listings', { q, page, pageSize }], queryFn: () => channelListingsApi.dashboard({ q: q || undefined, page, pageSize }) });
 
   const sync = useMutation({
     mutationFn: (integrationIds?: string[]) => channelListingsApi.sync(integrationIds),
@@ -550,11 +550,14 @@ export function ChannelListingsPage() {
             </div>
           )}
 
-          {!isLoading && pageCount > 1 && (
-            <div className="mt-4 flex items-center justify-between">
-              <div className="text-[13px] text-n-500">{visibleRows.length} of {total.toLocaleString()} SKUs shown</div>
-              <Pagination page={page} pageCount={pageCount} onPageChange={setPage} />
-            </div>
+          {!isLoading && total > 0 && (
+            <Pagination
+              page={page}
+              pageCount={pageCount}
+              onPageChange={setPage}
+              pageSize={pageSize}
+              onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
+            />
           )}
         </>
       )}
