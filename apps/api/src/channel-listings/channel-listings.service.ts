@@ -107,7 +107,7 @@ export class ChannelListingsService {
       ...(selective ? { id: { in: integrationIds } } : { channelType: 'amazon' }),
       ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
     };
-    const ints = await this.prisma.channelIntegration.findMany({ where, select: { id: true, name: true, channelType: true } });
+    const ints = await this.prisma.channelIntegration.findMany({ where, select: { id: true, name: true, channelType: true, targetCompanyId: true } });
     const skuMap = await this.buildSkuMap();
     const now = new Date();
     const results: Array<{ integrationId: string; name: string; ok: boolean; pulled?: number; message?: string }> = [];
@@ -122,8 +122,8 @@ export class ChannelListingsService {
           const productId = skuMap.get((l.sku ?? '').trim().toLowerCase()) ?? null;
           await this.prisma.channelListing.upsert({
             where: { integrationId_channelSku: { integrationId: intg.id, channelSku: l.sku } },
-            create: { integrationId: intg.id, channelSku: l.sku, productId, asin: l.asin, title: l.title, listedQuantity: l.quantity, listedPrice: l.price, currency: l.currency, fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now },
-            update: { productId, asin: l.asin, title: l.title, listedQuantity: l.quantity, listedPrice: l.price, currency: l.currency, fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now },
+            create: { integrationId: intg.id, companyId: intg.targetCompanyId, channelSku: l.sku, productId, asin: l.asin, title: l.title, listedQuantity: l.quantity, listedPrice: l.price, currency: l.currency, fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now },
+            update: { companyId: intg.targetCompanyId, productId, asin: l.asin, title: l.title, listedQuantity: l.quantity, listedPrice: l.price, currency: l.currency, fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now },
           });
         }
         results.push({ integrationId: intg.id, name: intg.name, ok: true, pulled: listings.length });
