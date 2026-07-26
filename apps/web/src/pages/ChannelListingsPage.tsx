@@ -277,7 +277,8 @@ export function ChannelListingsPage() {
     onSuccess: (r) => {
       const ok = r.channels.filter((c) => c.ok);
       const fail = r.channels.filter((c) => !c.ok);
-      toast.success(`Synced ${r.total} listings across ${ok.length} channel${ok.length === 1 ? '' : 's'}${fail.length ? ` · ${fail.length} failed` : ''}`);
+      const failNote = fail.length ? ` · ${fail.length} skipped${fail[0].message ? ` (${fail[0].message})` : ''}` : '';
+      toast.success(`Synced ${r.total} listings across ${ok.length} channel${ok.length === 1 ? '' : 's'}${failNote}`);
       qc.invalidateQueries({ queryKey: ['channel-listings'] });
       qc.invalidateQueries({ queryKey: ['channel-listings-channels'] });
     },

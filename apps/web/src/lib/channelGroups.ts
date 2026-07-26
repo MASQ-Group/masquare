@@ -57,16 +57,27 @@ export function channelPlatform(name: string): ChannelPlatform {
 const ORDER: string[] = [];
 CHANNEL_GROUPS.forEach((g) => g.isos.forEach((iso) => ORDER.push(`${g.platform}:${iso}`)));
 
+// When a platform has exactly one group (e.g. OnBuy = UK only), any channel of that
+// platform belongs to it even if its country is missing/unrecognised.
+function soleGroupForPlatform(platform: ChannelPlatform): ChannelGroup | undefined {
+  const gs = CHANNEL_GROUPS.filter((g) => g.platform === platform);
+  return gs.length === 1 ? gs[0] : undefined;
+}
+
 export function channelGroupOf(ch: ChannelLike): ChannelGroup | undefined {
   const platform = channelPlatform(ch.name);
   const iso = (ch.countryIso ?? '').toUpperCase();
-  return CHANNEL_GROUPS.find((g) => g.platform === platform && g.isos.includes(iso));
+  return CHANNEL_GROUPS.find((g) => g.platform === platform && g.isos.includes(iso)) ?? soleGroupForPlatform(platform);
 }
 
 export function channelSortIndex(ch: ChannelLike): number {
   const platform = channelPlatform(ch.name);
   const iso = (ch.countryIso ?? '').toUpperCase();
-  const i = ORDER.indexOf(`${platform}:${iso}`);
+  let i = ORDER.indexOf(`${platform}:${iso}`);
+  if (i === -1) {
+    const sole = soleGroupForPlatform(platform);
+    if (sole) i = ORDER.indexOf(`${sole.platform}:${sole.isos[0]}`);
+  }
   // Unknown channels sort after all known ones, alphabetically by name via the caller.
   return i === -1 ? Number.MAX_SAFE_INTEGER : i;
 }
