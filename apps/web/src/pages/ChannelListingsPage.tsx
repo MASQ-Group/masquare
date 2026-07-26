@@ -510,10 +510,10 @@ export function ChannelListingsPage() {
           {/* MATRIX */}
           {!isLoading && total > 0 && view === 'matrix' && (
             <div className="card overflow-hidden">
-              <div className="overflow-x-auto">
+              <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 300px)' }}>
                 <div style={{ minWidth: 600 }}>
-                  <div className="grid items-stretch border-b border-n-100 bg-n-25" style={{ gridTemplateColumns: gridCols }}>
-                    <div className="flex items-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-n-500">Product</div>
+                  <div className="sticky top-0 z-20 grid items-stretch border-b border-n-100 bg-n-25" style={{ gridTemplateColumns: gridCols }}>
+                    <div className="sticky left-0 z-30 flex items-center bg-n-25 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-n-500">Product</div>
                     {shownChannels.map((c) => (
                       <div key={c.id} className="flex flex-col gap-0.5 border-l border-n-100 px-4 py-3">
                         <div className="flex items-center gap-2">
@@ -525,8 +525,8 @@ export function ChannelListingsPage() {
                     ))}
                   </div>
                   {visibleRows.map((r) => (
-                    <div key={r.productId} className="grid items-stretch border-b border-n-50 hover:bg-n-25/60" style={{ gridTemplateColumns: gridCols }}>
-                      <Link to={`/channel-listings/${r.productId}`} className="flex items-center gap-3 px-4 py-3 text-inherit">
+                    <div key={r.productId} className="grid items-stretch border-b border-n-50" style={{ gridTemplateColumns: gridCols }}>
+                      <Link to={`/channel-listings/${r.productId}`} className="sticky left-0 z-10 flex items-center gap-3 border-r border-n-100 bg-n-0 px-4 py-3 text-inherit hover:bg-n-25">
                         <div className="grid h-9 w-9 flex-none place-items-center rounded-lg border border-n-100 bg-n-50 text-n-300"><Package size={18} /></div>
                         <div className="min-w-0">
                           <div className="truncate text-[13.5px] font-semibold text-n-900" title={r.title}>{r.title}</div>
