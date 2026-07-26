@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { IntegrationsService } from './integrations.service';
 import { IntegrationsController } from './integrations.controller';
+import { EbayNotificationsController } from './ebay-notifications.controller';
 import { SalesTransactionsModule } from '../sales-transactions/sales-transactions.module';
 
 @Module({
   imports: [SalesTransactionsModule],
-  controllers: [IntegrationsController],
+  controllers: [IntegrationsController, EbayNotificationsController],
   providers: [IntegrationsService],
   exports: [IntegrationsService],
 })
