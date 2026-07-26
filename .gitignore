@@ -34,4 +34,6 @@ coverage/
 
 # Database dumps (never commit — contains real data)
 *.dump
-*.sql
+# NB: do NOT ignore *.sql broadly — Prisma migration files are .sql and MUST be committed.
+# Ignore only ad-hoc dump SQL at the repo root.
+/*.sql
