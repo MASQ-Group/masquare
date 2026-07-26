@@ -8,7 +8,7 @@ import { channelListingsApi, type ChannelListingCell, type ChannelListingChannel
 import { formatAmount } from '../lib/format';
 import { Flag } from '../components/common/Flag';
 import { usePersistentState } from '../lib/usePersistentState';
-import { CHANNEL_GROUPS, channelGroupOf, sortChannelsCanonical } from '../lib/channelGroups';
+import { CHANNEL_GROUPS, channelGroupOf, sortChannelsCanonical, type ChannelGroup } from '../lib/channelGroups';
 
 // Design status palette.
 const STATUS: Record<string, { label: string; color: string; dot: string; bg: string }> = {
@@ -185,6 +185,78 @@ function CheckRow({
   );
 }
 
+// The caret half of the "Sync now" split button — pick specific channels or whole
+// groups to sync, instead of syncing every connected channel.
+function SyncMenu({
+  groups, channelsInGroup, onSync, busy,
+}: {
+  groups: ChannelGroup[];
+  channelsInGroup: (key: string) => ChannelListingChannel[];
+  onSync: (ids: string[]) => void;
+  busy: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  const toggle = (id: string) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const setMany = (ids: string[], on: boolean) => setSel((s) => { const n = new Set(s); ids.forEach((id) => (on ? n.add(id) : n.delete(id))); return n; });
+  const count = sel.size;
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen((o) => !o)} disabled={busy} aria-label="Choose channels to sync"
+        className="inline-flex h-10 items-center rounded-r-md border-l border-teal-600/40 bg-teal-500 px-2 text-white hover:bg-teal-600 disabled:opacity-60">
+        <ChevronDown size={16} />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-40 mt-1.5 w-[330px] rounded-xl border border-n-200 bg-n-0 shadow-lg">
+          <div className="flex items-center justify-between border-b border-n-100 px-3 py-2.5">
+            <span className="text-[12.5px] font-semibold text-n-800">Sync specific channels</span>
+            {count > 0 && <button onClick={() => setSel(new Set())} className="text-[11.5px] font-semibold text-n-500 hover:text-n-700">Clear</button>}
+          </div>
+          <div className="max-h-[52vh] overflow-y-auto p-1.5">
+            {groups.map((g) => {
+              const chans = channelsInGroup(g.key);
+              const ids = chans.map((c) => c.id);
+              const on = ids.filter((id) => sel.has(id)).length;
+              return (
+                <div key={g.key} className="mt-1.5 first:mt-0">
+                  <CheckRow checked={on === ids.length} indeterminate={on > 0 && on < ids.length} onClick={() => setMany(ids, on < ids.length)}>
+                    <span className="flex-1 text-[11px] font-semibold uppercase tracking-wide text-n-500">{g.label}</span>
+                    <span className="text-[11px] text-n-400">{ids.length}</span>
+                  </CheckRow>
+                  {chans.map((c) => (
+                    <div key={c.id} className="pl-4">
+                      <CheckRow checked={sel.has(c.id)} onClick={() => toggle(c.id)}>
+                        <Flag code={c.countryIso} />
+                        <span className="flex-1 truncate text-[13px] font-medium text-n-800">{c.name}</span>
+                        <span className="text-[11px] text-n-400">{c.currency ?? ''}</span>
+                      </CheckRow>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+          <div className="border-t border-n-100 p-2">
+            <button disabled={!count || busy} onClick={() => { onSync([...sel]); setOpen(false); }}
+              className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-teal-500 text-[13px] font-semibold text-white hover:bg-teal-600 disabled:opacity-50">
+              <RefreshCw size={15} className={busy ? 'animate-spin' : ''} /> Sync selected{count ? ` (${count})` : ''}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ChannelListingsPage() {
   const qc = useQueryClient();
   const [tab, setTab] = usePersistentState<'listings' | 'analytics'>('channelListings.tab', 'listings');
@@ -201,7 +273,7 @@ export function ChannelListingsPage() {
   const { data, isLoading } = useQuery({ queryKey: ['channel-listings', { q, page }], queryFn: () => channelListingsApi.dashboard({ q: q || undefined, page, pageSize }) });
 
   const sync = useMutation({
-    mutationFn: () => channelListingsApi.sync(),
+    mutationFn: (integrationIds?: string[]) => channelListingsApi.sync(integrationIds),
     onSuccess: (r) => {
       const ok = r.channels.filter((c) => c.ok);
       const fail = r.channels.filter((c) => !c.ok);
@@ -267,10 +339,13 @@ export function ChannelListingsPage() {
             <span className="text-[12.5px] font-semibold text-n-700">{connectedCount} channel{connectedCount === 1 ? '' : 's'} · {withListingsCount} with listings</span>
             <span className="text-[12px] text-n-400">· synced {ago(lastSynced)}</span>
           </div>
-          <button onClick={() => sync.mutate()} disabled={sync.isPending}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-teal-500 px-4 text-[13.5px] font-semibold text-white hover:bg-teal-600 disabled:opacity-60">
-            <RefreshCw size={16} className={sync.isPending ? 'animate-spin' : ''} /> {sync.isPending ? 'Syncing…' : 'Sync now'}
-          </button>
+          <div className="flex">
+            <button onClick={() => sync.mutate(undefined)} disabled={sync.isPending}
+              className="inline-flex h-10 items-center gap-2 rounded-l-md bg-teal-500 px-4 text-[13.5px] font-semibold text-white hover:bg-teal-600 disabled:opacity-60">
+              <RefreshCw size={16} className={sync.isPending ? 'animate-spin' : ''} /> {sync.isPending ? 'Syncing…' : 'Sync all'}
+            </button>
+            <SyncMenu groups={presentGroups} channelsInGroup={channelsInGroup} busy={sync.isPending} onSync={(ids) => sync.mutate(ids)} />
+          </div>
         </div>
       </div>
 
