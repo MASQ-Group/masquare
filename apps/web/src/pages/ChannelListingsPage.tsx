@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, ChevronDown, Edit3, ExternalLink, Eye, Grid2x2, LayoutGrid, Layers, Package, Pause, RefreshCw, Search, SlidersHorizontal, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { Pagination, Select } from '@masquare/ui';
-import { channelListingsApi, type ChannelListingCell, type ChannelListingChannel } from '../lib/api';
+import { brandsApi, channelListingsApi, productTypesApi, vendorsApi, type ChannelListingCell, type ChannelListingChannel } from '../lib/api';
 import { formatAmount } from '../lib/format';
 import { Flag } from '../components/common/Flag';
 import { usePersistentState } from '../lib/usePersistentState';
@@ -291,13 +291,20 @@ export function ChannelListingsPage() {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
+  // Product filters (persist across reloads); '' = all.
+  const [brandId, setBrandId] = usePersistentState('channelListings.brandId', '');
+  const [vendorId, setVendorId] = usePersistentState('channelListings.vendorId', '');
+  const [productTypeId, setProductTypeId] = usePersistentState('channelListings.productTypeId', '');
   // Per-channel column visibility persists across reloads; empty = all channels shown.
   const [hiddenArr, setHiddenArr] = usePersistentState<string[]>('channelListings.hiddenChannels', []);
   const hidden = useMemo(() => new Set(hiddenArr), [hiddenArr]);
   const [pageSize, setPageSize] = usePersistentState<number>('channelListings.pageSize', 25);
 
   const { data: channels = [] } = useQuery({ queryKey: ['channel-listings-channels'], queryFn: () => channelListingsApi.channels() });
-  const { data, isLoading } = useQuery({ queryKey: ['channel-listings', { q, page, pageSize }], queryFn: () => channelListingsApi.dashboard({ q: q || undefined, page, pageSize }) });
+  const { data: brands = [] } = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
+  const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
+  const { data: productTypes = [] } = useQuery({ queryKey: ['product-types'], queryFn: () => productTypesApi.list() });
+  const { data, isLoading } = useQuery({ queryKey: ['channel-listings', { q, page, pageSize, brandId, vendorId, productTypeId }], queryFn: () => channelListingsApi.dashboard({ q: q || undefined, brandId: brandId || undefined, vendorId: vendorId || undefined, productTypeId: productTypeId || undefined, page, pageSize }) });
 
   const sync = useMutation({
     mutationFn: (integrationIds?: string[]) => channelListingsApi.sync(integrationIds),
@@ -463,6 +470,13 @@ export function ChannelListingsPage() {
                 </CheckRow>
               ))}
             </FilterMenu>
+
+            <Select className="w-40" value={brandId} onChange={(v) => { setBrandId(v); setPage(1); }} placeholder="All brands"
+              options={[{ value: '', label: 'All brands' }, ...brands.map((b) => ({ value: b.id, label: b.name }))]} />
+            <Select className="w-40" value={vendorId} onChange={(v) => { setVendorId(v); setPage(1); }} placeholder="All vendors"
+              options={[{ value: '', label: 'All vendors' }, ...vendors.map((v) => ({ value: v.id, label: v.name }))]} />
+            <Select className="w-40" value={productTypeId} onChange={(v) => { setProductTypeId(v); setPage(1); }} placeholder="All types"
+              options={[{ value: '', label: 'All types' }, ...productTypes.map((t) => ({ value: t.id, label: t.name }))]} />
 
             <Select className="w-44" value={statusFilter} onChange={setStatusFilter} options={[
               { value: 'all', label: 'All statuses' }, { value: 'loss', label: 'Loss-making only' }, { value: 'issues', label: 'Issues only' },

@@ -16,10 +16,13 @@ export class ChannelListingsController {
     @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('channelId') channelId?: string,
+    @Query('brandId') brandId?: string,
+    @Query('vendorId') vendorId?: string,
+    @Query('productTypeId') productTypeId?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    const query: ListingsQuery = { q, channelId, companyIds, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
+    const query: ListingsQuery = { q, channelId, brandId, vendorId, productTypeId, companyIds, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
     return this.svc.dashboard(query);
   }
 

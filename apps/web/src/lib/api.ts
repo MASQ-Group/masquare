@@ -262,7 +262,7 @@ export interface ChannelListingDetail {
 export interface ChannelSyncResult { channels: { integrationId: string; name: string; ok: boolean; pulled?: number; message?: string }[]; total: number }
 export const channelListingsApi = {
   channels: () => api.get<ChannelListingChannel[]>('/channel-listings/channels').then((r) => r.data),
-  dashboard: (params: { q?: string; channelId?: string; page?: number; pageSize?: number } = {}) =>
+  dashboard: (params: { q?: string; channelId?: string; brandId?: string; vendorId?: string; productTypeId?: string; page?: number; pageSize?: number } = {}) =>
     api.get<ChannelListingsDashboard>('/channel-listings', { params }).then((r) => r.data),
   sync: (integrationIds?: string[]) =>
     api.post<ChannelSyncResult>('/channel-listings/sync', integrationIds?.length ? { integrationIds } : {}).then((r) => r.data),

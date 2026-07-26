@@ -11,6 +11,9 @@ const PALETTE = ['#F59B00', '#0064D2', '#6E56CF', '#7AB55C', '#E0447B', '#14A79D
 export interface ListingsQuery {
   q?: string;
   channelId?: string;
+  brandId?: string;
+  vendorId?: string;
+  productTypeId?: string;
   /** Enforced company isolation: the companies the caller may see. */
   companyIds?: string[];
   page?: number;
@@ -161,6 +164,9 @@ export class ChannelListingsService {
     const where: Prisma.ProductWhereInput = {
       ...ACTIVE,
       channelListings: { some: listingScope },
+      ...(query.brandId ? { brandId: query.brandId } : {}),
+      ...(query.vendorId ? { vendorId: query.vendorId } : {}),
+      ...(query.productTypeId ? { productTypeId: query.productTypeId } : {}),
       ...(q ? { OR: [{ mainSku: { contains: q, mode: 'insensitive' } }, { title: { contains: q, mode: 'insensitive' } }, { aliases: { some: { skuValue: { contains: q, mode: 'insensitive' } } } }] } : {}),
     };
     const [total, products] = await this.prisma.$transaction([
