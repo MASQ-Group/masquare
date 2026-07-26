@@ -107,3 +107,15 @@
     @apply inline-flex items-center rounded-pill px-2.5 py-0.5 text-[11.5px] font-semibold;
   }
 }
+
+/* Channel Listings · Matrix cell — adaptive container-query cell (design final spec).
+   ≥200px → labelled auto-fit grid; <200px → compact with hover/focus disclosure. */
+.chc { container-type: inline-size; }
+.chc .chc-grid { display: none; }
+@container (min-width: 200px) {
+  .chc .chc-compact { display: none; }
+  .chc .chc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  }
+}

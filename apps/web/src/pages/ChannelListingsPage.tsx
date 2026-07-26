@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Edit3, ExternalLink, Grid2x2, LayoutGrid, Package, Pause, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, Edit3, ExternalLink, Grid2x2, LayoutGrid, Package, Pause, RefreshCw, Search, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { Pagination, Select } from '@masquare/ui';
 import { channelListingsApi, type ChannelListingCell, type ChannelListingChannel } from '../lib/api';
@@ -31,6 +31,112 @@ const pct = (v: number | null) => (v == null ? '—' : `${v.toFixed(1)}%`);
 
 /** Small "sample data" chip for the placeholder analytics we don't yet compute. */
 const Sample = () => <span className="ml-2 rounded-full bg-n-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-n-400">Sample</span>;
+
+// Per-status cell tint + 3px left-accent bar (design: amber=low, red=out, grey=paused, neutral=live).
+const TONE: Record<string, { edge: string; bg: string }> = {
+  live: { edge: '#EBEEEC', bg: '#ffffff' },
+  low: { edge: '#E8A33D', bg: '#FFFDF8' },
+  oos: { edge: '#E5714E', bg: '#FFFBFA' },
+  paused: { edge: '#D6DBD8', bg: '#ffffff' },
+  error: { edge: '#E5714E', bg: '#FFFBFA' },
+};
+
+/** A labelled metric block used in the cell's grid mode. */
+function Block({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="px-3 py-[11px]">
+      <div className="mb-[3px] text-[9.5px] font-bold uppercase tracking-[0.07em] text-n-400">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Adaptive channel matrix cell — "Channel Listings · Matrix cell, final spec".
+ * One component, driven by a 200px container query on its own width:
+ *  - ≥200px  → labelled auto-fit grid (4→3→2 blocks), everything visible.
+ *  - <200px  → compact: Inventory + Price stay; Status→dot, Profit→chip, full values on hover/focus.
+ * Data order is always Inventory → Price → Profit → Status. Square corners; the 3px left
+ * accent echoes listing status. Numbers are tabular (.mono) so columns align.
+ */
+function ChannelCell({ cell }: { cell?: ChannelListingCell }) {
+  const [open, setOpen] = useState<null | 'status' | 'profit'>(null);
+
+  if (!cell) {
+    return (
+      <div className="chc flex flex-col justify-center gap-1 px-3 py-3" style={{ borderLeft: '3px solid #EBEEEC' }}>
+        <span className="text-[12px] text-n-300">Not listed</span>
+        <button title="List on this channel (coming with push sync)" className="w-fit text-left text-[11px] font-semibold text-teal-700 hover:text-teal-600">+ List</button>
+      </div>
+    );
+  }
+
+  const st = STATUS[cell.status] ?? STATUS.live;
+  const tone = cell.loss ? { edge: '#E5714E', bg: '#FDF1EE' } : TONE[cell.status] ?? TONE.live;
+  const profitColor = cell.loss ? '#C63B1B' : '#0E7A73';
+  const qty = cell.quantity ?? 0;
+
+  // Reveal on hover AND keyboard focus (spec: use a popover, never `title`).
+  const discl = (key: 'status' | 'profit') => ({
+    tabIndex: 0,
+    onMouseEnter: () => setOpen(key),
+    onMouseLeave: () => setOpen((o) => (o === key ? null : o)),
+    onFocus: () => setOpen(key),
+    onBlur: () => setOpen((o) => (o === key ? null : o)),
+  });
+
+  return (
+    <div className="chc" style={{ borderLeft: `3px solid ${tone.edge}`, background: tone.bg }}>
+      {/* GRID MODE — ≥200px */}
+      <div className="chc-grid">
+        <Block label="Inventory">
+          <div className="flex items-baseline gap-1">
+            <span className="mono text-[18px] font-bold leading-none text-n-900">{qty}</span>
+            <span className="text-[11px] text-n-400">units</span>
+          </div>
+        </Block>
+        <Block label="Price">
+          <span className="mono text-[16px] font-bold leading-none text-n-900">{money(cell.price, cell.currency)}</span>
+        </Block>
+        <Block label="Est. profit">
+          <div className="flex flex-wrap items-baseline gap-x-1 gap-y-0.5" style={{ color: profitColor }}>
+            <span className="mono text-[16px] font-bold leading-none">{eur(cell.profitEur)}</span>
+            <span className="text-[11px] font-semibold leading-tight">{pct(cell.marginPct)}</span>
+          </div>
+        </Block>
+        <Block label="Status">
+          <span className="inline-flex items-center gap-1.5 text-[12px] font-bold" style={{ color: st.color }}>
+            <span className="inline-block h-[7px] w-[7px] rounded-full" style={{ background: st.dot }} />{st.label}
+          </span>
+        </Block>
+      </div>
+
+      {/* COMPACT MODE — <200px */}
+      <div className="chc-compact relative px-3 py-[11px]">
+        <div className="flex items-center justify-between gap-1.5">
+          <div className="flex items-baseline gap-0.5">
+            <span className="mono text-[18px] font-bold leading-none text-n-900">{qty}</span>
+            <span className="text-[10px] text-n-400">u</span>
+          </div>
+          <span className="relative cursor-default p-0.5 outline-none" aria-label={`Status: ${st.label}`} {...discl('status')}>
+            <span className="inline-block h-[9px] w-[9px] rounded-full" style={{ background: st.dot }} />
+            {open === 'status' && (
+              <span className="absolute right-[-4px] top-5 z-20 whitespace-nowrap rounded-md border px-2 py-1 text-[11px] font-bold shadow-lg" style={{ color: st.color, background: st.bg, borderColor: `${st.color}22` }}>{st.label}</span>
+            )}
+          </span>
+        </div>
+        <div className="mono mt-[7px] whitespace-nowrap text-[15px] font-bold text-n-900">{money(cell.price, cell.currency)}</div>
+        <span className="relative mt-2 inline-flex cursor-default items-center gap-1 rounded-full border py-0.5 pl-[5px] pr-[7px] outline-none" style={{ background: cell.loss ? '#FDF1EE' : '#F3FAF9', borderColor: cell.loss ? '#F0B3A2' : '#E1F0EE' }} aria-label={`Estimated profit ${eur(cell.profitEur)}, ${pct(cell.marginPct)} margin`} {...discl('profit')}>
+          {cell.loss ? <TrendingDown size={13} style={{ color: profitColor }} /> : <TrendingUp size={13} style={{ color: profitColor }} />}
+          <span className="mono text-[11px] font-bold" style={{ color: profitColor }}>{pct(cell.marginPct)}</span>
+          {open === 'profit' && (
+            <span className="absolute left-0 top-[26px] z-20 whitespace-nowrap rounded-md border px-2 py-1 text-[11px] font-bold shadow-lg" style={{ color: profitColor, background: cell.loss ? '#FBE7E1' : '#E1F3F1', borderColor: `${profitColor}22` }}>Est. profit {eur(cell.profitEur)} · {pct(cell.marginPct)}</span>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export function ChannelListingsPage() {
   const qc = useQueryClient();
@@ -177,7 +283,7 @@ export function ChannelListingsPage() {
                           <Flag code={c.countryIso} />
                           <span className="text-[12.5px] font-bold text-n-900">{c.name}</span>
                         </div>
-                        <span className="text-[11px] text-n-400">Qty · Price {c.currency ?? ''} · Est. profit</span>
+                        <span className="text-[11px] text-n-400">Inventory · Price {c.currency ?? ''} · Profit · Status</span>
                       </div>
                     ))}
                   </div>
@@ -190,35 +296,9 @@ export function ChannelListingsPage() {
                           <div className="code mt-0.5 text-[11.5px] text-teal-700">{r.sku} <span className="text-n-300">· {r.masterStock ?? '—'} avail.</span></div>
                         </div>
                       </Link>
-                      {shownChannels.map((c) => {
-                        const cell = r.cells[c.id];
-                        const st = cell ? STATUS[cell.status] ?? STATUS.live : null;
-                        return (
-                          <div key={c.id} className={`flex flex-col justify-center gap-1 border-l border-n-50 px-4 py-3 ${cell?.loss ? 'bg-[#FBE7E1]/45' : ''}`}>
-                            {cell ? (
-                              <>
-                                {/* Quantity — the headline figure, since availability is what syncs across channels. */}
-                                <div className="flex items-baseline gap-1.5">
-                                  <span className="mono text-[21px] font-bold leading-none text-n-900">{cell.quantity ?? '—'}</span>
-                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-n-400">in stock</span>
-                                </div>
-                                <div className="mono text-[12px] text-n-500">{money(cell.price, cell.currency)}</div>
-                                {cell.profitEur != null && (
-                                  <div className={`inline-flex items-center gap-1 text-[11px] font-bold ${cell.loss ? 'text-[#C63B1B]' : 'text-[#0E7A73]'}`}>
-                                    {cell.loss && <AlertTriangle size={11} />}
-                                    <span className="mono">{eur(cell.profitEur)}</span>
-                                    <span className="font-semibold text-n-300">·</span>
-                                    <span className="mono">{pct(cell.marginPct)}</span>
-                                  </div>
-                                )}
-                                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold" style={{ color: st!.color }}><span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: st!.dot }} />{st!.label}</span>
-                              </>
-                            ) : (
-                              <><span className="text-[12.5px] text-n-300">Not listed</span><span className="text-[11.5px] font-semibold text-n-300">—</span></>
-                            )}
-                          </div>
-                        );
-                      })}
+                      {shownChannels.map((c) => (
+                        <ChannelCell key={c.id} cell={r.cells[c.id]} />
+                      ))}
                     </div>
                   ))}
                 </div>
