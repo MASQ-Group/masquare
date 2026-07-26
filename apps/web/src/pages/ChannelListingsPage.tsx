@@ -1,13 +1,14 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Edit3, ExternalLink, Grid2x2, LayoutGrid, Package, Pause, RefreshCw, Search, TrendingDown, TrendingUp } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Edit3, ExternalLink, Grid2x2, LayoutGrid, Layers, Package, Pause, RefreshCw, Search, SlidersHorizontal, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { Pagination, Select } from '@masquare/ui';
 import { channelListingsApi, type ChannelListingCell, type ChannelListingChannel } from '../lib/api';
 import { formatAmount } from '../lib/format';
 import { Flag } from '../components/common/Flag';
 import { usePersistentState } from '../lib/usePersistentState';
+import { CHANNEL_GROUPS, channelGroupOf, sortChannelsCanonical } from '../lib/channelGroups';
 
 // Design status palette.
 const STATUS: Record<string, { label: string; color: string; dot: string; bg: string }> = {
@@ -138,6 +139,52 @@ function ChannelCell({ cell, solo }: { cell?: ChannelListingCell; solo?: boolean
   );
 }
 
+// A toolbar dropdown holding a checkbox list. Closes on outside click / Escape.
+function FilterMenu({
+  icon, label, summary, active, children, width = 300,
+}: { icon: ReactNode; label: string; summary: string; active?: boolean; children: ReactNode; width?: number }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen((o) => !o)}
+        className={`flex h-[42px] items-center gap-2 rounded-md border px-3.5 text-[13px] font-semibold ${active ? 'border-teal-300 bg-teal-50 text-teal-700' : 'border-n-200 bg-n-0 text-n-700 hover:bg-n-25'}`}>
+        {icon}<span>{label}</span>
+        <span className={`text-[12px] font-normal ${active ? 'text-teal-600' : 'text-n-400'}`}>{summary}</span>
+        <ChevronDown size={15} className={active ? 'text-teal-500' : 'text-n-400'} />
+      </button>
+      {open && (
+        <div className="absolute left-0 z-40 mt-1.5 max-h-[70vh] overflow-y-auto rounded-xl border border-n-200 bg-n-0 p-1.5 shadow-lg" style={{ width }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A single checkbox row inside a FilterMenu.
+function CheckRow({
+  checked, indeterminate, onClick, children,
+}: { checked: boolean; indeterminate?: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button onClick={onClick} className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-n-50">
+      <span className={`grid h-[17px] w-[17px] flex-none place-items-center rounded border ${checked || indeterminate ? 'border-teal-500 bg-teal-500 text-white' : 'border-n-300 bg-n-0'}`}>
+        {checked && <Check size={12} strokeWidth={3} />}
+        {!checked && indeterminate && <span className="h-[2px] w-[9px] rounded bg-white" />}
+      </span>
+      <span className="flex min-w-0 flex-1 items-center gap-2">{children}</span>
+    </button>
+  );
+}
+
 export function ChannelListingsPage() {
   const qc = useQueryClient();
   const [tab, setTab] = usePersistentState<'listings' | 'analytics'>('channelListings.tab', 'listings');
@@ -145,7 +192,9 @@ export function ChannelListingsPage() {
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  // Per-channel column visibility persists across reloads; empty = all channels shown.
+  const [hiddenArr, setHiddenArr] = usePersistentState<string[]>('channelListings.hiddenChannels', []);
+  const hidden = useMemo(() => new Set(hiddenArr), [hiddenArr]);
   const pageSize = 25;
 
   const { data: channels = [] } = useQuery({ queryKey: ['channel-listings-channels'], queryFn: () => channelListingsApi.channels() });
@@ -163,12 +212,26 @@ export function ChannelListingsPage() {
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Sync failed'),
   });
 
-  // Channels shown as matrix columns: every connected channel, minus toggled-off ones.
-  const activeChannels = useMemo(() => channels, [channels]);
-  const shownChannels = useMemo(() => activeChannels.filter((c) => !hidden.has(c.id)), [activeChannels, hidden]);
-  const connectedCount = activeChannels.length;
+  // Columns always follow the canonical group sequence; visibility is one per-channel set.
+  const orderedChannels = useMemo(() => sortChannelsCanonical(channels), [channels]);
+  const shownChannels = useMemo(() => orderedChannels.filter((c) => !hidden.has(c.id)), [orderedChannels, hidden]);
+  const connectedCount = orderedChannels.length;
   const withListingsCount = useMemo(() => channels.filter((c) => c.listingCount > 0).length, [channels]);
   const lastSynced = useMemo(() => channels.map((c) => c.lastPulledAt).filter(Boolean).sort().slice(-1)[0] ?? null, [channels]);
+
+  // Only the groups that actually have a connected channel, in canonical order.
+  const presentGroups = useMemo(
+    () => CHANNEL_GROUPS.filter((g) => orderedChannels.some((c) => channelGroupOf(c)?.key === g.key)),
+    [orderedChannels],
+  );
+  const channelsInGroup = (key: string) => orderedChannels.filter((c) => channelGroupOf(c)?.key === key);
+  const toggleChannel = (id: string) => setHiddenArr((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
+  const setChannelsVisible = (ids: string[], visible: boolean) => setHiddenArr((a) => {
+    const s = new Set(a);
+    ids.forEach((id) => (visible ? s.delete(id) : s.add(id)));
+    return [...s];
+  });
+  const shownCount = shownChannels.length;
 
   const rows = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -221,16 +284,66 @@ export function ChannelListingsPage() {
         ))}
       </div>
 
-      {tab === 'analytics' && <AnalyticsTab channels={activeChannels} />}
+      {tab === 'analytics' && <AnalyticsTab channels={orderedChannels} />}
 
       {tab === 'listings' && (
         <>
           {/* toolbar */}
-          <div className="mb-3.5 flex flex-wrap items-center gap-2.5">
-            <div className="flex h-[42px] min-w-[240px] flex-1 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3.5">
+          <div className="mb-3 flex flex-wrap items-center gap-2.5">
+            <div className="flex h-[42px] min-w-[220px] flex-1 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3.5">
               <Search size={16} className="text-n-400" />
               <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search SKU or product title…" className="flex-1 bg-transparent text-[13.5px] text-n-900 outline-none placeholder:text-n-400" />
             </div>
+
+            {/* Group filter — show whole marketplace regions at once */}
+            {presentGroups.length > 0 && (
+              <FilterMenu icon={<Layers size={15} />} label="Groups"
+                summary={`${presentGroups.filter((g) => channelsInGroup(g.key).some((c) => !hidden.has(c.id))).length}/${presentGroups.length}`}
+                active={presentGroups.some((g) => channelsInGroup(g.key).every((c) => hidden.has(c.id)))}>
+                <div className="flex items-center justify-between px-2 pb-1.5 pt-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-n-400">Channel groups</span>
+                  <button onClick={() => setChannelsVisible(orderedChannels.map((c) => c.id), true)} className="text-[11.5px] font-semibold text-teal-700 hover:text-teal-600">Show all</button>
+                </div>
+                {presentGroups.map((g) => {
+                  const ids = channelsInGroup(g.key).map((c) => c.id);
+                  const visible = ids.filter((id) => !hidden.has(id)).length;
+                  return (
+                    <CheckRow key={g.key} checked={visible === ids.length} indeterminate={visible > 0 && visible < ids.length}
+                      onClick={() => setChannelsVisible(ids, visible === 0)}>
+                      <span className="flex-1 text-[13px] font-medium text-n-800">{g.label}</span>
+                      <span className="text-[11px] text-n-400">{ids.length}</span>
+                    </CheckRow>
+                  );
+                })}
+              </FilterMenu>
+            )}
+
+            {/* Per-channel column filter */}
+            {orderedChannels.length > 0 && (
+              <FilterMenu icon={<SlidersHorizontal size={15} />} label="Channels" width={330}
+                summary={`${shownCount}/${orderedChannels.length}`} active={hidden.size > 0}>
+                <div className="flex items-center justify-between px-2 pb-1.5 pt-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-n-400">Show columns</span>
+                  <div className="flex gap-2.5">
+                    <button onClick={() => setChannelsVisible(orderedChannels.map((c) => c.id), true)} className="text-[11.5px] font-semibold text-teal-700 hover:text-teal-600">All</button>
+                    <button onClick={() => setChannelsVisible(orderedChannels.map((c) => c.id), false)} className="text-[11.5px] font-semibold text-n-500 hover:text-n-700">None</button>
+                  </div>
+                </div>
+                {presentGroups.map((g) => (
+                  <div key={g.key} className="mt-1.5 first:mt-0">
+                    <div className="px-2 py-1 text-[10.5px] font-semibold uppercase tracking-wide text-n-400">{g.label}</div>
+                    {channelsInGroup(g.key).map((c) => (
+                      <CheckRow key={c.id} checked={!hidden.has(c.id)} onClick={() => toggleChannel(c.id)}>
+                        <Flag code={c.countryIso} />
+                        <span className="flex-1 truncate text-[13px] font-medium text-n-800">{c.name}</span>
+                        <span className="text-[11px] text-n-400">{c.currency ?? ''}</span>
+                      </CheckRow>
+                    ))}
+                  </div>
+                ))}
+              </FilterMenu>
+            )}
+
             <Select className="w-44" value={statusFilter} onChange={setStatusFilter} options={[
               { value: 'all', label: 'All statuses' }, { value: 'loss', label: 'Loss-making only' }, { value: 'issues', label: 'Issues only' },
               { value: 'oos', label: 'Out of stock' }, { value: 'low', label: 'Low stock' }, { value: 'error', label: 'Errors' }, { value: 'paused', label: 'Paused' },
@@ -242,23 +355,12 @@ export function ChannelListingsPage() {
             </div>
           </div>
 
-          {/* channel toggles */}
-          {activeChannels.length > 0 && (
-            <div className="mb-3.5 flex flex-wrap items-center gap-2">
-              <span className="text-[12px] font-semibold text-n-400">Channels:</span>
-              {activeChannels.map((c) => {
-                const on = !hidden.has(c.id);
-                return (
-                  <button key={c.id} onClick={() => setHidden((s) => { const n = new Set(s); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })}
-                    className={`inline-flex h-8 items-center gap-2 rounded-full border px-3 ${on ? 'border-n-300 bg-n-0' : 'border-n-200 bg-n-50 opacity-55'}`}>
-                    <Flag code={c.countryIso} />
-                    <span className="text-[12.5px] font-semibold text-n-700">{c.name}</span>
-                    <span className="text-[11px] font-semibold text-n-400">{c.currency ?? ''}</span>
-                  </button>
-                );
-              })}
-              <div className="flex-1" />
-              <div className="text-[13px] text-n-500">Showing <strong className="font-semibold text-n-700">{visibleRows.length}</strong> of <strong className="font-semibold text-n-700">{total.toLocaleString()}</strong> SKUs</div>
+          {/* summary line */}
+          {orderedChannels.length > 0 && (
+            <div className="mb-3.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-n-500">
+              <span>Showing <strong className="font-semibold text-n-700">{visibleRows.length}</strong> of <strong className="font-semibold text-n-700">{total.toLocaleString()}</strong> SKUs</span>
+              <span className="text-n-300">·</span>
+              <span><strong className="font-semibold text-n-700">{shownCount}</strong> of {orderedChannels.length} channels{withListingsCount > 0 ? ` · ${withListingsCount} with listings` : ''}</span>
             </div>
           )}
 
@@ -293,8 +395,8 @@ export function ChannelListingsPage() {
                       <Link to={`/channel-listings/${r.productId}`} className="flex items-center gap-3 px-4 py-3 text-inherit">
                         <div className="grid h-9 w-9 flex-none place-items-center rounded-lg border border-n-100 bg-n-50 text-n-300"><Package size={18} /></div>
                         <div className="min-w-0">
-                          <div className="truncate text-[13.5px] font-semibold text-n-900">{r.title}</div>
-                          <div className="code mt-0.5 text-[11.5px] text-teal-700">{r.sku} <span className="text-n-300">· {r.masterStock ?? '—'} avail.</span></div>
+                          <div className="truncate text-[13.5px] font-semibold text-n-900" title={r.title}>{r.title}</div>
+                          <div className="code mt-0.5 whitespace-normal break-words text-[11.5px] leading-snug text-teal-700">{r.sku} <span className="text-n-300">· {r.masterStock ?? '—'} avail.</span></div>
                         </div>
                       </Link>
                       {shownChannels.map((c) => (
