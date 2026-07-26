@@ -301,7 +301,10 @@ export class IntegrationsService {
   /** Resolve which eBay integration a callback targets: the state id if valid, else the
    *  single configured eBay integration (so the flow works without threading the prod id). */
   private async resolveEbayIntegration(stateId?: string) {
-    if (stateId) {
+    // Only look up by id when state is actually a UUID — the id column is @db.Uuid, so a
+    // non-UUID state (e.g. our "ebay-connect" marker) would throw at the DB layer.
+    const isUuid = !!stateId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(stateId);
+    if (isUuid) {
       const byId = await this.prisma.channelIntegration.findFirst({ where: { id: stateId, deletedAt: null, channelType: 'ebay' } });
       if (byId) return byId;
     }
