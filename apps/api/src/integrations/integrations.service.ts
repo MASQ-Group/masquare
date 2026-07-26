@@ -359,6 +359,33 @@ export class IntegrationsService {
     return json.access_token as string;
   }
 
+  /** One page of eBay Sell Fulfillment API orders (line items + pricing included in the order). */
+  private async ebayGetOrdersPage(base: string, token: string, opts: { filter?: string; limit?: number; offset?: number }): Promise<{ ok: boolean; status?: number; message?: string; orders: any[]; total: number }> {
+    const q = new URLSearchParams();
+    if (opts.filter) q.set('filter', opts.filter);
+    q.set('limit', String(opts.limit ?? 50));
+    if (opts.offset) q.set('offset', String(opts.offset));
+    const res = await fetch(`${base}/sell/fulfillment/v1/order?${q.toString()}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(20000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, status: res.status, message: (json?.errors?.[0]?.message || `HTTP ${res.status}`).toString().slice(0, 200), orders: [], total: 0 };
+    return { ok: true, orders: json?.orders ?? [], total: Number(json?.total ?? (json?.orders?.length ?? 0)) };
+  }
+
+  /** Read-only: fetch recent eBay orders (raw) for connection + mapping validation. */
+  private async fetchEbayOrders(row: any, limit: number): Promise<{ ok: boolean; status?: number; message?: string; total: number; orders: any[] }> {
+    const config = (row.config ?? {}) as Record<string, string>;
+    const secrets = await this.decryptedSecrets(row.id);
+    const token = await this.ebayAccessToken(config, secrets);
+    const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+    const from = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString().replace(/\.\d+Z$/, '.000Z');
+    const page = await this.ebayGetOrdersPage(base, token, { filter: `creationdate:[${from}..]`, limit });
+    if (!page.ok) return { ok: false, status: page.status, message: page.message, total: 0, orders: [] };
+    return { ok: true, total: page.total, orders: page.orders.slice(0, limit) };
+  }
+
   private async testOnBuy(config: Record<string, string>, secrets: Record<string, string>, mode: 'live' | 'test'): Promise<{ ok: boolean; message: string }> {
     const consumerKey = secrets[mode === 'live' ? 'liveConsumerKey' : 'testConsumerKey'];
     const secretKey = secrets[mode === 'live' ? 'liveSecretKey' : 'testSecretKey'];
@@ -758,7 +785,12 @@ export class IntegrationsService {
       await this.audit(id, actorId, 'preview', `amazon status=${r.status ?? 200}`);
       return r.ok ? { ok: true, mode: 'live', total: r.total, count: r.mapped.length, orders: r.mapped.map((m) => m.raw) } : { ok: false, mode: 'live', status: r.status, message: r.message };
     }
-    if (row.channelType !== 'onbuy') throw new BadRequestException('Order preview supports OnBuy and Amazon only.');
+    if (row.channelType === 'ebay') {
+      const r = await this.fetchEbayOrders(row, limit);
+      await this.audit(id, actorId, 'preview', `ebay status=${r.status ?? 200}`);
+      return r.ok ? { ok: true, mode: 'live', total: r.total, count: r.orders.length, orders: r.orders } : { ok: false, mode: 'live', status: r.status, message: r.message };
+    }
+    if (row.channelType !== 'onbuy') throw new BadRequestException('Order preview supports OnBuy, Amazon and eBay only.');
     const r = await this.fetchOnBuyOrders(row, limit);
     await this.audit(id, actorId, 'preview', `mode=${r.mode} status=${r.status ?? 200}`);
     return r.ok ? { ok: true, mode: r.mode, siteId: r.siteId, total: r.total, count: r.orders.length, orders: r.orders } : { ok: false, mode: r.mode, status: r.status, message: r.message };
