@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle, CalendarRange, CheckCircle2, ChevronRight, Download, ExternalLink, Eye, EyeOff,
+  AlertTriangle, CalendarRange, CheckCircle2, ChevronRight, Download, ExternalLink, Eye, EyeOff, Globe,
   KeyRound, ListChecks, MoreHorizontal, Pause, Pencil, Play, Plug, Plus, RefreshCw, Search, Trash2, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -359,6 +359,7 @@ export function IntegrationsPage() {
                             key={i.id}
                             i={i}
                             countryCode={countryOf(i)}
+                            logoUrl={channelLogos[i.channelType]}
                             last={idx === rows.length - 1}
                             selected={!!selected[i.id]}
                             expanded={!!expanded[i.id]}
@@ -438,12 +439,15 @@ function HealthChip({ dot, color, text }: { dot: string; color: string; text: st
 }
 
 function IntegrationRow({
-  i, last, selected, expanded, syncing, maskSecrets, canSync, countryCode,
+  i, last, selected, expanded, syncing, maskSecrets, canSync, countryCode, logoUrl,
   onToggleSel, onToggleExpand, onSync, onEdit, onBackfill, onMapping, onRemove,
 }: {
   i: ChannelIntegration; last: boolean; selected: boolean; expanded: boolean; syncing: boolean; maskSecrets: boolean; canSync: boolean;
   onToggleSel: () => void; onToggleExpand: () => void; onSync: () => void; onEdit: () => void; onBackfill: () => void; onMapping: () => void; onRemove: () => void;
   countryCode?: string | null;
+  // Some channels (eBay) run one account across every marketplace, so a single country flag
+  // is misleading — show the channel logo (or a globe) instead.
+  logoUrl?: string | null;
 }) {
   const error = hasError(i);
   const chips = syncChips(i);
@@ -461,7 +465,11 @@ function IntegrationRow({
           {/* Flag + name only: the group header above already says which connector this is,
               and the country reads off the flag, so the code and sub-line were repetition. */}
           <div className="flex min-w-0 items-center gap-2">
-            <Flag code={countryCode} className="shrink-0" />
+            {i.channelType === 'ebay'
+              ? (logoUrl
+                  ? <img src={logoUrl} alt="eBay" className="h-4 w-6 shrink-0 rounded object-contain" />
+                  : <Globe size={15} className="shrink-0 text-n-400" />)
+              : <Flag code={countryCode} className="shrink-0" />}
             <span className="truncate text-[14px] font-semibold text-n-900">{i.name}</span>
           </div>
         </button>

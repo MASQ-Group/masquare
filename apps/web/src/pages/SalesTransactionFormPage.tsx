@@ -743,6 +743,9 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                   return <Row label="Product cost" value={transaction ? eur(round2(productCost)) : '—'} small />;
                 })()}
                 {!isLocal && <Row label="Sales fee" value={transaction?.effectiveSalesFee != null ? `${money(transaction.effectiveSalesFee, feeCcy)}` : '—'} small />}
+                {transaction?.dutyImportCost != null && transaction.dutyImportCost > 0 && (
+                  <Row label="Import tax / duty" value={eur(transaction.dutyImportCost)} small />
+                )}
                 {!isLocal && transaction?.amazonPoints != null && transaction.amazonPoints > 0 && (
                   <Row label="Amazon points" value={money(transaction.amazonPoints, feeCcy)} small />
                 )}
