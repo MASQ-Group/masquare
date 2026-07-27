@@ -614,12 +614,26 @@ export class ShipmentsService {
         const type = (get('type') || 'outbound').toLowerCase() as 'outbound' | 'inbound';
         const markRaw = get('markShipped').toLowerCase();
         const markShipped = !(markRaw === 'no' || markRaw === 'false' || markRaw === 'n');
+        const tracking = get('trackingNumber') || null;
+        // Idempotency guard: if this exact parcel is already recorded for the order — matched
+        // by tracking number, or by ship date when there is no tracking — skip it. Without this
+        // a re-run of the import, or a gateway-timeout (502) that the user retries, records a
+        // second shipment for every order. A genuine extra parcel has a different tracking
+        // number and still goes through.
+        const already = await this.prisma.shipment.findFirst({
+          where: {
+            transactionId: item.transactionId, type, deletedAt: null,
+            ...(tracking ? { trackingNumber: tracking } : { trackingNumber: null, shipmentDate: parsedDate }),
+          },
+          select: { id: true },
+        });
+        if (already) { skipped++; continue; }
         await this.create({
           transactionId: item.transactionId,
           type,
           shipmentDate: parsedDate.toISOString(),
           shippingServiceId: item.shippingServiceId ?? null,
-          trackingNumber: get('trackingNumber') || null,
+          trackingNumber: tracking,
           shippingCostEur: this.normNum(get('shippingCostEur')),
           costBorneBy: ((get('costBorneBy') || 'company').toLowerCase()) as 'company' | 'customer',
           dutyImportEur: this.normNum(get('dutyImportEur')),
