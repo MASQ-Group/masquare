@@ -54,6 +54,13 @@ export class ShipmentsController {
     return this.svc.exportRows({ q, companyIds, salesChannelId, type, channelKind }, scope === 'pending' ? 'pending' : 'recorded');
   }
 
+  /** Maintenance: remove historic duplicate shipments (same order + tracking number), keeping
+   *  the earliest of each. Dry-run unless apply=true. Scoped to the caller's visible companies. */
+  @Post('dedupe')
+  dedupe(@VisibleCompanies() companyIds: string[], @Query('apply') apply?: string) {
+    return this.svc.dedupe(companyIds, apply === 'true');
+  }
+
   @Post('import/validate')
   importValidate(@Body() dto: ShipmentImportValidateDto) {
     return this.svc.importValidate(dto.rows);

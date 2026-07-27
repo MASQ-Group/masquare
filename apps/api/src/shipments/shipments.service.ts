@@ -647,4 +647,60 @@ export class ShipmentsService {
     }
     return { created, skipped, errors };
   }
+
+  /** One-shot cleanup for the historic duplicate-shipment bug (re-run/retried imports before
+   *  importCommit was made idempotent). Groups active outbound shipments of the same order that
+   *  share a tracking number, keeps the earliest of each group, and — when apply=true —
+   *  soft-deletes the rest (reversible; nothing is hard-deleted). Dry-run by default. Scoped to
+   *  the caller's visible companies. Only tracking-identified parcels are touched, so genuine
+   *  multi-parcel shipments (distinct tracking) and untracked local sales are never removed. */
+  async dedupe(companyIds: string[], apply: boolean) {
+    const rows = await this.prisma.shipment.findMany({
+      where: {
+        type: 'outbound',
+        deletedAt: null,
+        trackingNumber: { not: null },
+        transaction: { deletedAt: null, ...(companyIds?.length ? { companyId: { in: companyIds } } : {}) },
+      },
+      select: {
+        id: true, transactionId: true, trackingNumber: true, createdAt: true,
+        transaction: { select: { transactionRef: true } },
+      },
+      orderBy: { createdAt: 'asc' }, // earliest first, so the keeper is [0] in each group
+    });
+
+    const groups = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const track = (r.trackingNumber ?? '').trim().toLowerCase();
+      if (!track) continue; // only dedupe parcels identified by a tracking number
+      const key = `${r.transactionId}|${track}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(r);
+    }
+
+    const toDelete: { id: string; transactionRef: string; trackingNumber: string | null }[] = [];
+    let duplicateGroups = 0;
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      duplicateGroups++;
+      for (const dup of g.slice(1)) {
+        toDelete.push({ id: dup.id, transactionRef: dup.transaction.transactionRef, trackingNumber: dup.trackingNumber });
+      }
+    }
+
+    if (apply && toDelete.length) {
+      await this.prisma.shipment.updateMany({
+        where: { id: { in: toDelete.map((d) => d.id) } },
+        data: { deletedAt: new Date() },
+      });
+    }
+
+    return {
+      applied: apply,
+      ordersAffected: duplicateGroups,
+      removed: apply ? toDelete.length : 0,
+      wouldRemove: apply ? 0 : toDelete.length,
+      sample: toDelete.slice(0, 25),
+    };
+  }
 }
