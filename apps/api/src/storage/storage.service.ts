@@ -28,6 +28,18 @@ export class StorageService {
     });
   }
 
+  /** Non-secret storage config, for diagnosing upload failures. */
+  describe() {
+    let endpointValid = true;
+    try { new URL(this.endpoint); } catch { endpointValid = false; }
+    return {
+      endpoint: this.endpoint || '(empty)',
+      endpointValid,
+      bucket: this.bucket,
+      publicBase: process.env.STORAGE_PUBLIC_URL || '(unset — falls back to endpoint)',
+    };
+  }
+
   /** Idempotently ensure the media bucket exists. Safe to call at startup. */
   async ensureBucket(): Promise<void> {
     try {

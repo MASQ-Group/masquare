@@ -69,8 +69,9 @@ export class IntegrationsService {
     try {
       url = await this.storage.putObject(key, file.buffer, contentType);
     } catch (e: any) {
-      this.logger.error(`Channel-logo upload to storage failed (${channelType}): ${e?.name ?? ''} ${e?.message ?? e}`);
-      throw new ServiceUnavailableException(`Image storage rejected the upload: ${(e?.name ? `${e.name}: ` : '') + (e?.message ?? 'unknown error')}`.slice(0, 200));
+      const cfg = this.storage.describe();
+      this.logger.error(`Channel-logo upload to storage failed (${channelType}): ${e?.name ?? ''} ${e?.message ?? e} | cfg=${JSON.stringify(cfg)}`);
+      throw new ServiceUnavailableException(`Image storage rejected the upload: ${(e?.name ? `${e.name}: ` : '') + (e?.message ?? 'unknown error')} — endpoint=${cfg.endpoint} (valid=${cfg.endpointValid}), bucket=${cfg.bucket}, publicBase=${cfg.publicBase}`.slice(0, 300));
     }
 
     await this.prisma.channelLogo.upsert({
