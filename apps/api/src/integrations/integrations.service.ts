@@ -44,7 +44,19 @@ export class IntegrationsService {
   /** Every channel type's logo as a map { channelType: url }. Types without one are absent. */
   async listChannelLogos(): Promise<Record<string, string>> {
     const rows = await this.prisma.channelLogo.findMany({ select: { channelType: true, url: true } });
-    return Object.fromEntries(rows.map((r) => [r.channelType, r.url]));
+    return Object.fromEntries(rows.map((r) => [r.channelType, this.resolveLogoUrl(r.url)]));
+  }
+
+  /** Turn a stored logo reference into a live public URL. Newer rows store the bare
+   *  object key; older rows stored a full absolute URL, sometimes against a stale base
+   *  (e.g. the local MinIO `http://localhost:9000` endpoint, carried into prod by a DB
+   *  migration). Either way we re-derive from the object key so the CURRENT public base
+   *  always wins — a config change can never leave a frozen, broken URL again. */
+  private resolveLogoUrl(stored: string): string {
+    if (!stored) return stored;
+    const idx = stored.indexOf('channel-logos/');
+    if (idx === -1) return stored; // unrecognised shape — leave untouched
+    return this.storage.publicUrl(stored.slice(idx));
   }
 
   /** Upload/replace the brand logo for a channel family. Keyed by the connector type. */
@@ -74,10 +86,12 @@ export class IntegrationsService {
       throw new ServiceUnavailableException(`Image storage rejected the upload: ${(e?.name ? `${e.name}: ` : '') + (e?.message ?? 'unknown error')} — endpoint=${cfg.endpoint} (valid=${cfg.endpointValid}), bucket=${cfg.bucket}, publicBase=${cfg.publicBase}`.slice(0, 300));
     }
 
+    // Persist the bare object key (not the absolute URL); the public URL is derived
+    // on read against the current base, so it survives any storage-endpoint change.
     await this.prisma.channelLogo.upsert({
       where: { channelType },
-      create: { channelType, url, updatedById: actorId ?? null },
-      update: { url, updatedById: actorId ?? null },
+      create: { channelType, url: key, updatedById: actorId ?? null },
+      update: { url: key, updatedById: actorId ?? null },
     });
     return { channelType, url };
   }
