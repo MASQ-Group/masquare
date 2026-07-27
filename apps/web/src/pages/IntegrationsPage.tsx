@@ -35,22 +35,33 @@ const CHIP_TONE: Record<ChipTone, string> = {
   muted: 'bg-n-50 text-n-400',
 };
 
+/** A finished sync's message has the "N created, N updated…" shape; a sync that could not
+ *  run at all (thrown error) does not. This distinguishes a partial success (some per-order
+ *  errors, but the run completed) from a real failure — the former shows chips like any other
+ *  channel, the latter shows the red error line. */
+const syncCompleted = (i: ChannelIntegration) => /\d+ created\b/.test(i.lastSyncMessage ?? '');
+
+/** True only when the last sync genuinely failed to run (not merely per-order errors). */
+const syncFailed = (i: ChannelIntegration) => i.lastSyncStatus === 'error' && !syncCompleted(i);
+
 /** Parse the stored last-sync summary into result chips, mirroring the design.
  *  The message format is fixed by the sync service: "N created, N updated,
- *  N cancelled/refunded skipped, N errors[, N fees backfilled]…". */
+ *  N cancelled, N errors[, N fees backfilled]…". Per-order errors still show chips
+ *  (with a danger "errors" chip) — only a run that couldn't complete shows no chips. */
 function syncChips(i: ChannelIntegration): { text: string; tone: ChipTone }[] {
-  if (!i.lastSyncRunAt) return [];
-  if (i.lastSyncStatus === 'error') return [];
+  if (!i.lastSyncRunAt || !syncCompleted(i)) return [];
   const msg = i.lastSyncMessage ?? '';
   const num = (re: RegExp) => { const m = msg.match(re); return m ? Number(m[1]) : 0; };
   const created = num(/(\d+) created/);
   const updated = num(/(\d+) updated/);
+  const cancelled = num(/(\d+) cancelled/);
   const skipped = num(/(\d+) cancelled\/refunded skipped/);
   const errors = num(/(\d+) errors/);
   const fees = num(/(\d+) fees/);
   const chips: { text: string; tone: ChipTone }[] = [];
   if (created > 0) chips.push({ text: `+${created} new`, tone: 'teal' });
   if (updated > 0) chips.push({ text: `~${updated} updated`, tone: 'neutral' });
+  if (cancelled > 0) chips.push({ text: `${cancelled} cancelled`, tone: 'neutral' });
   if (skipped > 0) chips.push({ text: `${skipped} skipped`, tone: 'neutral' });
   if (errors > 0) chips.push({ text: `${errors} errors`, tone: 'danger' });
   if (fees > 0) chips.push({ text: `${fees} fees`, tone: 'warning' });
@@ -59,8 +70,9 @@ function syncChips(i: ChannelIntegration): { text: string; tone: ChipTone }[] {
 }
 
 // Health classification — a clean partition so the stat cards add up to the total.
-const hasError = (i: ChannelIntegration) => i.lastTestStatus === 'fail' || i.lastSyncStatus === 'error';
-const isHealthy = (i: ChannelIntegration) => !hasError(i) && !!i.mappingVerifiedAt && !!i.lastSyncRunAt && i.lastSyncStatus === 'ok' && i.status === 'active';
+// A completed sync with only per-order errors is not a failure (errors surface as a chip).
+const hasError = (i: ChannelIntegration) => i.lastTestStatus === 'fail' || syncFailed(i);
+const isHealthy = (i: ChannelIntegration) => !hasError(i) && !!i.mappingVerifiedAt && !!i.lastSyncRunAt && (i.lastSyncStatus === 'ok' || syncCompleted(i)) && i.status === 'active';
 const needsAttention = (i: ChannelIntegration) => !hasError(i) && !isHealthy(i);
 
 type Tab = 'all' | 'healthy' | 'attention' | 'errors';
@@ -471,10 +483,10 @@ function IntegrationRow({
 
         {/* last sync */}
         <div className="min-w-0 pr-3">
-          <div className={`text-[13px] font-semibold ${syncing ? 'text-teal-700' : i.lastSyncStatus === 'error' ? 'text-danger' : !i.lastSyncRunAt ? 'text-warning' : 'text-n-700'}`}>
+          <div className={`text-[13px] font-semibold ${syncing ? 'text-teal-700' : syncFailed(i) ? 'text-danger' : !i.lastSyncRunAt ? 'text-warning' : 'text-n-700'}`}>
             {syncing ? 'Syncing…' : relTime(i.lastSyncRunAt)}
           </div>
-          {!syncing && i.lastSyncStatus === 'error' && <div className="mt-0.5 truncate text-[11.5px] text-danger" title={i.lastSyncMessage ?? undefined}>{i.lastSyncMessage ?? 'Last sync failed'}</div>}
+          {!syncing && syncFailed(i) && <div className="mt-0.5 truncate text-[11.5px] text-danger" title={i.lastSyncMessage ?? undefined}>{i.lastSyncMessage ?? 'Last sync failed'}</div>}
           {!syncing && chips.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1.5">
               {chips.map((c, n) => <span key={n} className={`rounded px-1.5 py-px text-[11px] font-semibold tabular-nums ${CHIP_TONE[c.tone]}`}>{c.text}</span>)}

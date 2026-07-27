@@ -1118,7 +1118,10 @@ export class IntegrationsService {
         (cancelledDone ? `, ${cancelledDone} cancelled registered` : '') +
         (counts.refunded ? `, ${counts.refunded} refunds applied` : '');
       const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled, ${counts.errors} errors${defectNote}${feeNote}${relinkNote}${mcfNote}${rangeNote}${note}`;
-      await this.prisma.channelIntegration.update({ where: { id }, data: { lastSyncedAt: maxDate ?? undefined, lastSyncRunAt: new Date(), lastSyncStatus: counts.errors ? 'error' : 'ok', lastSyncMessage: message } });
+      // The run completed — status is 'ok' even if some individual orders failed (those surface
+      // as the "N errors" count in the message / a danger chip). Only a thrown failure (caught
+      // below, e.g. auth/API down) is a real 'error'.
+      await this.prisma.channelIntegration.update({ where: { id }, data: { lastSyncedAt: maxDate ?? undefined, lastSyncRunAt: new Date(), lastSyncStatus: 'ok', lastSyncMessage: message } });
       await this.audit(id, actorId, isRange ? 'sync.range' : 'sync', `${trigger}: ${message}`);
       return { ok: true, ...counts, message };
     } catch (e: any) {
