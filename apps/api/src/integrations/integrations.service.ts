@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
@@ -65,7 +65,13 @@ export class IntegrationsService {
     const contentType = ext === 'svg' ? 'image/svg+xml' : file.mimetype || `image/${ext === 'jpg' ? 'jpeg' : ext}`;
     // A stable-ish key per upload avoids CDN cache collisions when a logo is replaced.
     const key = `channel-logos/${channelType}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-    const url = await this.storage.putObject(key, file.buffer, contentType);
+    let url: string;
+    try {
+      url = await this.storage.putObject(key, file.buffer, contentType);
+    } catch (e: any) {
+      this.logger.error(`Channel-logo upload to storage failed (${channelType}): ${e?.name ?? ''} ${e?.message ?? e}`);
+      throw new ServiceUnavailableException(`Image storage rejected the upload: ${(e?.name ? `${e.name}: ` : '') + (e?.message ?? 'unknown error')}`.slice(0, 200));
+    }
 
     await this.prisma.channelLogo.upsert({
       where: { channelType },
