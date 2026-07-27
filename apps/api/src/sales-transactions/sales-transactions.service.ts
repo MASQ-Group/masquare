@@ -965,11 +965,23 @@ export class SalesTransactionsService {
   }
 
   /** SKU (lowercased) → productId from the current catalogue; main SKU wins over an alias.
-   *  Shared by save-time re-linking and the Recalculate button so both resolve SKUs identically. */
-  private async buildSkuToProduct(): Promise<Map<string, string>> {
+   *  Shared by save-time re-linking and the Recalculate button so both resolve SKUs identically.
+   *  Pass `skus` to resolve just those (save / per-order import) — the map is only ever looked
+   *  up by those SKUs, so scoping the query is behaviour-preserving and avoids loading the whole
+   *  product + alias tables on every write. Omit `skus` to load the entire catalogue. */
+  private async buildSkuToProduct(skus?: string[]): Promise<Map<string, string>> {
+    const norm = skus ? [...new Set(skus.map((s) => (s ?? '').trim()).filter(Boolean))] : null;
+    if (norm && norm.length === 0) return new Map();
+    const prodWhere: any = { deletedAt: null };
+    const aliasWhere: any = { deletedAt: null };
+    if (norm) {
+      // Case-insensitive match on the handful of SKUs on the current document(s).
+      prodWhere.OR = norm.map((s) => ({ mainSku: { equals: s, mode: 'insensitive' as const } }));
+      aliasWhere.OR = norm.map((s) => ({ skuValue: { equals: s, mode: 'insensitive' as const } }));
+    }
     const [products, aliases] = await Promise.all([
-      this.prisma.product.findMany({ where: { deletedAt: null }, select: { id: true, mainSku: true } }),
-      this.prisma.productSkuAlias.findMany({ where: { deletedAt: null }, select: { productId: true, skuValue: true } }),
+      this.prisma.product.findMany({ where: prodWhere, select: { id: true, mainSku: true } }),
+      this.prisma.productSkuAlias.findMany({ where: aliasWhere, select: { productId: true, skuValue: true } }),
     ]);
     const m = new Map<string, string>();
     for (const a of aliases) m.set(a.skuValue.trim().toLowerCase(), a.productId);
@@ -982,7 +994,7 @@ export class SalesTransactionsService {
    *  Recalculate button performs). The catalogue link wins; an explicit productId is the
    *  fallback for a SKU the catalogue doesn't know yet. */
   private async linkItemsToCatalogue<T extends { sku: string; productId?: string | null }>(items: T[]): Promise<T[]> {
-    const skuMap = await this.buildSkuToProduct();
+    const skuMap = await this.buildSkuToProduct(items.map((i) => i.sku));
     return items.map((i) => {
       // `serials` rides along on the DTO but belongs to the serial register, not to the
       // item row — spreading it into the item create would hand Prisma an unknown column.
@@ -1512,10 +1524,22 @@ export class SalesTransactionsService {
     });
 
     // SKU (lowercased) → productId from the current catalogue (main SKU wins over alias).
-    const skuToProduct = await this.buildSkuToProduct();
+    // When recalculating a known set of orders, resolve only their SKUs / products instead
+    // of loading the whole catalogue (a full sweep still needs everything).
+    const skuToProduct = await this.buildSkuToProduct(
+      scoped ? txs.flatMap((t) => t.items.map((i) => i.sku)) : undefined,
+    );
     // productId → its current VAT class, used to fill in local lines that never got one
     // (e.g. imported before the product existed).
-    const products = await this.prisma.product.findMany({ where: { deletedAt: null }, select: { id: true, vatClassId: true, vatClass: { select: { ratePct: true } } } });
+    const scopedPids = new Set<string>();
+    if (scoped) {
+      for (const t of txs) for (const it of t.items) if (it.productId) scopedPids.add(it.productId);
+      for (const pid of skuToProduct.values()) scopedPids.add(pid);
+    }
+    const products = await this.prisma.product.findMany({
+      where: { deletedAt: null, ...(scoped ? { id: { in: [...scopedPids] } } : {}) },
+      select: { id: true, vatClassId: true, vatClass: { select: { ratePct: true } } },
+    });
     const vatByProduct = new Map<string, { vatClassId: string; ratePct: number }>();
     for (const p of products) {
       if (p.vatClassId && p.vatClass) vatByProduct.set(p.id, { vatClassId: p.vatClassId, ratePct: Number(p.vatClass.ratePct) });
