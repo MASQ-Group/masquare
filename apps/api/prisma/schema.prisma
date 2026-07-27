@@ -560,6 +560,14 @@ model Product {
   availabilityLedger   AvailabilityLedger[]
   channelListings      ChannelListing[]
 
+  // Every products list filters out soft-deleted rows and often filters by one of
+  // these FKs (brand/vendor/type/category); none were indexed before.
+  @@index([deletedAt])
+  @@index([brandId])
+  @@index([vendorId])
+  @@index([categoryId])
+  @@index([productTypeId])
+  @@index([fulfilmentTypeId])
   @@map("product")
 }
 
@@ -1623,6 +1631,14 @@ model SalesTransaction {
   unlockRequests     SalesTransactionUnlockRequest[]
   shipments          Shipment[]
 
+  // Company isolation filters every read by companyId, and lists/analytics sort &
+  // range by date — this composite serves both. The rest match the hot filters and
+  // the import dedup lookup (integrationId + transactionRef).
+  @@index([companyId, date])
+  @@index([deletedAt])
+  @@index([integrationId, transactionRef])
+  @@index([salesChannelId])
+  @@index([destinationCountryId])
   @@map("sales_transaction")
 }
 
@@ -1715,6 +1731,11 @@ model SalesTransactionItem {
   product     Product?         @relation(fields: [productId], references: [id], onDelete: SetNull)
   vatClass    VatClass?        @relation(fields: [vatClassId], references: [id], onDelete: SetNull)
 
+  // transactionId is the FK join for every `include: { items }` (sales lists +
+  // analytics); productId/sku power product-level rollups and SKU relinking.
+  @@index([transactionId])
+  @@index([productId])
+  @@index([sku])
   @@map("sales_transaction_item")
 }
 

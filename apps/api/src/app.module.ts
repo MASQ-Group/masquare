@@ -31,6 +31,7 @@ import { ExpensesModule } from './expenses/expenses.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { ChannelListingsModule } from './channel-listings/channel-listings.module';
 import { StorageModule } from './storage/storage.module';
+import { HealthController } from './health.controller';
 
 @Module({
   imports: [
@@ -42,6 +43,19 @@ import { StorageModule } from './storage/storage.module';
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'apps/web/dist'),
       exclude: ['/api*'],
+      // Vite emits content-hashed asset filenames, so they can be cached forever.
+      // Without this express-static sends max-age=0 and the browser revalidates
+      // every bundle on every page load (304 round-trips to the single instance).
+      // index.html itself is never cached (must always point at the newest hashes).
+      serveStaticOptions: {
+        maxAge: '1y',
+        immutable: true,
+        setHeaders: (res, path) => {
+          if (path.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-cache');
+          }
+        },
+      },
     }),
     PrismaModule,
     CryptoModule,
@@ -69,6 +83,7 @@ import { StorageModule } from './storage/storage.module';
     ChannelListingsModule,
     IntegrationsModule,
   ],
+  controllers: [HealthController],
   providers: [
     CompanyScopeService,
     // Populates req.companyScope for every authenticated request (company isolation).

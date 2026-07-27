@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
+import compression from 'compression';
 import { AppModule } from './app.module';
 import { StorageService } from './storage/storage.service';
 
@@ -13,10 +14,16 @@ async function bootstrap() {
   app.use(json({ limit: '25mb' }));
   app.use(urlencoded({ extended: true, limit: '25mb' }));
 
+  // gzip/brotli every response — JSON API payloads and the SPA's JS/CSS bundles
+  // are large text that compresses 70-90%, the biggest over-the-wire latency win
+  // (Node serves everything directly; there is no CDN in front to do this).
+  app.use(compression());
+
   app.setGlobalPrefix('api');
 
-  // Ensure the media bucket exists (no-op if storage is offline).
-  await app.get(StorageService).ensureBucket();
+  // Ensure the media bucket exists — fire-and-forget so a slow or offline storage
+  // round-trip never delays the server from accepting requests at boot.
+  void app.get(StorageService).ensureBucket().catch(() => undefined);
 
   app.useGlobalPipes(
     new ValidationPipe({
