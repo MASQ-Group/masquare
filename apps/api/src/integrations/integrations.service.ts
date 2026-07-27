@@ -890,7 +890,7 @@ export class IntegrationsService {
    *  (integration, transactionRef): updates the existing draft, else creates one.
    *  Returns true when a row was written, so the caller can advance the high-water
    *  mark. Never touches manually-entered transactions (they have no integrationId). */
-  private async importMappedOrder(row: any, mapped: MappedOrder, orderDate: Date, sysUser: any, actorId: string | undefined, counts: { created: number; updated: number; errors: number }): Promise<boolean> {
+  private async importMappedOrder(row: any, mapped: MappedOrder, orderDate: Date, sysUser: any, actorId: string | undefined, counts: { created: number; updated: number; errors: number }, salesChannelIdOverride?: string | null): Promise<boolean> {
     const destCountry = mapped.payload.destinationCountryCode
       ? await this.prisma.country.findFirst({ where: { deletedAt: null, isoCode: mapped.payload.destinationCountryCode }, select: { id: true } })
       : null;
@@ -898,7 +898,7 @@ export class IntegrationsService {
     const dto: any = {
       date: orderDate.toISOString(),
       transactionRef: mapped.payload.transactionRef,
-      salesChannelId: row.targetSalesChannelId,
+      salesChannelId: salesChannelIdOverride ?? row.targetSalesChannelId,
       destinationCountryId: destCountry?.id ?? null,
       companyId: row.targetCompanyId,
       // FBA orders are fulfilled by the channel with no action needed from us, so they're
@@ -999,6 +999,15 @@ export class IntegrationsService {
         const LIMIT = 200;
         const MAX_PAGES = 50; // 10k orders/run cap; larger backfills should be date-chunked
 
+        // One eBay account sells across eBay UK/AU/DE/… in different currencies. Route each order
+        // to the company's sales channel that matches its marketplace country, so it inherits the
+        // correct currency / VAT / fees. Falls back to the integration's default channel.
+        const companyChannels = row.targetCompanyId
+          ? await this.prisma.salesChannel.findMany({ where: { companyId: row.targetCompanyId, deletedAt: null }, select: { id: true, name: true, nativeCountry: { select: { isoCode: true } } } })
+          : [];
+        const ebayChannelByIso = new Map<string, string>();
+        for (const c of companyChannels) if (/ebay/i.test(c.name) && c.nativeCountry?.isoCode) ebayChannelByIso.set(c.nativeCountry.isoCode, c.id);
+
         for (let pageNo = 0; pageNo < MAX_PAGES; pageNo++) {
           const page = await this.ebayGetOrdersPage(base, token, { filter, limit: LIMIT, offset: pageNo * LIMIT });
           if (!page.ok) throw new Error(`eBay orders ${page.status}: ${page.message}`);
@@ -1010,7 +1019,9 @@ export class IntegrationsService {
             const mapped = mapEbayOrder(order);
             // Fully cancelled orders are not net sales — skip (mirrors OnBuy).
             if (mapped.payload.resolution === 'cancelled') { counts.cancelled++; continue; }
-            if (await this.importMappedOrder(row, mapped, orderDate, sysUser, actorId, counts)) advance(orderDate);
+            const iso = mapped.payload.marketplaceCountryCode;
+            const channelId = (iso && ebayChannelByIso.get(iso)) || row.targetSalesChannelId;
+            if (await this.importMappedOrder(row, mapped, orderDate, sysUser, actorId, counts, channelId)) advance(orderDate);
           }
           if (page.orders.length < LIMIT) break;
         }

@@ -20,12 +20,25 @@ const n = (v: any) => { const x = Number(String(v ?? '').trim()); return Number.
 const round2 = (x: number) => Math.round(x * 100) / 100;
 const money = (m: any) => n(m?.value);
 
+/** eBay marketplace id (e.g. "EBAY_AU", "EBAY_GB", "EBAY_MOTORS") → ISO country code, so an
+ *  order can be routed to the matching per-country sales channel. */
+export function ebayMarketplaceToIso(mp?: string | null): string | null {
+  if (!mp) return null;
+  const s = String(mp).replace(/^EBAY_/, '').toUpperCase();
+  if (s === 'MOTORS') return 'US'; // eBay Motors is the US marketplace
+  return /^[A-Z]{2}$/.test(s) ? s : (/^[A-Z]{2}/.test(s) ? s.slice(0, 2) : null); // e.g. CA_FR → CA
+}
+
 export function mapEbayOrder(o: any): MappedOrder {
   const orderId = String(o.orderId ?? o.legacyOrderId ?? '');
   const currency = o?.pricingSummary?.total?.currency ?? o?.pricingSummary?.priceSubtotal?.currency ?? null;
   const destCode = o?.fulfillmentStartInstructions?.[0]?.shippingStep?.shipTo?.contactAddress?.countryCode ?? null;
   const channelShipmentStatus: 'shipped' | 'not_shipped' = String(o.orderFulfillmentStatus ?? '') === 'FULFILLED' ? 'shipped' : 'not_shipped';
   const resolution: 'none' | 'cancelled' = String(o?.cancelStatus?.cancelState ?? '') === 'CANCELED' ? 'cancelled' : 'none';
+
+  // The marketplace the order was placed on (per line item; an order is single-marketplace).
+  const marketplaceId = (o.lineItems ?? [])[0]?.listingMarketplaceId ?? (o.lineItems ?? [])[0]?.purchaseMarketplaceId ?? null;
+  const marketplaceCountryCode = ebayMarketplaceToIso(marketplaceId);
 
   const lines = (o.lineItems ?? []) as any[];
   const nets = lines.map((li) => money(li.total));
@@ -43,6 +56,7 @@ export function mapEbayOrder(o: any): MappedOrder {
   const header: MappedField[] = [
     { target: 'transactionRef', label: 'Transaction ID', source: 'orderId', value: orderId },
     { target: 'date', label: 'Date', source: 'creationDate', value: o.creationDate ?? null },
+    { target: 'salesChannel', label: 'eBay marketplace', source: 'lineItem.listingMarketplaceId', value: marketplaceId, resolved: marketplaceCountryCode },
     { target: 'currency', label: 'Currency', source: 'pricingSummary.total.currency', value: currency },
     { target: 'destinationCountry', label: 'Destination country', source: 'shipTo.contactAddress.countryCode', value: destCode },
     { target: 'fulfilmentType', label: 'Fulfilment type', source: 'eBay is seller-fulfilled', value: null },
@@ -94,6 +108,7 @@ export function mapEbayOrder(o: any): MappedOrder {
       channelShipmentStatus,
       resolution,
       fulfilmentType: null,
+      marketplaceCountryCode,
     },
     raw: o,
   };

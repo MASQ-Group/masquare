@@ -43,6 +43,10 @@ export interface MappedOrderPayload {
   channelShipmentStatus: 'shipped' | 'not_shipped';
   resolution: 'none' | 'cancelled';
   fulfilmentType: 'FBA' | 'FBM' | null; // channel fulfilment (Amazon AFN/MFN); null where N/A
+  // For multi-marketplace channels (eBay: one account sells across eBay UK/AU/DE/… with
+  // different currencies), the ISO country of the marketplace the order was placed on. Used to
+  // route the transaction to the matching per-country sales channel. Null → use the default.
+  marketplaceCountryCode?: string | null;
 }
 
 export interface MappedOrder {
