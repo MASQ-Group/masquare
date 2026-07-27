@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+// xlsx is loaded on demand inside handleFile (below) so it stays out of the main bundle.
 import { cn } from './cn';
 
 export interface ImportField {
@@ -33,6 +33,7 @@ export function BulkImport({ fields, onCommit, onClose }: BulkImportProps) {
 
   const handleFile = async (file: File) => {
     setFileName(file.name);
+    const XLSX = await import('xlsx');
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
     const sheet = wb.Sheets[wb.SheetNames[0]];

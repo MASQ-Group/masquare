@@ -1,46 +1,56 @@
+import { lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './lib/auth';
 import { AppShell } from './components/AppShell';
 import { LoginPage } from './pages/LoginPage';
-import { DashboardPage } from './pages/DashboardPage';
-import { CompaniesPage } from './pages/CompaniesPage';
-import { UsersPage } from './pages/UsersPage';
-import { ModulesPage } from './pages/ModulesPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { ProductsPage } from './pages/ProductsPage';
-import { SalesTransactionsPage } from './pages/SalesTransactionsPage';
-import { SalesTransactionFormPage } from './pages/SalesTransactionFormPage';
-import { ShipmentsPage } from './pages/ShipmentsPage';
-import { FbaShipmentsPage } from './pages/FbaShipmentsPage';
-import { WarehousesPage } from './pages/WarehousesPage';
-import { PurchaseOrdersPage } from './pages/PurchaseOrdersPage';
-import { PurchaseOrderFormPage } from './pages/PurchaseOrderFormPage';
-import { PurchaseOrderDetailPage } from './pages/PurchaseOrderDetailPage';
-import { GoodsReceiptsPage } from './pages/GoodsReceiptsPage';
-import { ProcurementPage } from './pages/ProcurementPage';
-import { IndividualPricingPage } from './pages/IndividualPricingPage';
-import { BulkPricingPage } from './pages/BulkPricingPage';
-import { VendorReturnsPage } from './pages/VendorReturnsPage';
-import { SerialsPage } from './pages/SerialsPage';
-import { InventoryPage } from './pages/InventoryPage';
-import { AvailabilityPage } from './pages/AvailabilityPage';
-import { ChannelListingsPage } from './pages/ChannelListingsPage';
-import { ChannelListingDetailPage } from './pages/ChannelListingDetailPage';
-import { StockOwedPage } from './pages/StockOwedPage';
-import { AnalyticsLayout } from './components/analytics/AnalyticsLayout';
-import { AnalyticsOverviewPage } from './pages/analytics/AnalyticsOverviewPage';
-import { AnalyticsSalesPage } from './pages/analytics/AnalyticsSalesPage';
-import { AnalyticsProfitabilityPage } from './pages/analytics/AnalyticsProfitabilityPage';
-import { AnalyticsProductsPage } from './pages/analytics/AnalyticsProductsPage';
-import { AnalyticsSkuDetailPage } from './pages/analytics/AnalyticsSkuDetailPage';
-import { AnalyticsCountriesPage } from './pages/analytics/AnalyticsCountriesPage';
-import { AnalyticsReturnsPage } from './pages/analytics/AnalyticsReturnsPage';
-import { ExpensesPage } from './pages/expenses/ExpensesPage';
-import { ExpenseCategoriesPage } from './pages/expenses/ExpenseCategoriesPage';
-import { ExpenseNamesPage } from './pages/expenses/ExpenseNamesPage';
-import { ExpenseTagsPage } from './pages/expenses/ExpenseTagsPage';
-import { IntegrationsPage } from './pages/IntegrationsPage';
 import { ConfirmProvider } from './components/ConfirmProvider';
+
+// Every page is code-split into its own chunk so the first load only ships the
+// shell + login, not all ~40 screens. `lazyPage` adapts our named page exports
+// (we don't use default exports) to React.lazy's default-export contract.
+// The Suspense boundary lives in AppShell around <Outlet/>, so the sidebar and
+// header stay put while a route chunk loads.
+const lazyPage = <T extends Record<string, any>>(loader: () => Promise<T>, name: keyof T) =>
+  lazy(() => loader().then((m) => ({ default: m[name] })));
+
+const DashboardPage = lazyPage(() => import('./pages/DashboardPage'), 'DashboardPage');
+const CompaniesPage = lazyPage(() => import('./pages/CompaniesPage'), 'CompaniesPage');
+const UsersPage = lazyPage(() => import('./pages/UsersPage'), 'UsersPage');
+const ModulesPage = lazyPage(() => import('./pages/ModulesPage'), 'ModulesPage');
+const SettingsPage = lazyPage(() => import('./pages/SettingsPage'), 'SettingsPage');
+const ProductsPage = lazyPage(() => import('./pages/ProductsPage'), 'ProductsPage');
+const SalesTransactionsPage = lazyPage(() => import('./pages/SalesTransactionsPage'), 'SalesTransactionsPage');
+const SalesTransactionFormPage = lazyPage(() => import('./pages/SalesTransactionFormPage'), 'SalesTransactionFormPage');
+const ShipmentsPage = lazyPage(() => import('./pages/ShipmentsPage'), 'ShipmentsPage');
+const FbaShipmentsPage = lazyPage(() => import('./pages/FbaShipmentsPage'), 'FbaShipmentsPage');
+const WarehousesPage = lazyPage(() => import('./pages/WarehousesPage'), 'WarehousesPage');
+const PurchaseOrdersPage = lazyPage(() => import('./pages/PurchaseOrdersPage'), 'PurchaseOrdersPage');
+const PurchaseOrderFormPage = lazyPage(() => import('./pages/PurchaseOrderFormPage'), 'PurchaseOrderFormPage');
+const PurchaseOrderDetailPage = lazyPage(() => import('./pages/PurchaseOrderDetailPage'), 'PurchaseOrderDetailPage');
+const GoodsReceiptsPage = lazyPage(() => import('./pages/GoodsReceiptsPage'), 'GoodsReceiptsPage');
+const ProcurementPage = lazyPage(() => import('./pages/ProcurementPage'), 'ProcurementPage');
+const IndividualPricingPage = lazyPage(() => import('./pages/IndividualPricingPage'), 'IndividualPricingPage');
+const BulkPricingPage = lazyPage(() => import('./pages/BulkPricingPage'), 'BulkPricingPage');
+const VendorReturnsPage = lazyPage(() => import('./pages/VendorReturnsPage'), 'VendorReturnsPage');
+const SerialsPage = lazyPage(() => import('./pages/SerialsPage'), 'SerialsPage');
+const InventoryPage = lazyPage(() => import('./pages/InventoryPage'), 'InventoryPage');
+const AvailabilityPage = lazyPage(() => import('./pages/AvailabilityPage'), 'AvailabilityPage');
+const ChannelListingsPage = lazyPage(() => import('./pages/ChannelListingsPage'), 'ChannelListingsPage');
+const ChannelListingDetailPage = lazyPage(() => import('./pages/ChannelListingDetailPage'), 'ChannelListingDetailPage');
+const StockOwedPage = lazyPage(() => import('./pages/StockOwedPage'), 'StockOwedPage');
+const AnalyticsLayout = lazyPage(() => import('./components/analytics/AnalyticsLayout'), 'AnalyticsLayout');
+const AnalyticsOverviewPage = lazyPage(() => import('./pages/analytics/AnalyticsOverviewPage'), 'AnalyticsOverviewPage');
+const AnalyticsSalesPage = lazyPage(() => import('./pages/analytics/AnalyticsSalesPage'), 'AnalyticsSalesPage');
+const AnalyticsProfitabilityPage = lazyPage(() => import('./pages/analytics/AnalyticsProfitabilityPage'), 'AnalyticsProfitabilityPage');
+const AnalyticsProductsPage = lazyPage(() => import('./pages/analytics/AnalyticsProductsPage'), 'AnalyticsProductsPage');
+const AnalyticsSkuDetailPage = lazyPage(() => import('./pages/analytics/AnalyticsSkuDetailPage'), 'AnalyticsSkuDetailPage');
+const AnalyticsCountriesPage = lazyPage(() => import('./pages/analytics/AnalyticsCountriesPage'), 'AnalyticsCountriesPage');
+const AnalyticsReturnsPage = lazyPage(() => import('./pages/analytics/AnalyticsReturnsPage'), 'AnalyticsReturnsPage');
+const ExpensesPage = lazyPage(() => import('./pages/expenses/ExpensesPage'), 'ExpensesPage');
+const ExpenseCategoriesPage = lazyPage(() => import('./pages/expenses/ExpenseCategoriesPage'), 'ExpenseCategoriesPage');
+const ExpenseNamesPage = lazyPage(() => import('./pages/expenses/ExpenseNamesPage'), 'ExpenseNamesPage');
+const ExpenseTagsPage = lazyPage(() => import('./pages/expenses/ExpenseTagsPage'), 'ExpenseTagsPage');
+const IntegrationsPage = lazyPage(() => import('./pages/IntegrationsPage'), 'IntegrationsPage');
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();

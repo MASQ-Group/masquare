@@ -12,6 +12,18 @@ const ENV_LABEL = process.env.VITE_ENV_LABEL ?? '';
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        // Keep the stable framework libraries in their own chunk so they stay cached
+        // across app deploys (app code changes far more often than these do).
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'query-vendor': ['@tanstack/react-query'],
+        },
+      },
+    },
+  },
   define: {
     // Vite only auto-exposes VITE_* from its own .env files; ours arrives via dotenv-cli.
     'import.meta.env.VITE_ENV_LABEL': JSON.stringify(ENV_LABEL),

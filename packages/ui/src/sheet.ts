@@ -1,5 +1,5 @@
-import * as XLSX from 'xlsx';
-
+// xlsx (SheetJS) is ~400KB. It's only needed when the user actually exports or
+// imports a sheet, so we load it on demand instead of in the main bundle.
 type Cell = string | number | null | undefined;
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -14,7 +14,8 @@ function triggerDownload(blob: Blob, filename: string) {
 }
 
 /** Build a .csv or .xlsx from an array-of-arrays and download it. */
-export function downloadSheet(baseName: string, aoa: Cell[][], format: 'csv' | 'xlsx' = 'xlsx') {
+export async function downloadSheet(baseName: string, aoa: Cell[][], format: 'csv' | 'xlsx' = 'xlsx') {
+  const XLSX = await import('xlsx');
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   if (format === 'csv') {
     const csv = XLSX.utils.sheet_to_csv(ws);
@@ -31,6 +32,7 @@ export function downloadSheet(baseName: string, aoa: Cell[][], format: 'csv' | '
 export async function parseSheetFile(
   file: File,
 ): Promise<{ columns: string[]; rows: Record<string, string>[] }> {
+  const XLSX = await import('xlsx');
   const buf = await file.arrayBuffer();
   // cellDates parses date-formatted cells as JS Dates (not raw Excel serial numbers),
   // so a "Ship date" column comes through as a real date instead of e.g. 46028.

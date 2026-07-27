@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
@@ -387,7 +387,10 @@ export function AppShell() {
         </header>
 
         <main className="flex-1 overflow-auto px-8 py-7 max-[760px]:px-4 max-[760px]:py-5">
-          <Outlet />
+          {/* Suspense boundary for lazily-loaded route chunks; the shell stays put. */}
+          <Suspense fallback={<div className="grid h-full place-items-center text-[13px] text-n-500">Loading…</div>}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
 
