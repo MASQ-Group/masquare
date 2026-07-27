@@ -240,7 +240,11 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
                   <div key={i} className="flex items-center gap-2">
                     <Select className="w-48" value={a.attributeId} placeholder="Attribute…"
                       onChange={(v) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, attributeId: v, value: '' } : x)); touch(); }}
-                      options={attributeLibrary.map((lib) => ({ value: lib.id, label: lib.name }))} />
+                      options={attributeLibrary
+                        // Don't offer an attribute already assigned on another row — keep only this
+                        // row's own current selection so it still displays.
+                        .filter((lib) => lib.id === a.attributeId || !attrs.some((x, xi) => xi !== i && x.attributeId === lib.id))
+                        .map((lib) => ({ value: lib.id, label: lib.name }))} />
                     {def?.inputType === 'predefined' ? (
                       <Select className="flex-1 mono" value={a.value} placeholder="Value…"
                         onChange={(v) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, value: v } : x)); touch(); }}
