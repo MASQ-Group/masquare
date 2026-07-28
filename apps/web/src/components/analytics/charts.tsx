@@ -144,7 +144,9 @@ export interface WaterfallStep { label: string; sub?: string; value: number; fro
 export function Waterfall({ steps, format, height = 250 }: { steps: WaterfallStep[]; format: (v: number) => string; height?: number }) {
   const top = Math.max(...steps.flatMap((s) => [s.from, s.to]), 1);
   return (
-    <div className="flex items-stretch gap-4">
+    // pt-6 reserves headroom for the value labels, which sit ~22px above each bar — the
+    // tallest bar starts at the very top, so without this its label overflows the card.
+    <div className="flex items-stretch gap-4 pt-6">
       {steps.map((st) => {
         const hi = Math.max(st.from, st.to);
         const lo = Math.min(st.from, st.to);
