@@ -176,23 +176,30 @@ export class ChannelListingsService {
           results.push({ integrationId: intg.id, name: intg.name, ok: false, message: `Listings sync for ${intg.channelType} isn't available yet` });
           continue;
         }
+        // Build rows in memory, then REPLACE this integration's listings in bulk. Row-by-row
+        // upserts don't scale to thousands of eBay listings (they time out mid-sync); a delete +
+        // chunked createMany is a handful of queries. Since we pull the full set each time, a
+        // full replace also drops delisted items and the old single-column ('') eBay rows.
+        // eBay keys by marketplace (per-market columns); single-market channels use ''.
+        const seen = new Set<string>();
+        const data = [] as Prisma.ChannelListingCreateManyInput[];
         for (const l of listings) {
-          const productId = skuMap.get((l.sku ?? '').trim().toLowerCase()) ?? null;
-          // eBay spans marketplaces on one integration, so listings are keyed by marketplace
-          // too. Single-marketplace channels (Amazon, OnBuy) use '' — one column as before.
+          if (!l.sku) continue;
           const marketplace = (l.marketplace ?? '').toString();
-          await this.prisma.channelListing.upsert({
-            where: { integrationId_channelSku_marketplace: { integrationId: intg.id, channelSku: l.sku, marketplace } },
-            create: { integrationId: intg.id, companyId: intg.targetCompanyId, channelSku: l.sku, marketplace, productId, asin: l.asin, title: l.title, listedQuantity: l.quantity, listedPrice: l.price, currency: l.currency, fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now },
-            update: { companyId: intg.targetCompanyId, productId, asin: l.asin, title: l.title, listedQuantity: l.quantity, listedPrice: l.price, currency: l.currency, fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now },
+          const key = `${l.sku} ${marketplace}`;
+          if (seen.has(key)) continue; // one row per (sku, marketplace) — avoids unique clashes
+          seen.add(key);
+          data.push({
+            integrationId: intg.id, companyId: intg.targetCompanyId, channelSku: l.sku, marketplace,
+            productId: skuMap.get(l.sku.trim().toLowerCase()) ?? null,
+            asin: l.asin, title: l.title, listedQuantity: l.quantity, listedPrice: l.price,
+            currency: l.currency, fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now,
           });
         }
-        // Drop legacy eBay rows from before per-marketplace splitting (marketplace '', not
-        // refreshed this sync), so the old single "eBay" column disappears.
-        if (intg.channelType === 'ebay') {
-          await this.prisma.channelListing.deleteMany({ where: { integrationId: intg.id, marketplace: '', lastPulledAt: { lt: now } } });
-        }
-        results.push({ integrationId: intg.id, name: intg.name, ok: true, pulled: listings.length });
+        const ops: Prisma.PrismaPromise<unknown>[] = [this.prisma.channelListing.deleteMany({ where: { integrationId: intg.id } })];
+        for (let i = 0; i < data.length; i += 1000) ops.push(this.prisma.channelListing.createMany({ data: data.slice(i, i + 1000), skipDuplicates: true }));
+        await this.prisma.$transaction(ops);
+        results.push({ integrationId: intg.id, name: intg.name, ok: true, pulled: data.length });
       } catch (e: any) {
         results.push({ integrationId: intg.id, name: intg.name, ok: false, message: (e?.message ?? 'failed').toString().slice(0, 160) });
       }
