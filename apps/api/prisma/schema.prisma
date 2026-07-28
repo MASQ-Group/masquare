@@ -624,6 +624,10 @@ model ChannelListing {
   companyId        String?   @map("company_id") @db.Uuid
   integrationId    String    @map("integration_id") @db.Uuid
   channelSku       String    @map("channel_sku")
+  // Marketplace this listing belongs to, as an ISO-2 country code (e.g. GB, US, DE). eBay uses
+  // ONE integration/token across many marketplaces, so this splits its listings into per-market
+  // columns. Empty string for single-marketplace integrations (Amazon, OnBuy).
+  marketplace      String    @default("")
   productId        String?   @map("product_id") @db.Uuid // null = unmatched to our catalogue
   asin             String?
   title            String?
@@ -641,7 +645,7 @@ model ChannelListing {
   integration ChannelIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
   company     Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
 
-  @@unique([integrationId, channelSku])
+  @@unique([integrationId, channelSku, marketplace])
   @@index([productId])
   @@index([companyId])
   @@map("channel_listing")

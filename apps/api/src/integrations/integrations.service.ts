@@ -8,7 +8,7 @@ import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFi
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
 import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 import { mapAmazonOrder } from './mappings/amazon-mapping';
-import { mapEbayOrder } from './mappings/ebay-mapping';
+import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
 import type { MappedOrder } from './mappings/types';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -532,6 +532,7 @@ export class IntegrationsService {
   async fetchAmazonListings(integrationId: string, opts: { maxPages?: number } = {}): Promise<Array<{
     sku: string; asin: string | null; title: string | null; quantity: number | null;
     price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+    marketplace: string | null;
   }>> {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
     if (!row) throw new NotFoundException('Integration not found');
@@ -566,6 +567,7 @@ export class IntegrationsService {
           currency: offer?.price?.currencyCode ?? null,
           fulfilmentChannel: isFbm ? 'FBM' : (avail.length ? 'FBA' : null),
           status: Array.isArray(summ.status) ? summ.status.join(',') : (summ.status ?? null),
+          marketplace: null, // Amazon integration is already marketplace-specific → single column
         });
       }
       pageToken = json?.pagination?.nextToken ?? null;
@@ -582,6 +584,7 @@ export class IntegrationsService {
   async fetchEbayListings(integrationId: string, opts: { maxItems?: number } = {}): Promise<Array<{
     sku: string; asin: string | null; title: string | null; quantity: number | null;
     price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+    marketplace: string | null;
   }>> {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
     if (!row) throw new NotFoundException('Integration not found');
@@ -622,7 +625,7 @@ export class IntegrationsService {
     // 2) Each SKU's offer → price, currency, listing status (getOffers is per-SKU).
     const out: any[] = [];
     for (const it of items) {
-      let price: number | null = null, currency: string | null = null, status: string | null = null;
+      let price: number | null = null, currency: string | null = null, status: string | null = null, marketplace: string | null = null;
       try {
         const res = await fetch(`${base}/sell/inventory/v1/offer?sku=${encodeURIComponent(it.sku)}`, { headers, signal: AbortSignal.timeout(15000) });
         const json: any = await res.json().catch(() => null);
@@ -632,9 +635,10 @@ export class IntegrationsService {
           price = p?.value != null ? Number(p.value) : null;
           currency = p?.currency ?? null;
           status = offer?.status ?? offer?.listing?.listingStatus ?? null;
+          marketplace = ebayMarketplaceToIso(offer?.marketplaceId ?? null);
         }
       } catch { /* leave price null on a per-SKU error */ }
-      out.push({ sku: it.sku, asin: null, title: it.title, quantity: it.quantity, price, currency, fulfilmentChannel: null, status });
+      out.push({ sku: it.sku, asin: null, title: it.title, quantity: it.quantity, price, currency, fulfilmentChannel: null, status, marketplace });
     }
     return out;
   }
@@ -646,6 +650,7 @@ export class IntegrationsService {
   private async ebayTradingListings(base: string, token: string, config: Record<string, string>, maxItems: number): Promise<Array<{
     sku: string; asin: string | null; title: string | null; quantity: number | null;
     price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+    marketplace: string | null;
   }>> {
     const endpoint = `${base}/ws/api.dll`;
     // GetMyeBaySelling ActiveList is account-wide, so one site call returns every active listing
@@ -696,6 +701,8 @@ export class IntegrationsService {
             currency: priceM ? priceM[1] : null,
             fulfilmentChannel: null,
             status: pick(b, /<ListingStatus>([^<]+)<\/ListingStatus>/),
+            // Per-item Site (e.g. "UK", "US", "Australia") → the marketplace's ISO country.
+            marketplace: IntegrationsService.ebaySiteNameToIso(pick(b, /<Site>([^<]+)<\/Site>/)),
           });
         }
         const totalPages = Number(/<TotalNumberOfPages>(\d+)<\/TotalNumberOfPages>/.exec(activeList)?.[1] ?? '1');
@@ -714,12 +721,26 @@ export class IntegrationsService {
       .replace(/&amp;/g, '&');
   }
 
+  /** eBay Trading `Site` name (e.g. "UK", "US", "Australia") → ISO-2 country, for per-market columns. */
+  private static readonly EBAY_SITE_ISO: Record<string, string> = {
+    us: 'US', ebaymotors: 'US', uk: 'GB', 'ebay uk': 'GB', australia: 'AU', austria: 'AT',
+    belgiumdutch: 'BE', belgiumfrench: 'BE', canada: 'CA', canadafrench: 'CA', switzerland: 'CH',
+    germany: 'DE', spain: 'ES', france: 'FR', ireland: 'IE', italy: 'IT', netherlands: 'NL',
+    poland: 'PL', hongkong: 'HK', singapore: 'SG', malaysia: 'MY', philippines: 'PH', india: 'IN',
+  };
+  static ebaySiteNameToIso(site: string | null): string | null {
+    if (!site) return null;
+    const key = site.trim().toLowerCase();
+    return IntegrationsService.EBAY_SITE_ISO[key] ?? (/^[a-z]{2}$/.test(key) ? key.toUpperCase() : null);
+  }
+
   /** Read-only pull of OnBuy listings (SKU, price, stock, status) for the seller's site.
    *  Feeds Channel Listings, same shape as fetchAmazonListings. Field names are parsed
    *  defensively — verify against a real pull, as OnBuy's listing schema varies by account. */
   async fetchOnBuyListings(integrationId: string, opts: { maxItems?: number } = {}): Promise<Array<{
     sku: string; asin: string | null; title: string | null; quantity: number | null;
     price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+    marketplace: string | null;
   }>> {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
     if (!row) throw new NotFoundException('Integration not found');
@@ -748,6 +769,7 @@ export class IntegrationsService {
           currency: 'GBP', // OnBuy is a GB marketplace
           fulfilmentChannel: null,
           status: (l.status ?? l.listing_status ?? null)?.toString() ?? null,
+          marketplace: null, // OnBuy is single-marketplace → single column
         });
       }
       const total = Number(json?.metadata?.total_rows ?? json?.total ?? 0);
