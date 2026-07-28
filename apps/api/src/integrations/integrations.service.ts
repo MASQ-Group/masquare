@@ -574,6 +574,100 @@ export class IntegrationsService {
     return out;
   }
 
+  /** Read-only pull of eBay listings via the Sell Inventory API (scope `sell.inventory.readonly`,
+   *  already granted). Lists inventory items (SKU, title, quantity), then reads each SKU's offer
+   *  for price + listing status. Feeds Channel Listings, same shape as fetchAmazonListings.
+   *  NOTE: the Inventory API only surfaces listings MANAGED by the Inventory API — classic
+   *  (Trading-API) listings may not all appear; if coverage is short we add GetMyeBaySelling. */
+  async fetchEbayListings(integrationId: string, opts: { maxItems?: number } = {}): Promise<Array<{
+    sku: string; asin: string | null; title: string | null; quantity: number | null;
+    price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+  }>> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) throw new NotFoundException('Integration not found');
+    const config = (row.config ?? {}) as Record<string, string>;
+    const secrets = await this.decryptedSecrets(row.id);
+    const token = await this.ebayAccessToken(config, secrets);
+    const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+    const maxItems = opts.maxItems ?? 1000;
+    const limit = 100;
+
+    // 1) Inventory items: SKU, title, quantity.
+    const items: Array<{ sku: string; title: string | null; quantity: number | null }> = [];
+    for (let offset = 0; offset < maxItems; offset += limit) {
+      const res = await fetch(`${base}/sell/inventory/v1/inventory_item?limit=${limit}&offset=${offset}`, { headers, signal: AbortSignal.timeout(20000) });
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok) throw new BadRequestException(`eBay inventory fetch failed (${res.status}${json?.errors?.[0]?.message ? ': ' + json.errors[0].message : ''}).`);
+      for (const it of json?.inventoryItems ?? []) {
+        items.push({ sku: it.sku, title: it.product?.title ?? null, quantity: it.availability?.shipToLocationAvailability?.quantity ?? null });
+      }
+      const total = Number(json?.total ?? 0);
+      if (!json?.inventoryItems?.length || offset + limit >= total) break;
+    }
+
+    // 2) Each SKU's offer → price, currency, listing status (getOffers is per-SKU).
+    const out: any[] = [];
+    for (const it of items) {
+      let price: number | null = null, currency: string | null = null, status: string | null = null;
+      try {
+        const res = await fetch(`${base}/sell/inventory/v1/offer?sku=${encodeURIComponent(it.sku)}`, { headers, signal: AbortSignal.timeout(15000) });
+        const json: any = await res.json().catch(() => null);
+        if (res.ok) {
+          const offer = (json?.offers ?? [])[0] ?? null;
+          const p = offer?.pricingSummary?.price;
+          price = p?.value != null ? Number(p.value) : null;
+          currency = p?.currency ?? null;
+          status = offer?.status ?? offer?.listing?.listingStatus ?? null;
+        }
+      } catch { /* leave price null on a per-SKU error */ }
+      out.push({ sku: it.sku, asin: null, title: it.title, quantity: it.quantity, price, currency, fulfilmentChannel: null, status });
+    }
+    return out;
+  }
+
+  /** Read-only pull of OnBuy listings (SKU, price, stock, status) for the seller's site.
+   *  Feeds Channel Listings, same shape as fetchAmazonListings. Field names are parsed
+   *  defensively — verify against a real pull, as OnBuy's listing schema varies by account. */
+  async fetchOnBuyListings(integrationId: string, opts: { maxItems?: number } = {}): Promise<Array<{
+    sku: string; asin: string | null; title: string | null; quantity: number | null;
+    price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+  }>> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) throw new NotFoundException('Integration not found');
+    const config = (row.config ?? {}) as Record<string, string>;
+    const secrets = await this.decryptedSecrets(row.id);
+    const { token, base } = await this.onbuyAccessToken(config, secrets);
+    const siteId = (config.siteIds || '').match(/\d+/)?.[0] ?? null;
+    const maxItems = opts.maxItems ?? 2000;
+    const limit = 100;
+
+    const out: any[] = [];
+    for (let offset = 0; offset < maxItems; offset += limit) {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+      if (siteId) params.set('site_id', siteId);
+      const res = await fetch(`${base}/listings?${params.toString()}`, { headers: { Authorization: token }, signal: AbortSignal.timeout(15000) });
+      const json: any = await res.json().catch(() => null);
+      if (!res.ok) throw new BadRequestException(`OnBuy listings fetch failed (${res.status}${json?.error?.message || json?.message ? ': ' + (json.error?.message || json.message) : ''}).`);
+      const results: any[] = json?.results ?? (Array.isArray(json) ? json : []);
+      for (const l of results) {
+        out.push({
+          sku: l.sku ?? l.seller_sku ?? l.merchant_sku ?? null,
+          asin: null,
+          title: l.product_name ?? l.name ?? l.product?.name ?? l.title ?? null,
+          quantity: l.stock ?? l.quantity ?? l.stock_level ?? null,
+          price: l.price != null ? Number(l.price) : (l.unit_price != null ? Number(l.unit_price) : null),
+          currency: 'GBP', // OnBuy is a GB marketplace
+          fulfilmentChannel: null,
+          status: (l.status ?? l.listing_status ?? null)?.toString() ?? null,
+        });
+      }
+      const total = Number(json?.metadata?.total_rows ?? json?.total ?? 0);
+      if (!results.length || offset + limit >= total) break;
+    }
+    return out.filter((x) => x.sku);
+  }
+
   /** One page of orders. When paging with NextToken, SP-API forbids other filters. */
   private async amazonGetOrdersPage(endpoint: string, token: string, marketplaceId: string, opts: { createdAfter?: string; createdBefore?: string; lastUpdatedAfter?: string; nextToken?: string | null }): Promise<{ ok: boolean; status?: number; message?: string; orders: any[]; nextToken: string | null }> {
     const params = new URLSearchParams({ MarketplaceIds: marketplaceId });

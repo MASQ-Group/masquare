@@ -503,7 +503,7 @@ export function ChannelListingsPage() {
             <div className="card p-12 text-center">
               <Package size={30} className="mx-auto text-n-300" />
               <p className="mt-3 text-[14px] font-medium text-n-700">No channel listings pulled yet</p>
-              <p className="mt-1 text-[13px] text-n-500">Hit <strong>Sync now</strong> to pull what's live on your connected Amazon marketplaces.</p>
+              <p className="mt-1 text-[13px] text-n-500">Hit <strong>Sync now</strong> to pull what's live on your connected Amazon, eBay and OnBuy channels.</p>
             </div>
           )}
 

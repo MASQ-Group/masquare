@@ -100,14 +100,17 @@ export class ChannelListingsService {
   }
 
   /** Pull listings from the given (or all active Amazon) channels into ChannelListing. */
+  // Channel types we can pull listings from today.
+  private static readonly LISTING_CHANNELS = ['amazon', 'ebay', 'onbuy'];
+
   async sync(integrationIds?: string[], companyIds?: string[]) {
-    // "Sync all" (no explicit ids) syncs Amazon only — the one channel type with a
-    // listings connector today. A selective sync may target any connected channel;
-    // types without a listings connector yet are reported, not silently dropped.
+    // "Sync all" (no explicit ids) syncs every channel type with a listings connector.
+    // A selective sync may target any connected channel; types without a listings connector
+    // yet are reported, not silently dropped.
     const selective = !!integrationIds?.length;
     const where: Prisma.ChannelIntegrationWhereInput = {
       ...ACTIVE, status: 'active',
-      ...(selective ? { id: { in: integrationIds } } : { channelType: 'amazon' }),
+      ...(selective ? { id: { in: integrationIds } } : { channelType: { in: ChannelListingsService.LISTING_CHANNELS } }),
       ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
     };
     const ints = await this.prisma.channelIntegration.findMany({ where, select: { id: true, name: true, channelType: true, targetCompanyId: true } });
@@ -115,12 +118,16 @@ export class ChannelListingsService {
     const now = new Date();
     const results: Array<{ integrationId: string; name: string; ok: boolean; pulled?: number; message?: string }> = [];
     for (const intg of ints) {
-      if (intg.channelType !== 'amazon') {
-        results.push({ integrationId: intg.id, name: intg.name, ok: false, message: `Listings sync for ${intg.channelType} isn't available yet` });
-        continue;
-      }
       try {
-        const listings = await this.integrations.fetchAmazonListings(intg.id);
+        const listings =
+          intg.channelType === 'amazon' ? await this.integrations.fetchAmazonListings(intg.id)
+          : intg.channelType === 'ebay' ? await this.integrations.fetchEbayListings(intg.id)
+          : intg.channelType === 'onbuy' ? await this.integrations.fetchOnBuyListings(intg.id)
+          : null;
+        if (!listings) {
+          results.push({ integrationId: intg.id, name: intg.name, ok: false, message: `Listings sync for ${intg.channelType} isn't available yet` });
+          continue;
+        }
         for (const l of listings) {
           const productId = skuMap.get((l.sku ?? '').trim().toLowerCase()) ?? null;
           await this.prisma.channelListing.upsert({
