@@ -510,12 +510,14 @@ export function ChannelListingsPage() {
           {/* MATRIX */}
           {!isLoading && total > 0 && view === 'matrix' && (
             <div className="card overflow-hidden">
-              <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 200px)', minHeight: 420 }}>
+              <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 300px)' }}>
                 <div style={{ minWidth: 600 }}>
-                  <div className="sticky top-0 z-30 grid items-stretch border-b border-n-100 bg-n-25" style={{ gridTemplateColumns: gridCols }}>
-                    <div className="sticky left-0 z-40 flex items-center bg-n-25 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-n-500">Product</div>
+                  {/* The bottom stroke lives on each header cell, not the sticky row: a border on
+                      the row only paints across the initially-visible width when scrolled sideways. */}
+                  <div className="sticky top-0 z-30 grid items-stretch bg-n-25" style={{ gridTemplateColumns: gridCols }}>
+                    <div className="sticky left-0 z-40 flex items-center border-b border-n-100 bg-n-25 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-n-500">Product</div>
                     {shownChannels.map((c) => (
-                      <div key={c.id} className="flex flex-col gap-0.5 border-l border-n-100 bg-n-25 px-4 py-3">
+                      <div key={c.id} className="flex flex-col gap-0.5 border-b border-l border-n-100 bg-n-25 px-4 py-3">
                         <div className="flex items-center gap-2">
                           <Flag code={c.countryIso} />
                           <span className="text-[12.5px] font-bold text-n-900">{c.name}</span>
