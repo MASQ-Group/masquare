@@ -589,7 +589,14 @@ export class IntegrationsService {
     const secrets = await this.decryptedSecrets(row.id);
     const token = await this.ebayAccessToken(config, secrets);
     const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
-    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+    // eBay's Sell Inventory API validates Accept-Language / Content-Language and 400s without a
+    // valid value ("Invalid value for header Accept-Language."), so set them explicitly.
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+      'Accept-Language': 'en-US',
+      'Content-Language': 'en-US',
+    };
     const maxItems = opts.maxItems ?? 1000;
     const limit = 100;
 
