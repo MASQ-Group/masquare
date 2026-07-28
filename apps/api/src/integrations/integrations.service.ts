@@ -692,17 +692,24 @@ export class IntegrationsService {
           const rawSku = pick(b, /<SKU>([\s\S]*?)<\/SKU>/);
           const priceM = /<CurrentPrice[^>]*currencyID="([^"]+)"[^>]*>([\d.]+)<\/CurrentPrice>/.exec(b);
           const qty = pick(b, /<QuantityAvailable>(\d+)<\/QuantityAvailable>/);
+          const currency = priceM ? priceM[1] : null;
+          // GetMyeBaySelling omits <Site> by default, so resolve the marketplace from the item URL
+          // domain (ebay.co.uk → GB, ebay.de → DE…) or, failing that, the listing currency
+          // (GBP → GB, AUD → AU…). EUR is ambiguous so the URL is the reliable signal there.
+          const marketplace =
+            IntegrationsService.ebaySiteNameToIso(pick(b, /<Site>([^<]+)<\/Site>/))
+            ?? IntegrationsService.ebayUrlToIso(pick(b, /<ViewItemURL>([\s\S]*?)<\/ViewItemURL>/))
+            ?? IntegrationsService.ebayCurrencyToIso(currency);
           out.push({
             sku: (rawSku && rawSku.trim()) || `EBAY-${itemId}`,
             asin: null,
             title: this.decodeXmlEntities(pick(b, /<Title>([\s\S]*?)<\/Title>/)),
             quantity: qty != null ? Number(qty) : null,
             price: priceM ? Number(priceM[2]) : null,
-            currency: priceM ? priceM[1] : null,
+            currency,
             fulfilmentChannel: null,
             status: pick(b, /<ListingStatus>([^<]+)<\/ListingStatus>/),
-            // Per-item Site (e.g. "UK", "US", "Australia") → the marketplace's ISO country.
-            marketplace: IntegrationsService.ebaySiteNameToIso(pick(b, /<Site>([^<]+)<\/Site>/)),
+            marketplace,
           });
         }
         const totalPages = Number(/<TotalNumberOfPages>(\d+)<\/TotalNumberOfPages>/.exec(activeList)?.[1] ?? '1');
@@ -732,6 +739,29 @@ export class IntegrationsService {
     if (!site) return null;
     const key = site.trim().toLowerCase();
     return IntegrationsService.EBAY_SITE_ISO[key] ?? (/^[a-z]{2}$/.test(key) ? key.toUpperCase() : null);
+  }
+
+  /** eBay item URL domain → ISO. Order matters: match longer/compound TLDs before `.com`. */
+  static ebayUrlToIso(url: string | null): string | null {
+    if (!url) return null;
+    const u = url.toLowerCase();
+    const map: Array<[RegExp, string]> = [
+      [/ebay\.co\.uk/, 'GB'], [/ebay\.com\.au/, 'AU'], [/ebay\.ca/, 'CA'], [/ebay\.de/, 'DE'],
+      [/ebay\.fr/, 'FR'], [/ebay\.it/, 'IT'], [/ebay\.es/, 'ES'], [/ebay\.ie/, 'IE'], [/ebay\.nl/, 'NL'],
+      [/ebay\.at/, 'AT'], [/ebay\.ch/, 'CH'], [/ebay\.be/, 'BE'], [/ebay\.pl/, 'PL'], [/ebay\.com/, 'US'],
+    ];
+    for (const [re, iso] of map) if (re.test(u)) return iso;
+    return null;
+  }
+
+  /** Listing currency → ISO for the marketplaces with a distinct currency (EUR is ambiguous → null). */
+  private static readonly EBAY_CCY_ISO: Record<string, string> = {
+    GBP: 'GB', USD: 'US', AUD: 'AU', CAD: 'CA', CHF: 'CH', PLN: 'PL', SEK: 'SE',
+    HKD: 'HK', SGD: 'SG', MYR: 'MY', PHP: 'PH', INR: 'IN', JPY: 'JP',
+  };
+  static ebayCurrencyToIso(ccy: string | null): string | null {
+    if (!ccy) return null;
+    return IntegrationsService.EBAY_CCY_ISO[ccy.toUpperCase()] ?? null;
   }
 
   /** Read-only pull of OnBuy listings (SKU, price, stock, status) for the seller's site.
