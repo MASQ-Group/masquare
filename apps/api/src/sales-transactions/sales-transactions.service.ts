@@ -906,11 +906,36 @@ export class SalesTransactionsService {
     if (cur === 'EUR') return 1;
     const peg = SalesTransactionsService.USD_PEG[cur];
     if (peg) {
-      const usdEur = await this.frankfurterRate('USD', date);
+      const usdEur = await this.rateToEur('USD', date);
       return usdEur != null ? round(usdEur / peg, 6) : null;
     }
-    const rate = await this.frankfurterRate(cur, date);
+    const rate = await this.rateToEur(cur, date);
     return rate != null ? round(rate, 6) : null;
+  }
+
+  /** currency -> EUR with provider redundancy: try Frankfurter (ECB, historical) first, then a
+   *  second free source if it's unreachable. A single provider outage was leaving transactions
+   *  saved with an "estimated" last-known rate; a fallback lets the real rate land at save time. */
+  private async rateToEur(currency: string, date: string): Promise<number | null> {
+    const primary = await this.frankfurterRate(currency, date);
+    if (primary != null) return primary;
+    return this.fallbackRateToEur(currency);
+  }
+
+  /** Fallback FX source: open.er-api.com (free, no key). Latest rates only — used only when
+   *  Frankfurter is down, so a recent sale still gets a real rate instead of an estimate. */
+  private async fallbackRateToEur(currency: string): Promise<number | null> {
+    try {
+      const res = await fetch(`https://open.er-api.com/v6/latest/${currency}`, { signal: AbortSignal.timeout(6000) });
+      if (res.ok) {
+        const json: any = await res.json();
+        const eur = json?.rates?.EUR;
+        if (typeof eur === 'number' && eur > 0) return round(eur, 6);
+      }
+    } catch {
+      // network / timeout — give up; caller falls back to the last known rate (estimated).
+    }
+    return null;
   }
 
   /** Sales channel row plus its native/fee currencies (snapshotted on the transaction). */

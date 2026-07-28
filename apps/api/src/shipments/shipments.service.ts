@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -175,13 +175,25 @@ export class ShipmentsService {
   async create(dto: CreateShipmentDto, actorId?: string) {
     const tx = await this.prisma.salesTransaction.findFirst({ where: { id: dto.transactionId, deletedAt: null }, select: { id: true } });
     if (!tx) throw new NotFoundException('Sales transaction not found');
+    const type = dto.type ?? 'outbound';
+    const tracking = dto.trackingNumber?.trim() || null;
+    // Block a duplicate parcel on manual entry: the same order can't have two shipments of
+    // the same type with the same tracking number (that would double-count shipping cost in
+    // the profit calc). A genuine extra parcel carries a different tracking number.
+    if (tracking) {
+      const existing = await this.prisma.shipment.findFirst({
+        where: { transactionId: dto.transactionId, type, trackingNumber: tracking, deletedAt: null },
+        select: { id: true },
+      });
+      if (existing) throw new ConflictException(`A ${type} shipment with tracking number ${tracking} is already recorded for this order.`);
+    }
     const s = await this.prisma.shipment.create({
       data: {
         transactionId: dto.transactionId,
-        type: dto.type ?? 'outbound',
+        type,
         shipmentDate: new Date(dto.shipmentDate),
         shippingServiceId: dto.shippingServiceId ?? null,
-        trackingNumber: dto.trackingNumber ?? null,
+        trackingNumber: tracking,
         shippingCostEur: dto.shippingCostEur ?? null,
         costBorneBy: dto.costBorneBy ?? 'company',
         dutyImportEur: dto.dutyImportEur ?? null,
