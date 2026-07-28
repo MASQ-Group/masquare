@@ -1216,7 +1216,9 @@ model ProductAttribute {
   product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
   attribute Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
 
-  @@unique([productId, attributeId])
+  // A product may carry an attribute more than once (multi-value attributes), so uniqueness
+  // is per distinct value — the same attribute+value can't be recorded twice on one product.
+  @@unique([productId, attributeId, value])
   @@map("product_attribute")
 }
 

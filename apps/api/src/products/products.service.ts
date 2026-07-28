@@ -408,13 +408,23 @@ export class ProductsService {
       await this.prisma.product.updateMany({ where: { id: { in: dto.ids }, deletedAt: null }, data });
     }
     if (dto.attributes?.length) {
+      // Group incoming values per attribute, then replace that attribute's values on each
+      // selected product (supports multi-value attributes).
+      const byAttr = new Map<string, string[]>();
+      for (const a of dto.attributes) {
+        const vals = byAttr.get(a.attributeId) ?? [];
+        vals.push(a.value);
+        byAttr.set(a.attributeId, vals);
+      }
       for (const pid of dto.ids) {
-        for (const a of dto.attributes) {
-          await this.prisma.productAttribute.upsert({
-            where: { productId_attributeId: { productId: pid, attributeId: a.attributeId } },
-            create: { productId: pid, attributeId: a.attributeId, value: a.value },
-            update: { value: a.value, deletedAt: null },
-          });
+        for (const [attributeId, values] of byAttr) {
+          const clean = [...new Set(values.map((v) => v.trim()).filter(Boolean))];
+          await this.prisma.productAttribute.deleteMany({ where: { productId: pid, attributeId } });
+          if (clean.length) {
+            await this.prisma.productAttribute.createMany({
+              data: clean.map((value) => ({ productId: pid, attributeId, value })),
+            });
+          }
         }
       }
     }

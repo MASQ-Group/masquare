@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ImagePlus, Plus, Star, Trash2 } from 'lucide-react';
+import { ImagePlus, Plus, Star, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { CostHistory } from './CostHistory';
 import { ProductStockSection } from './ProductStockSection';
@@ -8,7 +8,7 @@ import { ModalShell, Select } from '@masquare/ui';
 import {
   attributesApi, brandsApi, categoriesApi, fulfilmentTypesApi, productClassesApi, productsApi,
   productTypesApi, vatClassesApi, vendorsApi,
-  type Product, type ProductAlias, type ProductMediaItem, type RefLite,
+  type Attribute, type Product, type ProductAlias, type ProductMediaItem, type RefLite,
 } from '../../lib/api';
 import { RefField } from './RefField';
 import { CountrySelect } from '../common/CountrySelect';
@@ -55,9 +55,9 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   );
 
   const [aliases, setAliases] = useState<ProductAlias[]>(product?.aliases ?? []);
-  const [attrs, setAttrs] = useState<{ attributeId: string; value: string }[]>(
-    product?.attributes.map((a) => ({ attributeId: a.attributeId, value: a.value })) ?? [],
-  );
+  // One row per attribute, holding all its values — a multi-value attribute is edited in a
+  // single row instead of being added once per value.
+  const [attrs, setAttrs] = useState<{ attributeId: string; values: string[] }[]>(() => groupAttributes(product?.attributes));
 
   const [ident, setIdent] = useState({
     ean: product?.ean ?? '', upc: product?.upc ?? '', vendorSku: product?.vendorSku ?? '',
@@ -107,7 +107,9 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
         packageWidthCm: numOrNull(dims.packageWidthCm),
         packageHeightCm: numOrNull(dims.packageHeightCm),
         aliases: aliases.filter((a) => a.skuValue.trim()).map((a) => ({ skuValue: a.skuValue.trim(), label: a.label || undefined, fulfilmentTypeId: a.fulfilmentTypeId || undefined })),
-        attributes: attrs.filter((a) => a.attributeId && a.value.trim()),
+        attributes: attrs
+          .filter((a) => a.attributeId)
+          .flatMap((a) => a.values.map((v) => v.trim()).filter(Boolean).map((value) => ({ attributeId: a.attributeId, value }))),
       };
       if (product) await productsApi.update(product.id, body); else await productsApi.create(body);
       toast.success(product ? 'Product saved' : 'Product created');
@@ -236,28 +238,34 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
             <div className="flex flex-col gap-2">
               {attrs.map((a, i) => {
                 const def = attributeLibrary.find((x) => x.id === a.attributeId);
+                const setValues = (values: string[]) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, values } : x)); touch(); };
                 return (
-                  <div key={i} className="flex items-center gap-2">
+                  <div key={i} className="flex items-start gap-2">
                     <Select className="w-48" value={a.attributeId} placeholder="Attribute…"
-                      onChange={(v) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, attributeId: v, value: '' } : x)); touch(); }}
+                      onChange={(v) => { setAttrs((r) => r.map((x, idx) => idx === i ? { attributeId: v, values: [] } : x)); touch(); }}
                       options={attributeLibrary
-                        // Don't offer an attribute already assigned on another row — keep only this
-                        // row's own current selection so it still displays. Attributes flagged
-                        // "allow multiple" stay available so the same one can be added again.
-                        .filter((lib) => lib.id === a.attributeId || lib.allowMultiple || !attrs.some((x, xi) => xi !== i && x.attributeId === lib.id))
+                        // Each attribute occupies a single row (a multi-value one holds all its
+                        // values), so don't offer an attribute already assigned on another row.
+                        .filter((lib) => lib.id === a.attributeId || !attrs.some((x, xi) => xi !== i && x.attributeId === lib.id))
                         .map((lib) => ({ value: lib.id, label: lib.name }))} />
-                    {def?.inputType === 'predefined' ? (
-                      <Select className="flex-1 mono" value={a.value} placeholder="Value…"
-                        onChange={(v) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, value: v } : x)); touch(); }}
-                        options={def.values.map((v) => ({ value: v.value, label: v.value }))} />
-                    ) : (
-                      <input className="input mono flex-1" placeholder="Value" value={a.value} onChange={(e) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, value: e.target.value } : x)); touch(); }} />
-                    )}
+                    <div className="flex-1">
+                      {!def ? (
+                        <input className="input mono" placeholder="Value…" disabled value="" />
+                      ) : def.allowMultiple ? (
+                        <MultiValueEditor def={def} values={a.values} onChange={setValues} />
+                      ) : def.inputType === 'predefined' ? (
+                        <Select className="mono" value={a.values[0] ?? ''} placeholder="Value…"
+                          onChange={(v) => setValues([v])}
+                          options={def.values.map((v) => ({ value: v.value, label: v.value }))} />
+                      ) : (
+                        <input className="input mono" placeholder="Value" value={a.values[0] ?? ''} onChange={(e) => setValues([e.target.value])} />
+                      )}
+                    </div>
                     <button className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" onClick={() => { setAttrs((r) => r.filter((_, idx) => idx !== i)); touch(); }}><Trash2 size={15} /></button>
                   </div>
                 );
               })}
-              <div><button className="btn btn-ghost" onClick={() => { setAttrs((r) => [...r, { attributeId: '', value: '' }]); touch(); }}><Plus size={16} /> Add attribute</button></div>
+              <div><button className="btn btn-ghost" onClick={() => { setAttrs((r) => [...r, { attributeId: '', values: [] }]); touch(); }}><Plus size={16} /> Add attribute</button></div>
             </div>
           </div>
         </div>
@@ -369,5 +377,54 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
 
       {tab === 'stock' && product && <ProductStockSection productId={product.id} />}
     </ModalShell>
+  );
+}
+
+/** Collapse a product's stored attributes (one row per value) into one row per attribute,
+ *  gathering that attribute's values — so a multi-value attribute is edited as a single row. */
+function groupAttributes(rows?: { attributeId: string; value: string }[]): { attributeId: string; values: string[] }[] {
+  const out: { attributeId: string; values: string[] }[] = [];
+  const idx = new Map<string, number>();
+  for (const a of rows ?? []) {
+    if (!idx.has(a.attributeId)) { idx.set(a.attributeId, out.length); out.push({ attributeId: a.attributeId, values: [] }); }
+    out[idx.get(a.attributeId)!].values.push(a.value);
+  }
+  return out;
+}
+
+/** Editor for an attribute that allows several values on one SKU: shows the chosen values as
+ *  removable chips, plus a picker (predefined) or a text field (free text) to add more. */
+function MultiValueEditor({ def, values, onChange }: { def: Attribute; values: string[]; onChange: (values: string[]) => void }) {
+  const [text, setText] = useState('');
+  const has = (v: string) => values.some((x) => x.toLowerCase() === v.trim().toLowerCase());
+  const add = (v: string) => { const t = v.trim(); if (t && !has(t)) onChange([...values, t]); };
+  const remove = (v: string) => onChange(values.filter((x) => x !== v));
+  const remaining = def.values.filter((o) => !has(o.value));
+  return (
+    <div className="rounded-md border border-n-200 bg-n-0 p-1.5">
+      {values.length > 0 && (
+        <div className="mb-1.5 flex flex-wrap gap-1.5">
+          {values.map((v) => (
+            <span key={v} className="mono inline-flex items-center gap-1 rounded bg-n-100 px-2 py-0.5 text-[12px] text-n-700">
+              {v}
+              <button type="button" className="text-n-400 hover:text-danger" onClick={() => remove(v)}><X size={12} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+      {def.inputType === 'predefined' ? (
+        <Select className="mono" value="" disabled={remaining.length === 0}
+          placeholder={remaining.length ? 'Add a value…' : 'All values added'}
+          onChange={(v) => add(v)}
+          options={remaining.map((o) => ({ value: o.value, label: o.value }))} />
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <input className="input mono flex-1" placeholder="Type a value, Enter to add" value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(text); setText(''); } }} />
+          <button type="button" className="btn btn-ghost flex-shrink-0" onClick={() => { add(text); setText(''); }}><Plus size={15} /> Add</button>
+        </div>
+      )}
+    </div>
   );
 }
