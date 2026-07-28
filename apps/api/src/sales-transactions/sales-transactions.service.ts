@@ -240,7 +240,7 @@ export class SalesTransactionsService {
       const fx = t.exchangeRate;
       const feeFxR = t.feeExchangeRate ?? t.exchangeRate;
       for (const it of items) {
-        const avg = fbaAvgMap.get(`${it.productId ?? ''}:${t.salesChannelId ?? ''}`) ?? 0;
+        const avg = this.fbaUnitCost(fbaAvgMap, it, t.salesChannelId);
         fbaInboundCostEur += avg * (it.quantity ?? 1);
         if (fx != null) fbaFeeEur += n(it.fbaFulfilmentFeeAmount) * (feeFxR ?? fx);
       }
@@ -420,7 +420,7 @@ export class SalesTransactionsService {
       const noWeight = uniq(linked.filter((it: any) => prodWeight(it.product) == null).map((it: any) => it.sku));
       if (noWeight.length) alerts.push({ code: 'missing_weight', severity: 'warning', message: 'Missing product weight', items: noWeight });
     } else {
-      const noInbound = uniq(linked.filter((it: any) => !((fbaAvgMap.get(`${it.productId}:${t.salesChannelId ?? ''}`) ?? 0) > 0)).map((it: any) => it.sku));
+      const noInbound = uniq(linked.filter((it: any) => !(this.fbaUnitCost(fbaAvgMap, it, t.salesChannelId) > 0)).map((it: any) => it.sku));
       if (noInbound.length) alerts.push({ code: 'missing_fba_inbound', severity: 'warning', message: 'No FBA inbound shipment cost recorded', items: noInbound });
     }
 
@@ -792,25 +792,49 @@ export class SalesTransactionsService {
   private async buildFbaAverageMap(rows: any[]): Promise<Map<string, number>> {
     const map = new Map<string, number>();
     const productIds = new Set<string>();
+    const skus = new Set<string>();
     for (const r of rows) {
       if (r.fulfilmentType !== 'FBA') continue;
-      for (const it of r.items ?? []) if (it.productId) productIds.add(it.productId);
+      for (const it of r.items ?? []) { if (it.productId) productIds.add(it.productId); if (it.sku) skus.add(String(it.sku).trim()); }
     }
-    if (!productIds.size) return map;
+    if (!productIds.size && !skus.size) return map;
+    // Match FBA inbound cost by product AND by SKU: an FBA shipment line that never linked to a
+    // product (productId null) would otherwise never match its orders, so its cost is invisible.
     const items = await this.prisma.fbaShipmentItem.findMany({
-      where: { deletedAt: null, productId: { in: [...productIds] }, shipment: { deletedAt: null } },
-      select: { productId: true, quantity: true, allocatedCostEur: true, shipment: { select: { salesChannelId: true } } },
+      where: {
+        deletedAt: null, shipment: { deletedAt: null },
+        OR: [
+          ...(productIds.size ? [{ productId: { in: [...productIds] } }] : []),
+          ...(skus.size ? [{ sku: { in: [...skus] } }] : []),
+        ],
+      },
+      select: { productId: true, sku: true, quantity: true, allocatedCostEur: true, shipment: { select: { salesChannelId: true } } },
     });
     const agg = new Map<string, { cost: number; qty: number }>();
-    for (const it of items) {
-      const key = `${it.productId}:${it.shipment?.salesChannelId ?? ''}`;
+    const add = (key: string, cost: number, qty: number) => {
       const cur = agg.get(key) ?? { cost: 0, qty: 0 };
-      cur.cost += it.allocatedCostEur != null ? Number(it.allocatedCostEur) : 0;
-      cur.qty += it.quantity ?? 0;
-      agg.set(key, cur);
+      cur.cost += cost; cur.qty += qty; agg.set(key, cur);
+    };
+    for (const it of items) {
+      const ch = it.shipment?.salesChannelId ?? '';
+      const cost = it.allocatedCostEur != null ? Number(it.allocatedCostEur) : 0;
+      const qty = it.quantity ?? 0;
+      if (it.productId) add(`p:${it.productId}:${ch}`, cost, qty);
+      if (it.sku) add(`s:${String(it.sku).trim().toLowerCase()}:${ch}`, cost, qty);
     }
     for (const [key, v] of agg) if (v.qty > 0) map.set(key, round(v.cost / v.qty, 4));
     return map;
+  }
+
+  /** Per-unit FBA inbound cost for a line: by product first, else by SKU (covers FBA lines that
+   *  never linked to a product). Channel-scoped, matching how the cost was recorded. */
+  private fbaUnitCost(fbaAvgMap: Map<string, number>, it: any, salesChannelId: string | null): number {
+    const ch = salesChannelId ?? '';
+    return (
+      (it.productId ? fbaAvgMap.get(`p:${it.productId}:${ch}`) : undefined) ??
+      fbaAvgMap.get(`s:${String(it.sku ?? '').trim().toLowerCase()}:${ch}`) ??
+      0
+    );
   }
 
   /** SKU (lowercased) → FBA/FBM label from its catalogue alias, when that alias carries a
