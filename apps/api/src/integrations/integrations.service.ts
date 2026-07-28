@@ -613,6 +613,12 @@ export class IntegrationsService {
       if (!json?.inventoryItems?.length || offset + limit >= total) break;
     }
 
+    // Classic listings (created via the Trading API / the normal Sell flow) don't appear in the
+    // Inventory API. If it returned nothing, fall back to GetMyeBaySelling which covers them all.
+    if (items.length === 0) {
+      return this.ebayTradingListings(base, token, config, maxItems);
+    }
+
     // 2) Each SKU's offer → price, currency, listing status (getOffers is per-SKU).
     const out: any[] = [];
     for (const it of items) {
@@ -631,6 +637,78 @@ export class IntegrationsService {
       out.push({ sku: it.sku, asin: null, title: it.title, quantity: it.quantity, price, currency, fulfilmentChannel: null, status });
     }
     return out;
+  }
+
+  /** eBay Trading API GetMyeBaySelling (ActiveList) — covers ALL active listings, including
+   *  classic ones the Inventory API doesn't surface. XML in/out; the OAuth user token is passed
+   *  via X-EBAY-API-IAF-TOKEN. Iterates the seller's sites (config.ebaySiteIds, default UK/AU/US)
+   *  and dedupes by ItemID, so it's correct whether GetMyeBaySelling is account-wide or per-site. */
+  private async ebayTradingListings(base: string, token: string, config: Record<string, string>, maxItems: number): Promise<Array<{
+    sku: string; asin: string | null; title: string | null; quantity: number | null;
+    price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+  }>> {
+    const endpoint = `${base}/ws/api.dll`;
+    const siteIds = (config.ebaySiteIds || '3,15,0').split(',').map((s) => s.trim()).filter(Boolean); // 3=UK 15=AU 0=US
+    const seen = new Set<string>();
+    const out: any[] = [];
+    const pick = (block: string, re: RegExp) => re.exec(block)?.[1] ?? null;
+
+    for (const siteId of siteIds) {
+      for (let pageNum = 1; pageNum <= 50 && out.length < maxItems; pageNum++) {
+        const body = `<?xml version="1.0" encoding="utf-8"?>\n<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ActiveList><Include>true</Include><Pagination><EntriesPerPage>200</EntriesPerPage><PageNumber>${pageNum}</PageNumber></Pagination></ActiveList></GetMyeBaySellingRequest>`;
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'X-EBAY-API-CALL-NAME': 'GetMyeBaySelling',
+            'X-EBAY-API-SITEID': siteId,
+            'X-EBAY-API-COMPATIBILITY-LEVEL': '1155',
+            'X-EBAY-API-IAF-TOKEN': token,
+            'Content-Type': 'text/xml',
+          },
+          body,
+          signal: AbortSignal.timeout(25000),
+        });
+        const xml = await res.text();
+        if (!res.ok) throw new BadRequestException(`eBay Trading API failed (${res.status}).`);
+        const ack = /<Ack>([^<]+)<\/Ack>/.exec(xml)?.[1] ?? '';
+        if (/Failure/i.test(ack)) {
+          const err = /<(?:ShortMessage|LongMessage)>([\s\S]*?)<\/(?:ShortMessage|LongMessage)>/.exec(xml)?.[1] ?? 'unknown error';
+          throw new BadRequestException(`eBay Trading API error (site ${siteId}): ${this.decodeXmlEntities(err)}`.slice(0, 250));
+        }
+        const activeList = /<ActiveList>[\s\S]*?<\/ActiveList>/.exec(xml)?.[0] ?? '';
+        const blocks = activeList.match(/<Item>[\s\S]*?<\/Item>/g) ?? [];
+        for (const b of blocks) {
+          const itemId = pick(b, /<ItemID>([^<]+)<\/ItemID>/);
+          if (!itemId || seen.has(itemId)) continue;
+          seen.add(itemId);
+          const rawSku = pick(b, /<SKU>([\s\S]*?)<\/SKU>/);
+          const priceM = /<CurrentPrice[^>]*currencyID="([^"]+)"[^>]*>([\d.]+)<\/CurrentPrice>/.exec(b);
+          const qty = pick(b, /<QuantityAvailable>(\d+)<\/QuantityAvailable>/);
+          out.push({
+            sku: (rawSku && rawSku.trim()) || `EBAY-${itemId}`,
+            asin: null,
+            title: this.decodeXmlEntities(pick(b, /<Title>([\s\S]*?)<\/Title>/)),
+            quantity: qty != null ? Number(qty) : null,
+            price: priceM ? Number(priceM[2]) : null,
+            currency: priceM ? priceM[1] : null,
+            fulfilmentChannel: null,
+            status: pick(b, /<ListingStatus>([^<]+)<\/ListingStatus>/),
+          });
+        }
+        const totalPages = Number(/<TotalNumberOfPages>(\d+)<\/TotalNumberOfPages>/.exec(activeList)?.[1] ?? '1');
+        if (blocks.length === 0 || pageNum >= totalPages) break;
+      }
+    }
+    return out;
+  }
+
+  /** Minimal XML entity decode for Trading-API text values. `&amp;` last to avoid double-decode. */
+  private decodeXmlEntities(s: string | null): string | null {
+    if (s == null) return null;
+    return s
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+      .replace(/&amp;/g, '&');
   }
 
   /** Read-only pull of OnBuy listings (SKU, price, stock, status) for the seller's site.
