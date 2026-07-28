@@ -597,7 +597,7 @@ export class IntegrationsService {
       'Accept-Language': 'en-US',
       'Content-Language': 'en-US',
     };
-    const maxItems = opts.maxItems ?? 1000;
+    const maxItems = opts.maxItems ?? 8000; // sellers can have thousands of listings
     const limit = 100;
 
     // 1) Inventory items: SKU, title, quantity.
@@ -648,7 +648,10 @@ export class IntegrationsService {
     price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
   }>> {
     const endpoint = `${base}/ws/api.dll`;
-    const siteIds = (config.ebaySiteIds || '3,15,0').split(',').map((s) => s.trim()).filter(Boolean); // 3=UK 15=AU 0=US
+    // GetMyeBaySelling ActiveList is account-wide, so one site call returns every active listing
+    // regardless of the site it's on — a single request avoids re-fetching thousands per extra
+    // site. Override with config.ebaySiteIds (comma-separated) only if a site is genuinely missing.
+    const siteIds = (config.ebaySiteIds || '3').split(',').map((s) => s.trim()).filter(Boolean); // 3=UK
     const seen = new Set<string>();
     const out: any[] = [];
     const pick = (block: string, re: RegExp) => re.exec(block)?.[1] ?? null;
