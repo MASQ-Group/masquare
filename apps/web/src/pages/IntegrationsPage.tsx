@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { integrationsApi, salesChannelsApi, type ChannelIntegration } from '../lib/api';
 import { IntegrationModal } from '../components/integrations/IntegrationModal';
 import { MappingVerifyModal } from '../components/integrations/MappingVerifyModal';
+import { ListingsPreviewModal } from '../components/integrations/ListingsPreviewModal';
 import { BackfillModal } from '../components/integrations/BackfillModal';
 import { ChannelLogoTile } from '../components/integrations/ChannelLogoTile';
 import { Flag } from '../components/common/Flag';
@@ -90,6 +91,7 @@ export function IntegrationsPage() {
   const [modal, setModal] = useState<ModalTarget>(undefined);
   const [mapVerify, setMapVerify] = useState<ChannelIntegration | undefined>();
   const [backfill, setBackfill] = useState<ChannelIntegration | undefined>();
+  const [listingsPreview, setListingsPreview] = useState<ChannelIntegration | undefined>();
 
   const [tab, setTab] = useState<Tab>('all');
   const [query, setQuery] = useState('');
@@ -372,6 +374,7 @@ export function IntegrationsPage() {
                             onEdit={() => setModal(i)}
                             onBackfill={() => setBackfill(i)}
                             onMapping={() => setMapVerify(i)}
+                            onPreviewListings={() => setListingsPreview(i)}
                             onRemove={() => confirm(`Remove integration “${i.name}”? Stored keys will be deleted.`) && del.mutate(i.id)}
                           />
                         ))}
@@ -401,6 +404,9 @@ export function IntegrationsPage() {
       )}
       {backfill && (
         <BackfillModal integration={backfill} onClose={() => setBackfill(undefined)} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }} />
+      )}
+      {listingsPreview && (
+        <ListingsPreviewModal integration={listingsPreview} onClose={() => setListingsPreview(undefined)} />
       )}
     </div>
   );
@@ -440,10 +446,10 @@ function HealthChip({ dot, color, text }: { dot: string; color: string; text: st
 
 function IntegrationRow({
   i, last, selected, expanded, syncing, maskSecrets, canSync, countryCode, logoUrl,
-  onToggleSel, onToggleExpand, onSync, onEdit, onBackfill, onMapping, onRemove,
+  onToggleSel, onToggleExpand, onSync, onEdit, onBackfill, onMapping, onPreviewListings, onRemove,
 }: {
   i: ChannelIntegration; last: boolean; selected: boolean; expanded: boolean; syncing: boolean; maskSecrets: boolean; canSync: boolean;
-  onToggleSel: () => void; onToggleExpand: () => void; onSync: () => void; onEdit: () => void; onBackfill: () => void; onMapping: () => void; onRemove: () => void;
+  onToggleSel: () => void; onToggleExpand: () => void; onSync: () => void; onEdit: () => void; onBackfill: () => void; onMapping: () => void; onPreviewListings: () => void; onRemove: () => void;
   countryCode?: string | null;
   // Some channels (eBay) run one account across every marketplace, so a single country flag
   // is misleading — show the channel logo (or a globe) instead.
@@ -539,6 +545,9 @@ function IntegrationRow({
             <div className="mt-3.5 flex flex-wrap gap-2">
               <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300" onClick={onEdit}><Pencil size={14} /> Edit connection</button>
               <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50" disabled={!canSync} title={canSync ? 'Import all orders in a past date range' : 'Verify the mapping and set the target first'} onClick={onBackfill}><Download size={14} /> Pull older orders</button>
+              {['amazon', 'ebay', 'onbuy'].includes(i.channelType) && (
+                <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300" title="Fetch a few live listings to preview — nothing is saved" onClick={onPreviewListings}><Eye size={14} /> Preview listings</button>
+              )}
               <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-bd bg-n-0 px-3 text-[12.5px] font-semibold text-danger hover:bg-danger-bg" onClick={onRemove}><Trash2 size={14} /> Remove</button>
             </div>
           </div>

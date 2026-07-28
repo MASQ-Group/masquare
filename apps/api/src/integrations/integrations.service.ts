@@ -912,6 +912,27 @@ export class IntegrationsService {
     return r.ok ? { ok: true, mode: r.mode, siteId: r.siteId, total: r.total, count: r.orders.length, orders: r.orders } : { ok: false, mode: r.mode, status: r.status, message: r.message };
   }
 
+  /** Read-only listings preview: fetch a few live listings and return the mapped rows WITHOUT
+   *  writing to Channel Listings — lets the operator confirm the pull (esp. OnBuy field mapping)
+   *  before a real sync. */
+  async previewListings(id: string, actorId?: string, limit = 10) {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
+    if (!row) throw new NotFoundException('Integration not found');
+    const type = row.channelType;
+    if (!['amazon', 'ebay', 'onbuy'].includes(type)) throw new BadRequestException('Listings preview supports Amazon, eBay and OnBuy only.');
+    try {
+      const listings =
+        type === 'amazon' ? await this.fetchAmazonListings(id, { maxPages: 1 })
+        : type === 'ebay' ? await this.fetchEbayListings(id, { maxItems: limit })
+        : await this.fetchOnBuyListings(id, { maxItems: limit });
+      await this.audit(id, actorId, 'listings.preview', `${type} count=${listings.length}`);
+      return { ok: true, channelType: type, count: listings.length, listings: listings.slice(0, limit) };
+    } catch (e: any) {
+      await this.audit(id, actorId, 'listings.preview', `${type} error`);
+      return { ok: false, channelType: type, message: (e?.message ?? 'failed').toString().slice(0, 200) };
+    }
+  }
+
   /** First-run mapping verification: fetch sample orders, apply the mapping, and
    *  return target ← source = value for each field so the user can confirm it. */
   async previewMapping(id: string, actorId?: string, limit = 3) {

@@ -72,6 +72,11 @@ export class IntegrationsController {
     return this.svc.previewMapping(id, user.sub);
   }
 
+  @Post(':id/preview-listings')
+  previewListings(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.svc.previewListings(id, user.sub);
+  }
+
   @Post(':id/verify-mapping')
   verifyMapping(@Param('id') id: string, @Body() dto: { confirmed?: boolean }, @CurrentUser() user: AuthUser) {
     return this.svc.verifyMapping(id, dto?.confirmed !== false, user.sub);

@@ -583,6 +583,14 @@ export interface MappingPreview {
   verifiedAt?: string | null; target?: string; samples?: MappingSample[];
 }
 
+export interface ListingPreviewRow {
+  sku: string; asin: string | null; title: string | null; quantity: number | null;
+  price: number | null; currency: string | null; fulfilmentChannel: string | null; status: string | null;
+}
+export interface ListingsPreview {
+  ok: boolean; channelType?: string; count?: number; message?: string; listings?: ListingPreviewRow[];
+}
+
 export const integrationsApi = {
   connectors: () => api.get<ConnectorDef[]>('/integrations/connectors').then((r) => r.data),
   list: () => api.get<ChannelIntegration[]>('/integrations').then((r) => r.data),
@@ -594,6 +602,7 @@ export const integrationsApi = {
   sync: (id: string, range?: { from: string; to?: string }) => api.post<IntegrationSyncResult>(`/integrations/${id}/sync`, range ?? {}).then((r) => r.data),
   test: (id: string, mode: 'live' | 'test') => api.post<IntegrationTestResult>(`/integrations/${id}/test`, { mode }).then((r) => r.data),
   previewMapping: (id: string) => api.post<MappingPreview>(`/integrations/${id}/preview-mapping`, {}).then((r) => r.data),
+  previewListings: (id: string) => api.post<ListingsPreview>(`/integrations/${id}/preview-listings`, {}).then((r) => r.data),
   verifyMapping: (id: string, confirmed: boolean) => api.post<ChannelIntegration>(`/integrations/${id}/verify-mapping`, { confirmed }).then((r) => r.data),
   remove: (id: string) => api.delete(`/integrations/${id}`).then((r) => r.data),
   /** Brand logos per channel family, as { channelType: url }. */
