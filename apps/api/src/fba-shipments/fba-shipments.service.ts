@@ -390,7 +390,7 @@ export class FbaShipmentsService {
     const where = { AND: and };
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.fbaShipment.count({ where }),
-      this.prisma.fbaShipment.findMany({ where, include: this.include, orderBy: { date: query.sortDir === 'asc' ? 'asc' : 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+      this.prisma.fbaShipment.findMany({ where, include: this.include, orderBy: [{ date: query.sortDir === 'asc' ? 'asc' : 'desc' }, { createdAt: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
     ]);
     return { items: rows.map((r) => this.serialize(r)), total, page, pageSize };
   }

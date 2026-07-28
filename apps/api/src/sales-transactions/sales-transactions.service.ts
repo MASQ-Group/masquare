@@ -610,7 +610,7 @@ export class SalesTransactionsService {
   async allIds(query: TxQuery): Promise<string[]> {
     const where = this.buildWhere(query);
     if (!query.profitTierId?.length && !query.hasAlert && !query.feeType?.length) {
-      const rows = await this.prisma.salesTransaction.findMany({ where, select: { id: true }, orderBy: { date: 'desc' } });
+      const rows = await this.prisma.salesTransaction.findMany({ where, select: { id: true }, orderBy: [{ date: 'desc' }, { transactionRef: 'desc' }] });
       return rows.map((r) => r.id);
     }
     const rows = await this.prisma.salesTransaction.findMany({ where, include });
@@ -650,7 +650,7 @@ export class SalesTransactionsService {
     // Profit / profit % are computed fields, so sorting or filtering by them happens
     // in memory over the whole filtered set before paginating.
     if (sortBy !== 'date' || query.profitTierId?.length || query.hasAlert || query.feeType?.length) {
-      const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: query.sortDir === 'asc' ? 'asc' : 'desc' } });
+      const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: [{ date: query.sortDir === 'asc' ? 'asc' : 'desc' }, { transactionRef: query.sortDir === 'asc' ? 'asc' : 'desc' }] });
       const serviceMap = await this.buildServiceMap();
       const fbaAvgMap = await this.buildFbaAverageMap(rows);
       const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
@@ -677,7 +677,7 @@ export class SalesTransactionsService {
 
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.salesTransaction.count({ where }),
-      this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: dir === 1 ? 'asc' : 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+      this.prisma.salesTransaction.findMany({ where, include, orderBy: [{ date: dir === 1 ? 'asc' : 'desc' }, { transactionRef: dir === 1 ? 'asc' : 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
     ]);
     const serviceMap = await this.buildServiceMap();
     const fbaAvgMap = await this.buildFbaAverageMap(rows);
@@ -694,7 +694,7 @@ export class SalesTransactionsService {
     const where = this.buildWhere(query);
     const dir = query.sortDir === 'asc' ? 1 : -1;
     const sortBy = query.sortBy === 'profit' || query.sortBy === 'profitPct' ? query.sortBy : 'date';
-    const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: { date: dir === 1 ? 'asc' : 'desc' } });
+    const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: [{ date: dir === 1 ? 'asc' : 'desc' }, { transactionRef: dir === 1 ? 'asc' : 'desc' }] });
     const serviceMap = await this.buildServiceMap();
     const fbaAvgMap = await this.buildFbaAverageMap(rows);
     const skuFulfilmentMap = await this.buildSkuFulfilmentMap();

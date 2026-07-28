@@ -88,7 +88,7 @@ export class ShipmentsService {
     };
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.shipment.count({ where }),
-      this.prisma.shipment.findMany({ where, include, orderBy: { shipmentDate: query.sortDir === 'asc' ? 'asc' : 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+      this.prisma.shipment.findMany({ where, include, orderBy: [{ shipmentDate: query.sortDir === 'asc' ? 'asc' : 'desc' }, { createdAt: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
     ]);
     return { items: rows.map((r) => this.serialize(r)), total, page, pageSize };
   }
