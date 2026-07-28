@@ -184,6 +184,7 @@ export interface Attribute {
   id: string;
   name: string;
   inputType: 'predefined' | 'free_text';
+  allowMultiple: boolean;
   values: AttributeValue[];
 }
 export interface PlatformSettings {

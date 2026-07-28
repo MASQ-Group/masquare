@@ -406,6 +406,10 @@ model Attribute {
   id        String             @id @default(uuid()) @db.Uuid
   name      String
   inputType AttributeInputType @map("input_type")
+  // When true, a single product/SKU may carry this attribute more than once (e.g. multiple
+  // "Compatible With" or "Material" values). When false (default) the product editor offers
+  // the attribute only once per SKU.
+  allowMultiple Boolean @default(false) @map("allow_multiple")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")

@@ -242,8 +242,9 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
                       onChange={(v) => { setAttrs((r) => r.map((x, idx) => idx === i ? { ...x, attributeId: v, value: '' } : x)); touch(); }}
                       options={attributeLibrary
                         // Don't offer an attribute already assigned on another row — keep only this
-                        // row's own current selection so it still displays.
-                        .filter((lib) => lib.id === a.attributeId || !attrs.some((x, xi) => xi !== i && x.attributeId === lib.id))
+                        // row's own current selection so it still displays. Attributes flagged
+                        // "allow multiple" stay available so the same one can be added again.
+                        .filter((lib) => lib.id === a.attributeId || lib.allowMultiple || !attrs.some((x, xi) => xi !== i && x.attributeId === lib.id))
                         .map((lib) => ({ value: lib.id, label: lib.name }))} />
                     {def?.inputType === 'predefined' ? (
                       <Select className="flex-1 mono" value={a.value} placeholder="Value…"

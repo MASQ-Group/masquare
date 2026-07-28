@@ -29,6 +29,7 @@ export class AttributesService {
       data: {
         name: dto.name,
         inputType: dto.inputType,
+        allowMultiple: dto.allowMultiple ?? false,
         createdById: actorId,
         updatedById: actorId,
         values: values.length ? { create: values.map((value) => ({ value })) } : undefined,
@@ -52,7 +53,7 @@ export class AttributesService {
       }
       return tx.attribute.update({
         where: { id },
-        data: { name: dto.name, inputType: dto.inputType, updatedById: actorId },
+        data: { name: dto.name, inputType: dto.inputType, allowMultiple: dto.allowMultiple, updatedById: actorId },
         include: { values: { where: { deletedAt: null }, orderBy: { value: 'asc' } } },
       });
     });

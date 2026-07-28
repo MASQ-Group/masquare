@@ -24,9 +24,14 @@ export function AttributesSection() {
         rows={data}
         columns={[
           { key: 'name', header: 'Name', render: (r) => <span className="font-medium text-n-800">{r.name}</span> },
-          { key: 'type', header: 'Input', render: (r) => r.inputType === 'predefined'
-            ? <span className="tag border border-info-bd bg-info-bg text-info">Predefined</span>
-            : <span className="tag border border-n-200 bg-n-100 text-n-600">Free text</span> },
+          { key: 'type', header: 'Input', render: (r) => (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {r.inputType === 'predefined'
+                ? <span className="tag border border-info-bd bg-info-bg text-info">Predefined</span>
+                : <span className="tag border border-n-200 bg-n-100 text-n-600">Free text</span>}
+              {r.allowMultiple && <span className="tag border border-n-200 bg-n-100 text-n-600">Multi-value</span>}
+            </div>
+          ) },
           { key: 'values', header: 'Values', render: (r) => (
             <div className="flex flex-wrap gap-1.5">
               {r.values.length === 0 && <span className="text-n-400">—</span>}
@@ -52,6 +57,7 @@ function AttributeModal({ attribute, onClose, onSaved }: { attribute: Attribute 
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState(attribute?.name ?? '');
   const [inputType, setInputType] = useState<'predefined' | 'free_text'>(attribute?.inputType ?? 'predefined');
+  const [allowMultiple, setAllowMultiple] = useState<boolean>(attribute?.allowMultiple ?? false);
   const [values, setValues] = useState<string[]>(attribute?.values.map((v) => v.value) ?? ['']);
 
   const canSave = name.trim().length > 0;
@@ -66,7 +72,7 @@ function AttributeModal({ attribute, onClose, onSaved }: { attribute: Attribute 
     }
     setBusy(true);
     try {
-      const body = { name, inputType, values: cleanValues };
+      const body = { name, inputType, allowMultiple, values: cleanValues };
       if (attribute) await attributesApi.update(attribute.id, body); else await attributesApi.create(body);
       toast.success('Saved');
       onSaved();
@@ -98,6 +104,18 @@ function AttributeModal({ attribute, onClose, onSaved }: { attribute: Attribute 
             ]}
           />
         </div>
+        <label className="flex cursor-pointer items-start gap-2.5">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 cursor-pointer accent-primary"
+            checked={allowMultiple}
+            onChange={(e) => { setAllowMultiple(e.target.checked); setDirty(true); }}
+          />
+          <span className="text-[13px] leading-tight text-n-700">
+            Allow multiple values per SKU
+            <span className="block text-[12px] text-n-400">A product can carry this attribute more than once (e.g. several materials or compatible models).</span>
+          </span>
+        </label>
         <div>
           <label className="label">{valuesLabel}</label>
           <div className="flex flex-col gap-2">
