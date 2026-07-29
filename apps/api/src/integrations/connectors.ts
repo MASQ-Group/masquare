@@ -111,6 +111,9 @@ const EBAY: ConnectorDef = {
     { key: 'ruName', label: 'Redirect URL name (RuName)', type: 'text', secret: false, required: false, group: 'Application' },
     { key: 'certId', label: 'Cert ID (Client Secret)', type: 'text', secret: true, required: false, group: 'OAuth credentials' },
     { key: 'refreshToken', label: 'OAuth Refresh Token', type: 'text', secret: true, required: false, group: 'OAuth credentials', help: 'User access token from the OAuth consent flow.' },
+    { key: 'ebayWriteEnabled', label: 'Enable stock push (inventory write)', type: 'select', secret: false, required: false, group: 'OAuth credentials',
+      options: [{ value: '', label: 'No — read-only' }, { value: 'true', label: 'Yes — allow quantity updates' }],
+      help: 'Turn on only after supplying a Refresh Token granted with the sell.inventory scope. Otherwise leave off — the token stays read-only and pushes are skipped.' },
   ],
 };
 

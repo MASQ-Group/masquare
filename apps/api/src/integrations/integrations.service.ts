@@ -299,8 +299,10 @@ export class IntegrationsService {
     }
   }
 
-  /** Read-only Sell API scopes we request at consent and on refresh (must stay a matched set). */
-  private readonly ebayScopes = [
+  /** Read-only Sell API scopes (the default — what every historical token was granted). The scope
+   *  set requested on refresh MUST be a subset of what the stored token carries, so a read-only
+   *  token must keep refreshing with read-only scopes. */
+  private readonly ebayReadScopes = [
     'https://api.ebay.com/oauth/api_scope',
     'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
     'https://api.ebay.com/oauth/api_scope/sell.inventory.readonly',
@@ -308,6 +310,23 @@ export class IntegrationsService {
     'https://api.ebay.com/oauth/api_scope/sell.finances',
     'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
   ];
+  /** Write-enabled set: the full sell.inventory scope (read + WRITE) replaces the read-only one, so
+   *  ReviseInventoryStatus / quantity pushes are authorised. Only used once the integration's token
+   *  was granted this scope (config.ebayWriteEnabled), else the refresh would fail as out-of-scope. */
+  private readonly ebayWriteScopes = [
+    'https://api.ebay.com/oauth/api_scope',
+    'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly',
+    'https://api.ebay.com/oauth/api_scope/sell.inventory',
+    'https://api.ebay.com/oauth/api_scope/sell.account.readonly',
+    'https://api.ebay.com/oauth/api_scope/sell.finances',
+    'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly',
+  ];
+  /** Opt-in per integration: only request the write scope once the operator has supplied a token
+   *  granted for it (config.ebayWriteEnabled = 'true'). Default stays read-only → zero downtime. */
+  private ebayScopesFor(config: Record<string, any>): string[] {
+    const on = config?.ebayWriteEnabled === true || config?.ebayWriteEnabled === 'true';
+    return on ? this.ebayWriteScopes : this.ebayReadScopes;
+  }
 
   /** Build the eBay OAuth consent URL for an integration (state = integration id). */
   async ebayConsentUrl(integrationId: string): Promise<string> {
@@ -316,7 +335,7 @@ export class IntegrationsService {
     const config = row.config as Record<string, string>;
     if (!config.appId || !config.ruName) throw new BadRequestException('Set the eBay App ID and RuName on the integration first.');
     const authHost = config.env === 'sandbox' ? 'https://auth.sandbox.ebay.com' : 'https://auth.ebay.com';
-    const q = new URLSearchParams({ client_id: config.appId, response_type: 'code', redirect_uri: config.ruName, scope: this.ebayScopes.join(' '), state: row.id });
+    const q = new URLSearchParams({ client_id: config.appId, response_type: 'code', redirect_uri: config.ruName, scope: this.ebayScopesFor(config).join(' '), state: row.id });
     return `${authHost}/oauth2/authorize?${q.toString()}`;
   }
 
@@ -373,7 +392,7 @@ export class IntegrationsService {
     const res = await fetch(`${base}/identity/v1/oauth2/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${Buffer.from(`${appId}:${certId}`).toString('base64')}` },
-      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, scope: this.ebayScopes.join(' ') }).toString(),
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, scope: this.ebayScopesFor(config).join(' ') }).toString(),
       signal: AbortSignal.timeout(10000),
     });
     const json: any = await res.json().catch(() => null);
