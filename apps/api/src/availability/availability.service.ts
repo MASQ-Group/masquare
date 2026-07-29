@@ -33,12 +33,10 @@ export class AvailabilityService {
     };
   }
 
-  /** Products with their channel-availability quantity (the number broadcast to sales channels). */
-  async list(query: AvailabilityQuery) {
-    const page = Math.max(1, Number(query.page) || 1);
-    const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
+  /** The product filter shared by list() and listIds() so "select all matching" uses the same set. */
+  private buildWhere(query: AvailabilityQuery): Prisma.ProductWhereInput {
     const q = query.q?.trim();
-    const where: Prisma.ProductWhereInput = {
+    return {
       ...ACTIVE,
       ...(query.brandId ? { brandId: query.brandId } : {}),
       ...(query.vendorId ? { vendorId: query.vendorId } : {}),
@@ -54,6 +52,19 @@ export class AvailabilityService {
           }
         : {}),
     };
+  }
+
+  /** Every product id matching the current filter — backs "select all N" across pages. */
+  async listIds(query: AvailabilityQuery): Promise<string[]> {
+    const rows = await this.prisma.product.findMany({ where: this.buildWhere(query), select: { id: true } });
+    return rows.map((r) => r.id);
+  }
+
+  /** Products with their channel-availability quantity (the number broadcast to sales channels). */
+  async list(query: AvailabilityQuery) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
+    const where = this.buildWhere(query);
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.product.count({ where }),
       this.prisma.product.findMany({

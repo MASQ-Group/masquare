@@ -33,6 +33,19 @@ export class AvailabilityController {
     return this.svc.list(query);
   }
 
+  // Literal path before ":productId": every product id matching the filter (for "select all N").
+  @Get('ids')
+  ids(
+    @Query('q') q?: string,
+    @Query('brandId') brandId?: string,
+    @Query('vendorId') vendorId?: string,
+    @Query('productTypeId') productTypeId?: string,
+    @Query('unset') unset?: string,
+  ) {
+    const query: AvailabilityQuery = { q, brandId, vendorId, productTypeId, unset: unset == null ? undefined : isTrue(unset) };
+    return this.svc.listIds(query);
+  }
+
   @Get(':productId')
   get(@Param('productId') productId: string) {
     return this.svc.get(productId);

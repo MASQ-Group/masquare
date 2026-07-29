@@ -262,7 +262,7 @@ export interface ChannelListingDetail {
   channels: ChannelListingDetailChannel[];
 }
 export interface ChannelSyncResult { channels: { integrationId: string; name: string; ok: boolean; pulled?: number; message?: string }[]; total: number }
-export interface ChannelPushRow { productId: string; channel: string; channelType: string; marketplace: string; channelSku: string; currentQty: number | null; targetQty: number; ok: boolean; message: string }
+export interface ChannelPushRow { productId: string; channelKey: string; channel: string; channelType: string; marketplace: string; channelSku: string; currentQty: number | null; targetQty: number; ok: boolean; message: string }
 export interface ChannelPushResult { dryRun: boolean; count: number; ok: number; failed: number; results: ChannelPushRow[] }
 export const channelListingsApi = {
   channels: () => api.get<ChannelListingChannel[]>('/channel-listings/channels').then((r) => r.data),
@@ -271,8 +271,8 @@ export const channelListingsApi = {
   sync: (integrationIds?: string[]) =>
     api.post<ChannelSyncResult>('/channel-listings/sync', integrationIds?.length ? { integrationIds } : {}).then((r) => r.data),
   detail: (productId: string) => api.get<ChannelListingDetail>(`/channel-listings/product/${productId}`).then((r) => r.data),
-  push: (productIds: string[], dryRun: boolean) =>
-    api.post<ChannelPushResult>('/channel-listings/push', { productIds, dryRun }).then((r) => r.data),
+  push: (productIds: string[], dryRun: boolean, channels?: string[]) =>
+    api.post<ChannelPushResult>('/channel-listings/push', { productIds, dryRun, ...(channels && channels.length ? { channels } : {}) }).then((r) => r.data),
 };
 
 // ---- Channel availability (sellable quantity broadcast to sales channels) ----
@@ -288,6 +288,9 @@ export interface AvailabilityListResponse { items: AvailabilityRow[]; total: num
 export const availabilityApi = {
   list: (params: { q?: string; brandId?: string; vendorId?: string; productTypeId?: string; unset?: boolean; page?: number; pageSize?: number } = {}) =>
     api.get<AvailabilityListResponse>('/availability', { params }).then((r) => r.data),
+  // Every product id matching the filter — backs "select all N across pages".
+  ids: (params: { q?: string; brandId?: string; vendorId?: string; productTypeId?: string; unset?: boolean } = {}) =>
+    api.get<string[]>('/availability/ids', { params }).then((r) => r.data),
   get: (productId: string) =>
     api.get<AvailabilityRow & { ledger: AvailabilityLedgerRow[] }>(`/availability/${productId}`).then((r) => r.data),
   setQuantity: (productId: string, quantity: number, note?: string) =>

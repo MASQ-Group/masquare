@@ -46,7 +46,7 @@ export class ChannelListingsController {
   /** Push Availability quantity to the selected products' listings. dryRun=true (default) previews
    *  without applying; dryRun=false commits and records a ChannelPush audit per listing. */
   @Post('push')
-  push(@VisibleCompanies() companyIds: string[], @CurrentUser() user: AuthUser, @Body() body: { productIds: string[]; dryRun?: boolean }) {
-    return this.svc.pushAvailability(body?.productIds ?? [], { dryRun: body?.dryRun !== false }, companyIds, user.sub);
+  push(@VisibleCompanies() companyIds: string[], @CurrentUser() user: AuthUser, @Body() body: { productIds: string[]; dryRun?: boolean; channels?: string[] }) {
+    return this.svc.pushAvailability(body?.productIds ?? [], { dryRun: body?.dryRun !== false, channelKeys: body?.channels }, companyIds, user.sub);
   }
 }

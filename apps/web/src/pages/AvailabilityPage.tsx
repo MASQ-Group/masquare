@@ -67,6 +67,17 @@ export function AvailabilityPage() {
   const toggleOne = (id: string) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleAllPage = () => setSelected((s) => { const n = new Set(s); if (allOnPage) pageIds.forEach((id) => n.delete(id)); else pageIds.forEach((id) => n.add(id)); return n; });
 
+  // "Select all N" across pages — fetch every matching product id for the current filter.
+  const [selectingAll, setSelectingAll] = useState(false);
+  const allMatchingSelected = total > 0 && selected.size >= total;
+  const selectAllMatching = async () => {
+    setSelectingAll(true);
+    try {
+      const ids = await availabilityApi.ids({ q: q || undefined, brandId: brandId || undefined, vendorId: vendorId || undefined, productTypeId: productTypeId || undefined, unset: onlyUnset || undefined });
+      setSelected(new Set(ids));
+    } catch { toast.error('Could not select all products'); } finally { setSelectingAll(false); }
+  };
+
   return (
     <div className="w-full">
       <div className="mb-5">
@@ -98,7 +109,20 @@ export function AvailabilityPage() {
       </div>
 
       <div className="card overflow-hidden">
-        <div className="border-b border-n-100 px-4 py-2.5 text-[12px] text-n-500">{total} product{total === 1 ? '' : 's'}</div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-n-100 px-4 py-2.5 text-[12px] text-n-500">
+          <span>{total} product{total === 1 ? '' : 's'}</span>
+          {selected.size > 0 && <span className="text-n-400">·</span>}
+          {selected.size > 0 && <span className="font-medium text-n-600">{selected.size} selected</span>}
+          {/* Select-all-across-pages: shown once everything on this page is ticked and more pages exist. */}
+          {allOnPage && total > pageIds.length && !allMatchingSelected && (
+            <button onClick={selectAllMatching} disabled={selectingAll} className="font-semibold text-teal-600 hover:text-teal-700 disabled:opacity-50">
+              {selectingAll ? 'Selecting…' : `Select all ${total}`}
+            </button>
+          )}
+          {allMatchingSelected && total > pageIds.length && (
+            <span className="text-n-500">All {total} selected · <button onClick={() => setSelected(new Set())} className="font-semibold text-teal-600 hover:text-teal-700">Clear</button></span>
+          )}
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] border-collapse">
             <thead>
@@ -188,8 +212,31 @@ function PushModal({ productIds, titles, onClose, onDone }: {
     refetchOnWindowFocus: false,
   });
 
+  const rows = preview.data?.results ?? [];
+  // Distinct channels present across the previewed products (keyed by the dashboard column id).
+  const channels = useMemo(() => {
+    const m = new Map<string, { label: string; marketplace: string }>();
+    for (const r of rows) if (!m.has(r.channelKey)) m.set(r.channelKey, { label: r.channel, marketplace: r.marketplace });
+    return [...m.entries()].map(([key, v]) => ({ key, ...v }));
+  }, [rows]);
+  // null until the preview lands; then defaults to ALL channels (push-to-all is the default action).
+  const [chosen, setChosen] = useState<Set<string> | null>(null);
+  useEffect(() => { if (preview.data && chosen === null) setChosen(new Set(channels.map((c) => c.key))); }, [preview.data, channels, chosen]);
+  const chosenSet = chosen ?? new Set(channels.map((c) => c.key));
+  const allChannels = channels.length > 0 && chosenSet.size >= channels.length;
+  const toggleChannel = (key: string) => setChosen((s) => { const n = new Set(s ?? channels.map((c) => c.key)); n.has(key) ? n.delete(key) : n.add(key); return n; });
+
+  const pushable = rows.filter((r) => r.ok && chosenSet.has(r.channelKey));
+  // Group rows by product for a readable plan.
+  const groups = useMemo(() => {
+    const m = new Map<string, typeof rows>();
+    for (const r of rows) { const a = m.get(r.productId) ?? []; a.push(r); m.set(r.productId, a); }
+    return [...m.entries()];
+  }, [rows]);
+
   const commit = useMutation({
-    mutationFn: () => channelListingsApi.push(productIds, false),
+    // Push to all channels => omit the filter (server pushes to every listing). Subset => pass the chosen keys.
+    mutationFn: () => channelListingsApi.push(productIds, false, allChannels ? undefined : [...chosenSet]),
     onSuccess: (r) => {
       if (r.failed > 0) toast.warning(`Pushed ${r.ok} listing${r.ok === 1 ? '' : 's'}, ${r.failed} failed`);
       else toast.success(`Pushed availability to ${r.ok} listing${r.ok === 1 ? '' : 's'}`);
@@ -197,15 +244,6 @@ function PushModal({ productIds, titles, onClose, onDone }: {
     },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Push failed'),
   });
-
-  const rows = preview.data?.results ?? [];
-  const pushable = rows.filter((r) => r.ok);
-  // Group rows by product for a readable plan.
-  const groups = useMemo(() => {
-    const m = new Map<string, typeof rows>();
-    for (const r of rows) { const a = m.get(r.productId) ?? []; a.push(r); m.set(r.productId, a); }
-    return [...m.entries()];
-  }, [rows]);
 
   const th = 'px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-n-400';
   const td = 'px-3 py-1.5 text-[12.5px] text-n-700';
@@ -215,12 +253,12 @@ function PushModal({ productIds, titles, onClose, onDone }: {
       open
       title="Push availability to channels"
       subtitle={`${productIds.length} product${productIds.length === 1 ? '' : 's'} selected`}
-      primaryLabel={commit.isPending ? 'Pushing…' : `Push to ${pushable.length} listing${pushable.length === 1 ? '' : 's'}`}
+      primaryLabel={commit.isPending ? 'Pushing…' : allChannels ? `Push to all channels (${pushable.length})` : `Push to ${chosenSet.size} channel${chosenSet.size === 1 ? '' : 's'} (${pushable.length})`}
       primaryDisabled={preview.isLoading || pushable.length === 0 || commit.isPending}
       busy={commit.isPending}
       onPrimary={() => commit.mutate()}
       onClose={onClose}
-      initialSize={{ w: 760, h: 560 }}
+      initialSize={{ w: 760, h: 600 }}
     >
       <div className="p-1">
         {preview.isLoading && <div className="py-10 text-center text-[13px] text-n-400">Checking each channel…</div>}
@@ -231,6 +269,33 @@ function PushModal({ productIds, titles, onClose, onDone }: {
               Preview only — nothing has changed yet. <b className="text-n-800">{pushable.length}</b> listing{pushable.length === 1 ? '' : 's'} will be updated to match Availability
               {preview.data.failed > 0 && <> · <span className="text-rose-600">{preview.data.failed} cannot be pushed</span></>}.
             </div>
+
+            {/* Channel chooser — all channels by default; untick any to push to specific channels only. */}
+            {channels.length > 1 && (
+              <div className="mb-3 rounded-lg border border-n-200 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Channels</span>
+                  <div className="flex gap-2 text-[12px]">
+                    <button onClick={() => setChosen(new Set(channels.map((c) => c.key)))} className="font-semibold text-teal-600 hover:text-teal-700">All</button>
+                    <span className="text-n-300">·</span>
+                    <button onClick={() => setChosen(new Set())} className="font-semibold text-n-500 hover:text-n-700">None</button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {channels.map((c) => {
+                    const on = chosenSet.has(c.key);
+                    return (
+                      <button key={c.key} onClick={() => toggleChannel(c.key)}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium transition ${on ? 'border-teal-300 bg-teal-50 text-teal-800' : 'border-n-200 bg-n-0 text-n-400'}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${on ? 'bg-teal-500' : 'bg-n-300'}`} />
+                        {c.label}{c.marketplace ? ` ${c.marketplace}` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {rows.length === 0 && (
               <div className="py-8 text-center text-[13px] text-n-400">The selected products have no active channel listings to push.</div>
             )}
@@ -254,20 +319,23 @@ function PushModal({ productIds, titles, onClose, onDone }: {
                         </tr>
                       </thead>
                       <tbody>
-                        {grp.map((r, i) => (
-                          <tr key={i} className="border-t border-n-50">
-                            <td className={`${td} whitespace-nowrap`}>{r.channel}{r.marketplace ? <span className="ml-1 text-n-400">{r.marketplace}</span> : null}</td>
-                            <td className={`${td} code text-n-500`}>{r.channelSku}</td>
-                            <td className={`${td} mono text-right text-n-500`}>{r.currentQty ?? '—'}</td>
-                            <td className={`${td} mono text-right font-semibold text-n-900`}>{r.targetQty}</td>
-                            <td className={td}>
-                              <span className="inline-flex items-center gap-1.5">
-                                <span className={`h-1.5 w-1.5 rounded-full ${STATE_DOT[r.ok ? 'ok' : 'fail']}`} />
-                                <span className={r.ok ? 'text-n-500' : 'text-rose-600'}>{r.message}</span>
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
+                        {grp.map((r, i) => {
+                          const excluded = !chosenSet.has(r.channelKey);
+                          return (
+                            <tr key={i} className={`border-t border-n-50 ${excluded ? 'opacity-40' : ''}`}>
+                              <td className={`${td} whitespace-nowrap`}>{r.channel}{r.marketplace ? <span className="ml-1 text-n-400">{r.marketplace}</span> : null}{excluded ? <span className="ml-1.5 text-[11px] text-n-400">(skipped)</span> : null}</td>
+                              <td className={`${td} code text-n-500`}>{r.channelSku}</td>
+                              <td className={`${td} mono text-right text-n-500`}>{r.currentQty ?? '—'}</td>
+                              <td className={`${td} mono text-right font-semibold text-n-900`}>{r.targetQty}</td>
+                              <td className={td}>
+                                <span className="inline-flex items-center gap-1.5">
+                                  <span className={`h-1.5 w-1.5 rounded-full ${STATE_DOT[r.ok ? 'ok' : 'fail']}`} />
+                                  <span className={r.ok ? 'text-n-500' : 'text-rose-600'}>{r.message}</span>
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

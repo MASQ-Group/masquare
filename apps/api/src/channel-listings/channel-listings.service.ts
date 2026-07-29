@@ -211,8 +211,11 @@ export class ChannelListingsService {
    *  eBay later). `dryRun` validates without applying — Amazon uses VALIDATION_PREVIEW, a real
    *  call that confirms the write would succeed. A real run updates listedQuantity and writes a
    *  ChannelPush audit row per listing. Excludes Amazon FBA (Amazon owns that quantity). */
-  async pushAvailability(productIds: string[], opts: { dryRun?: boolean } = {}, companyIds?: string[], actorId?: string) {
+  async pushAvailability(productIds: string[], opts: { dryRun?: boolean; channelKeys?: string[] } = {}, companyIds?: string[], actorId?: string) {
     const dryRun = opts.dryRun ?? false;
+    // Optional channel restriction: keys are the dashboard column ids — `${integrationId}:${marketplace}`
+    // for a per-marketplace (eBay) column, or the bare integrationId otherwise. Empty/undefined = all.
+    const channelKeys = opts.channelKeys && opts.channelKeys.length ? new Set(opts.channelKeys) : null;
     if (!productIds.length) return { dryRun, count: 0, ok: 0, failed: 0, results: [] as any[] };
     const avails = await this.prisma.productAvailability.findMany({ where: { productId: { in: productIds } }, select: { productId: true, quantity: true } });
     const qtyByProduct = new Map(avails.map((a) => [a.productId, a.quantity]));
@@ -224,8 +227,11 @@ export class ChannelListingsService {
       },
       select: { id: true, productId: true, integrationId: true, channelSku: true, marketplace: true, listedQuantity: true, companyId: true, integration: { select: { channelType: true, name: true } } },
     });
+    const channelKeyOf = (l: { integrationId: string; marketplace: string | null }) => (l.marketplace ? `${l.integrationId}:${l.marketplace}` : l.integrationId);
     const results: any[] = [];
     for (const l of listings) {
+      const channelKey = channelKeyOf(l);
+      if (channelKeys && !channelKeys.has(channelKey)) continue; // caller chose specific channels
       const target = qtyByProduct.get(l.productId ?? '') ?? 0;
       const r =
         l.integration.channelType === 'amazon' ? await this.integrations.pushAmazonQuantity(l.integrationId, l.channelSku, target, dryRun)
@@ -235,7 +241,7 @@ export class ChannelListingsService {
         if (r.ok) await this.prisma.channelListing.update({ where: { id: l.id }, data: { listedQuantity: target, lastPushedAt: new Date() } });
         await this.prisma.channelPush.create({ data: { companyId: l.companyId, integrationId: l.integrationId, productId: l.productId, channelSku: l.channelSku, marketplace: l.marketplace, field: 'quantity', requestedValue: target, previousValue: l.listedQuantity, ok: r.ok, message: r.message.slice(0, 300), dryRun: false, createdById: actorId ?? null } });
       }
-      results.push({ productId: l.productId, channel: l.integration.name, channelType: l.integration.channelType, marketplace: l.marketplace, channelSku: l.channelSku, currentQty: l.listedQuantity, targetQty: target, ok: r.ok, message: r.message });
+      results.push({ productId: l.productId, channelKey, channel: l.integration.name, channelType: l.integration.channelType, marketplace: l.marketplace, channelSku: l.channelSku, currentQty: l.listedQuantity, targetQty: target, ok: r.ok, message: r.message });
     }
     return { dryRun, count: results.length, ok: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length, results };
   }
