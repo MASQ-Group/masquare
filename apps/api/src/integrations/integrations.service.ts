@@ -389,15 +389,29 @@ export class IntegrationsService {
     const refreshToken = secrets.refreshToken;
     if (!appId || !certId || !refreshToken) throw new BadRequestException('eBay integration is missing App ID, Cert ID or Refresh Token.');
     const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
-    const res = await fetch(`${base}/identity/v1/oauth2/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${Buffer.from(`${appId}:${certId}`).toString('base64')}` },
-      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, scope: this.ebayScopesFor(config).join(' ') }).toString(),
-      signal: AbortSignal.timeout(10000),
-    });
-    const json: any = await res.json().catch(() => null);
-    if (!res.ok || !json?.access_token) throw new BadRequestException(`eBay token refresh failed (${res.status}${json?.error ? `: ${json.error}` : ''}).`);
-    return json.access_token as string;
+    const auth = `Basic ${Buffer.from(`${appId}:${certId}`).toString('base64')}`;
+    const refresh = async (scopes: string[]) => {
+      const res = await fetch(`${base}/identity/v1/oauth2/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: auth },
+        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, scope: scopes.join(' ') }).toString(),
+        signal: AbortSignal.timeout(10000),
+      });
+      const json: any = await res.json().catch(() => null);
+      return { ok: res.ok && !!json?.access_token, status: res.status, json };
+    };
+    // Ask for the configured (possibly write) scopes first.
+    const wanted = this.ebayScopesFor(config);
+    let r = await refresh(wanted);
+    // A token that was never granted the write scope 400s with invalid_scope. That must NOT break
+    // reads — fall back to the read-only set (always granted) so pulls keep working; a push then
+    // just fails with a clear auth error until a genuinely write-scoped token is connected.
+    if (!r.ok && r.status === 400 && /invalid_scope/i.test(String(r.json?.error ?? r.json?.error_description ?? '')) && wanted !== this.ebayReadScopes) {
+      this.logger.warn('eBay refresh rejected the write scope (invalid_scope) — falling back to read-only. Reconnect with a sell.inventory-granted token to enable pushes.');
+      r = await refresh(this.ebayReadScopes);
+    }
+    if (!r.ok) throw new BadRequestException(`eBay token refresh failed (${r.status}${r.json?.error ? `: ${r.json.error}` : ''}).`);
+    return r.json.access_token as string;
   }
 
   /** One page of eBay Sell Fulfillment API orders (line items + pricing included in the order). */

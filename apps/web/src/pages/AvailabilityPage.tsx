@@ -292,7 +292,11 @@ function PushModal({ productIds, titles, onClose, onDone }: {
   };
   const stripPlatform = (s: string) => s.replace(/^(Amazon|eBay|OnBuy)\s*/i, '').trim();
   const regionShort = (g: { key: string; label: string }) => REGION_SHORT[g.key] ?? (stripPlatform(g.label) || g.label);
-  const chipLabel = (c: { countryIso: string; marketplace: string; label: string }) => c.countryIso || c.marketplace || stripPlatform(c.label) || c.label;
+  // Chip label = the per-market ISO for eBay marketplaces; the account-wide eBay listing (no
+  // marketplace) shows "eBay" so it isn't a duplicate of the per-market GB chip. Amazon/OnBuy
+  // use their region ISO.
+  const chipLabel = (c: { countryIso: string; marketplace: string; label: string; channelType: string }) =>
+    c.marketplace || (c.channelType === 'ebay' ? 'eBay' : c.countryIso) || stripPlatform(c.label) || c.label;
   const chanName = (r: { channel: string; marketplace: string }) => `${r.channel}${r.marketplace ? ` ${r.marketplace}` : ''}`;
   // "Validated" / "Skipped" / "Failed" status + a muted detail line (eBay revise / OnBuy set …).
   const statusOf = (ok: boolean, excluded: boolean) =>
@@ -345,11 +349,11 @@ function PushModal({ productIds, titles, onClose, onDone }: {
       onClose={onClose}
       initialSize={{ w: 780, h: 600 }}
     >
-      <div className="p-1">
+      <div className="flex h-full flex-col p-1">
         {preview.isLoading && <div className="py-10 text-center text-[13px] text-n-400">Checking each channel…</div>}
         {preview.isError && <div className="py-10 text-center text-[13px] text-rose-500">Could not build the push preview.</div>}
         {preview.data && (
-          <>
+          <div className="flex min-h-0 flex-1 flex-col">
             {/* Compact preview banner (design: a chip, not a full-width bar). */}
             <div className="mb-3 inline-flex items-center gap-2 rounded-md border border-n-100 bg-n-25 px-3 py-1.5 text-[12px] text-n-500">
               <Info size={13} className="shrink-0 text-n-400" />
@@ -359,11 +363,12 @@ function PushModal({ productIds, titles, onClose, onDone }: {
             {rows.length === 0 ? (
               <div className="py-8 text-center text-[13px] text-n-400">The selected products have no active channel listings to push.</div>
             ) : (
-              // Two panels: stack in the standard modal, sit side-by-side when the modal is widened.
-              <div className="flex flex-wrap items-stretch gap-4">
+              // Two panels: stack in the standard modal; each fills the container height and scrolls
+              // independently when they sit side-by-side (full page).
+              <div className="flex min-h-0 flex-1 flex-wrap items-stretch gap-4">
 
                 {/* CHANNELS PANEL — platform cards with region rows + wrapping country chips. */}
-                <div className="min-w-0 flex-1 basis-[400px]">
+                <div className="flex min-h-0 min-w-0 flex-1 basis-[400px] flex-col">
                   <div className="mb-2.5 flex items-center justify-between">
                     <span className="eyebrow">Channels to push</span>
                     <div className="flex gap-2.5 text-[12px] font-semibold">
@@ -372,7 +377,7 @@ function PushModal({ productIds, titles, onClose, onDone }: {
                       <button onClick={() => setChosen(new Set())} className="text-n-500 hover:text-n-700">None</button>
                     </div>
                   </div>
-                  <div className="space-y-2.5">
+                  <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1">
                     {channelTree.map((P) => {
                       const pKeys = P.groups.flatMap((g) => g.channels.map((c) => c.key));
                       const pOn = pKeys.filter((k) => chosenSet.has(k)).length;
@@ -414,7 +419,7 @@ function PushModal({ productIds, titles, onClose, onDone }: {
                 </div>
 
                 {/* PREVIEW PANEL — compact table: Channel · Qty → New · Status (+ muted detail). */}
-                <div className="min-w-0 flex-1 basis-[400px]">
+                <div className="flex min-h-0 min-w-0 flex-1 basis-[400px] flex-col">
                   <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                     <span className="eyebrow">Preview</span>
                     {singleProduct && soleTitle ? (
@@ -429,11 +434,11 @@ function PushModal({ productIds, titles, onClose, onDone }: {
                   {singleProduct && skuMatches(soleTitle?.sku, groups[0]?.[1] ?? []) && (
                     <div className="mb-2 text-[11.5px] text-n-400">Channel SKU matches the product SKU on all channels.</div>
                   )}
-                  <div className="mt-1.5 overflow-hidden rounded-lg border border-n-200">
+                  <div className="mt-1.5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-n-200">
                     <div className="grid grid-cols-[1fr_78px_minmax(94px,1.1fr)] gap-1 border-b border-n-100 bg-n-25 px-3 py-[7px] text-[9.5px] font-semibold uppercase tracking-wide text-n-400">
                       <span>Channel</span><span className="text-right">Qty → New</span><span className="pl-3">Status</span>
                     </div>
-                    <div className="max-h-[46vh] overflow-y-auto">
+                    <div className="min-h-0 flex-1 overflow-y-auto">
                       {singleProduct
                         ? (groups[0]?.[1] ?? []).map((r, i) => rowEl(r, i, skuMatches(soleTitle?.sku, groups[0]?.[1] ?? []) ? undefined : soleTitle?.sku))
                         : groups.map(([pid, grp]) => {
@@ -454,7 +459,7 @@ function PushModal({ productIds, titles, onClose, onDone }: {
                 </div>
               </div>
             )}
-          </>
+          </div>
         )}
       </div>
     </ModalShell>
