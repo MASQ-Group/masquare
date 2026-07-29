@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Camera, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { integrationsApi } from '../../lib/api';
@@ -30,8 +30,13 @@ const MAX_BYTES = 1_000_000;
 export function ChannelLogoTile({ channelType, label, url, onChanged }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  // A stored logo whose object is missing/unreachable (e.g. a DB row migrated without its file)
+  // must not render a broken-image icon — fall back to the monogram instead. Reset per url.
+  const [imgError, setImgError] = useState(false);
+  useEffect(() => { setImgError(false); }, [url]);
   const brand = BRAND[channelType] ?? { bg: '#EEF1F0', color: '#3B4642' };
   const mono = (label || channelType).charAt(0).toUpperCase();
+  const showImg = !!url && !imgError;
 
   const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -73,8 +78,8 @@ export function ChannelLogoTile({ channelType, label, url, onChanged }: Props) {
         title={url ? `Replace ${label} logo` : `Add ${label} logo`}
         className="relative grid h-9 w-9 place-items-center overflow-hidden rounded-lg border border-n-200 bg-n-0 disabled:opacity-60"
       >
-        {url ? (
-          <img src={url} alt={`${label} logo`} className="h-full w-full object-contain p-1" />
+        {showImg ? (
+          <img src={url} alt={`${label} logo`} className="h-full w-full object-contain p-1" onError={() => setImgError(true)} />
         ) : (
           <span className="grid h-full w-full place-items-center text-[14px] font-bold" style={{ background: brand.bg, color: brand.color }}>
             {mono}
