@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Search, X } from 'lucide-react';
+import { Check, Search, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { Pagination, Select } from '@masquare/ui';
-import { availabilityApi, brandsApi, productTypesApi, vendorsApi, type AvailabilityRow } from '../lib/api';
+import { ModalShell, Pagination, Select } from '@masquare/ui';
+import { availabilityApi, brandsApi, channelListingsApi, productTypesApi, vendorsApi, type AvailabilityRow } from '../lib/api';
 import { usePersistentState } from '../lib/usePersistentState';
 
 const SOURCE_LABEL: Record<string, string> = { manual: 'Manual', vendor_import: 'Vendor import', sale: 'Sale', return: 'Return' };
@@ -21,6 +21,9 @@ export function AvailabilityPage() {
   const pageSize = 50;
   // Per-row edit buffer (productId -> typed string), so several rows can be edited before saving.
   const [edits, setEdits] = useState<Record<string, string>>({});
+  // Selected products for a channel quantity push.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [pushOpen, setPushOpen] = useState(false);
 
   useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
   useEffect(() => { setPage(1); }, [brandId, vendorId, productTypeId, onlyUnset]);
@@ -59,6 +62,11 @@ export function AvailabilityPage() {
   const td = 'border-b border-n-100 px-4 py-2.5 text-[13px] text-n-700';
   const opts = (rows: { id: string; name: string }[], all: string) => [{ value: '', label: all }, ...rows.map((r) => ({ value: r.id, label: r.name }))];
 
+  const pageIds = items.map((r) => r.productId);
+  const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+  const toggleOne = (id: string) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAllPage = () => setSelected((s) => { const n = new Set(s); if (allOnPage) pageIds.forEach((id) => n.delete(id)); else pageIds.forEach((id) => n.add(id)); return n; });
+
   return (
     <div className="w-full">
       <div className="mb-5">
@@ -79,6 +87,14 @@ export function AvailabilityPage() {
           <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={onlyUnset} onChange={(e) => setOnlyUnset(e.target.checked)} /> Not set yet
         </label>
         {hasFilters && <button onClick={resetFilters} className="text-[12.5px] font-semibold text-n-500 hover:text-n-700">Reset</button>}
+        <div className="ml-auto flex items-center gap-2.5">
+          {selected.size > 0 && <button onClick={() => setSelected(new Set())} className="text-[12.5px] font-semibold text-n-500 hover:text-n-700">Clear ({selected.size})</button>}
+          <button disabled={selected.size === 0} onClick={() => setPushOpen(true)}
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-teal-500 px-3.5 text-[13px] font-semibold text-white hover:bg-teal-600 disabled:opacity-50"
+            title={selected.size === 0 ? 'Select products to push their availability to the channels' : 'Push the selected products’ availability to all their channel listings'}>
+            <Send size={15} /> Push to channels{selected.size > 0 ? ` (${selected.size})` : ''}
+          </button>
+        </div>
       </div>
 
       <div className="card overflow-hidden">
@@ -87,6 +103,7 @@ export function AvailabilityPage() {
           <table className="w-full min-w-[860px] border-collapse">
             <thead>
               <tr>
+                <th className={`${th} w-[36px] text-center`}><input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={allOnPage} onChange={toggleAllPage} title="Select all on this page" /></th>
                 <th className={`${th} text-left`}>SKU</th>
                 <th className={`${th} text-left`}>Product</th>
                 <th className={`${th} text-left`}>Brand</th>
@@ -98,12 +115,13 @@ export function AvailabilityPage() {
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td className={td} colSpan={8}>Loading…</td></tr>}
-              {!isLoading && items.length === 0 && <tr><td className={`${td} py-10 text-center text-n-400`} colSpan={8}>{hasFilters ? 'No products match these filters.' : 'No products yet.'}</td></tr>}
+              {isLoading && <tr><td className={td} colSpan={9}>Loading…</td></tr>}
+              {!isLoading && items.length === 0 && <tr><td className={`${td} py-10 text-center text-n-400`} colSpan={9}>{hasFilters ? 'No products match these filters.' : 'No products yet.'}</td></tr>}
               {items.map((r) => {
                 const val = edits[r.productId] ?? String(r.quantity ?? '');
                 return (
-                  <tr key={r.productId} className="group hover:bg-n-25">
+                  <tr key={r.productId} className={`group hover:bg-n-25 ${selected.has(r.productId) ? 'bg-teal-50/40' : ''}`}>
+                    <td className={`${td} text-center`}><input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={selected.has(r.productId)} onChange={() => toggleOne(r.productId)} /></td>
                     <td className={`${td} code whitespace-nowrap text-n-800`}>{r.mainSku}</td>
                     <td className={`${td} max-w-[280px] truncate`} title={r.title}>{r.title}</td>
                     <td className={td}>{r.brand ?? <span className="text-n-300">—</span>}</td>
@@ -142,6 +160,123 @@ export function AvailabilityPage() {
           <Pagination page={page} pageCount={pageCount} onPageChange={setPage} />
         </div>
       )}
+
+      {pushOpen && (
+        <PushModal
+          productIds={[...selected]}
+          titles={new Map(items.map((r) => [r.productId, { sku: r.mainSku, title: r.title }]))}
+          onClose={() => setPushOpen(false)}
+          onDone={() => { setPushOpen(false); setSelected(new Set()); qc.invalidateQueries({ queryKey: ['availability'] }); qc.invalidateQueries({ queryKey: ['channel-listings'] }); }}
+        />
+      )}
     </div>
+  );
+}
+
+const STATE_DOT: Record<string, string> = { ok: 'bg-emerald-500', fail: 'bg-rose-500' };
+
+function PushModal({ productIds, titles, onClose, onDone }: {
+  productIds: string[];
+  titles: Map<string, { sku: string; title: string }>;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  // Preview (dry-run) on open. It validates against each channel's API without applying any change.
+  const preview = useQuery({
+    queryKey: ['availability-push-preview', productIds],
+    queryFn: () => channelListingsApi.push(productIds, true),
+    refetchOnWindowFocus: false,
+  });
+
+  const commit = useMutation({
+    mutationFn: () => channelListingsApi.push(productIds, false),
+    onSuccess: (r) => {
+      if (r.failed > 0) toast.warning(`Pushed ${r.ok} listing${r.ok === 1 ? '' : 's'}, ${r.failed} failed`);
+      else toast.success(`Pushed availability to ${r.ok} listing${r.ok === 1 ? '' : 's'}`);
+      onDone();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Push failed'),
+  });
+
+  const rows = preview.data?.results ?? [];
+  const pushable = rows.filter((r) => r.ok);
+  // Group rows by product for a readable plan.
+  const groups = useMemo(() => {
+    const m = new Map<string, typeof rows>();
+    for (const r of rows) { const a = m.get(r.productId) ?? []; a.push(r); m.set(r.productId, a); }
+    return [...m.entries()];
+  }, [rows]);
+
+  const th = 'px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-n-400';
+  const td = 'px-3 py-1.5 text-[12.5px] text-n-700';
+
+  return (
+    <ModalShell
+      open
+      title="Push availability to channels"
+      subtitle={`${productIds.length} product${productIds.length === 1 ? '' : 's'} selected`}
+      primaryLabel={commit.isPending ? 'Pushing…' : `Push to ${pushable.length} listing${pushable.length === 1 ? '' : 's'}`}
+      primaryDisabled={preview.isLoading || pushable.length === 0 || commit.isPending}
+      busy={commit.isPending}
+      onPrimary={() => commit.mutate()}
+      onClose={onClose}
+      initialSize={{ w: 760, h: 560 }}
+    >
+      <div className="p-1">
+        {preview.isLoading && <div className="py-10 text-center text-[13px] text-n-400">Checking each channel…</div>}
+        {preview.isError && <div className="py-10 text-center text-[13px] text-rose-500">Could not build the push preview.</div>}
+        {preview.data && (
+          <>
+            <div className="mb-3 rounded-md border border-n-200 bg-n-25 px-3.5 py-2.5 text-[12.5px] text-n-600">
+              Preview only — nothing has changed yet. <b className="text-n-800">{pushable.length}</b> listing{pushable.length === 1 ? '' : 's'} will be updated to match Availability
+              {preview.data.failed > 0 && <> · <span className="text-rose-600">{preview.data.failed} cannot be pushed</span></>}.
+            </div>
+            {rows.length === 0 && (
+              <div className="py-8 text-center text-[13px] text-n-400">The selected products have no active channel listings to push.</div>
+            )}
+            <div className="space-y-3">
+              {groups.map(([pid, grp]) => {
+                const label = titles.get(pid);
+                return (
+                  <div key={pid} className="overflow-hidden rounded-lg border border-n-200">
+                    <div className="flex items-center gap-2 border-b border-n-100 bg-n-25 px-3 py-2">
+                      {label?.sku && <span className="code text-[12px] text-n-800">{label.sku}</span>}
+                      <span className="truncate text-[12.5px] text-n-500">{label?.title ?? pid}</span>
+                    </div>
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr className="text-left">
+                          <th className={th}>Channel</th>
+                          <th className={th}>Channel SKU</th>
+                          <th className={`${th} text-right`}>Current</th>
+                          <th className={`${th} text-right`}>New</th>
+                          <th className={th}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {grp.map((r, i) => (
+                          <tr key={i} className="border-t border-n-50">
+                            <td className={`${td} whitespace-nowrap`}>{r.channel}{r.marketplace ? <span className="ml-1 text-n-400">{r.marketplace}</span> : null}</td>
+                            <td className={`${td} code text-n-500`}>{r.channelSku}</td>
+                            <td className={`${td} mono text-right text-n-500`}>{r.currentQty ?? '—'}</td>
+                            <td className={`${td} mono text-right font-semibold text-n-900`}>{r.targetQty}</td>
+                            <td className={td}>
+                              <span className="inline-flex items-center gap-1.5">
+                                <span className={`h-1.5 w-1.5 rounded-full ${STATE_DOT[r.ok ? 'ok' : 'fail']}`} />
+                                <span className={r.ok ? 'text-n-500' : 'text-rose-600'}>{r.message}</span>
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+    </ModalShell>
   );
 }

@@ -466,6 +466,12 @@ model PlatformSettings {
   // demo and live run the same code, so this is the switch that keeps it off live until review.
   applyChannelResolutions Boolean @default(false) @map("apply_channel_resolutions")
 
+  // Whether a submitted sale lowers channel Availability (the sellable number broadcast to
+  // channels) and schedules a push of the new figure to every channel the SKU is listed on.
+  // Off by default: turning it on starts making live quantity writes to the marketplaces, so
+  // it stays dormant until deliberately enabled. Forward-only, like deductStockOnSale.
+  autoAdjustAvailabilityOnSale Boolean @default(false) @map("auto_adjust_availability_on_sale")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -1757,6 +1763,13 @@ model SalesTransactionItem {
   // cover is carried as StockOwed, not here.
   stockDeductedQty  Int     @default(0) @map("stock_deducted_qty")
   stockWarehouseId  String? @map("stock_warehouse_id") @db.Uuid
+
+  // How many units of this line have been taken off channel Availability (the sellable number
+  // broadcast to every channel). Independent of physical stock: a sale on any channel lowers
+  // the shared pool so the other channels can be told the new figure. Only used when
+  // "auto-adjust availability on sale" is on; lets a re-submit move just the delta and an
+  // un-submit/cancel add it back.
+  availabilityDeductedQty Int @default(0) @map("availability_deducted_qty")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

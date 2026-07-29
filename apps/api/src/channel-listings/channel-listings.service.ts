@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
@@ -238,6 +238,30 @@ export class ChannelListingsService {
       results.push({ productId: l.productId, channel: l.integration.name, channelType: l.integration.channelType, marketplace: l.marketplace, channelSku: l.channelSku, currentQty: l.listedQuantity, targetQty: target, ok: r.ok, message: r.message });
     }
     return { dryRun, count: results.length, ok: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length, results };
+  }
+
+  private readonly logger = new Logger(ChannelListingsService.name);
+  private pushQueue = new Set<string>();
+  private pushTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * Coalesce channel pushes triggered by sell-through. A burst of ingested orders touching the
+   * same SKUs collapses to one live push per affected product, not one per order, which keeps
+   * us well inside the marketplaces' quantity-update rate limits. Fire-and-forget: the sale that
+   * scheduled it never waits on the network and never fails because a push did.
+   */
+  schedulePush(productIds: string[]) {
+    for (const id of productIds) if (id) this.pushQueue.add(id);
+    if (this.pushTimer || this.pushQueue.size === 0) return;
+    this.pushTimer = setTimeout(() => {
+      const ids = [...this.pushQueue];
+      this.pushQueue.clear();
+      this.pushTimer = null;
+      this.pushAvailability(ids, { dryRun: false })
+        .then((r) => this.logger.log(`Sell-through auto-push: ${r.ok}/${r.count} listing(s) updated across ${ids.length} product(s)${r.failed ? `, ${r.failed} failed` : ''}`))
+        .catch((e) => this.logger.error(`Sell-through auto-push failed: ${e?.message ?? e}`));
+    }, 8000);
+    this.pushTimer.unref?.();
   }
 
   private cellOf(l: any) {

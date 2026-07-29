@@ -25,6 +25,7 @@ export class SettingsService {
         ...(dto.monoFont !== undefined ? { monoFont: dto.monoFont } : {}),
         ...(dto.deductStockOnSale !== undefined ? { deductStockOnSale: dto.deductStockOnSale } : {}),
         ...(dto.applyChannelResolutions !== undefined ? { applyChannelResolutions: dto.applyChannelResolutions } : {}),
+        ...(dto.autoAdjustAvailabilityOnSale !== undefined ? { autoAdjustAvailabilityOnSale: dto.autoAdjustAvailabilityOnSale } : {}),
       },
     });
     return { ...row, salesTxStandardColumns: this.parseColumns(row.salesTxStandardColumns) };

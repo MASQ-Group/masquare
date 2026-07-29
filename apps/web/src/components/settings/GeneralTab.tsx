@@ -23,6 +23,7 @@ export function GeneralTab() {
   const [monoFont, setMonoFont] = useState(DEFAULT_MONO_FONT);
   const [deductStockOnSale, setDeductStockOnSale] = useState(false);
   const [applyChannelResolutions, setApplyChannelResolutions] = useState(false);
+  const [autoAdjustAvailabilityOnSale, setAutoAdjustAvailabilityOnSale] = useState(false);
 
   useEffect(() => {
     if (data) {
@@ -32,6 +33,7 @@ export function GeneralTab() {
       setMonoFont(data.monoFont ?? DEFAULT_MONO_FONT);
       setDeductStockOnSale(data.deductStockOnSale ?? false);
       setApplyChannelResolutions(data.applyChannelResolutions ?? false);
+      setAutoAdjustAvailabilityOnSale(data.autoAdjustAvailabilityOnSale ?? false);
     }
   }, [data]);
 
@@ -40,7 +42,7 @@ export function GeneralTab() {
   const previewFonts = (body: string, mono: string) => { setBodyFont(body); setMonoFont(mono); applyFonts(body, mono); };
 
   const save = useMutation({
-    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions }),
+    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions, autoAdjustAvailabilityOnSale }),
     onSuccess: () => { toast.success('Settings saved'); qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Save failed'),
   });
@@ -141,6 +143,32 @@ export function GeneralTab() {
             <span>⚠</span>
             <span>Leave off until you've reviewed the behaviour. While off, syncs ignore cancellations/refunds
               (their prior behaviour); switching it on lets the next sync change existing transactions.</span>
+          </p>
+        )}
+
+        <label className={`mt-1 flex items-start gap-3 border-t border-n-100 pt-4 ${readOnly ? 'opacity-60' : 'cursor-pointer'}`}>
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 accent-[var(--teal-500)]"
+            checked={autoAdjustAvailabilityOnSale}
+            disabled={readOnly}
+            onChange={(e) => setAutoAdjustAvailabilityOnSale(e.target.checked)}
+          />
+          <span>
+            <span className="block text-[13.5px] font-semibold text-n-800">Adjust channel Availability when a sale is submitted</span>
+            <span className="mt-0.5 block text-[12.5px] text-n-500">
+              A sale on any channel lowers the shared Availability figure (the sellable number broadcast to the channels)
+              and schedules a push of the new quantity to every channel the SKU is listed on, so the others don't keep
+              selling stock that's gone. Cancellations add it back. Independent of physical stock above.
+            </span>
+          </span>
+        </label>
+        {autoAdjustAvailabilityOnSale && (
+          <p className="flex items-start gap-2 rounded-md border border-warning-bd bg-warning-bg px-3 py-2 text-[12px] text-warning">
+            <span>⚠</span>
+            <span>This makes live quantity writes to the marketplaces. Leave off until Availability reflects real
+              sellable stock. It applies going forward — sales submitted before it was switched on are not
+              retroactively adjusted.</span>
           </p>
         )}
       </div>

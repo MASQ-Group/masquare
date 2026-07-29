@@ -13,4 +13,7 @@ export class UpdateSettingsDto {
   @IsOptional() @IsBoolean() deductStockOnSale?: boolean;
   // When on, a channel sync applies the cancellations/refunds it pulls. Off keeps it dormant.
   @IsOptional() @IsBoolean() applyChannelResolutions?: boolean;
+  // When on, a submitted sale lowers channel Availability and schedules a push of the new figure
+  // to every channel the SKU is listed on. Off until deliberately enabled (it makes live writes).
+  @IsOptional() @IsBoolean() autoAdjustAvailabilityOnSale?: boolean;
 }

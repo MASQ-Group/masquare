@@ -1,8 +1,14 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SerialsService } from '../warehouses/serials.service';
 import { StockService } from '../warehouses/stock.service';
+import { AvailabilityService } from '../availability/availability.service';
+// Type-only: importing the class value here would form a runtime ES-module cycle
+// (sales-transactions -> channel-listings -> integrations -> sales-transactions). Resolved at
+// call time via ModuleRef using the string token instead.
+import type { ChannelListingsService } from '../channel-listings/channel-listings.service';
 import type { AuthUser } from '../common/current-user.decorator';
 import { CreateSalesTransactionDto, SalesTransactionItemDto, UpdateSalesTransactionDto } from './dto/sales-transaction.dto';
 
@@ -83,7 +89,17 @@ export class SalesTransactionsService {
     private readonly prisma: PrismaService,
     private readonly serials: SerialsService,
     private readonly stock: StockService,
+    private readonly availability: AvailabilityService,
+    private readonly moduleRef: ModuleRef,
   ) {}
+
+  private readonly logger = new Logger(SalesTransactionsService.name);
+
+  /** Resolved lazily (by string token, no runtime import) to avoid the ES-module cycle
+   *  integrations -> sales-transactions -> channel-listings -> integrations. */
+  private channelListings(): ChannelListingsService {
+    return this.moduleRef.get<ChannelListingsService>('CHANNEL_LISTINGS_SERVICE', { strict: false });
+  }
 
   private serialize(t: any, serviceMap: Map<string, any>, fbaAvgMap: Map<string, number> = new Map(), skuFulfilmentMap: Map<string, 'FBA' | 'FBM'> = new Map(), feePctMap: { bySku: Map<string, number>; byChannel: Map<string, number> } = { bySku: new Map(), byChannel: new Map() }, fxFallback: Map<string, number> = new Map()) {
     const items = t.items ?? [];
@@ -1209,6 +1225,7 @@ export class SalesTransactionsService {
 
     await this.consumeSerials(serialWork, t.id, dto.transactionRef, actorId);
     await this.reconcileSaleStock(t.id, actorId);
+    await this.applyAvailabilitySellThrough(t.id, actorId);
     return this.get(t.id);
   }
 
@@ -1353,6 +1370,68 @@ export class SalesTransactionsService {
     });
   }
 
+  /**
+   * Sell-through: move channel Availability to match the sale, then schedule one push per
+   * affected product so every channel is told the new figure. Runs after the sale is saved and
+   * never throws back into it — Availability is a convenience mirror, not part of the sale.
+   */
+  private async applyAvailabilitySellThrough(txId: string, actorId?: string, opts: { forceRelease?: boolean } = {}) {
+    try {
+      const affected = await this.reconcileSaleAvailability(txId, actorId, opts);
+      if (affected.length) this.channelListings().schedulePush(affected);
+    } catch (e: any) {
+      this.logger.error(`Availability sell-through failed for ${txId}: ${e?.message ?? e}`);
+    }
+  }
+
+  /**
+   * Bring channel Availability into line with what a sale has consumed, when the
+   * "auto-adjust availability on sale" setting is on. Availability is the sellable number
+   * broadcast to every channel, so this is deliberately channel- and fulfilment-agnostic: an
+   * FBA sale and a serial-tracked sale both lower the shared pool (unlike physical stock, which
+   * skip those). Idempotent like reconcileSaleStock — each line records availabilityDeductedQty,
+   * so a re-submit moves only the delta and an un-submit/cancel adds it back. Returns the affected
+   * product ids so the caller can push each once.
+   *
+   * `forceRelease` treats the desired quantity as zero regardless of status (used on delete), so
+   * Availability a previous feature-on submit took is returned even when the setting is now off.
+   *
+   * Edge: a sale that ships more than was available floors Availability at 0 but still records the
+   * full quantity as deducted, so a later cancellation can over-restore by the shortfall. Accepted
+   * for v1 — Availability is operator-maintained and a manual correction fixes it.
+   */
+  private async reconcileSaleAvailability(txId: string, actorId?: string, opts: { forceRelease?: boolean } = {}): Promise<string[]> {
+    const settings = await this.prisma.platformSettings.findFirst({ select: { autoAdjustAvailabilityOnSale: true } });
+    if (!settings?.autoAdjustAvailabilityOnSale && !opts.forceRelease) return [];
+
+    const tx = await this.prisma.salesTransaction.findFirst({
+      where: { id: txId },
+      select: {
+        id: true, status: true, transactionRef: true, resolution: true,
+        items: { where: { deletedAt: null }, select: { id: true, productId: true, quantity: true, availabilityDeductedQty: true } },
+      },
+    });
+    if (!tx) return [];
+    const cancelled = tx.resolution === 'cancelled';
+    const affected = new Set<string>();
+
+    await this.prisma.$transaction(async (db) => {
+      for (const it of tx.items) {
+        if (!it.productId) continue;
+        const desired = opts.forceRelease || cancelled || tx.status !== 'submitted' ? 0 : it.quantity;
+        const move = desired - it.availabilityDeductedQty; // >0 = sell more, <0 = give back
+        if (move === 0) continue;
+        await this.availability.adjust(
+          it.productId, -move, move > 0 ? 'sale' : 'cancellation',
+          { refType: 'sales_tx', refId: it.id, note: tx.transactionRef ?? undefined }, actorId, db,
+        );
+        await db.salesTransactionItem.update({ where: { id: it.id }, data: { availabilityDeductedQty: desired } });
+        affected.add(it.productId);
+      }
+    });
+    return [...affected];
+  }
+
   /** One line's reconciliation. See reconcileSaleStock for the model. */
   private async reconcileSaleLine(
     db: Prisma.TransactionClient,
@@ -1478,7 +1557,10 @@ export class SalesTransactionsService {
     // Replacing the item rows drops their stockDeductedQty tracking, so return whatever the
     // current items hold first; the post-update reconcile then deducts against the new lines.
     // (No-op when the feature is off or nothing was deducted.)
-    if (items) await this.reconcileSaleStock(id, user.sub, { forceRelease: true });
+    if (items) {
+      await this.reconcileSaleStock(id, user.sub, { forceRelease: true });
+      await this.reconcileSaleAvailability(id, user.sub, { forceRelease: true }); // return old lines' Availability before they're replaced
+    }
 
     await this.prisma.$transaction(async (tx) => {
       if (serialWork.length) {
@@ -1522,6 +1604,7 @@ export class SalesTransactionsService {
 
     await this.consumeSerials(serialWork, id, existing.transactionRef, user.sub);
     await this.reconcileSaleStock(id, user.sub);
+    await this.applyAvailabilitySellThrough(id, user.sub);
     return this.get(id);
   }
 
@@ -1544,6 +1627,7 @@ export class SalesTransactionsService {
       });
       // Move stock to match the new status: submitting deducts, reverting to draft returns it.
       await this.reconcileSaleStock(r.id, user.sub);
+      await this.applyAvailabilitySellThrough(r.id, user.sub);
       updated++;
     }
     return { updated, skipped };
@@ -1754,6 +1838,7 @@ export class SalesTransactionsService {
     // reconcileSaleStock reads the resolution we just wrote.
     if (dto.resolution === 'cancelled' || (clearing && existing.resolution === 'cancelled')) {
       await this.reconcileSaleStock(id, user.sub);
+      await this.applyAvailabilitySellThrough(id, user.sub); // cancelling gives Availability back; clearing re-takes it
     }
     return this.get(id);
   }
@@ -1833,7 +1918,10 @@ export class SalesTransactionsService {
     });
     // Cancelling releases any stock the submit reserved (FBA is a no-op; reconcile reads the
     // resolution we just wrote).
-    if (isCancel) await this.reconcileSaleStock(txId, actorId);
+    if (isCancel) {
+      await this.reconcileSaleStock(txId, actorId);
+      await this.applyAvailabilitySellThrough(txId, actorId); // give Availability back and push the new figure
+    }
     return { applied: true };
   }
 
@@ -1843,6 +1931,7 @@ export class SalesTransactionsService {
     this.assertCanEdit(existing, user);
     // Return any stock this sale had taken (and cancel its owed rows) before it disappears.
     await this.reconcileSaleStock(id, user.sub, { forceRelease: true });
+    await this.applyAvailabilitySellThrough(id, user.sub, { forceRelease: true }); // and any Availability it consumed
     await this.prisma.salesTransaction.update({ where: { id }, data: { deletedAt: new Date() } });
     return { ok: true };
   }

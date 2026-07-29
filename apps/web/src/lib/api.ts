@@ -196,6 +196,7 @@ export interface PlatformSettings {
   monoFont: string;
   deductStockOnSale: boolean;
   applyChannelResolutions: boolean;
+  autoAdjustAvailabilityOnSale: boolean;
 }
 export type VatTaxTreatment = 'standard' | 'reduced' | 'zero' | 'exempt';
 export interface VatClass {
@@ -261,6 +262,8 @@ export interface ChannelListingDetail {
   channels: ChannelListingDetailChannel[];
 }
 export interface ChannelSyncResult { channels: { integrationId: string; name: string; ok: boolean; pulled?: number; message?: string }[]; total: number }
+export interface ChannelPushRow { productId: string; channel: string; channelType: string; marketplace: string; channelSku: string; currentQty: number | null; targetQty: number; ok: boolean; message: string }
+export interface ChannelPushResult { dryRun: boolean; count: number; ok: number; failed: number; results: ChannelPushRow[] }
 export const channelListingsApi = {
   channels: () => api.get<ChannelListingChannel[]>('/channel-listings/channels').then((r) => r.data),
   dashboard: (params: { q?: string; channelId?: string; brandId?: string; vendorId?: string; productTypeId?: string; page?: number; pageSize?: number } = {}) =>
@@ -268,6 +271,8 @@ export const channelListingsApi = {
   sync: (integrationIds?: string[]) =>
     api.post<ChannelSyncResult>('/channel-listings/sync', integrationIds?.length ? { integrationIds } : {}).then((r) => r.data),
   detail: (productId: string) => api.get<ChannelListingDetail>(`/channel-listings/product/${productId}`).then((r) => r.data),
+  push: (productIds: string[], dryRun: boolean) =>
+    api.post<ChannelPushResult>('/channel-listings/push', { productIds, dryRun }).then((r) => r.data),
 };
 
 // ---- Channel availability (sellable quantity broadcast to sales channels) ----

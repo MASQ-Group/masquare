@@ -7,6 +7,9 @@ import { PricingModule } from '../pricing/pricing.module';
 @Module({
   imports: [IntegrationsModule, PricingModule],
   controllers: [ChannelListingsController],
-  providers: [ChannelListingsService],
+  // Also exposed under a string token so consumers in a potential import cycle (sales-transactions
+  // sell-through) can resolve it via ModuleRef without a runtime `import` of the class.
+  providers: [ChannelListingsService, { provide: 'CHANNEL_LISTINGS_SERVICE', useExisting: ChannelListingsService }],
+  exports: [ChannelListingsService, 'CHANNEL_LISTINGS_SERVICE'],
 })
 export class ChannelListingsModule {}
