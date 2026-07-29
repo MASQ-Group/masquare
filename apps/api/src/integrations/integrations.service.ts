@@ -521,6 +521,52 @@ export class IntegrationsService {
     }
   }
 
+  private async amzWrite(url: string, token: string, method: string, body: unknown): Promise<Response> {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(url, { method, headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(20000) });
+      if (res.status !== 429 || attempt >= 3) return res;
+      await sleep(2000 * 2 ** attempt);
+    }
+  }
+
+  /** Push a listing's available quantity to Amazon (FBM/MFN only) via the Listings Items PATCH.
+   *  dryRun uses mode=VALIDATION_PREVIEW — a real API call that validates the write WITHOUT
+   *  applying it, so the preview genuinely confirms the push would succeed. */
+  async pushAmazonQuantity(integrationId: string, channelSku: string, quantity: number, dryRun = false): Promise<{ ok: boolean; message: string }> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) return { ok: false, message: 'Integration not found' };
+    const config = (row.config ?? {}) as Record<string, string>;
+    const sellerId = config.sellerId;
+    if (!sellerId) return { ok: false, message: 'Amazon integration has no Seller ID' };
+    const meta = this.amazonMarketMeta(row);
+    const secrets = await this.decryptedSecrets(row.id);
+    const token = await this.amazonAccessToken(config, secrets);
+    const qty = Math.max(0, Math.trunc(quantity));
+
+    // The PATCH requires the item's productType — fetch it from the listing summary.
+    const getRes = await this.amzFetch(`${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(channelSku)}?marketplaceIds=${meta.marketplaceId}&includedData=summaries`, token);
+    const getJson: any = await getRes.json().catch(() => null);
+    if (!getRes.ok) return { ok: false, message: `getItem ${getRes.status}${IntegrationsService.amzErr(getJson) ? ': ' + IntegrationsService.amzErr(getJson) : ''}` };
+    const productType = getJson?.summaries?.[0]?.productType;
+    if (!productType) return { ok: false, message: 'Could not resolve productType' };
+
+    const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(channelSku)}?marketplaceIds=${meta.marketplaceId}${dryRun ? '&mode=VALIDATION_PREVIEW' : ''}`;
+    const body = { productType, patches: [{ op: 'replace', path: '/attributes/fulfillment_availability', value: [{ fulfillment_channel_code: 'DEFAULT', quantity: qty }] }] };
+    const res = await this.amzWrite(url, token, 'PATCH', body);
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, message: `PATCH ${res.status}${IntegrationsService.amzErr(json) ? ': ' + IntegrationsService.amzErr(json) : ''}` };
+    if (json?.status === 'INVALID') return { ok: false, message: (json?.issues?.[0]?.message ?? 'INVALID').toString().slice(0, 200) };
+    return { ok: true, message: dryRun ? 'validated' : (json?.status ?? 'ACCEPTED') };
+  }
+
+  /** Push a listing's available quantity to OnBuy. NOTE: the exact stock-update endpoint/shape
+   *  must be confirmed against a live account before enabling real writes — kept behind the
+   *  dry-run until then so we never mis-write. */
+  async pushOnBuyQuantity(integrationId: string, channelSku: string, quantity: number, dryRun = false): Promise<{ ok: boolean; message: string }> {
+    if (dryRun) return { ok: true, message: 'preview (OnBuy write pending endpoint confirmation)' };
+    return { ok: false, message: 'OnBuy quantity push not enabled yet — confirming the stock-update endpoint' };
+  }
+
   private static amzErr(json: any): string {
     const e = json?.errors?.[0];
     return (e?.message || e?.code || '').toString().slice(0, 200);

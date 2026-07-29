@@ -651,6 +651,31 @@ model ChannelListing {
   @@map("channel_listing")
 }
 
+/// Audit of every quantity/price push to a channel listing (one row per listing per attempt),
+/// including dry-runs. Lets us show push health and debug failures. integrationId is a plain
+/// field (no relation) so audit rows survive independently.
+model ChannelPush {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String?  @map("company_id") @db.Uuid
+  integrationId  String   @map("integration_id") @db.Uuid
+  productId      String?  @map("product_id") @db.Uuid
+  channelSku     String   @map("channel_sku")
+  marketplace    String   @default("")
+  field          String   // 'quantity' (price/listing later)
+  requestedValue Int?     @map("requested_value")
+  previousValue  Int?     @map("previous_value")
+  ok             Boolean
+  message        String?
+  dryRun         Boolean  @default(false) @map("dry_run")
+  createdAt      DateTime @default(now()) @map("created_at")
+  createdById    String?  @map("created_by") @db.Uuid
+
+  @@index([productId])
+  @@index([integrationId])
+  @@index([createdAt])
+  @@map("channel_push")
+}
+
 // ===========================================================================
 // Inventory (Module: Warehouses). Stock is held per (product, warehouse).
 // Company-wide availability = the sum across warehouses that are active AND

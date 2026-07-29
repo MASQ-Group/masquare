@@ -207,6 +207,39 @@ export class ChannelListingsService {
     return { channels: results, total: results.reduce((s, r) => s + (r.pulled ?? 0), 0) };
   }
 
+  /** Push each product's Availability quantity to its channel listings (Amazon FBM/MFN + OnBuy;
+   *  eBay later). `dryRun` validates without applying — Amazon uses VALIDATION_PREVIEW, a real
+   *  call that confirms the write would succeed. A real run updates listedQuantity and writes a
+   *  ChannelPush audit row per listing. Excludes Amazon FBA (Amazon owns that quantity). */
+  async pushAvailability(productIds: string[], opts: { dryRun?: boolean } = {}, companyIds?: string[], actorId?: string) {
+    const dryRun = opts.dryRun ?? false;
+    if (!productIds.length) return { dryRun, count: 0, ok: 0, failed: 0, results: [] as any[] };
+    const avails = await this.prisma.productAvailability.findMany({ where: { productId: { in: productIds } }, select: { productId: true, quantity: true } });
+    const qtyByProduct = new Map(avails.map((a) => [a.productId, a.quantity]));
+    const listings = await this.prisma.channelListing.findMany({
+      where: {
+        productId: { in: productIds },
+        ...(companyIds ? { companyId: { in: companyIds } } : {}),
+        NOT: { fulfilmentChannel: 'FBA' }, // Amazon controls FBA quantity — never push it
+      },
+      select: { id: true, productId: true, integrationId: true, channelSku: true, marketplace: true, listedQuantity: true, companyId: true, integration: { select: { channelType: true, name: true } } },
+    });
+    const results: any[] = [];
+    for (const l of listings) {
+      const target = qtyByProduct.get(l.productId ?? '') ?? 0;
+      const r =
+        l.integration.channelType === 'amazon' ? await this.integrations.pushAmazonQuantity(l.integrationId, l.channelSku, target, dryRun)
+        : l.integration.channelType === 'onbuy' ? await this.integrations.pushOnBuyQuantity(l.integrationId, l.channelSku, target, dryRun)
+        : { ok: false, message: `Push for ${l.integration.channelType} not available yet` };
+      if (!dryRun) {
+        if (r.ok) await this.prisma.channelListing.update({ where: { id: l.id }, data: { listedQuantity: target, lastPushedAt: new Date() } });
+        await this.prisma.channelPush.create({ data: { companyId: l.companyId, integrationId: l.integrationId, productId: l.productId, channelSku: l.channelSku, marketplace: l.marketplace, field: 'quantity', requestedValue: target, previousValue: l.listedQuantity, ok: r.ok, message: r.message.slice(0, 300), dryRun: false, createdById: actorId ?? null } });
+      }
+      results.push({ productId: l.productId, channel: l.integration.name, channelType: l.integration.channelType, marketplace: l.marketplace, channelSku: l.channelSku, currentQty: l.listedQuantity, targetQty: target, ok: r.ok, message: r.message });
+    }
+    return { dryRun, count: results.length, ok: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length, results };
+  }
+
   private cellOf(l: any) {
     return {
       integrationId: l.integrationId,

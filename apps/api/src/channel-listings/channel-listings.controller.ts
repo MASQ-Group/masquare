@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/co
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { VisibleCompanies } from '../common/active-company.decorator';
+import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { ChannelListingsService, type ListingsQuery } from './channel-listings.service';
 
 @ApiTags('channel-listings')
@@ -40,5 +41,12 @@ export class ChannelListingsController {
   @Get('product/:productId')
   detail(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
     return this.svc.detail(productId, companyIds);
+  }
+
+  /** Push Availability quantity to the selected products' listings. dryRun=true (default) previews
+   *  without applying; dryRun=false commits and records a ChannelPush audit per listing. */
+  @Post('push')
+  push(@VisibleCompanies() companyIds: string[], @CurrentUser() user: AuthUser, @Body() body: { productIds: string[]; dryRun?: boolean }) {
+    return this.svc.pushAvailability(body?.productIds ?? [], { dryRun: body?.dryRun !== false }, companyIds, user.sub);
   }
 }
