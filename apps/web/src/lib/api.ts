@@ -262,7 +262,7 @@ export interface ChannelListingDetail {
   channels: ChannelListingDetailChannel[];
 }
 export interface ChannelSyncResult { channels: { integrationId: string; name: string; ok: boolean; pulled?: number; message?: string }[]; total: number }
-export interface ChannelPushRow { productId: string; channelKey: string; channel: string; channelType: string; marketplace: string; channelSku: string; currentQty: number | null; targetQty: number; ok: boolean; message: string }
+export interface ChannelPushRow { productId: string; channelKey: string; channel: string; channelType: string; marketplace: string; countryIso: string; channelSku: string; currentQty: number | null; targetQty: number; ok: boolean; message: string }
 export interface ChannelPushResult { dryRun: boolean; count: number; ok: number; failed: number; results: ChannelPushRow[] }
 export const channelListingsApi = {
   channels: () => api.get<ChannelListingChannel[]>('/channel-listings/channels').then((r) => r.data),

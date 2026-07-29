@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Search, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell, Pagination, Select } from '@masquare/ui';
 import { availabilityApi, brandsApi, channelListingsApi, productTypesApi, vendorsApi, type AvailabilityRow } from '../lib/api';
 import { usePersistentState } from '../lib/usePersistentState';
+import { CHANNEL_GROUPS, channelGroupOf, channelPlatform, type ChannelPlatform } from '../lib/channelGroups';
 
 const SOURCE_LABEL: Record<string, string> = { manual: 'Manual', vendor_import: 'Vendor import', sale: 'Sale', return: 'Return' };
 const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-IE', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
@@ -199,6 +200,14 @@ export function AvailabilityPage() {
 
 const STATE_DOT: Record<string, string> = { ok: 'bg-emerald-500', fail: 'bg-rose-500' };
 
+/** Checkbox that can show the indeterminate (partially-selected) state — for the platform and
+ *  group rows of the channel tree, ticked when all children are, dashed when only some are. */
+function TriCheck({ checked, indeterminate, onChange }: { checked: boolean; indeterminate: boolean; onChange: () => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (ref.current) ref.current.indeterminate = indeterminate && !checked; }, [indeterminate, checked]);
+  return <input ref={ref} type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={checked} onChange={onChange} />;
+}
+
 function PushModal({ productIds, titles, onClose, onDone }: {
   productIds: string[];
   titles: Map<string, { sku: string; title: string }>;
@@ -215,8 +224,8 @@ function PushModal({ productIds, titles, onClose, onDone }: {
   const rows = preview.data?.results ?? [];
   // Distinct channels present across the previewed products (keyed by the dashboard column id).
   const channels = useMemo(() => {
-    const m = new Map<string, { label: string; marketplace: string }>();
-    for (const r of rows) if (!m.has(r.channelKey)) m.set(r.channelKey, { label: r.channel, marketplace: r.marketplace });
+    const m = new Map<string, { label: string; marketplace: string; channelType: string; countryIso: string }>();
+    for (const r of rows) if (!m.has(r.channelKey)) m.set(r.channelKey, { label: r.channel, marketplace: r.marketplace, channelType: r.channelType, countryIso: r.countryIso });
     return [...m.entries()].map(([key, v]) => ({ key, ...v }));
   }, [rows]);
   // null until the preview lands; then defaults to ALL channels (push-to-all is the default action).
@@ -224,7 +233,33 @@ function PushModal({ productIds, titles, onClose, onDone }: {
   useEffect(() => { if (preview.data && chosen === null) setChosen(new Set(channels.map((c) => c.key))); }, [preview.data, channels, chosen]);
   const chosenSet = chosen ?? new Set(channels.map((c) => c.key));
   const allChannels = channels.length > 0 && chosenSet.size >= channels.length;
-  const toggleChannel = (key: string) => setChosen((s) => { const n = new Set(s ?? channels.map((c) => c.key)); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  const setMany = (keys: string[], on: boolean) => setChosen((s) => { const n = new Set(s ?? channels.map((c) => c.key)); keys.forEach((k) => (on ? n.add(k) : n.delete(k))); return n; });
+
+  // Three-level chooser: platform (Amazon/eBay/OnBuy) → regional group (Amazon Europe…) → channel.
+  const PLATFORM_LABEL: Record<string, string> = { amazon: 'Amazon', ebay: 'eBay', onbuy: 'OnBuy', other: 'Other' };
+  const PLATFORM_ORDER = ['amazon', 'ebay', 'onbuy', 'other'];
+  const groupOrder = (key: string) => { const i = CHANNEL_GROUPS.findIndex((g) => g.key === key); return i === -1 ? 999 : i; };
+  const channelTree = useMemo(() => {
+    const plats = new Map<string, { platform: string; label: string; groups: Map<string, { key: string; label: string; channels: typeof channels }> }>();
+    for (const c of channels) {
+      const platform = (c.channelType || channelPlatform(c.label) || 'other') as ChannelPlatform;
+      const grp = channelGroupOf({ name: c.label, countryIso: c.countryIso });
+      const gkey = grp?.key ?? `${platform}:other`;
+      const glabel = grp?.label ?? (PLATFORM_LABEL[platform] ?? platform);
+      if (!plats.has(platform)) plats.set(platform, { platform, label: PLATFORM_LABEL[platform] ?? platform, groups: new Map() });
+      const P = plats.get(platform)!;
+      if (!P.groups.has(gkey)) P.groups.set(gkey, { key: gkey, label: glabel, channels: [] as typeof channels });
+      P.groups.get(gkey)!.channels.push(c);
+    }
+    return [...plats.values()]
+      .sort((a, b) => PLATFORM_ORDER.indexOf(a.platform) - PLATFORM_ORDER.indexOf(b.platform))
+      .map((P) => ({
+        ...P,
+        groups: [...P.groups.values()]
+          .sort((a, b) => groupOrder(a.key) - groupOrder(b.key))
+          .map((g) => ({ ...g, channels: [...g.channels].sort((a, b) => (a.marketplace || '').localeCompare(b.marketplace || '') || a.label.localeCompare(b.label)) })),
+      }));
+  }, [channels]);
 
   const pushable = rows.filter((r) => r.ok && chosenSet.has(r.channelKey));
   // Group rows by product for a readable plan.
@@ -270,26 +305,55 @@ function PushModal({ productIds, titles, onClose, onDone }: {
               {preview.data.failed > 0 && <> · <span className="text-rose-600">{preview.data.failed} cannot be pushed</span></>}.
             </div>
 
-            {/* Channel chooser — all channels by default; untick any to push to specific channels only. */}
+            {/* Channel chooser — all channels by default. Pick by platform, regional group, or
+                individual channel; each level's checkbox toggles everything beneath it. */}
             {channels.length > 1 && (
               <div className="mb-3 rounded-lg border border-n-200 p-3">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Channels</span>
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Channels to push</span>
                   <div className="flex gap-2 text-[12px]">
                     <button onClick={() => setChosen(new Set(channels.map((c) => c.key)))} className="font-semibold text-teal-600 hover:text-teal-700">All</button>
                     <span className="text-n-300">·</span>
                     <button onClick={() => setChosen(new Set())} className="font-semibold text-n-500 hover:text-n-700">None</button>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {channels.map((c) => {
-                    const on = chosenSet.has(c.key);
+                <div className="space-y-1.5">
+                  {channelTree.map((P) => {
+                    const pKeys = P.groups.flatMap((g) => g.channels.map((c) => c.key));
+                    const pOn = pKeys.filter((k) => chosenSet.has(k)).length;
                     return (
-                      <button key={c.key} onClick={() => toggleChannel(c.key)}
-                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium transition ${on ? 'border-teal-300 bg-teal-50 text-teal-800' : 'border-n-200 bg-n-0 text-n-400'}`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${on ? 'bg-teal-500' : 'bg-n-300'}`} />
-                        {c.label}{c.marketplace ? ` ${c.marketplace}` : ''}
-                      </button>
+                      <div key={P.platform}>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 hover:bg-n-25">
+                          <TriCheck checked={pOn === pKeys.length} indeterminate={pOn > 0 && pOn < pKeys.length} onChange={() => setMany(pKeys, pOn !== pKeys.length)} />
+                          <span className="text-[13px] font-semibold text-n-800">{P.label}</span>
+                          <span className="text-[11.5px] text-n-400">{pOn}/{pKeys.length}</span>
+                        </label>
+                        {P.groups.map((g) => {
+                          const gKeys = g.channels.map((c) => c.key);
+                          const gOn = gKeys.filter((k) => chosenSet.has(k)).length;
+                          // Skip the group row when a platform has one catch-all group (keeps it flat).
+                          const showGroupRow = !(P.groups.length === 1 && g.key.endsWith(':other'));
+                          return (
+                            <div key={g.key} className={showGroupRow ? 'ml-5' : 'ml-5'}>
+                              {showGroupRow && (
+                                <label className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-0.5 hover:bg-n-25">
+                                  <TriCheck checked={gOn === gKeys.length} indeterminate={gOn > 0 && gOn < gKeys.length} onChange={() => setMany(gKeys, gOn !== gKeys.length)} />
+                                  <span className="text-[12.5px] font-medium text-n-600">{g.label}</span>
+                                  <span className="text-[11px] text-n-400">{gOn}/{gKeys.length}</span>
+                                </label>
+                              )}
+                              <div className={showGroupRow ? 'ml-5' : ''}>
+                                {g.channels.map((c) => (
+                                  <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-0.5 hover:bg-n-25">
+                                    <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={chosenSet.has(c.key)} onChange={() => setMany([c.key], !chosenSet.has(c.key))} />
+                                    <span className="text-[12.5px] text-n-700">{c.label}{c.marketplace ? <span className="ml-1 text-n-400">{c.marketplace}</span> : null}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     );
                   })}
                 </div>

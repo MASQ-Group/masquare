@@ -227,9 +227,16 @@ export class ChannelListingsService {
         // fulfilmentChannel): both `NOT:{...}` and `{not:'FBA'}` drop NULLs in SQL, so be explicit.
         OR: [{ fulfilmentChannel: null }, { fulfilmentChannel: { not: 'FBA' } }],
       },
-      select: { id: true, productId: true, integrationId: true, channelSku: true, marketplace: true, listedQuantity: true, companyId: true, integration: { select: { channelType: true, name: true } } },
+      select: { id: true, productId: true, integrationId: true, channelSku: true, marketplace: true, listedQuantity: true, companyId: true, integration: { select: { channelType: true, name: true, marketplace: true } } },
     });
     const channelKeyOf = (l: { integrationId: string; marketplace: string | null }) => (l.marketplace ? `${l.integrationId}:${l.marketplace}` : l.integrationId);
+    // Marketplace country ISO for the client's group tree. eBay listings carry it per-market;
+    // Amazon/OnBuy carry the region on the integration (connector id → ISO: UK→GB, AUS→AU).
+    const ISO_ALIAS: Record<string, string> = { UK: 'GB', AUS: 'AU', UAE: 'AE' };
+    const isoOf = (l: { marketplace: string | null; integration: { marketplace: string | null } }) => {
+      const raw = (l.marketplace || l.integration.marketplace || '').toUpperCase();
+      return ISO_ALIAS[raw] ?? raw;
+    };
     const results: any[] = [];
     for (const l of listings) {
       const channelKey = channelKeyOf(l);
@@ -244,7 +251,7 @@ export class ChannelListingsService {
         if (r.ok) await this.prisma.channelListing.update({ where: { id: l.id }, data: { listedQuantity: target, lastPushedAt: new Date() } });
         await this.prisma.channelPush.create({ data: { companyId: l.companyId, integrationId: l.integrationId, productId: l.productId, channelSku: l.channelSku, marketplace: l.marketplace, field: 'quantity', requestedValue: target, previousValue: l.listedQuantity, ok: r.ok, message: r.message.slice(0, 300), dryRun: false, createdById: actorId ?? null } });
       }
-      results.push({ productId: l.productId, channelKey, channel: l.integration.name, channelType: l.integration.channelType, marketplace: l.marketplace, channelSku: l.channelSku, currentQty: l.listedQuantity, targetQty: target, ok: r.ok, message: r.message });
+      results.push({ productId: l.productId, channelKey, channel: l.integration.name, channelType: l.integration.channelType, marketplace: l.marketplace, countryIso: isoOf(l), channelSku: l.channelSku, currentQty: l.listedQuantity, targetQty: target, ok: r.ok, message: r.message });
     }
     return { dryRun, count: results.length, ok: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length, results };
   }
