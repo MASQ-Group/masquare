@@ -559,12 +559,82 @@ export class IntegrationsService {
     return { ok: true, message: dryRun ? 'validated' : (json?.status ?? 'ACCEPTED') };
   }
 
-  /** Push a listing's available quantity to OnBuy. NOTE: the exact stock-update endpoint/shape
-   *  must be confirmed against a live account before enabling real writes — kept behind the
-   *  dry-run until then so we never mis-write. */
+  /** Push a listing's available quantity to OnBuy via the v2 stock-update endpoint
+   *  (`PUT /listings/by-sku` by default; override with config.stockUpdatePath / stockUpdateMethod
+   *  if an account differs). Body: `{ site_id, listings: [{ sku, stock }] }`. dryRun does not call
+   *  OnBuy — it only confirms we can build the request. */
   async pushOnBuyQuantity(integrationId: string, channelSku: string, quantity: number, dryRun = false): Promise<{ ok: boolean; message: string }> {
-    if (dryRun) return { ok: true, message: 'preview (OnBuy write pending endpoint confirmation)' };
-    return { ok: false, message: 'OnBuy quantity push not enabled yet — confirming the stock-update endpoint' };
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) return { ok: false, message: 'Integration not found' };
+    const config = (row.config ?? {}) as Record<string, string>;
+    const qty = Math.max(0, Math.trunc(quantity));
+    const siteId = (config.siteIds || '').match(/\d+/)?.[0] ?? '2000'; // 2000 = OnBuy UK
+    if (dryRun) return { ok: true, message: `validated (set SKU ${channelSku} → ${qty} on site ${siteId})` };
+
+    const secrets = await this.decryptedSecrets(row.id);
+    const { token, base } = await this.onbuyAccessToken(config, secrets);
+    const path = config.stockUpdatePath || '/listings/by-sku';
+    const res = await fetch(`${base}${path.startsWith('/') ? path : '/' + path}`, {
+      method: (config.stockUpdateMethod || 'PUT').toUpperCase(),
+      headers: { Authorization: token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ site_id: Number(siteId), listings: [{ sku: channelSku, stock: qty }] }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, message: `OnBuy ${res.status}${json?.error?.message || json?.message ? ': ' + (json.error?.message || json.message) : ''}`.slice(0, 200) };
+    // OnBuy returns per-SKU results; surface a per-SKU rejection even on a 200.
+    const r0 = (json?.results ?? [])[0];
+    if (r0 && r0.success === false) return { ok: false, message: (r0.errors?.[0]?.message || r0.message || 'OnBuy rejected the update').toString().slice(0, 200) };
+    return { ok: true, message: `stock set to ${qty}` };
+  }
+
+  /** eBay Trading-API site id (X-EBAY-API-SITEID) keyed by our stored marketplace ISO. */
+  private static readonly EBAY_ISO_SITEID: Record<string, string> = {
+    US: '0', CA: '2', GB: '3', AU: '15', AT: '16', BE: '23', FR: '71', DE: '77', IT: '101',
+    NL: '146', ES: '186', CH: '193', IE: '205', PL: '212',
+  };
+  private static xmlEscape(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  }
+
+  /** Push a listing's available quantity to eBay via the Trading-API ReviseInventoryStatus call.
+   *  Targets the listing by SKU when it has one, else by the ItemID we encoded as `EBAY-<id>` at
+   *  pull time. The OAuth user token goes in X-EBAY-API-IAF-TOKEN — this is a WRITE call, so the
+   *  token must carry the sell.inventory scope; a read-only connection returns an auth error here
+   *  (reconnect the eBay integration to grant write access). dryRun does not call eBay. */
+  async pushEbayQuantity(integrationId: string, channelSku: string, marketplace: string | null, quantity: number, dryRun = false): Promise<{ ok: boolean; message: string }> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) return { ok: false, message: 'Integration not found' };
+    const config = (row.config ?? {}) as Record<string, string>;
+    const qty = Math.max(0, Math.trunc(quantity));
+    const iso = (marketplace || '').toUpperCase();
+    const siteId = IntegrationsService.EBAY_ISO_SITEID[iso] ?? (config.ebaySiteIds || '3').split(',')[0].trim();
+    const m = /^EBAY-(\d+)$/i.exec(channelSku.trim());
+    const targetXml = m ? `<ItemID>${m[1]}</ItemID>` : `<SKU>${IntegrationsService.xmlEscape(channelSku)}</SKU>`;
+    if (dryRun) return { ok: true, message: `validated (revise ${m ? 'item ' + m[1] : 'SKU ' + channelSku} on site ${siteId})` };
+
+    const secrets = await this.decryptedSecrets(row.id);
+    const token = await this.ebayAccessToken(config, secrets);
+    const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+    const body = `<?xml version="1.0" encoding="utf-8"?>\n<ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents"><InventoryStatus>${targetXml}<Quantity>${qty}</Quantity></InventoryStatus></ReviseInventoryStatusRequest>`;
+    const res = await fetch(`${base}/ws/api.dll`, {
+      method: 'POST',
+      headers: {
+        'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus',
+        'X-EBAY-API-SITEID': siteId,
+        'X-EBAY-API-COMPATIBILITY-LEVEL': '1155',
+        'X-EBAY-API-IAF-TOKEN': token,
+        'Content-Type': 'text/xml',
+      },
+      body,
+      signal: AbortSignal.timeout(20000),
+    });
+    const xml = await res.text();
+    if (!res.ok) return { ok: false, message: `eBay ${res.status}` };
+    const ack = /<Ack>([^<]+)<\/Ack>/.exec(xml)?.[1] ?? '';
+    if (/Success|Warning/i.test(ack)) return { ok: true, message: `revised → ${qty}` };
+    const err = /<(?:ShortMessage|LongMessage)>([\s\S]*?)<\/(?:ShortMessage|LongMessage)>/.exec(xml)?.[1] ?? 'unknown error';
+    return { ok: false, message: (this.decodeXmlEntities(err) ?? 'error').slice(0, 200) };
   }
 
   private static amzErr(json: any): string {

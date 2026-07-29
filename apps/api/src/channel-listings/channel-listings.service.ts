@@ -223,7 +223,9 @@ export class ChannelListingsService {
       where: {
         productId: { in: productIds },
         ...(companyIds ? { companyId: { in: companyIds } } : {}),
-        NOT: { fulfilmentChannel: 'FBA' }, // Amazon controls FBA quantity — never push it
+        // Amazon controls FBA quantity — never push it. Keep NULLs (eBay/OnBuy listings have no
+        // fulfilmentChannel): both `NOT:{...}` and `{not:'FBA'}` drop NULLs in SQL, so be explicit.
+        OR: [{ fulfilmentChannel: null }, { fulfilmentChannel: { not: 'FBA' } }],
       },
       select: { id: true, productId: true, integrationId: true, channelSku: true, marketplace: true, listedQuantity: true, companyId: true, integration: { select: { channelType: true, name: true } } },
     });
@@ -236,6 +238,7 @@ export class ChannelListingsService {
       const r =
         l.integration.channelType === 'amazon' ? await this.integrations.pushAmazonQuantity(l.integrationId, l.channelSku, target, dryRun)
         : l.integration.channelType === 'onbuy' ? await this.integrations.pushOnBuyQuantity(l.integrationId, l.channelSku, target, dryRun)
+        : l.integration.channelType === 'ebay' ? await this.integrations.pushEbayQuantity(l.integrationId, l.channelSku, l.marketplace, target, dryRun)
         : { ok: false, message: `Push for ${l.integration.channelType} not available yet` };
       if (!dryRun) {
         if (r.ok) await this.prisma.channelListing.update({ where: { id: l.id }, data: { listedQuantity: target, lastPushedAt: new Date() } });
