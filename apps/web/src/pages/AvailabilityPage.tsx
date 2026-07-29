@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Search, Send, X } from 'lucide-react';
+import { Check, Info, Minus, Search, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell, Pagination, Select } from '@masquare/ui';
 import { availabilityApi, brandsApi, channelListingsApi, productTypesApi, vendorsApi, type AvailabilityRow } from '../lib/api';
@@ -198,14 +198,19 @@ export function AvailabilityPage() {
   );
 }
 
-const STATE_DOT: Record<string, string> = { ok: 'bg-emerald-500', fail: 'bg-rose-500' };
-
-/** Checkbox that can show the indeterminate (partially-selected) state — for the platform and
- *  group rows of the channel tree, ticked when all children are, dashed when only some are. */
-function TriCheck({ checked, indeterminate, onChange }: { checked: boolean; indeterminate: boolean; onChange: () => void }) {
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (ref.current) ref.current.indeterminate = indeterminate && !checked; }, [indeterminate, checked]);
-  return <input ref={ref} type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={checked} onChange={onChange} />;
+/** Square tri-state checkbox (ticked / dashed / empty) for the platform and region rows of the
+ *  channel chooser. Mirrors the design's custom box, tinted with the platform teal token. */
+function CheckSquare({ checked, indeterminate, size = 16 }: { checked: boolean; indeterminate?: boolean; size?: number }) {
+  const on = checked || indeterminate;
+  const icon = size >= 15 ? 11 : 9;
+  return (
+    <span
+      className={`grid shrink-0 place-items-center rounded-[4px] border text-n-0 ${on ? 'border-teal-500 bg-teal-500' : 'border-n-300 bg-n-0'}`}
+      style={{ width: size, height: size }}
+    >
+      {checked ? <Check size={icon} strokeWidth={3.4} /> : indeterminate ? <Minus size={icon} strokeWidth={3.4} /> : null}
+    </span>
+  );
 }
 
 function PushModal({ productIds, titles, onClose, onDone }: {
@@ -280,8 +285,53 @@ function PushModal({ productIds, titles, onClose, onDone }: {
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Push failed'),
   });
 
-  const th = 'px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-n-400';
-  const td = 'px-3 py-1.5 text-[12.5px] text-n-700';
+  // --- Presentation helpers (design: compact chips + merged preview) ----------
+  const REGION_SHORT: Record<string, string> = {
+    'amazon-eu': 'Europe', 'amazon-americas': 'Americas', 'amazon-apac': 'Asia-Pacific', 'amazon-mena': 'MENA',
+    'ebay-eu': 'Europe', 'ebay-americas': 'Americas', 'ebay-apac': 'Asia-Pacific', 'onbuy': 'UK',
+  };
+  const stripPlatform = (s: string) => s.replace(/^(Amazon|eBay|OnBuy)\s*/i, '').trim();
+  const regionShort = (g: { key: string; label: string }) => REGION_SHORT[g.key] ?? (stripPlatform(g.label) || g.label);
+  const chipLabel = (c: { countryIso: string; marketplace: string; label: string }) => c.countryIso || c.marketplace || stripPlatform(c.label) || c.label;
+  const chanName = (r: { channel: string; marketplace: string }) => `${r.channel}${r.marketplace ? ` ${r.marketplace}` : ''}`;
+  // "Validated" / "Skipped" / "Failed" status + a muted detail line (eBay revise / OnBuy set …).
+  const statusOf = (ok: boolean, excluded: boolean) =>
+    excluded ? { t: 'Skipped', c: 'text-n-400', d: 'bg-n-300' }
+    : ok ? { t: 'Validated', c: 'text-teal-700', d: 'bg-teal-500' }
+    : { t: 'Failed', c: 'text-rose-600', d: 'bg-rose-500' };
+  const noteOf = (r: (typeof rows)[number], excluded: boolean) => {
+    if (excluded) return '';
+    if (!r.ok) return r.message;
+    const m = r.message || '';
+    return m.toLowerCase() === 'validated' ? '' : m.replace(/^validated\s*\(?/i, '').replace(/\)\s*$/, '');
+  };
+
+  const singleProduct = productIds.length === 1;
+  const soleTitle = singleProduct ? titles.get(productIds[0]) : undefined;
+  // Whether a product's channel SKUs all equal its own SKU (then we state it once, not per row).
+  const skuMatches = (sku: string | undefined, prodRows: typeof rows) => !!sku && prodRows.length > 0 && prodRows.every((r) => r.channelSku === sku);
+
+  const rowEl = (r: (typeof rows)[number], key: string | number, sku?: string) => {
+    const excluded = !chosenSet.has(r.channelKey);
+    const st = statusOf(r.ok, excluded);
+    const note = noteOf(r, excluded);
+    const showSku = sku != null && r.channelSku !== sku;
+    return (
+      <div key={key} className={`grid grid-cols-[1fr_78px_minmax(94px,1.1fr)] items-center gap-1 border-t border-n-50 px-3 py-[7px] ${excluded ? 'opacity-40' : ''}`}>
+        <span className="min-w-0">
+          <span className="block truncate text-[12.5px] font-medium text-n-700">{chanName(r)}</span>
+          {showSku && <span className="code block truncate text-[10.5px] text-n-400">{r.channelSku}</span>}
+        </span>
+        <span className="mono whitespace-nowrap text-right text-[11.5px] tabular-nums text-n-600">{r.currentQty ?? '—'} → <b className="text-n-900">{r.targetQty}</b></span>
+        <span className="min-w-0 pl-3">
+          <span className={`inline-flex items-center gap-1.5 whitespace-nowrap text-[11.5px] font-semibold ${st.c}`}>
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.d}`} />{st.t}
+          </span>
+          {note && <span className={`block truncate text-[10.5px] ${r.ok ? 'text-n-400' : 'text-rose-500'}`} title={note}>{note}</span>}
+        </span>
+      </div>
+    );
+  };
 
   return (
     <ModalShell
@@ -293,119 +343,117 @@ function PushModal({ productIds, titles, onClose, onDone }: {
       busy={commit.isPending}
       onPrimary={() => commit.mutate()}
       onClose={onClose}
-      initialSize={{ w: 760, h: 600 }}
+      initialSize={{ w: 780, h: 600 }}
     >
       <div className="p-1">
         {preview.isLoading && <div className="py-10 text-center text-[13px] text-n-400">Checking each channel…</div>}
         {preview.isError && <div className="py-10 text-center text-[13px] text-rose-500">Could not build the push preview.</div>}
         {preview.data && (
           <>
-            <div className="mb-3 rounded-md border border-n-200 bg-n-25 px-3.5 py-2.5 text-[12.5px] text-n-600">
-              Preview only — nothing has changed yet. <b className="text-n-800">{pushable.length}</b> listing{pushable.length === 1 ? '' : 's'} will be updated to match Availability
-              {preview.data.failed > 0 && <> · <span className="text-rose-600">{preview.data.failed} cannot be pushed</span></>}.
+            {/* Compact preview banner (design: a chip, not a full-width bar). */}
+            <div className="mb-3 inline-flex items-center gap-2 rounded-md border border-n-100 bg-n-25 px-3 py-1.5 text-[12px] text-n-500">
+              <Info size={13} className="shrink-0 text-n-400" />
+              <span>Preview only — nothing changed yet. <b className="text-n-700">{pushable.length}</b> listing{pushable.length === 1 ? '' : 's'} will match Availability{preview.data.failed > 0 && <> · <span className="text-rose-600">{preview.data.failed} cannot be pushed</span></>}.</span>
             </div>
 
-            {/* Channel chooser — all channels by default. Pick by platform, regional group, or
-                individual channel; each level's checkbox toggles everything beneath it. */}
-            {channels.length > 1 && (
-              <div className="mb-3 rounded-lg border border-n-200 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Channels to push</span>
-                  <div className="flex gap-2 text-[12px]">
-                    <button onClick={() => setChosen(new Set(channels.map((c) => c.key)))} className="font-semibold text-teal-600 hover:text-teal-700">All</button>
-                    <span className="text-n-300">·</span>
-                    <button onClick={() => setChosen(new Set())} className="font-semibold text-n-500 hover:text-n-700">None</button>
+            {rows.length === 0 ? (
+              <div className="py-8 text-center text-[13px] text-n-400">The selected products have no active channel listings to push.</div>
+            ) : (
+              // Two panels: stack in the standard modal, sit side-by-side when the modal is widened.
+              <div className="flex flex-wrap items-stretch gap-4">
+
+                {/* CHANNELS PANEL — platform cards with region rows + wrapping country chips. */}
+                <div className="min-w-0 flex-1 basis-[400px]">
+                  <div className="mb-2.5 flex items-center justify-between">
+                    <span className="eyebrow">Channels to push</span>
+                    <div className="flex gap-2.5 text-[12px] font-semibold">
+                      <button onClick={() => setChosen(new Set(channels.map((c) => c.key)))} className="text-teal-600 hover:text-teal-700">All</button>
+                      <span className="text-n-300">·</span>
+                      <button onClick={() => setChosen(new Set())} className="text-n-500 hover:text-n-700">None</button>
+                    </div>
+                  </div>
+                  <div className="space-y-2.5">
+                    {channelTree.map((P) => {
+                      const pKeys = P.groups.flatMap((g) => g.channels.map((c) => c.key));
+                      const pOn = pKeys.filter((k) => chosenSet.has(k)).length;
+                      return (
+                        <div key={P.platform} className="rounded-lg border border-n-200 p-2.5">
+                          <button onClick={() => setMany(pKeys, pOn !== pKeys.length)} className="mb-2 flex w-full items-center gap-2 text-left">
+                            <CheckSquare checked={pOn === pKeys.length} indeterminate={pOn > 0 && pOn < pKeys.length} />
+                            <span className="text-[13.5px] font-semibold text-n-900">{P.label}</span>
+                            <span className="mono text-[11px] text-n-400">{pOn}/{pKeys.length}</span>
+                          </button>
+                          <div className="space-y-1.5">
+                            {P.groups.map((g) => {
+                              const gKeys = g.channels.map((c) => c.key);
+                              const gOn = gKeys.filter((k) => chosenSet.has(k)).length;
+                              return (
+                                <div key={g.key} className="flex flex-wrap items-center gap-1.5">
+                                  <button onClick={() => setMany(gKeys, gOn !== gKeys.length)} className="flex min-w-[86px] shrink-0 items-center gap-1.5 py-0.5 text-left">
+                                    <CheckSquare size={13} checked={gOn === gKeys.length} indeterminate={gOn > 0 && gOn < gKeys.length} />
+                                    <span className="text-[11px] font-semibold text-n-500">{regionShort(g)}</span>
+                                  </button>
+                                  {g.channels.map((c) => {
+                                    const on = chosenSet.has(c.key);
+                                    return (
+                                      <button key={c.key} onClick={() => setMany([c.key], !on)}
+                                        className={`inline-flex select-none items-center gap-1 rounded-md border px-2 py-[3px] text-[11.5px] font-semibold transition ${on ? 'border-teal-200 bg-teal-50 text-teal-700' : 'border-n-200 bg-n-0 text-n-500 hover:border-teal-300'}`}>
+                                        {on && <Check size={10} strokeWidth={3.2} />}
+                                        {chipLabel(c)}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-                <div className="space-y-1.5">
-                  {channelTree.map((P) => {
-                    const pKeys = P.groups.flatMap((g) => g.channels.map((c) => c.key));
-                    const pOn = pKeys.filter((k) => chosenSet.has(k)).length;
-                    return (
-                      <div key={P.platform}>
-                        <label className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 hover:bg-n-25">
-                          <TriCheck checked={pOn === pKeys.length} indeterminate={pOn > 0 && pOn < pKeys.length} onChange={() => setMany(pKeys, pOn !== pKeys.length)} />
-                          <span className="text-[13px] font-semibold text-n-800">{P.label}</span>
-                          <span className="text-[11.5px] text-n-400">{pOn}/{pKeys.length}</span>
-                        </label>
-                        {P.groups.map((g) => {
-                          const gKeys = g.channels.map((c) => c.key);
-                          const gOn = gKeys.filter((k) => chosenSet.has(k)).length;
-                          // Skip the group row when a platform has one catch-all group (keeps it flat).
-                          const showGroupRow = !(P.groups.length === 1 && g.key.endsWith(':other'));
-                          return (
-                            <div key={g.key} className={showGroupRow ? 'ml-5' : 'ml-5'}>
-                              {showGroupRow && (
-                                <label className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-0.5 hover:bg-n-25">
-                                  <TriCheck checked={gOn === gKeys.length} indeterminate={gOn > 0 && gOn < gKeys.length} onChange={() => setMany(gKeys, gOn !== gKeys.length)} />
-                                  <span className="text-[12.5px] font-medium text-n-600">{g.label}</span>
-                                  <span className="text-[11px] text-n-400">{gOn}/{gKeys.length}</span>
-                                </label>
-                              )}
-                              <div className={showGroupRow ? 'ml-5' : ''}>
-                                {g.channels.map((c) => (
-                                  <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-0.5 hover:bg-n-25">
-                                    <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={chosenSet.has(c.key)} onChange={() => setMany([c.key], !chosenSet.has(c.key))} />
-                                    <span className="text-[12.5px] text-n-700">{c.label}{c.marketplace ? <span className="ml-1 text-n-400">{c.marketplace}</span> : null}</span>
-                                  </label>
-                                ))}
+
+                {/* PREVIEW PANEL — compact table: Channel · Qty → New · Status (+ muted detail). */}
+                <div className="min-w-0 flex-1 basis-[400px]">
+                  <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="eyebrow">Preview</span>
+                    {singleProduct && soleTitle ? (
+                      <>
+                        <span className="code text-[11.5px] text-teal-700">{soleTitle.sku}</span>
+                        <span className="min-w-0 flex-1 truncate text-[12px] text-n-500">{soleTitle.title}</span>
+                      </>
+                    ) : (
+                      <span className="text-[12px] text-n-500">{productIds.length} products</span>
+                    )}
+                  </div>
+                  {singleProduct && skuMatches(soleTitle?.sku, groups[0]?.[1] ?? []) && (
+                    <div className="mb-2 text-[11.5px] text-n-400">Channel SKU matches the product SKU on all channels.</div>
+                  )}
+                  <div className="mt-1.5 overflow-hidden rounded-lg border border-n-200">
+                    <div className="grid grid-cols-[1fr_78px_minmax(94px,1.1fr)] gap-1 border-b border-n-100 bg-n-25 px-3 py-[7px] text-[9.5px] font-semibold uppercase tracking-wide text-n-400">
+                      <span>Channel</span><span className="text-right">Qty → New</span><span className="pl-3">Status</span>
+                    </div>
+                    <div className="max-h-[46vh] overflow-y-auto">
+                      {singleProduct
+                        ? (groups[0]?.[1] ?? []).map((r, i) => rowEl(r, i, skuMatches(soleTitle?.sku, groups[0]?.[1] ?? []) ? undefined : soleTitle?.sku))
+                        : groups.map(([pid, grp]) => {
+                            const label = titles.get(pid);
+                            const matches = skuMatches(label?.sku, grp);
+                            return (
+                              <div key={pid}>
+                                <div className="flex items-center gap-2 border-t border-n-100 bg-n-25 px-3 py-1.5">
+                                  {label?.sku && <span className="code text-[11px] text-n-800">{label.sku}</span>}
+                                  <span className="min-w-0 flex-1 truncate text-[11.5px] text-n-500">{label?.title ?? pid}</span>
+                                </div>
+                                {grp.map((r, i) => rowEl(r, `${pid}-${i}`, matches ? undefined : label?.sku))}
                               </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
+                            );
+                          })}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
-
-            {rows.length === 0 && (
-              <div className="py-8 text-center text-[13px] text-n-400">The selected products have no active channel listings to push.</div>
-            )}
-            <div className="space-y-3">
-              {groups.map(([pid, grp]) => {
-                const label = titles.get(pid);
-                return (
-                  <div key={pid} className="overflow-hidden rounded-lg border border-n-200">
-                    <div className="flex items-center gap-2 border-b border-n-100 bg-n-25 px-3 py-2">
-                      {label?.sku && <span className="code text-[12px] text-n-800">{label.sku}</span>}
-                      <span className="truncate text-[12.5px] text-n-500">{label?.title ?? pid}</span>
-                    </div>
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="text-left">
-                          <th className={th}>Channel</th>
-                          <th className={th}>Channel SKU</th>
-                          <th className={`${th} text-right`}>Current</th>
-                          <th className={`${th} text-right`}>New</th>
-                          <th className={th}>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {grp.map((r, i) => {
-                          const excluded = !chosenSet.has(r.channelKey);
-                          return (
-                            <tr key={i} className={`border-t border-n-50 ${excluded ? 'opacity-40' : ''}`}>
-                              <td className={`${td} whitespace-nowrap`}>{r.channel}{r.marketplace ? <span className="ml-1 text-n-400">{r.marketplace}</span> : null}{excluded ? <span className="ml-1.5 text-[11px] text-n-400">(skipped)</span> : null}</td>
-                              <td className={`${td} code text-n-500`}>{r.channelSku}</td>
-                              <td className={`${td} mono text-right text-n-500`}>{r.currentQty ?? '—'}</td>
-                              <td className={`${td} mono text-right font-semibold text-n-900`}>{r.targetQty}</td>
-                              <td className={td}>
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span className={`h-1.5 w-1.5 rounded-full ${STATE_DOT[r.ok ? 'ok' : 'fail']}`} />
-                                  <span className={r.ok ? 'text-n-500' : 'text-rose-600'}>{r.message}</span>
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                );
-              })}
-            </div>
           </>
         )}
       </div>
