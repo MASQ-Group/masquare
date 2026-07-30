@@ -239,6 +239,10 @@ export class ChannelListingsService {
     };
     const results: any[] = [];
     for (const l of listings) {
+      // An eBay listing whose marketplace couldn't be resolved maps to no real sales channel — skip
+      // it rather than surface a generic "eBay" push target. A re-sync resolves most (by currency /
+      // item URL) into their proper per-market channel.
+      if (l.integration.channelType === 'ebay' && !l.marketplace) continue;
       const channelKey = channelKeyOf(l);
       if (channelKeys && !channelKeys.has(channelKey)) continue; // caller chose specific channels
       const target = qtyByProduct.get(l.productId ?? '') ?? 0;
