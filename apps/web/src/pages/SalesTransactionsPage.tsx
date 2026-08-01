@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowDown, ArrowUp, Columns3, Download, Filter, Lock, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Trash2, Undo2, Unlock, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { DateRangePicker, ModalShell, Pagination } from '@masquare/ui';
+import { DateRangePicker, ModalShell, Pagination, Select } from '@masquare/ui';
 import { countriesApi, profitTiersApi, salesChannelsApi, salesTransactionsApi, settingsApi, type ProfitTier, type SalesTransaction, type TransactionAlert } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useConfirm } from '../components/ConfirmProvider';
@@ -29,6 +29,33 @@ interface TxFilters {
   sku: string;
 }
 const EMPTY_FILTERS: TxFilters = { salesChannelId: [], destinationCountryId: [], status: [], profitTierId: [], shipmentStatus: [], fulfilmentType: [], feeType: [], resolution: [], sku: '' };
+
+// --- Date period presets (local dates, YYYY-MM-DD) --------------------------
+type DatePreset = 'all' | 'thisMonth' | 'lastMonth' | 'thisQuarter' | 'thisYear' | 'custom';
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const ymd = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+/** from/to for a preset — full calendar period; day 0 of next month = last day of this month. */
+const datePresetRange = (p: DatePreset): { from: string; to: string } => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const r = (a: Date, b: Date) => ({ from: ymd(a), to: ymd(b) });
+  switch (p) {
+    case 'thisMonth': return r(new Date(y, m, 1), new Date(y, m + 1, 0));
+    case 'lastMonth': return r(new Date(y, m - 1, 1), new Date(y, m, 0));
+    case 'thisQuarter': { const q = Math.floor(m / 3) * 3; return r(new Date(y, q, 1), new Date(y, q + 3, 0)); }
+    case 'thisYear': return r(new Date(y, 0, 1), new Date(y, 11, 31));
+    default: return { from: '', to: '' };
+  }
+};
+const DATE_PRESET_OPTS: { value: DatePreset; label: string }[] = [
+  { value: 'all', label: 'All time' },
+  { value: 'thisMonth', label: 'Current month' },
+  { value: 'lastMonth', label: 'Previous month' },
+  { value: 'thisQuarter', label: 'Current quarter' },
+  { value: 'thisYear', label: 'Current year' },
+  { value: 'custom', label: 'Custom range' },
+];
 const STATUS_OPTS = [{ id: 'draft', name: 'Draft' }, { id: 'submitted', name: 'Submitted' }];
 const SHIPMENT_OPTS = [{ id: 'shipped', name: 'Shipped' }, { id: 'not_shipped', name: 'Not shipped' }];
 // Defective-order states, for the "Resolution" filter facet.
@@ -104,6 +131,15 @@ export function SalesTransactionsPage() {
   const [alertsOnly, setAlertsOnly] = usePersistentState('salesTx.alertsOnly', false);
   const [needsReturnOnly, setNeedsReturnOnly] = usePersistentState('salesTx.needsReturn', false);
   const [dateRange, setDateRange] = usePersistentState<{ from: string; to: string }>('salesTx.dateRange', { from: '', to: '' });
+  // Which preset the current range corresponds to (else 'custom', or 'all' when empty).
+  const activeDatePreset = useMemo<DatePreset>(() => {
+    if (!dateRange.from && !dateRange.to) return 'all';
+    for (const p of ['thisMonth', 'lastMonth', 'thisQuarter', 'thisYear'] as DatePreset[]) {
+      const r = datePresetRange(p);
+      if (r.from === dateRange.from && r.to === dateRange.to) return p;
+    }
+    return 'custom';
+  }, [dateRange]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [eurOnly, setEurOnly] = useState(false);
   const [cols, setCols] = useState<Set<ColKey>>(new Set(DEFAULT_STANDARD));
@@ -430,8 +466,16 @@ export function SalesTransactionsPage() {
         >
           <RefreshCw size={15} className={`opacity-60 ${recalc.isPending && recalcScope === 'all' ? 'animate-spin' : ''}`} /> {recalc.isPending && recalcScope === 'all' ? 'Recalculating…' : 'Recalculate all'}
         </button>
+        <div className="w-40">
+          <Select
+            dense
+            value={activeDatePreset}
+            onChange={(v) => { const p = v as DatePreset; if (p === 'custom') return; setDateRange(datePresetRange(p)); setPage(1); }}
+            options={DATE_PRESET_OPTS}
+          />
+        </div>
         <div className="w-[248px]">
-          <DateRangePicker value={dateRange} onChange={(r) => { setDateRange(r); setPage(1); }} placeholder="Date range" clearable className="h-[38px]" />
+          <DateRangePicker value={dateRange} onChange={(r) => { setDateRange(r); setPage(1); }} placeholder="Custom range" clearable className="h-[38px]" />
         </div>
         <label className="inline-flex h-[38px] cursor-pointer items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700">
           <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={eurOnly} onChange={(e) => setEurOnly(e.target.checked)} />
