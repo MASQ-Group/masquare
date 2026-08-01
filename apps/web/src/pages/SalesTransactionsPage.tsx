@@ -195,10 +195,12 @@ export function SalesTransactionsPage() {
   // clipped or hidden behind the sidebar when the toolbar wraps to a second row.
   const colsBtnRef = useRef<HTMLButtonElement>(null);
   const colsMenuRef = useRef<HTMLDivElement>(null);
-  const [colsPos, setColsPos] = useState<{ top: number; right: number } | null>(null);
+  const [colsPos, setColsPos] = useState<{ top: number; left: number } | null>(null);
   const openCols = () => {
     const r = colsBtnRef.current?.getBoundingClientRect();
-    if (r) setColsPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    // Left-align the menu to the button so it opens rightward into the main area (never toward
+    // the sidebar). Menu is w-60 (240px); clamp so it can't run off the right viewport edge.
+    if (r) setColsPos({ top: r.bottom + 6, left: Math.min(r.left, window.innerWidth - 248) });
     setColsOpen(true);
   };
   useEffect(() => {
@@ -612,7 +614,7 @@ export function SalesTransactionsPage() {
           <Columns3 size={15} className="opacity-60" /> Columns
         </button>
         {colsOpen && colsPos && createPortal(
-          <div ref={colsMenuRef} className="fixed z-[90] max-h-[26rem] w-60 overflow-auto rounded-lg border border-n-200 bg-n-0 p-2 shadow-lg" style={{ top: colsPos.top, right: colsPos.right }}>
+          <div ref={colsMenuRef} className="fixed z-[90] max-h-[26rem] w-60 overflow-auto rounded-lg border border-n-200 bg-n-0 p-2 shadow-lg" style={{ top: colsPos.top, left: colsPos.left }}>
             {ALL_COLUMNS.map((c) => (
               <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-n-50">
                 <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={cols.has(c.key)} onChange={() => toggleCol(c.key)} />
