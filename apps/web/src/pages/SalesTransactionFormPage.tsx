@@ -44,6 +44,16 @@ const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s));
 const today = () => new Date().toISOString().slice(0, 10);
 const round2 = (v: number) => Number(v.toFixed(2));
 const eur = (n: number) => `€${n.toFixed(2)}`;
+/** The unit cost (EUR) the profit calc will use for a product: its moving-average landed cost once
+ *  received, else the catalogue purchase cost when that's already in EUR. Null when it can't be
+ *  resolved in EUR on the client (a non-EUR catalogue cost with no average yet) — the server
+ *  converts it at save time. Shown/pre-filled in the per-line cost field so the operator sees it. */
+const resolvedUnitCostEur = (p?: { averageCostEur: number | null; purchaseCost: { amount: number | null; currency: string } } | null): number | null => {
+  if (!p) return null;
+  if (p.averageCostEur != null) return p.averageCostEur;
+  if (p.purchaseCost?.amount != null && p.purchaseCost.currency === 'EUR') return p.purchaseCost.amount;
+  return null;
+};
 const CCY_SYM: Record<string, string> = { EUR: '€', GBP: '£', USD: '$', JPY: '¥', AUD: 'A$', CAD: 'C$', NZD: 'NZ$', SGD: 'S$' };
 /** Amount in a given currency, e.g. ¥7788.00 / A$795.00 / €50.00 (defaults to €). */
 const money = (n: number, ccy?: string) => `${ccy ? CCY_SYM[ccy] ?? `${ccy} ` : '€'}${n.toFixed(2)}`;
@@ -187,6 +197,13 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
     [lineProducts],
   );
   const productVatClassId = useMemo(() => new Map(lineProducts.map((p) => [p.id, p.vatClassId])), [lineProducts]);
+  // Product id → the EUR unit cost the profit calc will use (formatted). Feeds the cost field's
+  // placeholder for already-saved lines with no override, so the operator can see the cost in play.
+  const productCostEur = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of lineProducts) { const c = resolvedUnitCostEur(p); if (c != null) m.set(p.id, round2(c).toFixed(2)); }
+    return m;
+  }, [lineProducts]);
   const effectiveVatClass = (it: ItemForm) => {
     const id = it.vatClassId || (it.productId ? productVatClassId.get(it.productId) ?? null : null);
     return id ? vatClasses.find((v) => v.id === id) ?? null : null;
@@ -545,7 +562,11 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                     return (
                       <div key={i} className="border-b border-n-50">
                         <div className="grid items-center gap-2.5 px-1 py-2.5" style={{ gridTemplateColumns: cols }}>
-                          <ProductSkuField value={{ productId: it.productId, sku: it.sku }} onChange={(v) => setItem(i, v)} />
+                          <ProductSkuField
+                            value={{ productId: it.productId, sku: it.sku }}
+                            onChange={(v) => setItem(i, v)}
+                            onPick={(product) => { const c = resolvedUnitCostEur(product); if (c != null) setItem(i, { unitNetCost: round2(c).toFixed(2) }); }}
+                          />
                           <input
                             className="input mono text-center"
                             inputMode="numeric"
@@ -619,8 +640,8 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                                 <MoneyInput ccy={feeCcy} value={it.salesChannelSalesFeeAmount} onChange={(v) => setItem(i, { salesChannelSalesFeeAmount: v })} placeholder="auto" />
                               </Field>
                             )}
-                            <Field label="Unit cost override" hint="Blank = the product's cost.">
-                              <MoneyInput ccy="EUR" value={it.unitNetCost} onChange={(v) => setItem(i, { unitNetCost: v })} />
+                            <Field label="Unit cost" hint="Pre-filled from the product's saved cost — edit to override. Blank uses the product's cost.">
+                              <MoneyInput ccy="EUR" value={it.unitNetCost} placeholder={(it.productId && productCostEur.get(it.productId)) || '0.00'} onChange={(v) => setItem(i, { unitNetCost: v })} />
                             </Field>
                           </div>
                         )}
