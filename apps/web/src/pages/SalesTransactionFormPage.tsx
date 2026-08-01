@@ -377,6 +377,21 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
   const profit = transaction?.profit ?? null;
   const profitPct = transaction?.profitPct ?? null;
   const profitColor = profit == null ? undefined : profit >= 0 ? '#0F857D' : 'var(--danger)';
+  // FX for showing the EUR equivalent of any native-currency figure in Profit & costs. Sale amounts
+  // use the transaction rate; fees/points use the fee rate (falls back to the transaction rate).
+  const fx = transaction?.exchangeRate ?? null;
+  const feeFx = transaction?.feeExchangeRate ?? fx;
+  const showEur = !!nativeCcy && nativeCcy !== 'EUR'; // sale amounts in a non-EUR currency
+  const showEurFee = !!feeCcy && feeCcy !== 'EUR'; // fees charged in a non-EUR currency
+  // Native → EUR. When there's no rate (local sale, already EUR) the amount is its own EUR value.
+  const toEur = (n: number | null | undefined) => (n == null ? null : fx != null ? round2(n * fx) : n);
+  const toEurFee = (n: number | null | undefined) => (n == null ? null : feeFx != null ? round2(n * feeFx) : n);
+  // `= €x` sub-line, only when the amount was in a non-EUR currency.
+  const eurSub = (n: number | null | undefined, fee = false) => {
+    if (!(fee ? showEurFee : showEur)) return undefined;
+    const v = fee ? toEurFee(n) : toEur(n);
+    return v != null ? `= ${eur(v)}` : undefined;
+  };
   // Line table columns — same shape in both modes, but the middle three differ by what the
   // channel actually reports (local: unit price + VAT class; marketplace: the reported amounts).
   const cols = 'minmax(200px,1fr) 74px 120px 150px 108px 34px 34px';
@@ -752,40 +767,65 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
 
             <div className="card overflow-hidden p-0">
               <div className="border-b border-n-100 px-5 py-4 text-[12px] font-bold uppercase tracking-wide text-n-500">Profit &amp; costs</div>
-              <div className="flex flex-col gap-2.5 px-5 py-4">
-                {(() => {
-                  const actual = transaction?.shippingCostSource === 'actual';
-                  const shipVal = actual ? transaction?.actualShippingCost : transaction?.estimatedShippingCost;
+              <div className="flex flex-col gap-4 px-5 py-4">
+                {!transaction ? (
+                  <p className="text-[11px] leading-4 text-n-400">Profit and costs are calculated by the server when you save.</p>
+                ) : (() => {
+                  const t = transaction;
+                  const net = t.totals.netSales;
+                  const buyerShip = t.totals.shipping;
+                  const taxColl = t.totals.vat;
+                  const actual = t.shippingCostSource === 'actual';
+                  const shipVal = actual ? t.actualShippingCost : t.estimatedShippingCost;
                   const shipLabel = isLocal ? 'Delivery cost' : actual ? 'Actual shipping cost' : 'Est. shipping cost';
-                  return <Row label={shipLabel} value={shipVal != null ? eur(shipVal) : '—'} small />;
+                  const productCost = round2((t.items ?? []).reduce((s, it) => s + (it.unitCostEur ?? 0) * (it.quantity ?? 0), 0));
+                  return (
+                    <>
+                      {/* Incoming — money the sale brings in, in its own currency (+ EUR). */}
+                      <div>
+                        <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-teal-600">Revenue (incoming)</div>
+                        <div className="flex flex-col gap-2">
+                          <Row label="Net amount" value={money(net, nativeCcy)} sub={eurSub(net)} small />
+                          {buyerShip > 0 && <Row label="Buyer-paid shipping" value={money(buyerShip, nativeCcy)} sub={eurSub(buyerShip)} small />}
+                          {taxColl > 0 && <Row label={`${t.taxLabel || 'Tax'} collected`} value={money(taxColl, nativeCcy)} sub={eurSub(taxColl)} small />}
+                        </div>
+                      </div>
+
+                      {/* Outgoing — everything we pay out (shown in EUR; native fees also in their currency). */}
+                      <div>
+                        <div className="mb-2 text-[10.5px] font-bold uppercase tracking-wide text-orange-600">Costs (outgoing)</div>
+                        <div className="flex flex-col gap-2">
+                          <Row label="Product cost" value={eur(productCost)} small />
+                          <Row label={shipLabel} value={shipVal != null ? eur(shipVal) : '—'} small />
+                          {!isLocal && <Row label="Sales fee" value={t.effectiveSalesFee != null ? money(t.effectiveSalesFee, feeCcy) : '—'} sub={eurSub(t.effectiveSalesFee, true)} small />}
+                          {!isLocal && t.amazonPoints > 0 && <Row label="Amazon points" value={money(t.amazonPoints, feeCcy)} sub={eurSub(t.amazonPoints, true)} small />}
+                          {t.dutyImportCost > 0 && <Row label="Import tax / duty" value={eur(t.dutyImportCost)} small />}
+                          {t.returnShippingCost > 0 && <Row label="Return shipping" value={eur(t.returnShippingCost)} small />}
+                          {t.refundAmount != null && t.refundAmount > 0 && <Row label="Refund to buyer" value={money(t.refundAmount, nativeCcy)} sub={eurSub(t.refundAmount)} small />}
+                        </div>
+                      </div>
+
+                      <div className="flex items-baseline justify-between border-t border-n-100 pt-3.5">
+                        <span className="text-[14px] font-bold text-n-900">Est. profit</span>
+                        <div className="text-right">
+                          <div className="mono text-[19px] font-bold" style={{ color: profitColor }}>{profit != null ? eur(profit) : '—'}</div>
+                          <div className="text-[12px] font-semibold" style={{ color: profitColor }}>
+                            {profitPct != null ? `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}%` : ''}
+                          </div>
+                        </div>
+                      </div>
+
+                      {!isLocal && (
+                        <div className="flex flex-col gap-1 border-t border-n-100 pt-2.5 text-[11px] text-n-400">
+                          <div className="flex justify-between"><span>Exchange rate ({nativeCcy || '—'}→EUR)</span><span className="mono">{t.exchangeRate != null ? `${t.exchangeRate}${t.exchangeRateEstimated ? ' (est.)' : ''}` : '—'}</span></div>
+                          {showEurFee && feeCcy !== nativeCcy && <div className="flex justify-between"><span>Fee rate ({feeCcy}→EUR)</span><span className="mono">{t.feeExchangeRate ?? '—'}</span></div>}
+                          <div className="flex justify-between"><span>Package weight</span><span className="mono">{t.overallPackageWeight != null ? `${t.overallPackageWeight} kg` : '—'}</span></div>
+                        </div>
+                      )}
+                      <p className="text-[11px] leading-4 text-n-400">Profit and costs are calculated by the server; they refresh when you save.</p>
+                    </>
+                  );
                 })()}
-                {(() => {
-                  const productCost = (transaction?.items ?? []).reduce((s, it) => s + (it.unitCostEur ?? 0) * (it.quantity ?? 0), 0);
-                  return <Row label="Product cost" value={transaction ? eur(round2(productCost)) : '—'} small />;
-                })()}
-                {!isLocal && <Row label="Sales fee" value={transaction?.effectiveSalesFee != null ? `${money(transaction.effectiveSalesFee, feeCcy)}` : '—'} small />}
-                {transaction?.dutyImportCost != null && transaction.dutyImportCost > 0 && (
-                  <Row label="Import tax / duty" value={eur(transaction.dutyImportCost)} small />
-                )}
-                {!isLocal && transaction?.amazonPoints != null && transaction.amazonPoints > 0 && (
-                  <Row label="Amazon points" value={money(transaction.amazonPoints, feeCcy)} small />
-                )}
-                {!isLocal && <Row label={`Exchange rate (${nativeCcy || '—'}→EUR)`} value={transaction?.exchangeRate != null ? `${transaction.exchangeRate}${transaction.exchangeRateEstimated ? ' (est.)' : ''}` : '—'} small />}
-                {!isLocal && <Row label="Package weight" value={transaction?.overallPackageWeight != null ? `${transaction.overallPackageWeight} kg` : '—'} small />}
-                <div className="mt-1.5 flex items-baseline justify-between border-t border-n-100 pt-3.5">
-                  <span className="text-[14px] font-bold text-n-900">Est. profit</span>
-                  <div className="text-right">
-                    <div className="mono text-[19px] font-bold" style={{ color: profitColor }}>{profit != null ? eur(profit) : '—'}</div>
-                    <div className="text-[12px] font-semibold" style={{ color: profitColor }}>
-                      {profitPct != null ? `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}%` : ''}
-                    </div>
-                  </div>
-                </div>
-                <p className="text-[11px] leading-4 text-n-400">
-                  {transaction
-                    ? 'Profit and costs are calculated by the server; they refresh when you save.'
-                    : 'Profit and costs are calculated by the server when you save.'}
-                </p>
               </div>
             </div>
 
@@ -806,15 +846,18 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
   );
 }
 
-function Row({ label, value, big, small, valueColor }: { label: string; value: string; big?: boolean; small?: boolean; valueColor?: string }) {
+function Row({ label, value, sub, big, small, valueColor }: { label: string; value: string; sub?: string; big?: boolean; small?: boolean; valueColor?: string }) {
   return (
     <div className={`flex items-baseline justify-between ${big || small ? '' : 'mt-3'}`}>
       <span className={`text-n-600 ${small ? 'text-[13.5px]' : 'text-[14px]'}`}>{label}</span>
-      <span
-        className={`mono font-semibold text-n-900 ${big ? 'text-[16px]' : small ? 'text-[13.5px]' : 'text-[15px]'}`}
-        style={valueColor ? { color: valueColor } : undefined}
-      >
-        {value}
+      <span className="text-right">
+        <span
+          className={`mono block font-semibold text-n-900 ${big ? 'text-[16px]' : small ? 'text-[13.5px]' : 'text-[15px]'}`}
+          style={valueColor ? { color: valueColor } : undefined}
+        >
+          {value}
+        </span>
+        {sub && <span className="mono block text-[11px] font-medium text-n-400">{sub}</span>}
       </span>
     </div>
   );
