@@ -191,6 +191,27 @@ export function SalesTransactionsPage() {
   const [cols, setCols] = useState<Set<ColKey>>(new Set(DEFAULT_STANDARD));
   const [colsCustomized, setColsCustomized] = useState(false);
   const [colsOpen, setColsOpen] = useState(false);
+  // The Columns menu is portalled to the body (fixed), anchored to its button, so it's never
+  // clipped or hidden behind the sidebar when the toolbar wraps to a second row.
+  const colsBtnRef = useRef<HTMLButtonElement>(null);
+  const colsMenuRef = useRef<HTMLDivElement>(null);
+  const [colsPos, setColsPos] = useState<{ top: number; right: number } | null>(null);
+  const openCols = () => {
+    const r = colsBtnRef.current?.getBoundingClientRect();
+    if (r) setColsPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    setColsOpen(true);
+  };
+  useEffect(() => {
+    if (!colsOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!colsMenuRef.current?.contains(t) && !colsBtnRef.current?.contains(t)) setColsOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setColsOpen(false); };
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown, true); document.removeEventListener('keydown', onKey); };
+  }, [colsOpen]);
   const [exportOpen, setExportOpen] = useState(false);
 
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: () => settingsApi.get() });
@@ -587,31 +608,30 @@ export function SalesTransactionsPage() {
         >
           <Download size={15} className="opacity-60" /> Export
         </button>
-        <div className="relative">
-          <button className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300" onClick={() => setColsOpen((v) => !v)}>
-            <Columns3 size={15} className="opacity-60" /> Columns
-          </button>
-          {colsOpen && (
-            <div className="absolute right-0 top-11 z-40 max-h-[26rem] w-60 overflow-auto rounded-lg border border-n-200 bg-n-0 p-2 shadow-lg" onMouseLeave={() => setColsOpen(false)}>
-              {ALL_COLUMNS.map((c) => (
-                <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-n-50">
-                  <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={cols.has(c.key)} onChange={() => toggleCol(c.key)} />
-                  <span className="text-[13px] text-n-700">{c.label}</span>
-                </label>
-              ))}
-              <button className="mt-1 w-full rounded-md px-2 py-1.5 text-left text-[12px] font-medium text-teal-700 hover:bg-teal-50" onClick={resetCols}>Reset to standard view</button>
-              {isAdmin && (
-                <button
-                  className="mt-0.5 flex w-full items-center gap-1.5 rounded-md border-t border-n-100 px-2 py-1.5 text-left text-[12px] font-semibold text-n-700 hover:bg-n-50 disabled:opacity-50"
-                  disabled={saveStandard.isPending}
-                  onClick={() => saveStandard.mutate()}
-                >
-                  <Save size={13} className="opacity-70" /> {saveStandard.isPending ? 'Saving…' : 'Save current as standard view'}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+        <button ref={colsBtnRef} className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300" onClick={() => (colsOpen ? setColsOpen(false) : openCols())}>
+          <Columns3 size={15} className="opacity-60" /> Columns
+        </button>
+        {colsOpen && colsPos && createPortal(
+          <div ref={colsMenuRef} className="fixed z-[90] max-h-[26rem] w-60 overflow-auto rounded-lg border border-n-200 bg-n-0 p-2 shadow-lg" style={{ top: colsPos.top, right: colsPos.right }}>
+            {ALL_COLUMNS.map((c) => (
+              <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-n-50">
+                <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={cols.has(c.key)} onChange={() => toggleCol(c.key)} />
+                <span className="text-[13px] text-n-700">{c.label}</span>
+              </label>
+            ))}
+            <button className="mt-1 w-full rounded-md px-2 py-1.5 text-left text-[12px] font-medium text-teal-700 hover:bg-teal-50" onClick={resetCols}>Reset to standard view</button>
+            {isAdmin && (
+              <button
+                className="mt-0.5 flex w-full items-center gap-1.5 rounded-md border-t border-n-100 px-2 py-1.5 text-left text-[12px] font-semibold text-n-700 hover:bg-n-50 disabled:opacity-50"
+                disabled={saveStandard.isPending}
+                onClick={() => saveStandard.mutate()}
+              >
+                <Save size={13} className="opacity-70" /> {saveStandard.isPending ? 'Saving…' : 'Save current as standard view'}
+              </button>
+            )}
+          </div>,
+          document.body,
+        )}
         {isAdmin && (
           <button className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300" onClick={() => setReqOpen(true)}>
             <Unlock size={15} className="opacity-70" /> Unlock requests
