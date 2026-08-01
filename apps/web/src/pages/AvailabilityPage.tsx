@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Info, Minus, Search, Send, X } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, ClipboardCopy, Info, Minus, Search, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell, Pagination, Select } from '@masquare/ui';
-import { availabilityApi, brandsApi, channelListingsApi, productTypesApi, vendorsApi, type AvailabilityRow } from '../lib/api';
+import { availabilityApi, brandsApi, channelListingsApi, productTypesApi, vendorsApi, type AvailabilityRow, type ChannelPushResult } from '../lib/api';
 import { usePersistentState } from '../lib/usePersistentState';
 import { CHANNEL_GROUPS, channelGroupOf, channelPlatform, type ChannelPlatform } from '../lib/channelGroups';
 
@@ -191,7 +191,7 @@ export function AvailabilityPage() {
           productIds={[...selected]}
           titles={new Map(items.map((r) => [r.productId, { sku: r.mainSku, title: r.title }]))}
           onClose={() => setPushOpen(false)}
-          onDone={() => { setPushOpen(false); setSelected(new Set()); qc.invalidateQueries({ queryKey: ['availability'] }); qc.invalidateQueries({ queryKey: ['channel-listings'] }); }}
+          onDone={() => { setSelected(new Set()); qc.invalidateQueries({ queryKey: ['availability'] }); qc.invalidateQueries({ queryKey: ['channel-listings'] }); }}
         />
       )}
     </div>
@@ -233,6 +233,8 @@ function PushModal({ productIds, titles, onClose, onDone }: {
     for (const r of rows) if (!m.has(r.channelKey)) m.set(r.channelKey, { label: r.channel, marketplace: r.marketplace, channelType: r.channelType, countryIso: r.countryIso });
     return [...m.entries()].map(([key, v]) => ({ key, ...v }));
   }, [rows]);
+  // Once a live push finishes we keep the modal open and show a detailed report instead of a toast.
+  const [report, setReport] = useState<ChannelPushResult | null>(null);
   // null until the preview lands; then defaults to ALL channels (push-to-all is the default action).
   const [chosen, setChosen] = useState<Set<string> | null>(null);
   useEffect(() => { if (preview.data && chosen === null) setChosen(new Set(channels.map((c) => c.key))); }, [preview.data, channels, chosen]);
@@ -278,8 +280,8 @@ function PushModal({ productIds, titles, onClose, onDone }: {
     // Push to all channels => omit the filter (server pushes to every listing). Subset => pass the chosen keys.
     mutationFn: () => channelListingsApi.push(productIds, false, allChannels ? undefined : [...chosenSet]),
     onSuccess: (r) => {
-      if (r.failed > 0) toast.warning(`Pushed ${r.ok} listing${r.ok === 1 ? '' : 's'}, ${r.failed} failed`);
-      else toast.success(`Pushed availability to ${r.ok} listing${r.ok === 1 ? '' : 's'}`);
+      // Keep the modal open on a detailed report; refresh the underlying list behind it.
+      setReport(r);
       onDone();
     },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Push failed'),
@@ -308,6 +310,30 @@ function PushModal({ productIds, titles, onClose, onDone }: {
     if (!r.ok) return r.message;
     const m = r.message || '';
     return m.toLowerCase() === 'validated' ? '' : m.replace(/^validated\s*\(?/i, '').replace(/\)\s*$/, '');
+  };
+
+  // --- Push report derivation (after a live push) --------------------------
+  const reportRows = report?.results ?? [];
+  const failedRows = reportRows.filter((r) => !r.ok);
+  const okRows = reportRows.filter((r) => r.ok);
+  // Group failures by their exact reason so a systemic problem (one expired token, one bad
+  // scope) surfaces as a single line with a count instead of N scattered rows.
+  const failureReasons = useMemo(() => {
+    const m = new Map<string, typeof failedRows>();
+    for (const r of failedRows) { const key = (r.message || 'Unknown error').trim(); const a = m.get(key) ?? []; a.push(r); m.set(key, a); }
+    return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report]);
+  const copyReport = () => {
+    if (!report) return;
+    const skuOf = (r: (typeof reportRows)[number]) => titles.get(r.productId)?.sku ?? r.channelSku;
+    const lines: string[] = [`Availability push — ${okRows.length} pushed, ${failedRows.length} failed (${reportRows.length} attempted)`];
+    if (failedRows.length) {
+      lines.push('', 'FAILURES');
+      for (const [reason, rs] of failureReasons) { lines.push(`• ${reason} (${rs.length})`); for (const r of rs) lines.push(`    - ${chanName(r)} · ${skuOf(r)} · set ${r.targetQty}`); }
+    }
+    if (okRows.length) { lines.push('', 'PUSHED'); for (const r of okRows) lines.push(`• ${chanName(r)} · ${skuOf(r)} · ${r.currentQty ?? '—'} → ${r.targetQty}`); }
+    navigator.clipboard.writeText(lines.join('\n')).then(() => toast.success('Report copied')).catch(() => toast.error('Could not copy'));
   };
 
   const singleProduct = productIds.length === 1;
@@ -340,16 +366,71 @@ function PushModal({ productIds, titles, onClose, onDone }: {
   return (
     <ModalShell
       open
-      title="Push availability to channels"
-      subtitle={`${productIds.length} product${productIds.length === 1 ? '' : 's'} selected`}
-      primaryLabel={commit.isPending ? 'Pushing…' : allChannels ? `Push to all channels (${pushable.length})` : `Push to ${chosenSet.size} channel${chosenSet.size === 1 ? '' : 's'} (${pushable.length})`}
-      primaryDisabled={preview.isLoading || pushable.length === 0 || commit.isPending}
-      busy={commit.isPending}
-      onPrimary={() => commit.mutate()}
+      title={report ? 'Push report' : 'Push availability to channels'}
+      subtitle={report ? `${report.ok} pushed · ${report.failed} failed` : `${productIds.length} product${productIds.length === 1 ? '' : 's'} selected`}
+      primaryLabel={report ? 'Done' : commit.isPending ? 'Pushing…' : allChannels ? `Push to all channels (${pushable.length})` : `Push to ${chosenSet.size} channel${chosenSet.size === 1 ? '' : 's'} (${pushable.length})`}
+      primaryDisabled={report ? false : preview.isLoading || pushable.length === 0 || commit.isPending}
+      busy={report ? false : commit.isPending}
+      onPrimary={() => (report ? onClose() : commit.mutate())}
       onClose={onClose}
       initialSize={{ w: 780, h: 600 }}
     >
       <div className="flex h-full flex-col p-1">
+        {report ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-teal-50 px-2.5 py-1 text-[12.5px] font-semibold text-teal-700"><CheckCircle2 size={14} />{okRows.length} pushed</span>
+              {failedRows.length > 0 && <span className="inline-flex items-center gap-1.5 rounded-md bg-rose-50 px-2.5 py-1 text-[12.5px] font-semibold text-rose-600"><AlertTriangle size={14} />{failedRows.length} failed</span>}
+              <span className="text-[12px] text-n-400">{reportRows.length} listing{reportRows.length === 1 ? '' : 's'} attempted</span>
+              <button onClick={copyReport} className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-n-200 px-2.5 py-1 text-[12px] font-medium text-n-600 hover:border-n-300"><ClipboardCopy size={13} />Copy report</button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+              {failedRows.length > 0 && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50/40">
+                  <div className="border-b border-rose-100 px-3 py-2 text-[12px] font-semibold text-rose-700">Failures — grouped by reason</div>
+                  <div className="divide-y divide-rose-100">
+                    {failureReasons.map(([reason, rs]) => (
+                      <div key={reason} className="px-3 py-2.5">
+                        <div className="mb-1.5 flex items-start gap-1.5">
+                          <AlertTriangle size={13} className="mt-0.5 shrink-0 text-rose-500" />
+                          <span className="text-[12.5px] font-semibold text-rose-700">{reason}</span>
+                          <span className="mono ml-auto shrink-0 rounded-pill bg-rose-100 px-1.5 text-[11px] font-semibold text-rose-600">{rs.length}</span>
+                        </div>
+                        <ul className="space-y-1 pl-5">
+                          {rs.map((r, i) => (
+                            <li key={i} className="flex flex-wrap items-baseline gap-x-2 text-[11.5px] text-n-600">
+                              <span className="font-medium text-n-700">{chanName(r)}</span>
+                              <span className="code text-n-500">{titles.get(r.productId)?.sku ?? r.channelSku}</span>
+                              <span className="text-n-400">target {r.currentQty ?? '—'} → {r.targetQty}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {okRows.length > 0 && (
+                <div className="overflow-hidden rounded-lg border border-n-200">
+                  <div className="border-b border-n-100 bg-n-25 px-3 py-2 text-[12px] font-semibold text-n-600">Pushed successfully ({okRows.length})</div>
+                  <div>
+                    {okRows.map((r, i) => (
+                      <div key={i} className="grid grid-cols-[1fr_auto] items-center gap-2 border-t border-n-50 px-3 py-1.5 first:border-t-0">
+                        <span className="min-w-0">
+                          <span className="block truncate text-[12px] font-medium text-n-700">{chanName(r)}</span>
+                          <span className="code block truncate text-[10.5px] text-n-400">{titles.get(r.productId)?.sku ?? r.channelSku}</span>
+                        </span>
+                        <span className="mono whitespace-nowrap text-[11.5px] tabular-nums text-n-600">{r.currentQty ?? '—'} → <b className="text-n-900">{r.targetQty}</b></span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {reportRows.length === 0 && <div className="py-8 text-center text-[13px] text-n-400">Nothing was pushed.</div>}
+            </div>
+          </div>
+        ) : (
+        <>
         {preview.isLoading && <div className="py-10 text-center text-[13px] text-n-400">Checking each channel…</div>}
         {preview.isError && <div className="py-10 text-center text-[13px] text-rose-500">Could not build the push preview.</div>}
         {preview.data && (
@@ -460,6 +541,8 @@ function PushModal({ productIds, titles, onClose, onDone }: {
               </div>
             )}
           </div>
+        )}
+        </>
         )}
       </div>
     </ModalShell>
