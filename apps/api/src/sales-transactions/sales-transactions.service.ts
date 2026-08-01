@@ -656,6 +656,88 @@ export class SalesTransactionsService {
     return rows.filter((t) => (wantActual ? !t.salesFeeEstimated : t.salesFeeEstimated));
   }
 
+  // Region for the "channel group" rollup (Amazon Europe, eBay Americas, …).
+  private static readonly GROUP_ISO_REGION: Record<string, string> = {
+    GB: 'Europe', DE: 'Europe', FR: 'Europe', IT: 'Europe', ES: 'Europe', NL: 'Europe', BE: 'Europe', SE: 'Europe', PL: 'Europe', IE: 'Europe', AT: 'Europe', CH: 'Europe',
+    US: 'Americas', CA: 'Americas', MX: 'Americas', BR: 'Americas',
+    JP: 'Asia-Pacific', AU: 'Asia-Pacific', SG: 'Asia-Pacific',
+    AE: 'MENA', SA: 'MENA',
+  };
+  private channelGroupLabel(name: string | null | undefined, iso: string | null | undefined): { key: string; label: string } {
+    const n = (name ?? '').toLowerCase();
+    const platform = n.includes('amazon') ? 'Amazon' : n.includes('ebay') ? 'eBay' : n.includes('onbuy') ? 'OnBuy' : (name ? name.split(/[\s-]/)[0] : 'Other');
+    const region = SalesTransactionsService.GROUP_ISO_REGION[(iso ?? '').toUpperCase()] ?? 'Other';
+    return { key: `${platform}:${region}`, label: `${platform} ${region}` };
+  }
+
+  /** Aggregate the transactions matching a query into group rows (orders, units, revenue, profit,
+   *  margin) — by channel group, sales channel, SKU, brand or vendor. Channel-level keys aggregate
+   *  whole transactions; SKU/brand/vendor aggregate per line item (figures allocated by serialize
+   *  sum back to the transaction). Honours every list filter including the computed ones. */
+  async grouped(query: TxQuery, groupBy: 'channelGroup' | 'channel' | 'sku' | 'brand' | 'vendor') {
+    const where = this.buildWhere(query);
+    const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: [{ date: 'desc' }] });
+    const serviceMap = await this.buildServiceMap();
+    const fbaAvgMap = await this.buildFbaAverageMap(rows);
+    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
+    const feePctMap = await this.buildSalesFeePctMap();
+    const fxFallback = await this.buildFxFallbackMap();
+    let serialized = rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback)) as any[];
+    // Mirror the list's in-memory filters (profit tier / alerts / fee type).
+    if (query.profitTierId?.length) {
+      const tiers = await this.prisma.profitTier.findMany({ where: { id: { in: query.profitTierId } } });
+      serialized = serialized.filter((t) => t.profitPct != null && tiers.some((tier) => t.profitPct >= Number(tier.fromPct) && t.profitPct <= Number(tier.toPct)));
+    }
+    if (query.hasAlert) serialized = serialized.filter((t) => t.hasAlerts);
+    serialized = this.applyFeeTypeFilter(serialized, query);
+    const rowById = new Map(rows.map((r) => [r.id, r]));
+
+    // Brand/vendor for the item-level groupings.
+    const productIds = [...new Set(rows.flatMap((r) => (r.items ?? []).map((i: any) => i.productId).filter(Boolean)))] as string[];
+    const products = productIds.length ? await this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, brand: { select: { name: true } }, vendor: { select: { name: true } } } }) : [];
+    const brandOf = new Map(products.map((p) => [p.id, p.brand?.name ?? null]));
+    const vendorOf = new Map(products.map((p) => [p.id, p.vendor?.name ?? null]));
+
+    type Agg = { key: string; label: string; orders: Set<string>; units: number; revenueEur: number; profitEur: number };
+    const agg = new Map<string, Agg>();
+    const bump = (key: string, label: string, orderId: string, units: number, revenue: number | null, profit: number | null) => {
+      let a = agg.get(key);
+      if (!a) { a = { key, label, orders: new Set(), units: 0, revenueEur: 0, profitEur: 0 }; agg.set(key, a); }
+      a.orders.add(orderId); a.units += units; a.revenueEur += revenue ?? 0; a.profitEur += profit ?? 0;
+    };
+    const unitsOf = (t: any) => (t.items ?? []).reduce((s: number, it: any) => s + (it.quantity ?? 0), 0);
+
+    for (const t of serialized) {
+      if (groupBy === 'channel') {
+        bump(t.salesChannelId ?? '__none', t.salesChannel?.name ?? '— No channel', t.id, unitsOf(t), t.revenueExVatEur, t.profit);
+      } else if (groupBy === 'channelGroup') {
+        const g = this.channelGroupLabel(t.salesChannel?.name, t.salesChannel?.nativeCountry?.isoCode);
+        bump(g.key, g.label, t.id, unitsOf(t), t.revenueExVatEur, t.profit);
+      } else {
+        const row = rowById.get(t.id);
+        (t.items ?? []).forEach((it: any, idx: number) => {
+          const pid = row?.items?.[idx]?.productId ?? null;
+          let key: string, label: string;
+          if (groupBy === 'sku') { key = it.sku || '__none'; label = it.sku || '— No SKU'; }
+          else if (groupBy === 'brand') { const b = pid ? brandOf.get(pid) : null; key = b ?? '__none'; label = b ?? '— No brand'; }
+          else { const v = pid ? vendorOf.get(pid) : null; key = v ?? '__none'; label = v ?? '— No vendor'; }
+          bump(key, label, t.id, it.quantity ?? 0, it.revenueExVatEur, it.profitEur);
+        });
+      }
+    }
+
+    const groups = [...agg.values()]
+      .map((a) => ({ key: a.key, label: a.label, orders: a.orders.size, units: a.units, revenueEur: round(a.revenueEur, 2), profitEur: round(a.profitEur, 2), marginPct: a.revenueEur > 0 ? round((a.profitEur / a.revenueEur) * 100, 2) : null }))
+      .sort((x, y) => y.profitEur - x.profitEur);
+    const totals = {
+      orders: serialized.length,
+      units: serialized.reduce((s, t) => s + unitsOf(t), 0),
+      revenueEur: round(serialized.reduce((s, t) => s + (t.revenueExVatEur ?? 0), 0), 2),
+      profitEur: round(serialized.reduce((s, t) => s + (t.profit ?? 0), 0), 2),
+    };
+    return { groupBy, groups, totals };
+  }
+
   async list(query: TxQuery) {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(500, Math.max(1, Number(query.pageSize) || 50));

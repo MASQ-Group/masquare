@@ -87,6 +87,42 @@ export class SalesTransactionsController {
     return { ids, total: ids.length };
   }
 
+  @Get('grouped')
+  grouped(
+    @VisibleCompanies() companyIds: string[],
+    @Query('groupBy') groupBy: 'channelGroup' | 'channel' | 'sku' | 'brand' | 'vendor',
+    @Query('q') q?: string,
+    @Query('salesChannelId') salesChannelId?: string | string[],
+    @Query('destinationCountryId') destinationCountryId?: string | string[],
+    @Query('status') status?: string | string[],
+    @Query('profitTierId') profitTierId?: string | string[],
+    @Query('shipmentStatus') shipmentStatus?: string | string[],
+    @Query('fulfilmentType') fulfilmentType?: string | string[],
+    @Query('feeType') feeType?: string | string[],
+    @Query('resolution') resolution?: string | string[],
+    @Query('sku') sku?: string,
+    @Query('hasAlert') hasAlert?: string,
+    @Query('needsReturn') needsReturn?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ) {
+    const arr = (v?: string | string[]) => (v == null ? undefined : Array.isArray(v) ? v : [v]);
+    const g = ['channelGroup', 'channel', 'sku', 'brand', 'vendor'].includes(groupBy) ? groupBy : 'channel';
+    return this.svc.grouped({
+      q, companyIds, sku, dateFrom, dateTo,
+      salesChannelId: arr(salesChannelId),
+      destinationCountryId: arr(destinationCountryId),
+      status: arr(status),
+      profitTierId: arr(profitTierId),
+      shipmentStatus: arr(shipmentStatus),
+      fulfilmentType: arr(fulfilmentType),
+      feeType: arr(feeType),
+      resolution: arr(resolution),
+      hasAlert: hasAlert === 'true' || hasAlert === '1',
+      needsReturn: needsReturn === 'true' || needsReturn === '1',
+    }, g);
+  }
+
   @Get('export')
   exportRows(
     @VisibleCompanies() companyIds: string[],

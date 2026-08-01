@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowDown, ArrowUp, Columns3, Download, Filter, Lock, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Trash2, Undo2, Unlock, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DateRangePicker, ModalShell, Pagination, Select } from '@masquare/ui';
-import { countriesApi, profitTiersApi, salesChannelsApi, salesTransactionsApi, settingsApi, type ProfitTier, type SalesTransaction, type TransactionAlert } from '../lib/api';
+import { countriesApi, profitTiersApi, salesChannelsApi, salesTransactionsApi, settingsApi, type ProfitTier, type SalesTransaction, type TransactionAlert, type TxGroupBy } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useConfirm } from '../components/ConfirmProvider';
 import { usePersistentState } from '../lib/usePersistentState';
@@ -48,6 +48,15 @@ const datePresetRange = (p: DatePreset): { from: string; to: string } => {
     default: return { from: '', to: '' };
   }
 };
+const GROUP_BY_OPTS: { value: string; label: string }[] = [
+  { value: '', label: 'No grouping' },
+  { value: 'channelGroup', label: 'Group: Channel group' },
+  { value: 'channel', label: 'Group: Sales channel' },
+  { value: 'sku', label: 'Group: SKU' },
+  { value: 'brand', label: 'Group: Brand' },
+  { value: 'vendor', label: 'Group: Vendor' },
+];
+const GROUP_LABELS: Record<string, string> = { channelGroup: 'Channel group', channel: 'Sales channel', sku: 'SKU', brand: 'Brand', vendor: 'Vendor' };
 const DATE_PRESET_OPTS: { value: DatePreset; label: string }[] = [
   { value: 'all', label: 'All time' },
   { value: 'thisMonth', label: 'Current month' },
@@ -141,6 +150,8 @@ export function SalesTransactionsPage() {
     return 'custom';
   }, [dateRange]);
   const [filterOpen, setFilterOpen] = useState(false);
+  // Group-by view: '' = the normal transaction list; otherwise an aggregated summary.
+  const [groupBy, setGroupBy] = usePersistentState<'' | TxGroupBy>('salesTx.groupBy', '');
   const [eurOnly, setEurOnly] = useState(false);
   const [cols, setCols] = useState<Set<ColKey>>(new Set(DEFAULT_STANDARD));
   const [colsCustomized, setColsCustomized] = useState(false);
@@ -237,6 +248,12 @@ export function SalesTransactionsPage() {
     [q, filters, alertsOnly, dateRange],
   );
   const { data, isLoading } = useQuery({ queryKey: ['sales-transactions', params], queryFn: () => salesTransactionsApi.list(params) });
+  // Grouped summary (only when a group-by is active). Same filters as the list, no pagination.
+  const groupedQ = useQuery({
+    queryKey: ['sales-tx-grouped', groupBy, filterKey],
+    queryFn: () => salesTransactionsApi.grouped(exportParams, groupBy as TxGroupBy),
+    enabled: !!groupBy,
+  });
   const del = useMutation({
     mutationFn: (id: string) => salesTransactionsApi.remove(id),
     onSuccess: () => { toast.success('Transaction removed'); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); },
@@ -477,6 +494,9 @@ export function SalesTransactionsPage() {
         <div className="w-[248px]">
           <DateRangePicker value={dateRange} onChange={(r) => { setDateRange(r); setPage(1); }} placeholder="Custom range" clearable className="h-[38px]" />
         </div>
+        <div className="w-48">
+          <Select dense value={groupBy} onChange={(v) => setGroupBy(v as '' | TxGroupBy)} options={GROUP_BY_OPTS} />
+        </div>
         <label className="inline-flex h-[38px] cursor-pointer items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700">
           <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={eurOnly} onChange={(e) => setEurOnly(e.target.checked)} />
           Show in EUR
@@ -558,7 +578,56 @@ export function SalesTransactionsPage() {
         </div>
       )}
 
-      <div className="card overflow-hidden">
+      {groupBy && (
+        <div className="card overflow-hidden">
+          <div className="flex items-center justify-between border-b border-n-100 px-4 py-2.5">
+            <span className="text-[12px] font-semibold uppercase tracking-wide text-n-500">Grouped by {GROUP_LABELS[groupBy]}</span>
+            <span className="text-[12px] text-n-400">{groupedQ.data ? `${groupedQ.data.groups.length} group${groupedQ.data.groups.length === 1 ? '' : 's'}` : ''}</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] border-collapse">
+              <thead>
+                <tr>
+                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-n-500">{GROUP_LABELS[groupBy]}</th>
+                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Orders</th>
+                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Units</th>
+                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Revenue (ex-VAT)</th>
+                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Profit</th>
+                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Margin</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupedQ.isLoading && <tr><td colSpan={6} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
+                {!groupedQ.isLoading && groupedQ.data?.groups.length === 0 && <tr><td colSpan={6} className="px-4 py-12 text-center text-[13px] text-n-500">No transactions match.</td></tr>}
+                {groupedQ.data?.groups.map((g) => (
+                  <tr key={g.key} className="hover:bg-teal-50/60">
+                    <td className="border-b border-n-100 px-4 py-2.5 text-[13px] font-medium text-n-800">{g.label}</td>
+                    <td className="mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] text-n-700">{g.orders}</td>
+                    <td className="mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] text-n-700">{g.units}</td>
+                    <td className="mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] text-n-700">{money(g.revenueEur, 'EUR')}</td>
+                    <td className={`mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] font-semibold ${g.profitEur < 0 ? 'text-danger' : 'text-n-800'}`}>{money(g.profitEur, 'EUR')}</td>
+                    <td className={`mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] ${g.marginPct != null && g.marginPct < 0 ? 'text-danger' : 'text-n-600'}`}>{g.marginPct == null ? '—' : `${g.marginPct.toFixed(1)}%`}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {groupedQ.data && groupedQ.data.groups.length > 0 && (
+                <tfoot>
+                  <tr className="bg-n-25 font-semibold">
+                    <td className="px-4 py-3 text-[13px] text-n-800">Total</td>
+                    <td className="mono px-4 py-3 text-right text-[13px] text-n-800">{groupedQ.data.totals.orders}</td>
+                    <td className="mono px-4 py-3 text-right text-[13px] text-n-800">{groupedQ.data.totals.units}</td>
+                    <td className="mono px-4 py-3 text-right text-[13px] text-n-800">{money(groupedQ.data.totals.revenueEur, 'EUR')}</td>
+                    <td className={`mono px-4 py-3 text-right text-[13px] ${groupedQ.data.totals.profitEur < 0 ? 'text-danger' : 'text-n-800'}`}>{money(groupedQ.data.totals.profitEur, 'EUR')}</td>
+                    <td className="mono px-4 py-3 text-right text-[13px] text-n-600">{groupedQ.data.totals.revenueEur > 0 ? `${((groupedQ.data.totals.profitEur / groupedQ.data.totals.revenueEur) * 100).toFixed(1)}%` : '—'}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
+
+      {!groupBy && <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] border-collapse">
             <thead>
@@ -632,15 +701,15 @@ export function SalesTransactionsPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </div>}
 
-      <Pagination
+      {!groupBy && <Pagination
         page={page}
         pageCount={pageCount}
         onPageChange={setPage}
         pageSize={pageSize}
         onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
-      />
+      />}
 
       {viewing !== undefined && resolving === undefined && (
         <SalesTransactionSummaryModal

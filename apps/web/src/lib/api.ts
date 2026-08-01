@@ -1140,9 +1140,16 @@ export const fbaShipmentsApi = {
     api.post<{ created: number; shipments: number; errors: { fbaRef: string; message: string }[] }>('/fba-shipments/import', { rows }).then((r) => r.data),
 };
 
+export type TxGroupBy = 'channelGroup' | 'channel' | 'sku' | 'brand' | 'vendor';
+export interface TxGroupRow { key: string; label: string; orders: number; units: number; revenueEur: number; profitEur: number; marginPct: number | null }
+export interface TxGroupedResult { groupBy: TxGroupBy; groups: TxGroupRow[]; totals: { orders: number; units: number; revenueEur: number; profitEur: number } }
+export interface TxFilterParams { q?: string; salesChannelId?: string[]; destinationCountryId?: string[]; status?: string[]; profitTierId?: string[]; shipmentStatus?: string[]; fulfilmentType?: string[]; feeType?: string[]; sku?: string; hasAlert?: boolean; needsReturn?: boolean; resolution?: string[]; dateFrom?: string; dateTo?: string }
+
 export const salesTransactionsApi = {
   list: (params: { q?: string; companyId?: string; salesChannelId?: string[]; destinationCountryId?: string[]; status?: string[]; profitTierId?: string[]; shipmentStatus?: string[]; fulfilmentType?: string[]; feeType?: string[]; sku?: string; hasAlert?: boolean; needsReturn?: boolean; resolution?: string[]; dateFrom?: string; dateTo?: string; sortBy?: 'date' | 'profit' | 'profitPct'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<SalesTransactionListResponse>('/sales-transactions', { params }).then((r) => r.data),
+  grouped: (params: TxFilterParams, groupBy: TxGroupBy) =>
+    api.get<TxGroupedResult>('/sales-transactions/grouped', { params: { ...params, groupBy } }).then((r) => r.data),
   get: (id: string) => api.get<SalesTransaction>(`/sales-transactions/${id}`).then((r) => r.data),
   create: (body: any) => api.post<SalesTransaction>('/sales-transactions', body).then((r) => r.data),
   update: (id: string, body: any) => api.patch<SalesTransaction>(`/sales-transactions/${id}`, body).then((r) => r.data),
