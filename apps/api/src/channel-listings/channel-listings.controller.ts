@@ -43,6 +43,11 @@ export class ChannelListingsController {
     return this.svc.detail(productId, companyIds);
   }
 
+  @Get('product/:productId/identifiers')
+  identifiers(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.identifiers(productId, companyIds);
+  }
+
   /** Push Availability quantity to the selected products' listings. dryRun=true (default) previews
    *  without applying; dryRun=false commits and records a ChannelPush audit per listing. */
   @Post('push')

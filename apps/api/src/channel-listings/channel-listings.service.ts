@@ -186,13 +186,13 @@ export class ChannelListingsService {
         for (const l of listings) {
           if (!l.sku) continue;
           const marketplace = (l.marketplace ?? '').toString();
-          const key = `${l.sku} ${marketplace}`;
+          const key = `${l.sku}|${marketplace}`;
           if (seen.has(key)) continue; // one row per (sku, marketplace) — avoids unique clashes
           seen.add(key);
           data.push({
             integrationId: intg.id, companyId: intg.targetCompanyId, channelSku: l.sku, marketplace,
             productId: skuMap.get(l.sku.trim().toLowerCase()) ?? null,
-            asin: l.asin, title: l.title, listedQuantity: l.quantity, listedPrice: l.price,
+            asin: l.asin, externalListingId: l.externalId ?? null, title: l.title, listedQuantity: l.quantity, listedPrice: l.price,
             currency: l.currency, fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now,
           });
         }
@@ -227,7 +227,7 @@ export class ChannelListingsService {
         // fulfilmentChannel): both `NOT:{...}` and `{not:'FBA'}` drop NULLs in SQL, so be explicit.
         OR: [{ fulfilmentChannel: null }, { fulfilmentChannel: { not: 'FBA' } }],
       },
-      select: { id: true, productId: true, integrationId: true, channelSku: true, marketplace: true, listedQuantity: true, companyId: true, integration: { select: { channelType: true, name: true, marketplace: true } } },
+      select: { id: true, productId: true, integrationId: true, channelSku: true, externalListingId: true, marketplace: true, listedQuantity: true, companyId: true, integration: { select: { channelType: true, name: true, marketplace: true } } },
     });
     const channelKeyOf = (l: { integrationId: string; marketplace: string | null }) => (l.marketplace ? `${l.integrationId}:${l.marketplace}` : l.integrationId);
     // Marketplace country ISO for the client's group tree. eBay listings carry it per-market;
@@ -249,7 +249,7 @@ export class ChannelListingsService {
       const r =
         l.integration.channelType === 'amazon' ? await this.integrations.pushAmazonQuantity(l.integrationId, l.channelSku, target, dryRun)
         : l.integration.channelType === 'onbuy' ? await this.integrations.pushOnBuyQuantity(l.integrationId, l.channelSku, target, dryRun)
-        : l.integration.channelType === 'ebay' ? await this.integrations.pushEbayQuantity(l.integrationId, l.channelSku, l.marketplace, target, dryRun)
+        : l.integration.channelType === 'ebay' ? await this.integrations.pushEbayQuantity(l.integrationId, l.channelSku, l.marketplace, target, dryRun, l.externalListingId)
         : { ok: false, message: `Push for ${l.integration.channelType} not available yet` };
       if (!dryRun) {
         if (r.ok) await this.prisma.channelListing.update({ where: { id: l.id }, data: { listedQuantity: target, lastPushedAt: new Date() } });
@@ -367,6 +367,29 @@ export class ChannelListingsService {
 
   /** One product across all its channels (for the detail page). Real listing data only —
    *  performance analytics (units sold, buy box, revenue) are placeholders in the UI. */
+  /** The marketplace's own identifier for every listing of a product — one row per (channel,
+   *  marketplace): eBay ItemID, Amazon ASIN, OnBuy OPC. Shown on the product card. */
+  async identifiers(productId: string, companyIds?: string[]) {
+    const listings = await this.prisma.channelListing.findMany({
+      where: { productId, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: {
+        channelSku: true, asin: true, externalListingId: true, marketplace: true,
+        integration: { select: { channelType: true, name: true } },
+      },
+      orderBy: [{ integration: { channelType: 'asc' } }, { marketplace: 'asc' }],
+    });
+    const idType = (ct: string) => (ct === 'amazon' ? 'ASIN' : ct === 'ebay' ? 'eBay ItemID' : ct === 'onbuy' ? 'OnBuy OPC' : 'ID');
+    return listings.map((l) => ({
+      channelType: l.integration.channelType,
+      channelName: l.integration.name,
+      marketplace: l.marketplace || null,
+      countryIso: l.marketplace ? (this.marketplaceIso(l.marketplace) ?? l.marketplace) : null,
+      channelSku: l.channelSku,
+      identifierType: idType(l.integration.channelType),
+      identifier: l.externalListingId ?? l.asin ?? null,
+    }));
+  }
+
   async detail(productId: string, companyIds?: string[]) {
     const p = await this.prisma.product.findFirst({
       where: { id: productId, ...ACTIVE },

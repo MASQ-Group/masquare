@@ -4,6 +4,7 @@ import { ImagePlus, Plus, Star, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { CostHistory } from './CostHistory';
 import { ProductStockSection } from './ProductStockSection';
+import { ProductChannelIdentifiers } from './ProductChannelIdentifiers';
 import { ModalShell, Select } from '@masquare/ui';
 import {
   attributesApi, brandsApi, categoriesApi, fulfilmentTypesApi, productClassesApi, productsApi,
@@ -278,6 +279,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
           ))}
           <div><label className="label">Country of origin</label><CountrySelect value={ident.countryOfOrigin || null} valueKind="code" onChange={(v) => { setIdent((s) => ({ ...s, countryOfOrigin: v ?? '' })); touch(); }} /></div>
           <div><label className="label">HS code</label><input className="input mono" value={ident.hsCode} onChange={(e) => { setIdent((s) => ({ ...s, hsCode: e.target.value })); touch(); }} /></div>
+          {product && <ProductChannelIdentifiers productId={product.id} />}
         </div>
       )}
 

@@ -636,6 +636,10 @@ model ChannelListing {
   marketplace      String    @default("")
   productId        String?   @map("product_id") @db.Uuid // null = unmatched to our catalogue
   asin             String?
+  // The marketplace's OWN identifier for this listing/product: eBay ItemID, Amazon ASIN, OnBuy
+  // OPC. eBay needs the ItemID to revise quantity (classic listings reject the SKU as an
+  // identifier), and we surface all of them on the product card. Nullable — not every pull has one.
+  externalListingId String?  @map("external_listing_id")
   title            String?
   listedQuantity   Int?      @map("listed_quantity")
   listedPrice      Float?    @map("listed_price")

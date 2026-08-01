@@ -264,6 +264,8 @@ export interface ChannelListingDetail {
 export interface ChannelSyncResult { channels: { integrationId: string; name: string; ok: boolean; pulled?: number; message?: string }[]; total: number }
 export interface ChannelPushRow { productId: string; channelKey: string; channel: string; channelType: string; marketplace: string; countryIso: string; channelSku: string; currentQty: number | null; targetQty: number; ok: boolean; message: string }
 export interface ChannelPushResult { dryRun: boolean; count: number; ok: number; failed: number; results: ChannelPushRow[] }
+export interface ChannelIdentifier { channelType: string; channelName: string; marketplace: string | null; countryIso: string | null; channelSku: string; identifierType: string; identifier: string | null }
+
 export const channelListingsApi = {
   channels: () => api.get<ChannelListingChannel[]>('/channel-listings/channels').then((r) => r.data),
   dashboard: (params: { q?: string; channelId?: string; brandId?: string; vendorId?: string; productTypeId?: string; page?: number; pageSize?: number } = {}) =>
@@ -271,6 +273,7 @@ export const channelListingsApi = {
   sync: (integrationIds?: string[]) =>
     api.post<ChannelSyncResult>('/channel-listings/sync', integrationIds?.length ? { integrationIds } : {}).then((r) => r.data),
   detail: (productId: string) => api.get<ChannelListingDetail>(`/channel-listings/product/${productId}`).then((r) => r.data),
+  identifiers: (productId: string) => api.get<ChannelIdentifier[]>(`/channel-listings/product/${productId}/identifiers`).then((r) => r.data),
   push: (productIds: string[], dryRun: boolean, channels?: string[]) =>
     api.post<ChannelPushResult>('/channel-listings/push', { productIds, dryRun, ...(channels && channels.length ? { channels } : {}) }).then((r) => r.data),
 };

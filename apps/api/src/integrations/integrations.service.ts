@@ -643,16 +643,20 @@ export class IntegrationsService {
    *  pull time. The OAuth user token goes in X-EBAY-API-IAF-TOKEN — this is a WRITE call, so the
    *  token must carry the sell.inventory scope; a read-only connection returns an auth error here
    *  (reconnect the eBay integration to grant write access). dryRun does not call eBay. */
-  async pushEbayQuantity(integrationId: string, channelSku: string, marketplace: string | null, quantity: number, dryRun = false): Promise<{ ok: boolean; message: string }> {
+  async pushEbayQuantity(integrationId: string, channelSku: string, marketplace: string | null, quantity: number, dryRun = false, externalItemId?: string | null): Promise<{ ok: boolean; message: string }> {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
     if (!row) return { ok: false, message: 'Integration not found' };
     const config = (row.config ?? {}) as Record<string, string>;
     const qty = Math.max(0, Math.trunc(quantity));
     const iso = (marketplace || '').toUpperCase();
     const siteId = IntegrationsService.EBAY_ISO_SITEID[iso] ?? (config.ebaySiteIds || '3').split(',')[0].trim();
-    const m = /^EBAY-(\d+)$/i.exec(channelSku.trim());
-    const targetXml = m ? `<ItemID>${m[1]}</ItemID>` : `<SKU>${IntegrationsService.xmlEscape(channelSku)}</SKU>`;
-    if (dryRun) return { ok: true, message: `validated (revise ${m ? 'item ' + m[1] : 'SKU ' + channelSku} on site ${siteId})` };
+    // Prefer the stored ItemID (or the EBAY-<id> SKU fallback). Classic eBay listings track
+    // inventory by ItemID and REJECT the seller SKU as an identifier ("Invalid SKU number"), so
+    // revising by ItemID is the only reliable path; SKU is a last resort for SKU-tracked listings.
+    const itemId = (externalItemId && /^\d+$/.test(externalItemId.trim()) ? externalItemId.trim() : null)
+      ?? /^EBAY-(\d+)$/i.exec(channelSku.trim())?.[1] ?? null;
+    const targetXml = itemId ? `<ItemID>${itemId}</ItemID>` : `<SKU>${IntegrationsService.xmlEscape(channelSku)}</SKU>`;
+    if (dryRun) return { ok: true, message: `validated (revise ${itemId ? 'item ' + itemId : 'SKU ' + channelSku} on site ${siteId})` };
 
     const secrets = await this.decryptedSecrets(row.id);
     const token = await this.ebayAccessToken(config, secrets);
@@ -687,7 +691,7 @@ export class IntegrationsService {
    *  quantity, offer price, listing status). Paginated via pageToken; capped to avoid runaway.
    *  Feeds the Channel Listings dashboard. */
   async fetchAmazonListings(integrationId: string, opts: { maxPages?: number } = {}): Promise<Array<{
-    sku: string; asin: string | null; title: string | null; quantity: number | null;
+    sku: string; asin: string | null; externalId: string | null; title: string | null; quantity: number | null;
     price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
     marketplace: string | null;
   }>> {
@@ -718,6 +722,7 @@ export class IntegrationsService {
         out.push({
           sku: it.sku,
           asin: summ.asin ?? null,
+          externalId: summ.asin ?? null, // Amazon's own product identifier is the ASIN
           title: summ.itemName ?? null,
           quantity: isFbm ? merchant.reduce((s: number, a: any) => s + (a.quantity || 0), 0) : null,
           price: offer?.price?.amount != null ? Number(offer.price.amount) : null,
@@ -739,7 +744,7 @@ export class IntegrationsService {
    *  NOTE: the Inventory API only surfaces listings MANAGED by the Inventory API — classic
    *  (Trading-API) listings may not all appear; if coverage is short we add GetMyeBaySelling. */
   async fetchEbayListings(integrationId: string, opts: { maxItems?: number } = {}): Promise<Array<{
-    sku: string; asin: string | null; title: string | null; quantity: number | null;
+    sku: string; asin: string | null; externalId: string | null; title: string | null; quantity: number | null;
     price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
     marketplace: string | null;
   }>> {
@@ -782,7 +787,7 @@ export class IntegrationsService {
     // 2) Each SKU's offer → price, currency, listing status (getOffers is per-SKU).
     const out: any[] = [];
     for (const it of items) {
-      let price: number | null = null, currency: string | null = null, status: string | null = null, marketplace: string | null = null;
+      let price: number | null = null, currency: string | null = null, status: string | null = null, marketplace: string | null = null, externalId: string | null = null;
       try {
         const res = await fetch(`${base}/sell/inventory/v1/offer?sku=${encodeURIComponent(it.sku)}`, { headers, signal: AbortSignal.timeout(15000) });
         const json: any = await res.json().catch(() => null);
@@ -793,9 +798,10 @@ export class IntegrationsService {
           currency = p?.currency ?? null;
           status = offer?.status ?? offer?.listing?.listingStatus ?? null;
           marketplace = ebayMarketplaceToIso(offer?.marketplaceId ?? null);
+          externalId = offer?.listing?.listingId ?? null; // eBay ItemID for the published listing
         }
       } catch { /* leave price null on a per-SKU error */ }
-      out.push({ sku: it.sku, asin: null, title: it.title, quantity: it.quantity, price, currency, fulfilmentChannel: null, status, marketplace });
+      out.push({ sku: it.sku, asin: null, externalId, title: it.title, quantity: it.quantity, price, currency, fulfilmentChannel: null, status, marketplace });
     }
     return out;
   }
@@ -805,7 +811,7 @@ export class IntegrationsService {
    *  via X-EBAY-API-IAF-TOKEN. Iterates the seller's sites (config.ebaySiteIds, default UK/AU/US)
    *  and dedupes by ItemID, so it's correct whether GetMyeBaySelling is account-wide or per-site. */
   private async ebayTradingListings(base: string, token: string, config: Record<string, string>, maxItems: number): Promise<Array<{
-    sku: string; asin: string | null; title: string | null; quantity: number | null;
+    sku: string; asin: string | null; externalId: string | null; title: string | null; quantity: number | null;
     price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
     marketplace: string | null;
   }>> {
@@ -860,6 +866,7 @@ export class IntegrationsService {
           out.push({
             sku: (rawSku && rawSku.trim()) || `EBAY-${itemId}`,
             asin: null,
+            externalId: itemId, // eBay ItemID — required to revise classic (ItemID-tracked) listings
             title: this.decodeXmlEntities(pick(b, /<Title>([\s\S]*?)<\/Title>/)),
             quantity: qty != null ? Number(qty) : null,
             price: priceM ? Number(priceM[2]) : null,
@@ -925,7 +932,7 @@ export class IntegrationsService {
    *  Feeds Channel Listings, same shape as fetchAmazonListings. Field names are parsed
    *  defensively — verify against a real pull, as OnBuy's listing schema varies by account. */
   async fetchOnBuyListings(integrationId: string, opts: { maxItems?: number } = {}): Promise<Array<{
-    sku: string; asin: string | null; title: string | null; quantity: number | null;
+    sku: string; asin: string | null; externalId: string | null; title: string | null; quantity: number | null;
     price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
     marketplace: string | null;
   }>> {
@@ -950,6 +957,7 @@ export class IntegrationsService {
         out.push({
           sku: l.sku ?? l.seller_sku ?? l.merchant_sku ?? null,
           asin: null,
+          externalId: l.opc ?? l.product?.opc ?? l.listing_id ?? l.id ?? null, // OnBuy Product Code (OPC)
           title: l.product_name ?? l.name ?? l.product?.name ?? l.title ?? null,
           quantity: l.stock ?? l.quantity ?? l.stock_level ?? null,
           price: l.price != null ? Number(l.price) : (l.unit_price != null ? Number(l.unit_price) : null),
