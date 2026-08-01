@@ -1153,6 +1153,8 @@ export const salesTransactionsApi = {
     api.get<SalesTransactionListResponse>('/sales-transactions', { params }).then((r) => r.data),
   grouped: (params: TxFilterParams, groupBy: TxGroupBy) =>
     api.get<TxGroupedResult>('/sales-transactions/grouped', { params: { ...params, groupBy } }).then((r) => r.data),
+  groupMembers: (params: TxFilterParams, groupBy: TxGroupBy, groupKey: string) =>
+    api.get<SalesTransaction[]>('/sales-transactions/group-members', { params: { ...params, groupBy, groupKey } }).then((r) => r.data),
   get: (id: string) => api.get<SalesTransaction>(`/sales-transactions/${id}`).then((r) => r.data),
   create: (body: any) => api.post<SalesTransaction>('/sales-transactions', body).then((r) => r.data),
   update: (id: string, body: any) => api.patch<SalesTransaction>(`/sales-transactions/${id}`, body).then((r) => r.data),

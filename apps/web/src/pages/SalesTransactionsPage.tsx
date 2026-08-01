@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowDown, ArrowUp, Columns3, Download, Filter, Lock, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Trash2, Undo2, Unlock, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Columns3, Download, Filter, Lock, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Trash2, Undo2, Unlock, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DateRangePicker, ModalShell, Pagination, Select } from '@masquare/ui';
-import { countriesApi, profitTiersApi, salesChannelsApi, salesTransactionsApi, settingsApi, type ProfitTier, type SalesTransaction, type TransactionAlert, type TxGroupBy } from '../lib/api';
+import { countriesApi, profitTiersApi, salesChannelsApi, salesTransactionsApi, settingsApi, type ProfitTier, type SalesTransaction, type TransactionAlert, type TxGroupBy, type TxGroupRow, type TxFilterParams } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useConfirm } from '../components/ConfirmProvider';
 import { usePersistentState } from '../lib/usePersistentState';
@@ -109,6 +109,41 @@ const DEFAULT_STANDARD = ALL_COLUMNS.filter((c) => c.standard).map((c) => c.key)
 const orderedFrom = (set: Set<ColKey>) => ALL_COLUMNS.filter((c) => set.has(c.key)).map((c) => c.key);
 
 const money = (amount: number | null | undefined, currency: string) => formatMoney({ amount: amount ?? null, currency });
+
+/** One collapsible group in the grouped view: a header row (label + count + subtotals) that
+ *  expands to lazily fetch and render the group's own transactions with the normal columns. */
+function GroupBlock({ group, groupBy, params, colCount, renderRow }: {
+  group: TxGroupRow; groupBy: TxGroupBy; params: TxFilterParams; colCount: number; renderRow: (t: SalesTransaction) => ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const q = useQuery({
+    queryKey: ['sales-tx-group-members', groupBy, group.key, params],
+    queryFn: () => salesTransactionsApi.groupMembers(params, groupBy, group.key),
+    enabled: open,
+  });
+  return (
+    <tbody>
+      <tr className="cursor-pointer bg-n-25 hover:bg-n-50" onClick={() => setOpen((o) => !o)}>
+        <td colSpan={colCount} className="border-b border-n-200 px-3 py-2.5">
+          <div className="flex items-center gap-2.5">
+            <ChevronRight size={15} className={`shrink-0 text-n-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+            <span className="text-[13px] font-semibold text-n-800">{group.label}</span>
+            <span className="mono rounded-pill bg-n-100 px-2 py-0.5 text-[11px] font-semibold text-n-500">{group.orders}</span>
+            <div className="mono ml-auto flex items-center gap-5 text-[12px] tabular-nums text-n-600">
+              <span title="Units">{group.units} u</span>
+              <span title="Revenue ex-VAT">{money(group.revenueEur, 'EUR')}</span>
+              <span className={`font-semibold ${group.profitEur < 0 ? 'text-danger' : 'text-n-800'}`} title="Profit">{money(group.profitEur, 'EUR')}</span>
+              <span className={`w-14 text-right ${group.marginPct != null && group.marginPct < 0 ? 'text-danger' : 'text-n-500'}`} title="Margin">{group.marginPct == null ? '—' : `${group.marginPct.toFixed(1)}%`}</span>
+            </div>
+          </div>
+        </td>
+      </tr>
+      {open && q.isLoading && <tr><td colSpan={colCount} className="px-4 py-4 text-center text-[12.5px] text-n-400">Loading transactions…</td></tr>}
+      {open && q.data && q.data.length === 0 && <tr><td colSpan={colCount} className="px-4 py-4 text-center text-[12.5px] text-n-400">No transactions.</td></tr>}
+      {open && q.data?.map(renderRow)}
+    </tbody>
+  );
+}
 
 export function SalesTransactionsPage() {
   const qc = useQueryClient();
@@ -426,6 +461,49 @@ export function SalesTransactionsPage() {
     return `border-b border-n-100 px-4 py-2.5 text-[13px] text-n-700 whitespace-nowrap ${mono ? 'mono' : ''} ${code ? 'code' : ''} ${right ? 'text-right' : ''}`;
   };
 
+  // One transaction row — shared by the flat list and the grouped view's expanded members.
+  const txRow = (t: SalesTransaction): ReactNode => (
+    <tr
+      key={t.id}
+      className={`cursor-pointer ${t.resolution !== 'none' ? 'bg-violet-50 hover:bg-violet-100/70' : t.hasAlerts ? 'bg-orange-50 hover:bg-orange-100/70' : selected.has(t.id) ? 'bg-teal-50/60 hover:bg-teal-50' : 'hover:bg-teal-50'}`}
+      onClick={() => setViewing(t)}
+    >
+      <td className="border-b border-n-100 px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-1.5">
+          <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={selected.has(t.id)} onChange={() => toggleOne(t.id)} />
+          {t.hasAlerts && <AlertBadge alerts={t.alerts} />}
+          {t.resolution !== 'none' && (() => {
+            const label = t.resolution === 'cancelled' ? 'Cxl' : t.resolution === 'replaced' ? 'Rep' : 'Ref';
+            const needsAction = t.resolution !== 'cancelled' && !t.returnHandled;
+            return (
+              <span
+                className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${t.resolution === 'cancelled' ? 'bg-n-100 text-n-500' : needsAction ? 'bg-warning-bg text-warning' : 'bg-teal-50 text-teal-700'}`}
+                title={t.resolution === 'cancelled' ? 'Cancelled order' : `${t.resolution === 'replaced' ? 'Replaced' : 'Returned / refunded'}${needsAction ? ' — return decision needed' : ' — resolved'}`}
+              >
+                {label}{needsAction ? '!' : ''}
+              </span>
+            );
+          })()}
+        </div>
+      </td>
+      {visible.map((c) => <td key={c.key} className={cellClass(c.key, c.right)}>{renderCell(c.key, t)}</td>)}
+      <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-end gap-1">
+          <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Edit transaction" onClick={() => navigate(`/sales-transactions/${t.id}/edit`)}><Pencil size={15} /></button>
+          <button
+            className={`relative grid h-8 w-8 place-items-center rounded-md hover:bg-n-100 hover:text-n-800 ${t.resolution !== 'none' ? 'text-orange-600' : 'text-n-500'}`}
+            title={t.resolution === 'none' ? 'Resolve / return' : 'Edit resolution'}
+            onClick={() => setResolving(t)}
+          >
+            <RotateCcw size={15} />
+            {t.resolution !== 'none' && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-orange-500" />}
+          </button>
+          <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" title="Remove" onClick={() => window.confirm(`Remove transaction ${t.transactionRef}?`) && del.mutate(t.id)}><Trash2 size={15} /></button>
+        </div>
+      </td>
+    </tr>
+  );
+
   return (
     <div className="w-full">
       <div className="mb-5 flex items-start gap-4">
@@ -578,62 +656,13 @@ export function SalesTransactionsPage() {
         </div>
       )}
 
-      {groupBy && (
-        <div className="card overflow-hidden">
-          <div className="flex items-center justify-between border-b border-n-100 px-4 py-2.5">
-            <span className="text-[12px] font-semibold uppercase tracking-wide text-n-500">Grouped by {GROUP_LABELS[groupBy]}</span>
-            <span className="text-[12px] text-n-400">{groupedQ.data ? `${groupedQ.data.groups.length} group${groupedQ.data.groups.length === 1 ? '' : 's'}` : ''}</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] border-collapse">
-              <thead>
-                <tr>
-                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-n-500">{GROUP_LABELS[groupBy]}</th>
-                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Orders</th>
-                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Units</th>
-                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Revenue (ex-VAT)</th>
-                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Profit</th>
-                  <th className="border-b border-n-200 bg-n-25 px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Margin</th>
-                </tr>
-              </thead>
-              <tbody>
-                {groupedQ.isLoading && <tr><td colSpan={6} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
-                {!groupedQ.isLoading && groupedQ.data?.groups.length === 0 && <tr><td colSpan={6} className="px-4 py-12 text-center text-[13px] text-n-500">No transactions match.</td></tr>}
-                {groupedQ.data?.groups.map((g) => (
-                  <tr key={g.key} className="hover:bg-teal-50/60">
-                    <td className="border-b border-n-100 px-4 py-2.5 text-[13px] font-medium text-n-800">{g.label}</td>
-                    <td className="mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] text-n-700">{g.orders}</td>
-                    <td className="mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] text-n-700">{g.units}</td>
-                    <td className="mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] text-n-700">{money(g.revenueEur, 'EUR')}</td>
-                    <td className={`mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] font-semibold ${g.profitEur < 0 ? 'text-danger' : 'text-n-800'}`}>{money(g.profitEur, 'EUR')}</td>
-                    <td className={`mono border-b border-n-100 px-4 py-2.5 text-right text-[13px] ${g.marginPct != null && g.marginPct < 0 ? 'text-danger' : 'text-n-600'}`}>{g.marginPct == null ? '—' : `${g.marginPct.toFixed(1)}%`}</td>
-                  </tr>
-                ))}
-              </tbody>
-              {groupedQ.data && groupedQ.data.groups.length > 0 && (
-                <tfoot>
-                  <tr className="bg-n-25 font-semibold">
-                    <td className="px-4 py-3 text-[13px] text-n-800">Total</td>
-                    <td className="mono px-4 py-3 text-right text-[13px] text-n-800">{groupedQ.data.totals.orders}</td>
-                    <td className="mono px-4 py-3 text-right text-[13px] text-n-800">{groupedQ.data.totals.units}</td>
-                    <td className="mono px-4 py-3 text-right text-[13px] text-n-800">{money(groupedQ.data.totals.revenueEur, 'EUR')}</td>
-                    <td className={`mono px-4 py-3 text-right text-[13px] ${groupedQ.data.totals.profitEur < 0 ? 'text-danger' : 'text-n-800'}`}>{money(groupedQ.data.totals.profitEur, 'EUR')}</td>
-                    <td className="mono px-4 py-3 text-right text-[13px] text-n-600">{groupedQ.data.totals.revenueEur > 0 ? `${((groupedQ.data.totals.profitEur / groupedQ.data.totals.revenueEur) * 100).toFixed(1)}%` : '—'}</td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
-        </div>
-      )}
-
-      {!groupBy && <div className="card overflow-hidden">
+      <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] border-collapse">
             <thead>
               <tr>
                 <th className="border-b border-n-200 bg-n-25 px-3 py-3 text-left">
-                  <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={allOnPageSelected} onChange={toggleAll} title="Select all on this page" />
+                  {!groupBy && <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={allOnPageSelected} onChange={toggleAll} title="Select all on this page" />}
                 </th>
                 {visible.map((c) => (
                   <th key={c.key} className={`border-b border-n-200 bg-n-25 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap ${c.right ? 'text-right' : 'text-left'}`}>
@@ -654,54 +683,43 @@ export function SalesTransactionsPage() {
                 <th className="border-b border-n-200 bg-n-25" />
               </tr>
             </thead>
-            <tbody>
-              {isLoading && <tr><td colSpan={visible.length + 2} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
-              {!isLoading && items.length === 0 && <tr><td colSpan={visible.length + 2} className="px-4 py-12 text-center text-[13px] text-n-500">No transactions match. Register your first sale.</td></tr>}
-              {items.map((t) => (
-                <tr
-                  key={t.id}
-                  className={`cursor-pointer ${t.resolution !== 'none' ? 'bg-violet-50 hover:bg-violet-100/70' : t.hasAlerts ? 'bg-orange-50 hover:bg-orange-100/70' : selected.has(t.id) ? 'bg-teal-50/60 hover:bg-teal-50' : 'hover:bg-teal-50'}`}
-                  onClick={() => setViewing(t)}
-                >
-                  <td className="border-b border-n-100 px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1.5">
-                      <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={selected.has(t.id)} onChange={() => toggleOne(t.id)} />
-                      {t.hasAlerts && <AlertBadge alerts={t.alerts} />}
-                      {t.resolution !== 'none' && (() => {
-                        const label = t.resolution === 'cancelled' ? 'Cxl' : t.resolution === 'replaced' ? 'Rep' : 'Ref';
-                        const needsAction = t.resolution !== 'cancelled' && !t.returnHandled;
-                        return (
-                          <span
-                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${t.resolution === 'cancelled' ? 'bg-n-100 text-n-500' : needsAction ? 'bg-warning-bg text-warning' : 'bg-teal-50 text-teal-700'}`}
-                            title={t.resolution === 'cancelled' ? 'Cancelled order' : `${t.resolution === 'replaced' ? 'Replaced' : 'Returned / refunded'}${needsAction ? ' — return decision needed' : ' — resolved'}`}
-                          >
-                            {label}{needsAction ? '!' : ''}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                  </td>
-                  {visible.map((c) => <td key={c.key} className={cellClass(c.key, c.right)}>{renderCell(c.key, t)}</td>)}
-                  <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex justify-end gap-1">
-                      <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Edit transaction" onClick={() => navigate(`/sales-transactions/${t.id}/edit`)}><Pencil size={15} /></button>
-                      <button
-                        className={`relative grid h-8 w-8 place-items-center rounded-md hover:bg-n-100 hover:text-n-800 ${t.resolution !== 'none' ? 'text-orange-600' : 'text-n-500'}`}
-                        title={t.resolution === 'none' ? 'Resolve / return' : 'Edit resolution'}
-                        onClick={() => setResolving(t)}
-                      >
-                        <RotateCcw size={15} />
-                        {t.resolution !== 'none' && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-orange-500" />}
-                      </button>
-                      <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" title="Remove" onClick={() => window.confirm(`Remove transaction ${t.transactionRef}?`) && del.mutate(t.id)}><Trash2 size={15} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
+            {groupBy ? (
+              groupedQ.isLoading ? (
+                <tbody><tr><td colSpan={visible.length + 2} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr></tbody>
+              ) : !groupedQ.data || groupedQ.data.groups.length === 0 ? (
+                <tbody><tr><td colSpan={visible.length + 2} className="px-4 py-12 text-center text-[13px] text-n-500">No transactions match.</td></tr></tbody>
+              ) : (
+                <>
+                  {groupedQ.data.groups.map((g) => (
+                    <GroupBlock key={g.key} group={g} groupBy={groupBy} params={exportParams} colCount={visible.length + 2} renderRow={txRow} />
+                  ))}
+                  <tbody>
+                    <tr className="bg-n-25 font-semibold">
+                      <td colSpan={visible.length + 2} className="border-t-2 border-n-200 px-3 py-3">
+                        <div className="flex items-center gap-2.5 text-[13px] text-n-800">
+                          <span>Total · {groupedQ.data.totals.orders} order{groupedQ.data.totals.orders === 1 ? '' : 's'}</span>
+                          <div className="mono ml-auto flex items-center gap-5 text-[12.5px] tabular-nums">
+                            <span>{groupedQ.data.totals.units} u</span>
+                            <span>{money(groupedQ.data.totals.revenueEur, 'EUR')}</span>
+                            <span className={groupedQ.data.totals.profitEur < 0 ? 'text-danger' : ''}>{money(groupedQ.data.totals.profitEur, 'EUR')}</span>
+                            <span className="w-14 text-right text-n-500">{groupedQ.data.totals.revenueEur > 0 ? `${((groupedQ.data.totals.profitEur / groupedQ.data.totals.revenueEur) * 100).toFixed(1)}%` : '—'}</span>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </>
+              )
+            ) : (
+              <tbody>
+                {isLoading && <tr><td colSpan={visible.length + 2} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
+                {!isLoading && items.length === 0 && <tr><td colSpan={visible.length + 2} className="px-4 py-12 text-center text-[13px] text-n-500">No transactions match. Register your first sale.</td></tr>}
+                {items.map(txRow)}
+              </tbody>
+            )}
           </table>
         </div>
-      </div>}
+      </div>
 
       {!groupBy && <Pagination
         page={page}

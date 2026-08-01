@@ -738,6 +738,45 @@ export class SalesTransactionsService {
     return { groupBy, groups, totals };
   }
 
+  /** The transactions belonging to ONE group (its expanded members in the grouped list). Same
+   *  filters + serialization as the list; channel/channelGroup match at the order level,
+   *  sku/brand/vendor match if any item belongs to the group. Returns full serialized rows. */
+  async groupMembers(query: TxQuery, groupBy: 'channelGroup' | 'channel' | 'sku' | 'brand' | 'vendor', groupKey: string) {
+    const where = this.buildWhere(query);
+    const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: [{ date: 'desc' }, { transactionRef: 'desc' }] });
+    const serviceMap = await this.buildServiceMap();
+    const fbaAvgMap = await this.buildFbaAverageMap(rows);
+    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
+    const feePctMap = await this.buildSalesFeePctMap();
+    const fxFallback = await this.buildFxFallbackMap();
+    let serialized = rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback)) as any[];
+    if (query.profitTierId?.length) {
+      const tiers = await this.prisma.profitTier.findMany({ where: { id: { in: query.profitTierId } } });
+      serialized = serialized.filter((t) => t.profitPct != null && tiers.some((tier) => t.profitPct >= Number(tier.fromPct) && t.profitPct <= Number(tier.toPct)));
+    }
+    if (query.hasAlert) serialized = serialized.filter((t) => t.hasAlerts);
+    serialized = this.applyFeeTypeFilter(serialized, query);
+    const rowById = new Map(rows.map((r) => [r.id, r]));
+
+    const productIds = [...new Set(rows.flatMap((r) => (r.items ?? []).map((i: any) => i.productId).filter(Boolean)))] as string[];
+    const products = productIds.length ? await this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, brand: { select: { name: true } }, vendor: { select: { name: true } } } }) : [];
+    const brandOf = new Map(products.map((p) => [p.id, p.brand?.name ?? null]));
+    const vendorOf = new Map(products.map((p) => [p.id, p.vendor?.name ?? null]));
+
+    const inGroup = (t: any): boolean => {
+      if (groupBy === 'channel') return (t.salesChannelId ?? '__none') === groupKey;
+      if (groupBy === 'channelGroup') return this.channelGroupLabel(t.salesChannel?.name, t.salesChannel?.nativeCountry?.isoCode).key === groupKey;
+      const row = rowById.get(t.id);
+      return (t.items ?? []).some((it: any, idx: number) => {
+        const pid = row?.items?.[idx]?.productId ?? null;
+        if (groupBy === 'sku') return (it.sku || '__none') === groupKey;
+        if (groupBy === 'brand') return ((pid ? brandOf.get(pid) : null) ?? '__none') === groupKey;
+        return ((pid ? vendorOf.get(pid) : null) ?? '__none') === groupKey;
+      });
+    };
+    return serialized.filter(inGroup);
+  }
+
   async list(query: TxQuery) {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(500, Math.max(1, Number(query.pageSize) || 50));
