@@ -934,16 +934,15 @@ export class SalesTransactionsService {
    *  model falls back to this so revenue/profit still compute (flagged as an estimate); a later
    *  Recalculate re-fetches the real historical rate once the source is back. */
   private async buildFxFallbackMap(): Promise<Map<string, number>> {
-    const rows = await this.prisma.salesTransaction.findMany({
-      where: { deletedAt: null, exchangeRate: { not: null }, currency: { not: null } },
-      select: { currency: true, exchangeRate: true },
-      orderBy: { date: 'desc' },
-    });
+    // Latest known rate per currency, computed in the DB (DISTINCT ON) — one row per currency
+    // instead of loading every FX-bearing transaction and picking the first in JS.
+    const rows = await this.prisma.$queryRaw<Array<{ cur: string; rate: number }>>`
+      SELECT DISTINCT ON (upper(currency)) upper(currency) AS cur, exchange_rate AS rate
+      FROM sales_transaction
+      WHERE deleted_at IS NULL AND exchange_rate IS NOT NULL AND currency IS NOT NULL AND currency <> ''
+      ORDER BY upper(currency), date DESC`;
     const map = new Map<string, number>();
-    for (const r of rows) {
-      const cur = (r.currency ?? '').toUpperCase();
-      if (cur && r.exchangeRate != null && !map.has(cur)) map.set(cur, r.exchangeRate); // first = most recent
-    }
+    for (const r of rows) if (r.cur && r.rate != null) map.set(r.cur, Number(r.rate));
     return map;
   }
 
@@ -1019,22 +1018,25 @@ export class SalesTransactionsService {
    *  `${sku}:${channelId}` and per channel, from all order lines with a POSTED fee. Feeds the
    *  estimated sales fee for Amazon lines whose fee hasn't settled yet. */
   private async buildSalesFeePctMap(): Promise<{ bySku: Map<string, number>; byChannel: Map<string, number> }> {
-    const rows = await this.prisma.salesTransactionItem.findMany({
-      where: { deletedAt: null, salesChannelSalesFeeAmount: { gt: 0 }, netSalesAmount: { gt: 0 }, transaction: { deletedAt: null } },
-      select: { sku: true, salesChannelSalesFeeAmount: true, netSalesAmount: true, transaction: { select: { salesChannelId: true } } },
-    });
-    const skuAgg = new Map<string, { fee: number; net: number }>();
+    // Blended fee ratio per (sku, channel), aggregated in the DB — one row per sku+channel
+    // instead of loading every fee-bearing line item and summing in JS. The per-channel ratio
+    // is derived by folding the sku+channel rows together (mathematically identical).
+    const rows = await this.prisma.$queryRaw<Array<{ sku: string; ch: string; fee: number; net: number }>>`
+      SELECT lower(trim(i.sku)) AS sku, COALESCE(t.sales_channel_id::text, '') AS ch,
+             SUM(i.sales_channel_sales_fee_amount) AS fee, SUM(i.net_sales_amount) AS net
+      FROM sales_transaction_item i
+      JOIN sales_transaction t ON t.id = i.transaction_id
+      WHERE i.deleted_at IS NULL AND t.deleted_at IS NULL
+        AND i.sales_channel_sales_fee_amount > 0 AND i.net_sales_amount > 0
+      GROUP BY lower(trim(i.sku)), COALESCE(t.sales_channel_id::text, '')`;
+    const bySku = new Map<string, number>();
     const chAgg = new Map<string, { fee: number; net: number }>();
     for (const r of rows) {
-      const ch = r.transaction?.salesChannelId ?? '';
-      const fee = Number(r.salesChannelSalesFeeAmount);
-      const net = Number(r.netSalesAmount);
-      const skuKey = `${r.sku.trim().toLowerCase()}:${ch}`;
-      const s = skuAgg.get(skuKey) ?? { fee: 0, net: 0 }; s.fee += fee; s.net += net; skuAgg.set(skuKey, s);
-      const c = chAgg.get(ch) ?? { fee: 0, net: 0 }; c.fee += fee; c.net += net; chAgg.set(ch, c);
+      const fee = Number(r.fee);
+      const net = Number(r.net);
+      if (net > 0) bySku.set(`${r.sku}:${r.ch}`, fee / net);
+      const c = chAgg.get(r.ch) ?? { fee: 0, net: 0 }; c.fee += fee; c.net += net; chAgg.set(r.ch, c);
     }
-    const bySku = new Map<string, number>();
-    for (const [k, v] of skuAgg) if (v.net > 0) bySku.set(k, v.fee / v.net);
     const byChannel = new Map<string, number>();
     for (const [k, v] of chAgg) if (v.net > 0) byChannel.set(k, v.fee / v.net);
     return { bySku, byChannel };
