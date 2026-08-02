@@ -95,6 +95,30 @@ export class SalesTransactionsService {
 
   private readonly logger = new Logger(SalesTransactionsService.name);
 
+  // --- Reference-lookup cache -------------------------------------------------
+  // The shipping-service tree, SKU→fulfilment aliases, blended sales-fee ratios and last-known FX
+  // rates are near-static reference data, yet were rebuilt on EVERY list / grouped / export /
+  // serialize call — two of them (fee %, FX) full-table scans. They only feed FALLBACKS, so a few
+  // seconds of staleness is immaterial. Memoise them in-process with a short TTL; mutations that
+  // change the underlying data clear the cache so an edit is reflected immediately.
+  private static readonly LOOKUP_TTL_MS = 60_000;
+  private lookupCache = new Map<string, { at: number; value: unknown }>();
+  private async cachedLookup<T>(key: string, build: () => Promise<T>): Promise<T> {
+    const hit = this.lookupCache.get(key);
+    const now = Date.now();
+    if (hit && now - hit.at < SalesTransactionsService.LOOKUP_TTL_MS) return hit.value as T;
+    const value = await build();
+    this.lookupCache.set(key, { at: now, value });
+    return value;
+  }
+  /** Drop the memoised lookups — call after any write that changes shipping services, SKU
+   *  aliases, or the fee/FX history so the next read rebuilds them. */
+  invalidateLookupCache() { this.lookupCache.clear(); }
+  private cachedServiceMap() { return this.cachedLookup('service', () => this.buildServiceMap()); }
+  private cachedSkuFulfilmentMap() { return this.cachedLookup('skuFulfilment', () => this.buildSkuFulfilmentMap()); }
+  private cachedFeePctMap() { return this.cachedLookup('feePct', () => this.buildSalesFeePctMap()); }
+  private cachedFxFallbackMap() { return this.cachedLookup('fxFallback', () => this.buildFxFallbackMap()); }
+
   /** Resolved lazily (by string token, no runtime import) to avoid the ES-module cycle
    *  integrations -> sales-transactions -> channel-listings -> integrations. */
   private channelListings(): ChannelListingsService {
@@ -630,11 +654,11 @@ export class SalesTransactionsService {
       return rows.map((r) => r.id);
     }
     const rows = await this.prisma.salesTransaction.findMany({ where, include });
-    const serviceMap = await this.buildServiceMap();
+    const serviceMap = await this.cachedServiceMap();
     const fbaAvgMap = await this.buildFbaAverageMap(rows);
-    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
-    const feePctMap = await this.buildSalesFeePctMap();
-    const fxFallback = await this.buildFxFallbackMap();
+    const skuFulfilmentMap = await this.cachedSkuFulfilmentMap();
+    const feePctMap = await this.cachedFeePctMap();
+    const fxFallback = await this.cachedFxFallbackMap();
     let all = rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback));
     if (query.profitTierId?.length) {
       const tiers = await this.prisma.profitTier.findMany({ where: { id: { in: query.profitTierId } } });
@@ -677,11 +701,11 @@ export class SalesTransactionsService {
   async grouped(query: TxQuery, groupBy: 'channelGroup' | 'channel' | 'sku' | 'brand' | 'vendor') {
     const where = this.buildWhere(query);
     const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: [{ date: 'desc' }] });
-    const serviceMap = await this.buildServiceMap();
+    const serviceMap = await this.cachedServiceMap();
     const fbaAvgMap = await this.buildFbaAverageMap(rows);
-    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
-    const feePctMap = await this.buildSalesFeePctMap();
-    const fxFallback = await this.buildFxFallbackMap();
+    const skuFulfilmentMap = await this.cachedSkuFulfilmentMap();
+    const feePctMap = await this.cachedFeePctMap();
+    const fxFallback = await this.cachedFxFallbackMap();
     let serialized = rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback)) as any[];
     // Mirror the list's in-memory filters (profit tier / alerts / fee type).
     if (query.profitTierId?.length) {
@@ -744,11 +768,11 @@ export class SalesTransactionsService {
   async groupMembers(query: TxQuery, groupBy: 'channelGroup' | 'channel' | 'sku' | 'brand' | 'vendor', groupKey: string) {
     const where = this.buildWhere(query);
     const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: [{ date: 'desc' }, { transactionRef: 'desc' }] });
-    const serviceMap = await this.buildServiceMap();
+    const serviceMap = await this.cachedServiceMap();
     const fbaAvgMap = await this.buildFbaAverageMap(rows);
-    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
-    const feePctMap = await this.buildSalesFeePctMap();
-    const fxFallback = await this.buildFxFallbackMap();
+    const skuFulfilmentMap = await this.cachedSkuFulfilmentMap();
+    const feePctMap = await this.cachedFeePctMap();
+    const fxFallback = await this.cachedFxFallbackMap();
     let serialized = rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback)) as any[];
     if (query.profitTierId?.length) {
       const tiers = await this.prisma.profitTier.findMany({ where: { id: { in: query.profitTierId } } });
@@ -788,11 +812,11 @@ export class SalesTransactionsService {
     // in memory over the whole filtered set before paginating.
     if (sortBy !== 'date' || query.profitTierId?.length || query.hasAlert || query.feeType?.length) {
       const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: [{ date: query.sortDir === 'asc' ? 'asc' : 'desc' }, { transactionRef: query.sortDir === 'asc' ? 'asc' : 'desc' }] });
-      const serviceMap = await this.buildServiceMap();
+      const serviceMap = await this.cachedServiceMap();
       const fbaAvgMap = await this.buildFbaAverageMap(rows);
-      const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
-      const feePctMap = await this.buildSalesFeePctMap();
-      const fxFallback = await this.buildFxFallbackMap();
+      const skuFulfilmentMap = await this.cachedSkuFulfilmentMap();
+      const feePctMap = await this.cachedFeePctMap();
+      const fxFallback = await this.cachedFxFallbackMap();
       let all = rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback));
       if (query.profitTierId?.length) {
         const tiers = await this.prisma.profitTier.findMany({ where: { id: { in: query.profitTierId } } });
@@ -816,11 +840,11 @@ export class SalesTransactionsService {
       this.prisma.salesTransaction.count({ where }),
       this.prisma.salesTransaction.findMany({ where, include, orderBy: [{ date: dir === 1 ? 'asc' : 'desc' }, { transactionRef: dir === 1 ? 'asc' : 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
     ]);
-    const serviceMap = await this.buildServiceMap();
+    const serviceMap = await this.cachedServiceMap();
     const fbaAvgMap = await this.buildFbaAverageMap(rows);
-    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
-    const feePctMap = await this.buildSalesFeePctMap();
-    const fxFallback = await this.buildFxFallbackMap();
+    const skuFulfilmentMap = await this.cachedSkuFulfilmentMap();
+    const feePctMap = await this.cachedFeePctMap();
+    const fxFallback = await this.cachedFxFallbackMap();
     return { items: rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback)), total, page, pageSize };
   }
 
@@ -832,11 +856,11 @@ export class SalesTransactionsService {
     const dir = query.sortDir === 'asc' ? 1 : -1;
     const sortBy = query.sortBy === 'profit' || query.sortBy === 'profitPct' ? query.sortBy : 'date';
     const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: [{ date: dir === 1 ? 'asc' : 'desc' }, { transactionRef: dir === 1 ? 'asc' : 'desc' }] });
-    const serviceMap = await this.buildServiceMap();
+    const serviceMap = await this.cachedServiceMap();
     const fbaAvgMap = await this.buildFbaAverageMap(rows);
-    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
-    const feePctMap = await this.buildSalesFeePctMap();
-    const fxFallback = await this.buildFxFallbackMap();
+    const skuFulfilmentMap = await this.cachedSkuFulfilmentMap();
+    const feePctMap = await this.cachedFeePctMap();
+    const fxFallback = await this.cachedFxFallbackMap();
     let all = rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback));
     if (query.profitTierId?.length) {
       const tiers = await this.prisma.profitTier.findMany({ where: { id: { in: query.profitTierId } } });
@@ -859,11 +883,11 @@ export class SalesTransactionsService {
   async get(id: string) {
     const t = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null }, include });
     if (!t) throw new NotFoundException('Sales transaction not found');
-    const serviceMap = await this.buildServiceMap();
+    const serviceMap = await this.cachedServiceMap();
     const fbaAvgMap = await this.buildFbaAverageMap([t]);
-    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
-    const feePctMap = await this.buildSalesFeePctMap();
-    const fxFallback = await this.buildFxFallbackMap();
+    const skuFulfilmentMap = await this.cachedSkuFulfilmentMap();
+    const feePctMap = await this.cachedFeePctMap();
+    const fxFallback = await this.cachedFxFallbackMap();
     const out = this.serialize(t, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback);
 
     // Attach the units this transaction consumed, so reopening it shows what left.
@@ -888,11 +912,11 @@ export class SalesTransactionsService {
       include,
       orderBy: { date: 'asc' },
     });
-    const serviceMap = await this.buildServiceMap();
+    const serviceMap = await this.cachedServiceMap();
     const fbaAvgMap = await this.buildFbaAverageMap(rows);
-    const skuFulfilmentMap = await this.buildSkuFulfilmentMap();
-    const feePctMap = await this.buildSalesFeePctMap();
-    const fxFallback = await this.buildFxFallbackMap();
+    const skuFulfilmentMap = await this.cachedSkuFulfilmentMap();
+    const feePctMap = await this.cachedFeePctMap();
+    const fxFallback = await this.cachedFxFallbackMap();
     return rows.map((r) => this.serialize(r, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback));
   }
 
@@ -1771,6 +1795,8 @@ export class SalesTransactionsService {
    *  `ids`, sweeps every transaction; pass a set of ids to recalculate just those — far faster
    *  when you know exactly which orders you changed. */
   async recalculate(ids?: string[]) {
+    // Explicit "refresh against current settings" — never serve a stale service/fee/FX lookup.
+    this.invalidateLookupCache();
     const scoped = Array.isArray(ids) && ids.length > 0;
     const txs = await this.prisma.salesTransaction.findMany({
       where: { deletedAt: null, ...(scoped ? { id: { in: ids } } : {}) },
