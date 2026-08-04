@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ParseError, ParsedNotification, isStaleEvent, parseAnyOfferChanged } from './parser';
 import { RawNotificationEnvelope } from './any-offer-changed.types';
+import { RepricerService } from '../engine/repricer.service';
 
 // notif-ingest persistence (spec §2.2): dedupe on NotificationId, discard stale events, and upsert
 // the latest OfferSnapshot per ASIN × marketplace. The pure parse + stale logic lives in parser.ts;
@@ -19,7 +20,10 @@ export type IngestResult =
 export class SnapshotService {
   private readonly logger = new Logger(SnapshotService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly repricer: RepricerService,
+  ) {}
 
   /** Parse a raw SQS message body (JSON) and ingest it. The wireable entry point for the poller. */
   async ingestRaw(body: string): Promise<IngestResult> {
@@ -78,8 +82,19 @@ export class SnapshotService {
       },
     });
 
-    // TODO(Phase 2): enqueue an evaluation onto the repricing work-queue with ordering key
-    // `${asin}:${marketplaceId}` (Deviation D-1) once the engine I/O shell exists.
+    // Trigger a shadow evaluation of our SKU(s) on this listing (spec §6.5 — logs the intended
+    // price, submits nothing). A work-queue with per-ASIN ordering + a 30s debounce window (§5.1)
+    // is the eventual decoupling (Deviation D-1); for now, low single-seller volume, we evaluate
+    // inline and never let an evaluation failure fail the ingest.
+    try {
+      await this.repricer.evaluate(parsed.snapshot, {
+        triggerType: 'ANY_OFFER_CHANGED',
+        notificationId: parsed.notificationId,
+        safetyOverride: false,
+      });
+    } catch (e) {
+      this.logger.error(`Shadow evaluation failed for ${snapshotId}: ${(e as Error).message}`);
+    }
 
     return { status: 'PERSISTED', asin: parsed.asin, marketplaceId: parsed.marketplaceId };
   }

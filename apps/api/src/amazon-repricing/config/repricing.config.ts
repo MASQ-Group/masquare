@@ -21,6 +21,12 @@ export const REPRICING_DEFAULTS = {
   probeIntervalMinutes: 45,
   /** §9-#3 FBM premium when we are FBA vs an FBM competitor (delivery-tier based per §5.4). COMMERCIAL. */
   fbmPremiumPct: 0.03,
+  /** §9-#4 How far below a better-delivery competitor we go to compete. COMMERCIAL. */
+  fbmUndercutPct: 0.05,
+  /** When matching a same-tier competitor, shave this many cents (1–2c). ENGINEERING. */
+  beatByCents: 2,
+  /** Hard cap on a single UPWARD step — never ≥ 10% (suppression trigger, §1.5). ENGINEERING. */
+  maxUpStepPct: 0.1,
   /** §9-#5 Amazon-Retail wait-price premium above Amazon's landed. COMMERCIAL. */
   amazonRetailWaitPremiumPct: 0.02,
   /** §9-#10 Competitor-set filters. COMMERCIAL. */
