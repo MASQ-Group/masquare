@@ -638,6 +638,52 @@ export class IntegrationsService {
     return { ok: true, status: res.status, payload: result };
   }
 
+  /** Write a listing's price via the Listings Items PATCH (repricing price-writer, spec §6). Patches
+   *  purchasable_offer.our_price and maintains minimum/maximum_seller_allowed_price backstops.
+   *  dryRun uses mode=VALIDATION_PREVIEW — Amazon validates WITHOUT applying (§6.5 step 3).
+   *  NOTE: the exact purchasable_offer / *_seller_allowed_price attribute schema is productType- and
+   *  marketplace-specific — `TO VERIFY` via VALIDATION_PREVIEW against real listings before go-live. */
+  async patchListingsPrice(
+    integrationId: string,
+    sellerSku: string,
+    priceAmount: number,
+    currencyCode: string,
+    backstops: { minAmount?: number | null; maxAmount?: number | null },
+    dryRun = true,
+  ): Promise<{ ok: boolean; status: string; message: string }> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) return { ok: false, status: 'ERROR', message: 'Integration not found' };
+    if (row.channelType !== 'amazon') return { ok: false, status: 'ERROR', message: 'Not an Amazon integration' };
+    const config = (row.config ?? {}) as Record<string, string>;
+    const sellerId = config.sellerId;
+    if (!sellerId) return { ok: false, status: 'ERROR', message: 'Amazon integration has no Seller ID' };
+    const meta = this.amazonMarketMeta(row);
+    const secrets = await this.decryptedSecrets(row.id);
+    const token = await this.amazonAccessToken(config, secrets);
+
+    // productType is required by the PATCH — resolve it from the listing summary.
+    const getRes = await this.amzFetch(`${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sellerSku)}?marketplaceIds=${meta.marketplaceId}&includedData=summaries`, token);
+    const getJson: any = await getRes.json().catch(() => null);
+    if (!getRes.ok) return { ok: false, status: 'ERROR', message: `getItem ${getRes.status}${IntegrationsService.amzErr(getJson) ? ': ' + IntegrationsService.amzErr(getJson) : ''}` };
+    const productType = getJson?.summaries?.[0]?.productType;
+    if (!productType) return { ok: false, status: 'ERROR', message: 'Could not resolve productType' };
+
+    const priceAttr = (amount: number) => [{ marketplace_id: meta.marketplaceId, currency: currencyCode, our_price: [{ schedule: [{ value_with_tax: amount }] }] }];
+    const allowed = (amount: number) => [{ marketplace_id: meta.marketplaceId, currency: currencyCode, schedule: [{ value_with_tax: amount }] }];
+    const patches: Array<{ op: string; path: string; value: unknown }> = [
+      { op: 'replace', path: '/attributes/purchasable_offer', value: priceAttr(priceAmount) },
+    ];
+    if (backstops.minAmount != null) patches.push({ op: 'replace', path: '/attributes/minimum_seller_allowed_price', value: allowed(backstops.minAmount) });
+    if (backstops.maxAmount != null) patches.push({ op: 'replace', path: '/attributes/maximum_seller_allowed_price', value: allowed(backstops.maxAmount) });
+
+    const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sellerSku)}?marketplaceIds=${meta.marketplaceId}${dryRun ? '&mode=VALIDATION_PREVIEW' : ''}`;
+    const res = await this.amzWrite(url, token, 'PATCH', { productType, patches });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, status: 'ERROR', message: `PATCH ${res.status}${IntegrationsService.amzErr(json) ? ': ' + IntegrationsService.amzErr(json) : ''}` };
+    if (json?.status === 'INVALID') return { ok: false, status: 'INVALID', message: (json?.issues?.[0]?.message ?? 'INVALID').toString().slice(0, 200) };
+    return { ok: true, status: json?.status ?? 'ACCEPTED', message: dryRun ? 'validated (VALIDATION_PREVIEW)' : (json?.status ?? 'ACCEPTED') };
+  }
+
   /** LWA grantless token (client_credentials + scope) for grantless SP-API ops (createDestination). */
   private async amazonGrantlessToken(config: Record<string, string>, secrets: Record<string, string>, scope: string): Promise<string> {
     const clientId = config.lwaClientId;

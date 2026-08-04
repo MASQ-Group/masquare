@@ -2,9 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { MarketSnapshot } from './types';
+import { AutomationState, MarketSnapshot } from './types';
 import { RepricerConfig, buildDecideInput } from './mapping';
 import { decide, Decision } from './decision-core';
+import { PriceWriterService } from '../writer/price-writer.service';
 
 // The repricer I/O shell (spec §5.1, findings §G) — the thin layer around the pure decision core.
 // For one fresh snapshot it: loads our SKU rows on that ASIN × marketplace + the blocklist, builds
@@ -27,7 +28,10 @@ export interface EvalTrigger {
 export class RepricerService {
   private readonly logger = new Logger(RepricerService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly writer: PriceWriterService,
+  ) {}
 
   /** Evaluate every one of our SKUs on this ASIN × marketplace against a fresh snapshot. */
   async evaluate(snapshot: MarketSnapshot, trigger: EvalTrigger): Promise<number> {
@@ -83,9 +87,35 @@ export class RepricerService {
     }
 
     const decision = decide(built);
-    await this.persistDecision(row, snapshot, trigger, decision, cfg);
-    // Shadow mode: no submission, no pricing-state mutation — only record that we saw this event.
+    const decisionId = await this.persistDecision(row, snapshot, trigger, decision, cfg);
     await this.prisma.repricingSkuPricing.update({ where: { id: row.id }, data: { lastEventAt: new Date() } });
+
+    // Only a LIVE SKU with a priced decision and a known floor reaches the price-writer — and the
+    // writer STILL only previews unless the master switch is on and its own safety layer passes.
+    // Every other state is shadow: the decision is logged, nothing is submitted (§6.5).
+    if (
+      decision.outcome === 'PRICED' &&
+      decision.finalPriceCents != null &&
+      row.automationState === 'LIVE' &&
+      row.breakevenCents != null
+    ) {
+      await this.writer
+        .submit({
+          decisionId,
+          skuPricingId: row.id,
+          sku: row.sku,
+          marketplaceId: row.marketplaceId,
+          currency: row.currency,
+          automationState: row.automationState as AutomationState,
+          intendedPriceCents: decision.finalPriceCents,
+          breakevenCents: row.breakevenCents,
+          mapCents: row.mapCents,
+          currentPriceCents: row.currentPriceCents,
+          amazonMinAllowedCents: row.amazonMinAllowedCents,
+          amazonMaxAllowedCents: row.amazonMaxAllowedCents,
+        })
+        .catch((e) => this.logger.error(`Price-writer failed for ${row.sku}:${row.marketplaceId}: ${(e as Error).message}`));
+    }
   }
 
   private async persistDecision(
@@ -94,8 +124,8 @@ export class RepricerService {
     trigger: EvalTrigger,
     decision: Decision,
     cfg?: RepricerConfig,
-  ): Promise<void> {
-    await this.prisma.repricingDecision.create({
+  ): Promise<string> {
+    const created = await this.prisma.repricingDecision.create({
       data: {
         sku: row.sku,
         marketplaceId: row.marketplaceId,
@@ -116,7 +146,9 @@ export class RepricerService {
         configHash: cfg ? this.hash(cfg) : null,
         inputsHash: this.hash({ snapshot, reason: decision.reason }),
       },
+      select: { id: true },
     });
+    return created.id;
   }
 
   /** Prisma row → engine config, converting Decimal percents (1.00 = 1%) to fractions (0.01). */

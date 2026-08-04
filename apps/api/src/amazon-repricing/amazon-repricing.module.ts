@@ -6,6 +6,7 @@ import { FeeService } from './floor/fee.service';
 import { SnapshotService } from './ingest/snapshot.service';
 import { SqsPollerService } from './ingest/sqs-poller.service';
 import { RepricerService } from './engine/repricer.service';
+import { PriceWriterService } from './writer/price-writer.service';
 import { OnboardingService } from './onboarding/onboarding.service';
 import { RepricingController } from './ops/repricing.controller';
 
@@ -20,7 +21,7 @@ import { RepricingController } from './ops/repricing.controller';
 @Module({
   imports: [IntegrationsModule],
   controllers: [RepricingController],
-  providers: [FloorService, VatService, FeeService, SnapshotService, SqsPollerService, RepricerService, OnboardingService],
-  exports: [FloorService, VatService, SnapshotService, RepricerService, OnboardingService],
+  providers: [FloorService, VatService, FeeService, SnapshotService, SqsPollerService, RepricerService, PriceWriterService, OnboardingService],
+  exports: [FloorService, VatService, SnapshotService, RepricerService, PriceWriterService, OnboardingService],
 })
 export class AmazonRepricingModule {}
