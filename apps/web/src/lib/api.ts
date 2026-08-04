@@ -766,6 +766,49 @@ export const profitTiersApi = {
     api.put<ProfitTier[]>('/profit-tiers', { tiers }).then((r) => r.data),
 };
 
+// ---- Amazon repricing (Buy Box) ops console ----
+export interface RepricingReadiness {
+  total: number;
+  byState: Record<string, number>;
+  byExclusion: Record<string, number>;
+}
+export interface RepricingSkuRow {
+  id: string;
+  sku: string;
+  asin: string | null;
+  marketplaceId: string;
+  fulfillment: string;
+  strategy: string;
+  automationState: string;
+  exclusionReason: string | null;
+  breakevenCents: number | null;
+  strategyFloorCents: number | null;
+  currentPriceCents: number | null;
+  floorsComputedAt: string | null;
+  suppressed: boolean;
+  updatedAt: string;
+}
+export interface RepricingDecisionRow {
+  id: string;
+  at: string;
+  sku: string;
+  marketplaceId: string;
+  branch: string | null;
+  outcome: string;
+  rawTargetCents: number | null;
+  finalPriceCents: number | null;
+  beforePriceCents: number | null;
+  submissionStatus: string | null;
+}
+
+export const repricingApi = {
+  readiness: () => api.get<RepricingReadiness>('/amazon-repricing/readiness').then((r) => r.data),
+  onboard: () => api.post<{ scannedListings: number; created: number; updated: number; skipped: number }>('/amazon-repricing/onboard', {}).then((r) => r.data),
+  recomputeFloors: () => api.post<{ processed: number; ok: number }>('/amazon-repricing/floors/recompute', {}).then((r) => r.data),
+  skuPricing: (take = 100) => api.get<RepricingSkuRow[]>('/amazon-repricing/sku-pricing', { params: { take } }).then((r) => r.data),
+  decisions: (take = 100) => api.get<RepricingDecisionRow[]>('/amazon-repricing/decisions', { params: { take } }).then((r) => r.data),
+};
+
 // ---- Sales Transactions ----
 export interface SalesTransactionItem {
   /** Units consumed by this line, for serial-tracked products. */
