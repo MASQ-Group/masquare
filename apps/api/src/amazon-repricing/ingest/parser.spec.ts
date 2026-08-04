@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ParseError, isStaleEvent, moneyToCents, parseAnyOfferChanged } from './parser';
+import { ParseError, isStaleEvent, moneyToCents, parseAnyOfferChanged, parseFeePromotion, parsePricingHealth } from './parser';
 import { RawNotificationEnvelope } from './any-offer-changed.types';
 
 // A representative ANY_OFFER_CHANGED envelope for amazon.de (§8.2). Amazon money is in major units.
@@ -134,6 +134,35 @@ describe('parseAnyOfferChanged', () => {
     const env = envelope();
     env.Payload!.AnyOfferChangedNotification!.Offers = [];
     expect(parseAnyOfferChanged(env).snapshot.offers).toHaveLength(0);
+  });
+});
+
+describe('parsePricingHealth (defensive, TO VERIFY schema)', () => {
+  it('extracts marketplace/asin/sku and the notification id', () => {
+    const env = {
+      NotificationType: 'PricingHealth',
+      Payload: { PricingHealthNotification: { MarketplaceId: 'A1PA6795UKMFR9', ASIN: 'B0X', SellerSKU: 'SKU1' } },
+      NotificationMetadata: { NotificationId: 'ph-1' },
+    };
+    expect(parsePricingHealth(env)).toEqual({ notificationId: 'ph-1', marketplaceId: 'A1PA6795UKMFR9', asin: 'B0X', sku: 'SKU1' });
+  });
+
+  it('reads identifiers from an OfferChangeTrigger sub-object too', () => {
+    const env = { Payload: { PricingHealthNotification: { OfferChangeTrigger: { MarketplaceId: 'A13V1IB3VIYZZH', ASIN: 'B0Y' } } }, NotificationMetadata: {} };
+    const p = parsePricingHealth(env);
+    expect(p.marketplaceId).toBe('A13V1IB3VIYZZH');
+    expect(p.asin).toBe('B0Y');
+  });
+
+  it('degrades to nulls on an unexpected shape', () => {
+    expect(parsePricingHealth({})).toEqual({ notificationId: null, marketplaceId: null, asin: null, sku: null });
+  });
+});
+
+describe('parseFeePromotion (defensive, TO VERIFY schema)', () => {
+  it('extracts the marketplace and notification id', () => {
+    const env = { Payload: { FeePromotionNotification: { MarketplaceId: 'A1RKKUPIHCS9HS' } }, NotificationMetadata: { NotificationId: 'fp-1' } };
+    expect(parseFeePromotion(env)).toEqual({ notificationId: 'fp-1', marketplaceId: 'A1RKKUPIHCS9HS' });
   });
 });
 

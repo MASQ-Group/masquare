@@ -70,7 +70,17 @@ export class RepricerService {
     nowMs: number,
   ): Promise<void> {
     const cfg = this.toConfig(row);
-    const built = buildDecideInput(cfg, snapshot, { blocklistedSellerIds, amazonRetailSellerIds, nowMs, safetyOverride: trigger.safetyOverride });
+
+    // A SKU flagged suppressed by a prior PRICING_HEALTH evaluates in Branch D until a fresh event
+    // shows our offer is Featured again (spec §5.3). Clear the flag on restoration; thread it into
+    // the snapshot otherwise (never mutate the shared snapshot — clone per row).
+    const restored = snapshot.offers.some((o) => o.sellerId === snapshot.ourSellerId && o.isBuyBoxWinner);
+    if (row.suppressed && restored) {
+      await this.prisma.repricingSkuPricing.update({ where: { id: row.id }, data: { suppressed: false } });
+    }
+    const evalSnapshot = row.suppressed && !restored ? { ...snapshot, pricingHealthFired: true } : snapshot;
+
+    const built = buildDecideInput(cfg, evalSnapshot, { blocklistedSellerIds, amazonRetailSellerIds, nowMs, safetyOverride: trigger.safetyOverride });
 
     if ('skip' in built) {
       await this.persistDecision(row, snapshot, trigger, {

@@ -131,3 +131,44 @@ export function isStaleEvent(incoming: string, storedTimeOfOfferChange: string |
   if (!storedTimeOfOfferChange) return false;
   return incoming <= storedTimeOfOfferChange;
 }
+
+// PRICING_HEALTH and FEE_PROMOTION payload shapes are NOT documented in the spec (only §8.2's
+// ANY_OFFER_CHANGED is). These parsers pull the identifiers we need from the plausible locations
+// DEFENSIVELY — every field is `TO VERIFY` against real EU payloads once the corpus is captured.
+
+function payloadInner(envelope: RawNotificationEnvelope): Record<string, any> {
+  const p = (envelope.Payload ?? {}) as Record<string, any>;
+  // The one notification-specific key under Payload (e.g. PricingHealthNotification).
+  return p[Object.keys(p)[0]] ?? {};
+}
+
+export interface PricingHealthEvent {
+  notificationId: string | null;
+  marketplaceId: string | null;
+  asin: string | null;
+  sku: string | null;
+}
+
+export function parsePricingHealth(envelope: RawNotificationEnvelope): PricingHealthEvent {
+  const inner = payloadInner(envelope);
+  const trigger = inner.OfferChangeTrigger ?? inner.offerChangeTrigger ?? {};
+  return {
+    notificationId: envelope.NotificationMetadata?.NotificationId ?? null,
+    marketplaceId: inner.MarketplaceId ?? trigger.MarketplaceId ?? null,
+    asin: inner.ASIN ?? inner.Asin ?? trigger.ASIN ?? null,
+    sku: inner.SellerSKU ?? inner.SellerSku ?? inner.MerchantSKU ?? null,
+  };
+}
+
+export interface FeePromotionEvent {
+  notificationId: string | null;
+  marketplaceId: string | null;
+}
+
+export function parseFeePromotion(envelope: RawNotificationEnvelope): FeePromotionEvent {
+  const inner = payloadInner(envelope);
+  return {
+    notificationId: envelope.NotificationMetadata?.NotificationId ?? null,
+    marketplaceId: inner.MarketplaceId ?? inner.marketplaceId ?? null,
+  };
+}

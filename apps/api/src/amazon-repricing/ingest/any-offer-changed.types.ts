@@ -63,7 +63,9 @@ export interface RawNotificationEnvelope {
   NotificationType?: string;
   EventTime?: string;
   PayloadVersion?: string;
-  Payload?: { AnyOfferChangedNotification?: RawAnyOfferChangedNotification };
+  // AnyOfferChanged is fully typed; other notification types (PricingHealth, FeePromotion) carry
+  // their own payload key and are parsed defensively (parser.ts), so allow arbitrary extra keys.
+  Payload?: { AnyOfferChangedNotification?: RawAnyOfferChangedNotification } & Record<string, unknown>;
   NotificationMetadata?: {
     ApplicationId?: string;
     SubscriptionId?: string;

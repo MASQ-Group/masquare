@@ -1,20 +1,24 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ParseError, ParsedNotification, isStaleEvent, parseAnyOfferChanged } from './parser';
+import { ParseError, ParsedNotification, isStaleEvent, parseAnyOfferChanged, parseFeePromotion, parsePricingHealth } from './parser';
 import { RawNotificationEnvelope } from './any-offer-changed.types';
 import { RepricerService } from '../engine/repricer.service';
+import { FloorService } from '../floor/floor.service';
 
-// notif-ingest persistence (spec §2.2): dedupe on NotificationId, discard stale events, and upsert
-// the latest OfferSnapshot per ASIN × marketplace. The pure parse + stale logic lives in parser.ts;
-// this is the thin I/O shell over Prisma. Enqueueing the repricing evaluation onto the work-queue
-// (Deviation D-1) is a follow-up once the engine I/O shell lands — marked below.
+// notif-ingest persistence + routing (spec §2.2–2.3): dedupe on NotificationId, then dispatch by
+// notification type — ANY_OFFER_CHANGED → snapshot + shadow evaluate; PRICING_HEALTH → mark the
+// SKU for Branch D (restore eligibility, §5.3); FEE_PROMOTION → recompute floors (§4.3). The pure
+// parse/stale logic lives in parser.ts; this is the thin I/O shell over Prisma.
 
 export type IngestResult =
   | { status: 'DUPLICATE' }
   | { status: 'STALE' }
   | { status: 'PARSE_ERROR'; detail: string }
-  | { status: 'PERSISTED'; asin: string; marketplaceId: string };
+  | { status: 'PERSISTED'; asin: string; marketplaceId: string }
+  | { status: 'PRICING_HEALTH'; affected: number }
+  | { status: 'FEE_PROMOTION'; marketplaceId: string }
+  | { status: 'IGNORED'; reason: string };
 
 @Injectable()
 export class SnapshotService {
@@ -23,9 +27,10 @@ export class SnapshotService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly repricer: RepricerService,
+    private readonly floors: FloorService,
   ) {}
 
-  /** Parse a raw SQS message body (JSON) and ingest it. The wireable entry point for the poller. */
+  /** Parse a raw SQS message body (JSON) and route by notification type. Entry point for the poller. */
   async ingestRaw(body: string): Promise<IngestResult> {
     let envelope: RawNotificationEnvelope;
     try {
@@ -33,14 +38,49 @@ export class SnapshotService {
     } catch (e) {
       return { status: 'PARSE_ERROR', detail: `invalid JSON: ${(e as Error).message}` };
     }
-    let parsed: ParsedNotification;
     try {
-      parsed = parseAnyOfferChanged(envelope);
+      const type = envelope.NotificationType ?? '';
+      if (type === 'PricingHealth' || type === 'PRICING_HEALTH') return await this.ingestPricingHealth(envelope);
+      if (type === 'FeePromotion' || type === 'FEE_PROMOTION') return await this.ingestFeePromotion(envelope);
+      // Default: ANY_OFFER_CHANGED (also covers an absent type on an AOC-shaped body).
+      return await this.ingest(parseAnyOfferChanged(envelope));
     } catch (e) {
       if (e instanceof ParseError) return { status: 'PARSE_ERROR', detail: e.message };
       throw e;
     }
-    return this.ingest(parsed);
+  }
+
+  /** PRICING_HEALTH (spec §5.3): we lost Featured-Offer eligibility. Mark the SKU(s) suppressed so
+   *  the next evaluation runs Branch D. P1 — suppression also silently kills ad delivery (§1.5). */
+  private async ingestPricingHealth(envelope: RawNotificationEnvelope): Promise<IngestResult> {
+    const ev = parsePricingHealth(envelope);
+    if (ev.notificationId && !(await this.recordNotificationId(ev.notificationId, 'PricingHealth'))) return { status: 'DUPLICATE' };
+    if (!ev.marketplaceId || (!ev.sku && !ev.asin)) return { status: 'IGNORED', reason: 'PRICING_HEALTH missing marketplace/sku/asin' };
+    const updated = await this.prisma.repricingSkuPricing.updateMany({
+      where: { marketplaceId: ev.marketplaceId, deletedAt: null, ...(ev.sku ? { sku: ev.sku } : { asin: ev.asin! }) },
+      data: { suppressed: true },
+    });
+    this.logger.warn(`PRICING_HEALTH (P1) ${ev.marketplaceId} ${ev.sku ?? ev.asin} — ${updated.count} SKU(s) → Branch D.`);
+    return { status: 'PRICING_HEALTH', affected: updated.count };
+  }
+
+  /** FEE_PROMOTION (spec §4.3): a fee schedule change → recompute floors for the marketplace. Fired
+   *  in the background so the poller isn't blocked; the nightly cron is the backstop. */
+  private async ingestFeePromotion(envelope: RawNotificationEnvelope): Promise<IngestResult> {
+    const ev = parseFeePromotion(envelope);
+    if (ev.notificationId && !(await this.recordNotificationId(ev.notificationId, 'FeePromotion'))) return { status: 'DUPLICATE' };
+    if (!ev.marketplaceId) return { status: 'IGNORED', reason: 'FEE_PROMOTION missing marketplace' };
+    void this.recomputeMarketplaceFloors(ev.marketplaceId);
+    return { status: 'FEE_PROMOTION', marketplaceId: ev.marketplaceId };
+  }
+
+  private async recomputeMarketplaceFloors(marketplaceId: string): Promise<void> {
+    const rows = await this.prisma.repricingSkuPricing.findMany({ where: { marketplaceId, deletedAt: null }, select: { id: true } });
+    let ok = 0;
+    for (const { id } of rows) {
+      await this.floors.refreshFeesAndRecompute(id).then(() => (ok += 1)).catch((e) => this.logger.error(`Fee-promo recompute failed for ${id}: ${(e as Error).message}`));
+    }
+    this.logger.log(`FEE_PROMOTION ${marketplaceId} — recomputed ${ok}/${rows.length} floors.`);
   }
 
   /** Dedupe → stale-discard → persist snapshot. Idempotent per NotificationId. */
