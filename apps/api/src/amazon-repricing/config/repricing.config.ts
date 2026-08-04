@@ -51,3 +51,9 @@ export const MARKETPLACE_TO_ISO: Record<string, string> = {
   A13V1IB3VIYZZH: 'FR', // amazon.fr
   A1RKKUPIHCS9HS: 'ES', // amazon.es
 };
+
+/** ISO-2 country code → Amazon marketplace id (inverse of MARKETPLACE_TO_ISO). Used to derive a
+ *  listing's marketplace id from its integration's country during onboarding. */
+export const ISO_TO_MARKETPLACE: Record<string, string> = Object.fromEntries(
+  Object.entries(MARKETPLACE_TO_ISO).map(([mkt, iso]) => [iso, mkt]),
+);

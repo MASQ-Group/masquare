@@ -6,6 +6,8 @@ import { FeeService } from './floor/fee.service';
 import { SnapshotService } from './ingest/snapshot.service';
 import { SqsPollerService } from './ingest/sqs-poller.service';
 import { RepricerService } from './engine/repricer.service';
+import { OnboardingService } from './onboarding/onboarding.service';
+import { RepricingController } from './ops/repricing.controller';
 
 // Amazon Buy Box algorithmic repricing (spec docs/specs/amazon-repricing/). Built as ONE Nest
 // module rather than the spec's GCP microservice mesh (Deviation D-1).
@@ -17,7 +19,8 @@ import { RepricerService } from './engine/repricer.service';
 // Later phases add: price-writer + safety-layer wiring, enrichment, and the ops console.
 @Module({
   imports: [IntegrationsModule],
-  providers: [FloorService, VatService, FeeService, SnapshotService, SqsPollerService, RepricerService],
-  exports: [FloorService, VatService, SnapshotService, RepricerService],
+  controllers: [RepricingController],
+  providers: [FloorService, VatService, FeeService, SnapshotService, SqsPollerService, RepricerService, OnboardingService],
+  exports: [FloorService, VatService, SnapshotService, RepricerService, OnboardingService],
 })
 export class AmazonRepricingModule {}
