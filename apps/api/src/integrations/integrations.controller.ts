@@ -52,6 +52,12 @@ export class IntegrationsController {
     return this.svc.create(dto, user.sub);
   }
 
+  /** One-time: register SP-API notification subscriptions (repricing) to an SQS queue ARN. */
+  @Post(':id/spapi-notifications/setup')
+  setupSpApiNotifications(@Param('id') id: string, @Body() body: { sqsArn: string }) {
+    return this.svc.setupSpApiNotifications(id, body.sqsArn, ['ANY_OFFER_CHANGED', 'PRICING_HEALTH', 'FEE_PROMOTION']);
+  }
+
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateIntegrationDto, @CurrentUser() user: AuthUser) {
     return this.svc.update(id, dto, user.sub);

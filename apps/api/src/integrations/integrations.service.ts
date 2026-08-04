@@ -638,6 +638,73 @@ export class IntegrationsService {
     return { ok: true, status: res.status, payload: result };
   }
 
+  /** LWA grantless token (client_credentials + scope) for grantless SP-API ops (createDestination). */
+  private async amazonGrantlessToken(config: Record<string, string>, secrets: Record<string, string>, scope: string): Promise<string> {
+    const clientId = config.lwaClientId;
+    const clientSecret = secrets.lwaClientSecret;
+    if (!clientId || !clientSecret) throw new BadRequestException('Amazon integration is missing LWA Client ID or Client Secret.');
+    const res = await fetch('https://api.amazon.com/auth/o2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'client_credentials', scope, client_id: clientId, client_secret: clientSecret }).toString(),
+      signal: AbortSignal.timeout(10000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok || !json?.access_token) throw new BadRequestException(`Amazon LWA grantless auth failed (${res.status}${json?.error ? `: ${json.error}` : ''}).`);
+    return json.access_token as string;
+  }
+
+  /** One-time setup of SP-API notifications (repricing, spec §2.2): ensure an SQS destination for
+   *  the queue ARN, then subscribe the given notification types to it. createDestination /
+   *  getDestinations are grantless; createSubscription uses the seller token + the type's role. */
+  async setupSpApiNotifications(
+    integrationId: string,
+    sqsArn: string,
+    notificationTypes: string[],
+  ): Promise<{ ok: boolean; destinationId?: string; results: Array<{ type: string; ok: boolean; message: string }>; message?: string }> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) return { ok: false, results: [], message: 'Integration not found' };
+    if (row.channelType !== 'amazon') return { ok: false, results: [], message: 'Not an Amazon integration' };
+    if (!sqsArn?.startsWith('arn:aws:sqs:')) return { ok: false, results: [], message: 'A valid SQS ARN is required' };
+    const config = (row.config ?? {}) as Record<string, string>;
+    const meta = this.amazonMarketMeta(row);
+    const secrets = await this.decryptedSecrets(row.id);
+
+    // 1. Destination (grantless token; same x-amz-access-token header via amzFetch/amzWrite).
+    const grantless = await this.amazonGrantlessToken(config, secrets, 'sellingpartnerapi::notifications');
+    const dest = await this.ensureSqsDestination(meta.endpoint, grantless, sqsArn);
+    if (!dest.ok || !dest.destinationId) return { ok: false, results: [], message: dest.message };
+
+    // 2. Subscriptions (seller-authorized token — the notification's role, e.g. Pricing).
+    const token = await this.amazonAccessToken(config, secrets);
+    const results: Array<{ type: string; ok: boolean; message: string }> = [];
+    for (const type of notificationTypes) {
+      const r = await this.amzWrite(`${meta.endpoint}/notifications/v1/subscriptions/${type}`, token, 'POST', { payloadVersion: '1.0', destinationId: dest.destinationId });
+      const j: any = await r.json().catch(() => null);
+      if (r.ok) results.push({ type, ok: true, message: j?.payload?.subscriptionId ?? 'subscribed' });
+      else if (r.status === 409) results.push({ type, ok: true, message: 'already subscribed' });
+      else results.push({ type, ok: false, message: IntegrationsService.amzErr(j) || `subscribe ${r.status}` });
+    }
+    return { ok: results.every((x) => x.ok), destinationId: dest.destinationId, results };
+  }
+
+  /** Find an existing SQS destination for the ARN, or create one. */
+  private async ensureSqsDestination(endpoint: string, grantlessToken: string, sqsArn: string): Promise<{ ok: boolean; destinationId?: string; message?: string }> {
+    const getRes = await this.amzFetch(`${endpoint}/notifications/v1/destinations`, grantlessToken);
+    const getJson: any = await getRes.json().catch(() => null);
+    if (getRes.ok) {
+      const existing = (getJson?.payload ?? []).find((d: any) => d?.resource?.sqs?.arn === sqsArn);
+      if (existing?.destinationId) return { ok: true, destinationId: existing.destinationId };
+    }
+    const name = `masquare-repricing-${sqsArn.split(':').pop()}`.slice(0, 256);
+    const res = await this.amzWrite(`${endpoint}/notifications/v1/destinations`, grantlessToken, 'POST', { resourceSpecification: { sqs: { arn: sqsArn } }, name });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, message: IntegrationsService.amzErr(json) || `createDestination ${res.status}` };
+    const destinationId = json?.payload?.destinationId;
+    if (!destinationId) return { ok: false, message: 'createDestination returned no destinationId' };
+    return { ok: true, destinationId };
+  }
+
   /** Push a listing's available quantity to OnBuy via the v2 stock-update endpoint
    *  (`PUT /listings/by-sku` by default; override with config.stockUpdatePath / stockUpdateMethod
    *  if an account differs). Body: `{ site_id, listings: [{ sku, stock }] }`. dryRun does not call
