@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "build": "nest build",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "start": "dotenv -e ../../.env -- nest start",
     "start:dev": "dotenv -e ../../.env -- nest start --watch",
     "start:prod": "dotenv -e ../../.env -- node dist/main.js",
@@ -53,6 +55,7 @@
     "prisma": "^6.1.0",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.10"
   }
 }
