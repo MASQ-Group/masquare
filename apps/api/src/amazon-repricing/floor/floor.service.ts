@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { VatService } from './vat.service';
+import { FeeService } from './fee.service';
 import { FloorInputs, solveFloors } from './floor-solver';
 import { eurToCents } from '../common/money';
 import { REPRICING_DEFAULTS } from '../config/repricing.config';
@@ -28,6 +29,7 @@ export class FloorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly vat: VatService,
+    private readonly fees: FeeService,
   ) {}
 
   /**
@@ -125,17 +127,21 @@ export class FloorService {
   // Scheduled maintenance
   // -------------------------------------------------------------------------
 
-  /** Nightly full recompute (spec §4.3) — every non-deleted SKU × marketplace. 02:00. */
+  /** Nightly fee refresh + floor recompute (spec §4.3) — every non-deleted SKU × marketplace. 02:00.
+   *  Fees are refreshed best-effort; a fee-refresh failure still recomputes on the last known fees. */
   @Cron('0 2 * * *')
   async nightlyRecompute(): Promise<void> {
     const rows = await this.prisma.repricingSkuPricing.findMany({
       where: { deletedAt: null },
-      select: { id: true },
+      select: { id: true, sku: true, asin: true, marketplaceId: true, currency: true, fulfillment: true, currentPriceCents: true },
     });
-    this.logger.log(`Nightly floor recompute for ${rows.length} SKU×marketplace rows.`);
-    for (const { id } of rows) {
-      await this.computeFloorsForSku(id).catch((e) =>
-        this.logger.error(`Floor recompute failed for ${id}: ${e?.message ?? e}`),
+    this.logger.log(`Nightly fee refresh + floor recompute for ${rows.length} SKU×marketplace rows.`);
+    for (const row of rows) {
+      await this.fees.refreshFeesForSku(row).catch((e) =>
+        this.logger.error(`Fee refresh failed for ${row.id}: ${e?.message ?? e}`),
+      );
+      await this.computeFloorsForSku(row.id).catch((e) =>
+        this.logger.error(`Floor recompute failed for ${row.id}: ${e?.message ?? e}`),
       );
     }
   }
@@ -165,13 +171,16 @@ export class FloorService {
   }
 
   /**
-   * Refresh per-SKU fees from Amazon's getMyFeesEstimate (Product Fees API) → RepricingFeeEstimate.
-   * NOT YET IMPLEMENTED: needs the SP-API "Product Fees" role confirmed on our app (Phase 0
-   * checklist §3.1, still `TO VERIFY`). Until then fees must be seeded before a SKU can be priced,
-   * and the floor stays EXCLUDED as FEES_UNKNOWN. Wire this against integrations.service SP-API
-   * auth (amazonAccessToken / amzFetch) once the role is granted.
+   * Refresh per-SKU fees from Amazon's getMyFeesEstimate (Product Fees API) → RepricingFeeEstimate
+   * (spec §4.3), then recompute the floor. Delegates the SP-API call to FeeService (Pricing role).
    */
-  async refreshFees(_sku: string, _marketplaceId: string): Promise<never> {
-    throw new Error('getMyFeesEstimate not wired yet — SP-API Product Fees role pending (Phase 0 §3.1).');
+  async refreshFeesAndRecompute(skuPricingId: string): Promise<void> {
+    const row = await this.prisma.repricingSkuPricing.findUnique({
+      where: { id: skuPricingId },
+      select: { sku: true, asin: true, marketplaceId: true, currency: true, fulfillment: true, currentPriceCents: true },
+    });
+    if (!row) return;
+    await this.fees.refreshFeesForSku(row);
+    await this.computeFloorsForSku(skuPricingId);
   }
 }

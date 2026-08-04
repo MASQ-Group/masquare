@@ -600,6 +600,44 @@ export class IntegrationsService {
     return { ok: true, message: dryRun ? 'validated' : (json?.status ?? 'ACCEPTED') };
   }
 
+  /** Product Fees API — estimate fees for a SKU at a given price (repricing floor inputs, §4.3).
+   *  Returns the raw FeesEstimateResult payload; the repricing module parses it (fees-parse.ts).
+   *  Reuses the app's SP-API auth (needs the Pricing role). */
+  async getMyFeesEstimate(
+    integrationId: string,
+    sellerSku: string,
+    priceAmount: number,
+    currencyCode: string,
+    isAmazonFulfilled: boolean,
+  ): Promise<{ ok: boolean; status?: number; message?: string; payload?: unknown }> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) return { ok: false, message: 'Integration not found' };
+    if (row.channelType !== 'amazon') return { ok: false, message: 'Not an Amazon integration' };
+    const config = (row.config ?? {}) as Record<string, string>;
+    const meta = this.amazonMarketMeta(row);
+    const secrets = await this.decryptedSecrets(row.id);
+    const token = await this.amazonAccessToken(config, secrets);
+
+    const url = `${meta.endpoint}/products/fees/v0/listings/${encodeURIComponent(sellerSku)}/feesEstimate`;
+    const body = {
+      FeesEstimateRequest: {
+        MarketplaceId: meta.marketplaceId,
+        IsAmazonFulfilled: isAmazonFulfilled,
+        PriceToEstimateFees: { ListingPrice: { CurrencyCode: currencyCode, Amount: priceAmount } },
+        Identifier: `masq-${sellerSku}-${meta.marketplaceId}`,
+      },
+    };
+    const res = await this.amzWrite(url, token, 'POST', body);
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, status: res.status, message: IntegrationsService.amzErr(json) || `feesEstimate ${res.status}` };
+    const result = json?.payload?.FeesEstimateResult ?? json?.FeesEstimateResult;
+    const status = result?.Status;
+    if (status && status !== 'Success') {
+      return { ok: false, status: res.status, message: `feesEstimate status ${status}` };
+    }
+    return { ok: true, status: res.status, payload: result };
+  }
+
   /** Push a listing's available quantity to OnBuy via the v2 stock-update endpoint
    *  (`PUT /listings/by-sku` by default; override with config.stockUpdatePath / stockUpdateMethod
    *  if an account differs). Body: `{ site_id, listings: [{ sku, stock }] }`. dryRun does not call
