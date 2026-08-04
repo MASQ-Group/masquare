@@ -22,19 +22,19 @@ enum UserStatus {
 // Companies
 // ---------------------------------------------------------------------------
 model Company {
-  id                 String  @id @default(uuid()) @db.Uuid
-  officialName       String  @map("official_name")
-  registrationNumber String? @map("registration_number")
-  addressLine1       String? @map("address_line1")
-  addressLine2       String? @map("address_line2")
-  addressCity        String? @map("address_city")
-  addressRegion      String? @map("address_region")
-  addressPostalCode  String? @map("address_postal_code")
-  addressCountry     String? @map("address_country")
+  id                 String   @id @default(uuid()) @db.Uuid
+  officialName       String   @map("official_name")
+  registrationNumber String?  @map("registration_number")
+  addressLine1       String?  @map("address_line1")
+  addressLine2       String?  @map("address_line2")
+  addressCity        String?  @map("address_city")
+  addressRegion      String?  @map("address_region")
+  addressPostalCode  String?  @map("address_postal_code")
+  addressCountry     String?  @map("address_country")
   email              String?
   website            String?
-  phoneLandline      String? @map("phone_landline")
-  phoneMobile        String? @map("phone_mobile")
+  phoneLandline      String?  @map("phone_landline")
+  phoneMobile        String?  @map("phone_mobile")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -67,9 +67,9 @@ model CompanyVatRegistration {
   country   String
   vatNumber String @map("vat_number")
 
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -85,9 +85,9 @@ model CompanyContactPerson {
   phone     String?
   role      String?
 
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -122,9 +122,9 @@ model CompanyModule {
   moduleId  String  @map("module_id") @db.Uuid
   enabled   Boolean @default(true)
 
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   module  Module  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
@@ -138,9 +138,9 @@ model ModuleSharing {
   moduleId  String @map("module_id") @db.Uuid
   companyId String @map("company_id") @db.Uuid
 
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
 
   module  Module  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -250,15 +250,13 @@ model Vendor {
   //   standard      — charge VAT at each item's VAT class rate (local/Cyprus)
   //   reverse_charge — EU B2B supply, 0% with the Art. 196 note on the PDF
   //   outside_scope  — supplier outside the EU VAT zone, 0%
-  vatTreatment         String    @default("standard") @map("vat_treatment")
-  /**
-   * Currency this vendor invoices in. New POs default to it.
-   */
-  currency             String    @default("EUR")
+  vatTreatment String @default("standard") @map("vat_treatment")
+  /** Currency this vendor invoices in. New POs default to it. */
+  currency String @default("EUR")
   // Result of the last VIES lookup. Advisory only — never blocks raising a PO.
-  vatNumberValid       Boolean?  @map("vat_number_valid")
-  vatNumberCheckedAt   DateTime? @map("vat_number_checked_at")
-  vatNumberCheckedName String?   @map("vat_number_checked_name")
+  vatNumberValid     Boolean?  @map("vat_number_valid")
+  vatNumberCheckedAt DateTime? @map("vat_number_checked_at")
+  vatNumberCheckedName String? @map("vat_number_checked_name")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -266,8 +264,8 @@ model Vendor {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  contacts       VendorContact[]
-  products       Product[]
+  contacts VendorContact[]
+  products Product[]
   purchaseOrders PurchaseOrder[]
   vendorReturns  VendorReturn[]
 
@@ -405,13 +403,13 @@ model ProductCategory {
 }
 
 model Attribute {
-  id            String             @id @default(uuid()) @db.Uuid
-  name          String
-  inputType     AttributeInputType @map("input_type")
+  id        String             @id @default(uuid()) @db.Uuid
+  name      String
+  inputType AttributeInputType @map("input_type")
   // When true, a single product/SKU may carry this attribute more than once (e.g. multiple
   // "Compatible With" or "Material" values). When false (default) the product editor offers
   // the attribute only once per SKU.
-  allowMultiple Boolean            @default(false) @map("allow_multiple")
+  allowMultiple Boolean @default(false) @map("allow_multiple")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -441,15 +439,15 @@ model AttributeValue {
 
 // Singleton row holding platform-wide format defaults (§9).
 model PlatformSettings {
-  id                     String            @id @default(uuid()) @db.Uuid
-  measurementSystem      MeasurementSystem @default(metric) @map("measurement_system")
-  dateFormat             DateFormat        @default(ddmmyyyy) @map("date_format")
+  id                String            @id @default(uuid()) @db.Uuid
+  measurementSystem MeasurementSystem @default(metric) @map("measurement_system")
+  dateFormat        DateFormat        @default(ddmmyyyy) @map("date_format")
   // Admin-defined standard column set for the Sales Transactions list (JSON array of keys).
-  salesTxStandardColumns String?           @map("sales_tx_standard_columns")
+  salesTxStandardColumns String? @map("sales_tx_standard_columns")
   // Platform typography — the primary/body font and the monospace/code font.
   // Values are font-family keys resolved against the web font registry.
-  bodyFont               String            @default("Inter") @map("body_font")
-  monoFont               String            @default("JetBrains Mono") @map("mono_font")
+  bodyFont String @default("Inter") @map("body_font")
+  monoFont String @default("JetBrains Mono") @map("mono_font")
 
   // Whether submitting a sale takes the goods off the shelf.
   //
@@ -488,9 +486,9 @@ model PlatformSettings {
 // ===========================================================================
 
 model Product {
-  id      String @id @default(uuid()) @db.Uuid
+  id    String @id @default(uuid()) @db.Uuid
   mainSku String @unique @map("main_sku")
-  title   String
+  title String
 
   brandId          String? @map("brand_id") @db.Uuid
   vendorId         String? @map("vendor_id") @db.Uuid
@@ -510,13 +508,13 @@ model Product {
 
   // Cost & pricing (amount + currency)
   /**
-   * /**
    * Individual units of this product are tracked by serial number.
+   *
    * Opt-in: only products where it matters carry the receiving and dispatch burden.
    * Once on, a goods receipt must name a serial for every unit, and a sales transaction
    * cannot be submitted without naming which serials leave.
    */
-  serialTracked Boolean @default(false) @map("serial_tracked")
+  serialTracked        Boolean   @default(false) @map("serial_tracked")
 
   /**
    * Moving weighted average cost per unit, in EUR, at landed cost. Maintained by the
@@ -547,30 +545,30 @@ model Product {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  brand          Brand?           @relation(fields: [brandId], references: [id], onDelete: SetNull)
-  vendor         Vendor?          @relation(fields: [vendorId], references: [id], onDelete: SetNull)
-  productClass   ProductClass?    @relation(fields: [productClassId], references: [id], onDelete: SetNull)
-  productType    ProductType?     @relation(fields: [productTypeId], references: [id], onDelete: SetNull)
-  fulfilmentType FulfilmentType?  @relation(fields: [fulfilmentTypeId], references: [id], onDelete: SetNull)
-  category       ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  vatClass       VatClass?        @relation(fields: [vatClassId], references: [id], onDelete: SetNull)
+  brand         Brand?          @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  vendor        Vendor?         @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  productClass  ProductClass?   @relation(fields: [productClassId], references: [id], onDelete: SetNull)
+  productType   ProductType?    @relation(fields: [productTypeId], references: [id], onDelete: SetNull)
+  fulfilmentType FulfilmentType? @relation(fields: [fulfilmentTypeId], references: [id], onDelete: SetNull)
+  category      ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  vatClass      VatClass?       @relation(fields: [vatClassId], references: [id], onDelete: SetNull)
 
-  aliases               ProductSkuAlias[]
-  media                 ProductMedia[]
-  attributes            ProductAttribute[]
-  companies             ProductCompany[]
+  aliases              ProductSkuAlias[]
+  media                ProductMedia[]
+  attributes           ProductAttribute[]
+  companies            ProductCompany[]
   salesTransactionItems SalesTransactionItem[]
-  fbaShipmentItems      FbaShipmentItem[]
-  stockLevels           StockLevel[]
-  stockMovements        StockMovement[]
-  purchaseOrderLines    PurchaseOrderLine[]
-  costEvents            ProductCostEvent[]
-  serialNumbers         SerialNumber[]
-  vendorReturnLines     VendorReturnLine[]
-  stockOwed             StockOwed[]
-  availability          ProductAvailability?
-  availabilityLedger    AvailabilityLedger[]
-  channelListings       ChannelListing[]
+  fbaShipmentItems     FbaShipmentItem[]
+  stockLevels          StockLevel[]
+  stockMovements       StockMovement[]
+  purchaseOrderLines   PurchaseOrderLine[]
+  costEvents           ProductCostEvent[]
+  serialNumbers        SerialNumber[]
+  vendorReturnLines    VendorReturnLine[]
+  stockOwed            StockOwed[]
+  availability         ProductAvailability?
+  availabilityLedger   AvailabilityLedger[]
+  channelListings      ChannelListing[]
 
   // Every products list filters out soft-deleted rows and often filters by one of
   // these FKs (brand/vendor/type/category); none were indexed before.
@@ -627,31 +625,31 @@ model AvailabilityLedger {
 /// A product's current listing on one channel integration (marketplace) — populated by
 /// pulling from the channel; drives the listings dashboard and drift detection.
 model ChannelListing {
-  id                String    @id @default(uuid()) @db.Uuid
+  id               String    @id @default(uuid()) @db.Uuid
   // Owning company. Listings are per-company (separate channel accounts).
-  companyId         String?   @map("company_id") @db.Uuid
-  integrationId     String    @map("integration_id") @db.Uuid
-  channelSku        String    @map("channel_sku")
+  companyId        String?   @map("company_id") @db.Uuid
+  integrationId    String    @map("integration_id") @db.Uuid
+  channelSku       String    @map("channel_sku")
   // Marketplace this listing belongs to, as an ISO-2 country code (e.g. GB, US, DE). eBay uses
   // ONE integration/token across many marketplaces, so this splits its listings into per-market
   // columns. Empty string for single-marketplace integrations (Amazon, OnBuy).
-  marketplace       String    @default("")
-  productId         String?   @map("product_id") @db.Uuid // null = unmatched to our catalogue
-  asin              String?
+  marketplace      String    @default("")
+  productId        String?   @map("product_id") @db.Uuid // null = unmatched to our catalogue
+  asin             String?
   // The marketplace's OWN identifier for this listing/product: eBay ItemID, Amazon ASIN, OnBuy
   // OPC. eBay needs the ItemID to revise quantity (classic listings reject the SKU as an
   // identifier), and we surface all of them on the product card. Nullable — not every pull has one.
-  externalListingId String?   @map("external_listing_id")
-  title             String?
-  listedQuantity    Int?      @map("listed_quantity")
-  listedPrice       Float?    @map("listed_price")
-  currency          String?
-  fulfilmentChannel String?   @map("fulfilment_channel") // FBM | FBA
-  listingStatus     String?   @map("listing_status")
-  lastPulledAt      DateTime? @map("last_pulled_at")
-  lastPushedAt      DateTime? @map("last_pushed_at")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  externalListingId String?  @map("external_listing_id")
+  title            String?
+  listedQuantity   Int?      @map("listed_quantity")
+  listedPrice      Float?    @map("listed_price")
+  currency         String?
+  fulfilmentChannel String?  @map("fulfilment_channel") // FBM | FBA
+  listingStatus    String?   @map("listing_status")
+  lastPulledAt     DateTime? @map("last_pulled_at")
+  lastPushedAt     DateTime? @map("last_pushed_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   product     Product?           @relation(fields: [productId], references: [id], onDelete: SetNull)
   integration ChannelIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
@@ -673,7 +671,7 @@ model ChannelPush {
   productId      String?  @map("product_id") @db.Uuid
   channelSku     String   @map("channel_sku")
   marketplace    String   @default("")
-  field          String // 'quantity' (price/listing later)
+  field          String   // 'quantity' (price/listing later)
   requestedValue Int?     @map("requested_value")
   previousValue  Int?     @map("previous_value")
   ok             Boolean
@@ -695,19 +693,19 @@ model ChannelPush {
 // hold visible stock without ever counting as sellable.
 // ===========================================================================
 model Warehouse {
-  id                 String  @id @default(uuid()) @db.Uuid
+  id   String @id @default(uuid()) @db.Uuid
   // Owning company. Warehouses (and all stock held in them) are company-isolated.
-  companyId          String? @map("company_id") @db.Uuid
-  name               String
-  type               String  @default("physical") // physical | virtual
+  companyId String? @map("company_id") @db.Uuid
+  name String
+  type String @default("physical") // physical | virtual
   // Warehouses form a tree (e.g. Main Store → FBA Reserved / Damaged Goods).
   // Arbitrary depth; cycles are rejected in the service.
-  parentWarehouseId  String? @map("parent_warehouse_id") @db.Uuid
+  parentWarehouseId String? @map("parent_warehouse_id") @db.Uuid
   // Does stock here count toward company-wide availability / "in stock"?
   includeInInventory Boolean @default(true) @map("include_in_inventory")
   // Deactivated rather than deleted once movements reference it.
-  isActive           Boolean @default(true) @map("is_active")
-  notes              String?
+  isActive Boolean @default(true) @map("is_active")
+  notes    String?
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -732,9 +730,7 @@ model Warehouse {
   @@map("warehouse")
 }
 
-/**
- * Current quantity of a product in one warehouse. One row per (product, warehouse).
- */
+/** Current quantity of a product in one warehouse. One row per (product, warehouse). */
 model StockLevel {
   id             String @id @default(uuid()) @db.Uuid
   productId      String @map("product_id") @db.Uuid
@@ -752,20 +748,18 @@ model StockLevel {
   @@map("stock_level")
 }
 
-/**
- * Append-only audit of every stock change. Nothing may alter a StockLevel without
- * writing one of these, so a balance can always be explained.
- */
+/** Append-only audit of every stock change. Nothing may alter a StockLevel without
+ *  writing one of these, so a balance can always be explained. */
 model StockMovement {
-  id           String  @id @default(uuid()) @db.Uuid
-  productId    String  @map("product_id") @db.Uuid
-  warehouseId  String  @map("warehouse_id") @db.Uuid
-  qtyDelta     Int     @map("qty_delta") // signed: +in, -out
-  balanceAfter Int     @map("balance_after") // the warehouse balance once this was applied
+  id           String @id @default(uuid()) @db.Uuid
+  productId    String @map("product_id") @db.Uuid
+  warehouseId  String @map("warehouse_id") @db.Uuid
+  qtyDelta     Int    @map("qty_delta") // signed: +in, -out
+  balanceAfter Int    @map("balance_after") // the warehouse balance once this was applied
   // opening_balance | adjustment | damage | stocktake | transfer | goods_receipt | sale
-  reason       String
-  reference    String? // free-text doc reference (PO/receipt/order)
-  notes        String?
+  reason    String
+  reference String? // free-text doc reference (PO/receipt/order)
+  notes     String?
 
   createdAt   DateTime @default(now()) @map("created_at")
   createdById String?  @map("created_by") @db.Uuid
@@ -787,17 +781,17 @@ model StockMovement {
 // hand. quantityReceived stays 0 until then.
 // ===========================================================================
 model PurchaseOrder {
-  id                   String    @id @default(uuid()) @db.Uuid
-  poNumber             String    @unique @map("po_number") // PO-YYYY-NNNNN, year-scoped sequence
+  id       String @id @default(uuid()) @db.Uuid
+  poNumber String @unique @map("po_number") // PO-YYYY-NNNNN, year-scoped sequence
   // Issuing legal entity — drives the letterhead on the branded PDF.
-  companyId            String    @map("company_id") @db.Uuid
-  vendorId             String    @map("vendor_id") @db.Uuid
-  status               String    @default("draft") // draft | submitted | partially_received | received | cancelled
-  currency             String    @default("EUR")
+  companyId String @map("company_id") @db.Uuid
+  vendorId  String @map("vendor_id") @db.Uuid
+  status    String @default("draft") // draft | submitted | partially_received | received | cancelled
+  currency  String @default("EUR")
   expectedDeliveryDate DateTime? @map("expected_delivery_date")
   // VAT treatment snapshotted from the vendor when the order is raised, so editing
   // the vendor later never rewrites historical orders. Drives the per-line VAT below.
-  vatTreatment         String    @default("standard") @map("vat_treatment")
+  vatTreatment String @default("standard") @map("vat_treatment")
   // --- FX ---------------------------------------------------------------------
   // Goods are priced in `currency` (the vendor's). Everything downstream — average
   // cost, margin — is EUR, so we need a rate to get there.
@@ -805,31 +799,29 @@ model PurchaseOrder {
   // `amountPaidEur` is what actually left the bank to settle this order. When it is
   // known it beats any market rate, because it is the rate we genuinely got. Until
   // then `fxRate` (units of `currency` per 1 EUR) is used as the working estimate.
-  fxRate               Decimal?  @map("fx_rate") @db.Decimal(18, 8)
-  amountPaidEur        Decimal?  @map("amount_paid_eur") @db.Decimal(14, 2)
+  fxRate        Decimal? @map("fx_rate") @db.Decimal(18, 8)
+  amountPaidEur Decimal? @map("amount_paid_eur") @db.Decimal(14, 2)
 
   // --- Ancillary costs ---------------------------------------------------------
   // Each carries its own currency because freight and duty are often invoiced in EUR
   // even when the goods are not. Shipping, duty and handling are allocated across the
   // received lines and enter average cost; import VAT is reporting-only and never does.
-  shippingCost             Decimal? @map("shipping_cost") @db.Decimal(14, 2)
-  shippingCurrency         String   @default("EUR") @map("shipping_currency")
-  shippingAllocation       String   @default("weight") @map("shipping_allocation")
-  customsDuty              Decimal? @map("customs_duty") @db.Decimal(14, 2)
-  customsDutyCurrency      String   @default("EUR") @map("customs_duty_currency")
-  customsDutyAllocation    String   @default("value") @map("customs_duty_allocation")
-  importHandling           Decimal? @map("import_handling") @db.Decimal(14, 2)
-  importHandlingCurrency   String   @default("EUR") @map("import_handling_currency")
-  importHandlingAllocation String   @default("value") @map("import_handling_allocation")
-  /**
-   * Reporting only — never enters product cost.
-   */
-  importVat                Decimal? @map("import_vat") @db.Decimal(14, 2)
-  importVatCurrency        String   @default("EUR") @map("import_vat_currency")
+  shippingCost         Decimal? @map("shipping_cost") @db.Decimal(14, 2)
+  shippingCurrency     String   @default("EUR") @map("shipping_currency")
+  shippingAllocation   String   @default("weight") @map("shipping_allocation")
+  customsDuty          Decimal? @map("customs_duty") @db.Decimal(14, 2)
+  customsDutyCurrency  String   @default("EUR") @map("customs_duty_currency")
+  customsDutyAllocation String  @default("value") @map("customs_duty_allocation")
+  importHandling         Decimal? @map("import_handling") @db.Decimal(14, 2)
+  importHandlingCurrency String   @default("EUR") @map("import_handling_currency")
+  importHandlingAllocation String @default("value") @map("import_handling_allocation")
+  /** Reporting only — never enters product cost. */
+  importVat         Decimal? @map("import_vat") @db.Decimal(14, 2)
+  importVatCurrency String   @default("EUR") @map("import_vat_currency")
 
   // Where received stock lands by default. Null = decide at receiving time.
   destinationWarehouseId String? @map("destination_warehouse_id") @db.Uuid
-  notes                  String?
+  notes String?
 
   submittedAt DateTime? @map("submitted_at")
   cancelledAt DateTime? @map("cancelled_at")
@@ -841,14 +833,14 @@ model PurchaseOrder {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  company              Company                      @relation(fields: [companyId], references: [id])
-  vendor               Vendor                       @relation(fields: [vendorId], references: [id])
-  destinationWarehouse Warehouse?                   @relation(fields: [destinationWarehouseId], references: [id], onDelete: SetNull)
-  lines                PurchaseOrderLine[]
-  statusEvents         PurchaseOrderStatusEvent[]
-  goodsReceipts        GoodsReceipt[]
-  unlockRequests       PurchaseOrderUnlockRequest[]
-  vendorReturns        VendorReturn[]
+  company              Company    @relation(fields: [companyId], references: [id])
+  vendor               Vendor     @relation(fields: [vendorId], references: [id])
+  destinationWarehouse Warehouse? @relation(fields: [destinationWarehouseId], references: [id], onDelete: SetNull)
+  lines         PurchaseOrderLine[]
+  statusEvents   PurchaseOrderStatusEvent[]
+  goodsReceipts  GoodsReceipt[]
+  unlockRequests PurchaseOrderUnlockRequest[]
+  vendorReturns  VendorReturn[]
 
   @@index([vendorId])
   @@index([companyId])
@@ -857,28 +849,28 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderLine {
-  id               String  @id @default(uuid()) @db.Uuid
-  purchaseOrderId  String  @map("purchase_order_id") @db.Uuid
-  productId        String  @map("product_id") @db.Uuid
-  quantityOrdered  Int     @map("quantity_ordered")
-  unitCost         Decimal @map("unit_cost") @db.Decimal(14, 4)
+  id              String  @id @default(uuid()) @db.Uuid
+  purchaseOrderId String  @map("purchase_order_id") @db.Uuid
+  productId       String  @map("product_id") @db.Uuid
+  quantityOrdered Int     @map("quantity_ordered")
+  unitCost        Decimal @map("unit_cost") @db.Decimal(14, 4)
   // VAT resolved at save time: the product's VAT class when the order charges VAT,
   // otherwise a 0% snapshot. Rate is stored so a later rate change can't rewrite history.
-  vatClassId       String? @map("vat_class_id") @db.Uuid
-  vatRatePct       Float   @default(0) @map("vat_rate_pct")
-  vatAmount        Decimal @default(0) @map("vat_amount") @db.Decimal(14, 2)
+  vatClassId String?  @map("vat_class_id") @db.Uuid
+  vatRatePct Float    @default(0) @map("vat_rate_pct")
+  vatAmount  Decimal  @default(0) @map("vat_amount") @db.Decimal(14, 2)
   // Maintained from Goods Receipt lines in the receiving phase; 0 until then.
-  quantityReceived Int     @default(0) @map("quantity_received")
-  notes            String?
-  sortOrder        Int     @default(0) @map("sort_order")
+  quantityReceived Int    @default(0) @map("quantity_received")
+  notes     String?
+  sortOrder Int     @default(0) @map("sort_order")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  purchaseOrder     PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  product           Product            @relation(fields: [productId], references: [id])
-  vatClass          VatClass?          @relation(fields: [vatClassId], references: [id], onDelete: SetNull)
-  receiptLines      GoodsReceiptLine[]
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product       Product       @relation(fields: [productId], references: [id])
+  vatClass      VatClass?     @relation(fields: [vatClassId], references: [id], onDelete: SetNull)
+  receiptLines  GoodsReceiptLine[]
   vendorReturnLines VendorReturnLine[]
 
   @@index([purchaseOrderId])
@@ -893,45 +885,41 @@ model PurchaseOrderLine {
 // remainder, repeating until the PO is fully received or closed short.
 // ===========================================================================
 model GoodsReceipt {
-  id                       String   @id @default(uuid()) @db.Uuid
-  receiptNumber            String   @unique @map("receipt_number") // GR-YYYY-NNNNN, year-scoped
+  id              String @id @default(uuid()) @db.Uuid
+  receiptNumber   String @unique @map("receipt_number") // GR-YYYY-NNNNN, year-scoped
   // Owning company (denormalised from the PO for uniform scoping).
-  companyId                String?  @map("company_id") @db.Uuid
-  purchaseOrderId          String   @map("purchase_order_id") @db.Uuid
-  status                   String   @default("pending") // pending | posted | cancelled
+  companyId       String? @map("company_id") @db.Uuid
+  purchaseOrderId String @map("purchase_order_id") @db.Uuid
+  status          String @default("pending") // pending | posted | cancelled
   // True when this receipt covers the shortfall left by an earlier one.
-  isBackorder              Boolean  @default(false) @map("is_backorder")
-  parentReceiptId          String?  @map("parent_receipt_id") @db.Uuid
+  isBackorder     Boolean @default(false) @map("is_backorder")
+  parentReceiptId String? @map("parent_receipt_id") @db.Uuid
   // Where the stock lands. Defaults from the PO, changeable at receiving time.
-  destinationWarehouseId   String?  @map("destination_warehouse_id") @db.Uuid
+  destinationWarehouseId String? @map("destination_warehouse_id") @db.Uuid
   // --- Landed costs actually incurred on THIS shipment ---------------------------
   // A PO can arrive in several deliveries, each with its own freight and clearance
   // invoice, so the amounts are captured per receipt rather than taken from the PO.
   // They default to this receipt's pro-rata share of the PO figures and are editable
   // at posting time. The allocation methods are snapshotted from the PO so a later
   // change to the order never rewrites what a posted receipt already costed.
-  shippingCost             Decimal? @map("shipping_cost") @db.Decimal(14, 2)
-  shippingCurrency         String   @default("EUR") @map("shipping_currency")
-  shippingAllocation       String   @default("weight") @map("shipping_allocation")
-  customsDuty              Decimal? @map("customs_duty") @db.Decimal(14, 2)
-  customsDutyCurrency      String   @default("EUR") @map("customs_duty_currency")
-  customsDutyAllocation    String   @default("value") @map("customs_duty_allocation")
-  importHandling           Decimal? @map("import_handling") @db.Decimal(14, 2)
-  importHandlingCurrency   String   @default("EUR") @map("import_handling_currency")
-  importHandlingAllocation String   @default("value") @map("import_handling_allocation")
-  /**
-   * Reporting only — never enters product cost.
-   */
-  importVat                Decimal? @map("import_vat") @db.Decimal(14, 2)
-  importVatCurrency        String   @default("EUR") @map("import_vat_currency")
-  /**
-   * Rate used to bring this receipt's goods to EUR, snapshotted at posting.
-   */
-  fxRateUsed               Decimal? @map("fx_rate_used") @db.Decimal(18, 8)
+  shippingCost     Decimal? @map("shipping_cost") @db.Decimal(14, 2)
+  shippingCurrency String   @default("EUR") @map("shipping_currency")
+  shippingAllocation String @default("weight") @map("shipping_allocation")
+  customsDuty      Decimal? @map("customs_duty") @db.Decimal(14, 2)
+  customsDutyCurrency String @default("EUR") @map("customs_duty_currency")
+  customsDutyAllocation String @default("value") @map("customs_duty_allocation")
+  importHandling   Decimal? @map("import_handling") @db.Decimal(14, 2)
+  importHandlingCurrency String @default("EUR") @map("import_handling_currency")
+  importHandlingAllocation String @default("value") @map("import_handling_allocation")
+  /** Reporting only — never enters product cost. */
+  importVat        Decimal? @map("import_vat") @db.Decimal(14, 2)
+  importVatCurrency String  @default("EUR") @map("import_vat_currency")
+  /** Rate used to bring this receipt's goods to EUR, snapshotted at posting. */
+  fxRateUsed       Decimal? @map("fx_rate_used") @db.Decimal(18, 8)
 
-  notes      String?
-  postedAt   DateTime? @map("posted_at")
-  postedById String?   @map("posted_by") @db.Uuid
+  notes    String?
+  postedAt DateTime? @map("posted_at")
+  postedById String?  @map("posted_by") @db.Uuid
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -939,12 +927,12 @@ model GoodsReceipt {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  purchaseOrder        PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  destinationWarehouse Warehouse?         @relation(fields: [destinationWarehouseId], references: [id], onDelete: SetNull)
-  company              Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  parent               GoodsReceipt?      @relation("ReceiptBackorder", fields: [parentReceiptId], references: [id], onDelete: SetNull)
-  backorders           GoodsReceipt[]     @relation("ReceiptBackorder")
-  lines                GoodsReceiptLine[]
+  purchaseOrder        PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  destinationWarehouse Warehouse?    @relation(fields: [destinationWarehouseId], references: [id], onDelete: SetNull)
+  company    Company?       @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  parent     GoodsReceipt?  @relation("ReceiptBackorder", fields: [parentReceiptId], references: [id], onDelete: SetNull)
+  backorders GoodsReceipt[] @relation("ReceiptBackorder")
+  lines      GoodsReceiptLine[]
 
   @@index([purchaseOrderId])
   @@index([status])
@@ -956,9 +944,7 @@ model GoodsReceiptLine {
   id                  String @id @default(uuid()) @db.Uuid
   goodsReceiptId      String @map("goods_receipt_id") @db.Uuid
   purchaseOrderLineId String @map("purchase_order_line_id") @db.Uuid
-  /**
-   * Outstanding quantity on the PO line when this receipt was raised.
-   */
+  /** Outstanding quantity on the PO line when this receipt was raised. */
   quantityExpected    Int    @map("quantity_expected")
   quantityReceived    Int    @default(0) @map("quantity_received")
   sortOrder           Int    @default(0) @map("sort_order")
@@ -976,6 +962,7 @@ model GoodsReceiptLine {
 
 /**
  * One physical unit of a serial-tracked product, and where it is.
+ *
  * Created when the unit is received and retired when it leaves, so the rows with
  * status `in_stock` are exactly what is on the shelf. The serial is unique per product
  * rather than globally — two vendors can legitimately use the same sequence.
@@ -985,33 +972,25 @@ model SerialNumber {
   productId String @map("product_id") @db.Uuid
   serial    String
 
-  /**
-   * in_stock | sold | returned_to_vendor | scrapped
-   */
+  /** in_stock | sold | returned_to_vendor | scrapped */
   status      String  @default("in_stock")
-  /**
-   * Where it sits while in stock; null once it has left.
-   */
+  /** Where it sits while in stock; null once it has left. */
   warehouseId String? @map("warehouse_id") @db.Uuid
 
-  /**
-   * How it arrived.
-   */
-  goodsReceiptId String?   @map("goods_receipt_id") @db.Uuid
+  /** How it arrived. */
+  goodsReceiptId String? @map("goods_receipt_id") @db.Uuid
   receivedAt     DateTime? @map("received_at")
 
-  /**
-   * How it left — exactly one of these is set once it is no longer in stock.
-   */
+  /** How it left — exactly one of these is set once it is no longer in stock. */
   salesTransactionId String?   @map("sales_transaction_id") @db.Uuid
   vendorReturnId     String?   @map("vendor_return_id") @db.Uuid
   dispatchedAt       DateTime? @map("dispatched_at")
 
   notes String?
 
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  createdById String?  @map("created_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
 
   product   Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
@@ -1025,59 +1004,50 @@ model SerialNumber {
 
 /**
  * Stock sold before it was on the shelf.
+ *
  * The business is dynamic: a channel deadline can force a shipment days before the vendor
  * delivers. Blocking that would cost a real sale, so the sale always goes through — but the
  * gap it leaves is recorded here rather than swallowed.
+ *
  * Why this is not simply a negative quantity_on_hand:
- * - a negative balance is not located anywhere; you cannot have -3 units in a warehouse,
- * and a stocktake would have nothing to reconcile against;
- * - it corrupts the moving average, which reseeds itself whenever the balance is <= 0,
- * silently discarding the blend on the next receipt;
- * - a bare number carries no date, cause, or owner, so nothing can chase it.
+ *  - a negative balance is not located anywhere; you cannot have -3 units in a warehouse,
+ *    and a stocktake would have nothing to reconcile against;
+ *  - it corrupts the moving average, which reseeds itself whenever the balance is <= 0,
+ *    silently discarding the blend on the next receipt;
+ *  - a bare number carries no date, cause, or owner, so nothing can chase it.
+ *
  * Rows are opened when a submitted sale cannot be covered, and closed automatically when a
  * goods receipt for the same product lands (oldest first).
  */
 model StockOwed {
-  id          String  @id @default(uuid()) @db.Uuid
-  productId   String  @map("product_id") @db.Uuid
-  /**
-   * Where the goods should have left from — the shortfall belongs to that location.
-   */
+  id        String @id @default(uuid()) @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  /** Where the goods should have left from — the shortfall belongs to that location. */
   warehouseId String? @map("warehouse_id") @db.Uuid
 
-  /**
-   * The sale that could not be covered.
-   */
+  /** The sale that could not be covered. */
   salesTransactionId String  @map("sales_transaction_id") @db.Uuid
   transactionRef     String? @map("transaction_ref")
 
-  /**
-   * Units short when the sale was submitted, and how many have since been covered.
-   */
+  /** Units short when the sale was submitted, and how many have since been covered. */
   quantity        Int @default(0)
   quantitySettled Int @default(0) @map("quantity_settled")
 
-  /**
-   * open | settled | cancelled
-   */
+  /** open | settled | cancelled */
   status String @default("open")
-  /**
-   * sold_before_receipt | manual
-   */
+  /** sold_before_receipt | manual */
   reason String @default("sold_before_receipt")
 
-  /**
-   * When this ought to be cleared — the expected delivery, so overdue items can escalate.
-   */
+  /** When this ought to be cleared — the expected delivery, so overdue items can escalate. */
   dueBy DateTime? @map("due_by")
 
   notes String?
 
-  openedAt   DateTime  @default(now()) @map("opened_at")
-  openedById String?   @map("opened_by") @db.Uuid
-  settledAt  DateTime? @map("settled_at")
-  updatedAt  DateTime  @updatedAt @map("updated_at")
-  deletedAt  DateTime? @map("deleted_at")
+  openedAt    DateTime  @default(now()) @map("opened_at")
+  openedById  String?   @map("opened_by") @db.Uuid
+  settledAt   DateTime? @map("settled_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
 
   product          Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouse        Warehouse?       @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
@@ -1091,34 +1061,29 @@ model StockOwed {
 
 /**
  * Goods sent back to the vendor.
+ *
  * A posted goods receipt is never rewritten, so returning stock is its own document
  * rather than an edit of history. Posting one takes the stock out at the product's
  * current average cost — which leaves the average untouched for the units that stay,
  * the correct behaviour for a moving average.
  */
 model VendorReturn {
-  id              String  @id @default(uuid()) @db.Uuid
-  returnNumber    String  @unique @map("return_number") // RTV-YYYY-NNNNN, year-scoped
+  id           String @id @default(uuid()) @db.Uuid
+  returnNumber String @unique @map("return_number") // RTV-YYYY-NNNNN, year-scoped
   // Owning company (denormalised from the source warehouse/PO for uniform scoping).
-  companyId       String? @map("company_id") @db.Uuid
-  vendorId        String  @map("vendor_id") @db.Uuid
-  /**
-   * Set when the return is against a specific order; standalone returns leave it null.
-   */
+  companyId    String? @map("company_id") @db.Uuid
+  vendorId     String @map("vendor_id") @db.Uuid
+  /** Set when the return is against a specific order; standalone returns leave it null. */
   purchaseOrderId String? @map("purchase_order_id") @db.Uuid
-  /**
-   * Where the stock leaves from.
-   */
-  warehouseId     String  @map("warehouse_id") @db.Uuid
+  /** Where the stock leaves from. */
+  warehouseId  String @map("warehouse_id") @db.Uuid
 
   status        String  @default("posted") // posted | cancelled
   reason        String
   creditNoteRef String? @map("credit_note_ref")
   notes         String?
 
-  /**
-   * Value removed, at average cost, frozen at posting.
-   */
+  /** Value removed, at average cost, frozen at posting. */
   totalQuantity Int     @default(0) @map("total_quantity")
   totalCostEur  Decimal @default(0) @map("total_cost_eur") @db.Decimal(14, 2)
 
@@ -1128,10 +1093,10 @@ model VendorReturn {
   createdById String?   @map("created_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  vendor        Vendor             @relation(fields: [vendorId], references: [id])
-  purchaseOrder PurchaseOrder?     @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
-  warehouse     Warehouse          @relation(fields: [warehouseId], references: [id])
-  company       Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  vendor        Vendor         @relation(fields: [vendorId], references: [id])
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  warehouse     Warehouse      @relation(fields: [warehouseId], references: [id])
+  company       Company?       @relation(fields: [companyId], references: [id], onDelete: SetNull)
   lines         VendorReturnLine[]
 
   @@index([vendorId])
@@ -1142,18 +1107,14 @@ model VendorReturn {
 }
 
 model VendorReturnLine {
-  id                  String  @id @default(uuid()) @db.Uuid
-  vendorReturnId      String  @map("vendor_return_id") @db.Uuid
-  productId           String  @map("product_id") @db.Uuid
-  /**
-   * Links the return back to the ordered line so the PO's received quantity can be reduced.
-   */
+  id             String @id @default(uuid()) @db.Uuid
+  vendorReturnId String @map("vendor_return_id") @db.Uuid
+  productId      String @map("product_id") @db.Uuid
+  /** Links the return back to the ordered line so the PO's received quantity can be reduced. */
   purchaseOrderLineId String? @map("purchase_order_line_id") @db.Uuid
 
   quantity    Int
-  /**
-   * The average cost at the moment of posting — what the stock was carried at.
-   */
+  /** The average cost at the moment of posting — what the stock was carried at. */
   unitCostEur Decimal @map("unit_cost_eur") @db.Decimal(14, 2)
   sortOrder   Int     @default(0) @map("sort_order")
 
@@ -1168,12 +1129,10 @@ model VendorReturnLine {
   @@map("vendor_return_line")
 }
 
-/**
- * Append-only status history for a PO (P6 detail view). One row per transition.
- */
+/** Append-only status history for a PO (P6 detail view). One row per transition. */
 model PurchaseOrderStatusEvent {
-  id              String  @id @default(uuid()) @db.Uuid
-  purchaseOrderId String  @map("purchase_order_id") @db.Uuid
+  id              String @id @default(uuid()) @db.Uuid
+  purchaseOrderId String @map("purchase_order_id") @db.Uuid
   status          String // the status the PO moved to
   note            String?
 
@@ -1210,6 +1169,7 @@ model PurchaseOrderUnlockRequest {
 
 /**
  * Append-only history of every change to a product's average cost.
+ *
  * A single number on the product can never be explained or audited, so each event keeps
  * the quantities and averages either side of it plus what caused it. Recomputing the
  * product's average from this table in order must reproduce Product.averageCostEur.
@@ -1218,34 +1178,24 @@ model ProductCostEvent {
   id        String @id @default(uuid()) @db.Uuid
   productId String @map("product_id") @db.Uuid
 
-  /**
-   * opening | goods_receipt | vendor_return | adjustment
-   */
+  /** opening | goods_receipt | vendor_return | adjustment */
   reason    String
-  /**
-   * Document behind it, e.g. a GoodsReceipt id. Free-form so later sources can reuse it.
-   */
+  /** Document behind it, e.g. a GoodsReceipt id. Free-form so later sources can reuse it. */
   refType   String? @map("ref_type")
   refId     String? @map("ref_id") @db.Uuid
   reference String? // human-readable, e.g. "GR-2026-00007"
 
-  /**
-   * Units in (+) or out (-) that this event costed.
-   */
-  qtyDelta       Int     @map("qty_delta")
-  /**
-   * Landed cost per unit for this event, in EUR — goods plus its share of shipping/duty/fees.
-   */
-  unitCostEur    Decimal @map("unit_cost_eur") @db.Decimal(14, 4)
-  /**
-   * The allocated ancillary portion inside unitCostEur, kept so landed vs goods is explicable.
-   */
+  /** Units in (+) or out (-) that this event costed. */
+  qtyDelta      Int      @map("qty_delta")
+  /** Landed cost per unit for this event, in EUR — goods plus its share of shipping/duty/fees. */
+  unitCostEur   Decimal  @map("unit_cost_eur") @db.Decimal(14, 4)
+  /** The allocated ancillary portion inside unitCostEur, kept so landed vs goods is explicable. */
   landedAddOnEur Decimal @default(0) @map("landed_add_on_eur") @db.Decimal(14, 4)
 
-  qtyBefore    Int      @map("qty_before")
-  avgBeforeEur Decimal? @map("avg_before_eur") @db.Decimal(14, 4)
-  qtyAfter     Int      @map("qty_after")
-  avgAfterEur  Decimal  @map("avg_after_eur") @db.Decimal(14, 4)
+  qtyBefore     Int      @map("qty_before")
+  avgBeforeEur  Decimal? @map("avg_before_eur") @db.Decimal(14, 4)
+  qtyAfter      Int      @map("qty_after")
+  avgAfterEur   Decimal  @map("avg_after_eur") @db.Decimal(14, 4)
 
   notes String?
 
@@ -1332,13 +1282,13 @@ model ProductCompany {
 // ===========================================================================
 
 model Country {
-  id                       String  @id @default(uuid()) @db.Uuid
-  name                     String // ISO official name
-  isoCode                  String  @unique @map("iso_code") // 2-char alpha-2
+  id                       String   @id @default(uuid()) @db.Uuid
+  name                     String   // ISO official name
+  isoCode                  String   @unique @map("iso_code") // 2-char alpha-2
   continent                String
-  euVatZone                Boolean @default(false) @map("eu_vat_zone")
-  vatRate                  Decimal @default(0) @map("vat_rate") @db.Decimal(5, 2)
-  defaultShippingServiceId String? @map("default_shipping_service_id") @db.Uuid
+  euVatZone                Boolean  @default(false) @map("eu_vat_zone")
+  vatRate                  Decimal  @default(0) @map("vat_rate") @db.Decimal(5, 2)
+  defaultShippingServiceId String?  @map("default_shipping_service_id") @db.Uuid
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -1357,10 +1307,10 @@ model Country {
 }
 
 model ShippingService {
-  id                  String  @id @default(uuid()) @db.Uuid
-  name                String
-  alias               String?
-  calcMethod          String  @map("calc_method") // 'actual_weight' | 'volumetric_weight'
+  id         String @id @default(uuid()) @db.Uuid
+  name       String
+  alias      String?
+  calcMethod String @map("calc_method") // 'actual_weight' | 'volumetric_weight'
   // Tracking URL template for this courier. A `{tracking}` placeholder is replaced with
   // the shipment's tracking number to build a status/track link (used across modules).
   trackingUrlTemplate String? @map("tracking_url_template")
@@ -1443,41 +1393,41 @@ model CountryShippingZone {
 }
 
 model SalesChannel {
-  id                         String  @id @default(uuid()) @db.Uuid
+  id              String  @id @default(uuid()) @db.Uuid
   // Owning company. Sales channels are company-isolated: each company keeps its own
   // set (two companies may each have their own "Amazon IT"). Never shared across companies.
-  companyId                  String? @map("company_id") @db.Uuid
-  name                       String
-  description                String?
+  companyId       String? @map("company_id") @db.Uuid
+  name            String
+  description     String?
   // 'online'  — a marketplace/webshop; orders arrive via an integration and the channel reports tax to us.
   // 'local'   — our own direct/walk-in sales, entered by hand: EUR, FX 1, no sales fee, VAT charged by us.
   // Structural rather than editable: it decides which pricing and alert rules apply to a transaction.
-  kind                       String  @default("online")
+  kind            String  @default("online")
   // Whether a transaction Total (net + VAT + buyer-paid shipping + its VAT) is calculated and
   // shown for this channel. Off by default: on a marketplace the channel reports tax in its own
   // way, so a single "total" is often meaningless or misleading. On for our own local sales.
-  showTransactionTotal       Boolean @default(false) @map("show_transaction_total")
+  showTransactionTotal Boolean @default(false) @map("show_transaction_total")
   // Chip colours used wherever the channel name is shown. Seeded from the native country's
   // flag palette, then editable per channel in Global Settings. Null falls back to neutral grey.
-  chipBgColor                String? @map("chip_bg_color")
-  chipTextColor              String? @map("chip_text_color")
-  nativeCountryId            String? @map("native_country_id") @db.Uuid
-  nativeCurrency             String? @map("native_currency") // ISO 4217 3-letter
-  generalSalesFeePct         Float?  @map("general_sales_fee_pct") // % fee charged per sale
+  chipBgColor   String? @map("chip_bg_color")
+  chipTextColor String? @map("chip_text_color")
+  nativeCountryId String? @map("native_country_id") @db.Uuid
+  nativeCurrency     String? @map("native_currency") // ISO 4217 3-letter
+  generalSalesFeePct Float?  @map("general_sales_fee_pct") // % fee charged per sale
   // Whether the sales fees are charged in the channel's native currency; if not,
   // feeCurrency holds the explicit currency the fees are charged in.
   feeChargedInNativeCurrency Boolean @default(true) @map("fee_charged_in_native_currency")
   feeCurrency                String? @map("fee_currency")
   // Marketplace-collected VAT threshold rule (e.g. UK £135): below/equal the threshold the
   // channel collects VAT at belowPct; above it VAT is import VAT (abovePct, usually 0).
-  vatThresholdEnabled        Boolean @default(false) @map("vat_threshold_enabled")
-  vatThresholdAmount         Float?  @map("vat_threshold_amount")
-  vatThresholdCurrency       String? @map("vat_threshold_currency")
-  vatBelowThresholdPct       Float?  @map("vat_below_threshold_pct")
-  vatAboveThresholdPct       Float?  @map("vat_above_threshold_pct")
-  email                      String?
-  website                    String?
-  contactName                String? @map("contact_name")
+  vatThresholdEnabled  Boolean @default(false) @map("vat_threshold_enabled")
+  vatThresholdAmount   Float?  @map("vat_threshold_amount")
+  vatThresholdCurrency String? @map("vat_threshold_currency")
+  vatBelowThresholdPct Float?  @map("vat_below_threshold_pct")
+  vatAboveThresholdPct Float?  @map("vat_above_threshold_pct")
+  email              String?
+  website            String?
+  contactName        String? @map("contact_name")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -1500,22 +1450,22 @@ model SalesChannel {
 // encrypted in integration_secret and NEVER returned through the API.
 // ===========================================================================
 model ChannelIntegration {
-  id                   String    @id @default(uuid()) @db.Uuid
-  name                 String
-  channelType          String    @map("channel_type") // connector/family key: 'amazon' | 'ebay' | 'onbuy'
-  marketplace          String?   @map("marketplace") // sub-channel id, e.g. 'UK', 'DE'
-  config               Json      @default("{}") // non-secret fields (url, sellerId, siteIds, …)
-  status               String    @default("active") // active | disabled
-  lastTestedAt         DateTime? @map("last_tested_at")
-  lastTestStatus       String?   @map("last_test_status") // ok | fail
-  lastTestMessage      String?   @map("last_test_message")
+  id             String    @id @default(uuid()) @db.Uuid
+  name           String
+  channelType    String    @map("channel_type") // connector/family key: 'amazon' | 'ebay' | 'onbuy'
+  marketplace    String?   @map("marketplace") // sub-channel id, e.g. 'UK', 'DE'
+  config         Json      @default("{}") // non-secret fields (url, sellerId, siteIds, …)
+  status         String    @default("active") // active | disabled
+  lastTestedAt   DateTime? @map("last_tested_at")
+  lastTestStatus String?   @map("last_test_status") // ok | fail
+  lastTestMessage String?  @map("last_test_message")
   // Set when the user has reviewed & confirmed the field mapping (gate for import).
-  mappingVerifiedAt    DateTime? @map("mapping_verified_at")
+  mappingVerifiedAt DateTime? @map("mapping_verified_at")
   // Import settings: where imported orders land, and how the sync runs.
-  targetSalesChannelId String?   @map("target_sales_channel_id") @db.Uuid
-  targetCompanyId      String?   @map("target_company_id") @db.Uuid
-  autoSyncEnabled      Boolean   @default(false) @map("auto_sync_enabled")
-  backfillDays         Int       @default(30) @map("backfill_days")
+  targetSalesChannelId String?  @map("target_sales_channel_id") @db.Uuid
+  targetCompanyId      String?  @map("target_company_id") @db.Uuid
+  autoSyncEnabled      Boolean  @default(false) @map("auto_sync_enabled")
+  backfillDays         Int      @default(30) @map("backfill_days")
   lastSyncedAt         DateTime? @map("last_synced_at") // high-water mark (max imported order date)
   lastSyncRunAt        DateTime? @map("last_sync_run_at")
   lastSyncStatus       String?   @map("last_sync_status") // ok | error
@@ -1527,8 +1477,8 @@ model ChannelIntegration {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  secrets         IntegrationSecret[]
-  audits          IntegrationAudit[]
+  secrets IntegrationSecret[]
+  audits  IntegrationAudit[]
   channelListings ChannelListing[]
 
   @@map("channel_integration")
@@ -1567,11 +1517,9 @@ model IntegrationAudit {
   @@map("integration_audit")
 }
 
-/**
- * Optional brand logo for an integration channel family (Amazon, eBay, OnBuy).
- * Keyed by the static connector `type`; shown in the Integrations group header
- * in place of the monogram fallback. One logo per channel type.
- */
+/** Optional brand logo for an integration channel family (Amazon, eBay, OnBuy).
+ *  Keyed by the static connector `type`; shown in the Integrations group header
+ *  in place of the monogram fallback. One logo per channel type. */
 model ChannelLogo {
   id          String @id @default(uuid()) @db.Uuid
   channelType String @unique @map("channel_type")
@@ -1587,13 +1535,13 @@ model ChannelLogo {
 // Profit-percentage tiers: colour bands for the Profit (%) chip in the sales
 // transaction list (e.g. Tier 1: 1–10% → green chip). Managed in Global Settings.
 model ProfitTier {
-  id        String  @id @default(uuid()) @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
   name      String?
-  fromPct   Float   @map("from_pct")
-  toPct     Float   @map("to_pct")
-  bgColor   String  @map("bg_color") // CSS colour for the chip background
-  fontColor String  @map("font_color") // CSS colour for the chip text
-  sortOrder Int     @default(0) @map("sort_order")
+  fromPct   Float  @map("from_pct")
+  toPct     Float  @map("to_pct")
+  bgColor   String @map("bg_color") // CSS colour for the chip background
+  fontColor String @map("font_color") // CSS colour for the chip text
+  sortOrder Int    @default(0) @map("sort_order")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1641,77 +1589,77 @@ model CustomsFxSync {
 // ===========================================================================
 
 model SalesTransaction {
-  id                    String    @id @default(uuid()) @db.Uuid
-  date                  DateTime
-  transactionRef        String    @map("transaction_ref") // the user's "Transaction ID"
-  salesChannelId        String?   @map("sales_channel_id") @db.Uuid
-  destinationCountryId  String?   @map("destination_country_id") @db.Uuid
-  companyId             String?   @map("company_id") @db.Uuid
-  currency              String? // native currency snapshot (net/vat/shipping amounts)
-  feeCurrency           String?   @map("fee_currency") // fee currency snapshot
+  id                   String   @id @default(uuid()) @db.Uuid
+  date                 DateTime
+  transactionRef       String   @map("transaction_ref") // the user's "Transaction ID"
+  salesChannelId       String?  @map("sales_channel_id") @db.Uuid
+  destinationCountryId String?  @map("destination_country_id") @db.Uuid
+  companyId            String?  @map("company_id") @db.Uuid
+  currency             String? // native currency snapshot (net/vat/shipping amounts)
+  feeCurrency          String?  @map("fee_currency") // fee currency snapshot
   // draft = editable by anyone; submitted = locked (admin edits freely, non-admins need
   // an unlock granted). unlockedForEdit re-opens a submitted transaction to non-admins.
-  status                String    @default("draft") // draft | submitted
-  unlockedForEdit       Boolean   @default(false) @map("unlocked_for_edit")
+  status          String  @default("draft") // draft | submitted
+  unlockedForEdit Boolean @default(false) @map("unlocked_for_edit")
   // Chosen shipping service (defaults to the destination country's default; editable).
-  shippingServiceId     String?   @map("shipping_service_id") @db.Uuid
+  shippingServiceId String? @map("shipping_service_id") @db.Uuid
   // Snapshot: channel currency -> EUR exchange rate at the transaction date.
-  exchangeRate          Float?    @map("exchange_rate")
+  exchangeRate Float? @map("exchange_rate")
   // Snapshot: fee currency -> EUR rate (same as exchangeRate when fee is in native currency).
-  feeExchangeRate       Float?    @map("fee_exchange_rate")
+  feeExchangeRate Float? @map("fee_exchange_rate")
   // Destination VAT %: auto-derived (channel threshold rule or country rate) unless the
   // user overrides it (vatOverridden = true keeps the manual value on re-save).
-  destinationVatPct     Float?    @map("destination_vat_pct")
-  vatOverridden         Boolean   @default(false) @map("vat_overridden")
+  destinationVatPct Float?  @map("destination_vat_pct")
+  vatOverridden     Boolean @default(false) @map("vat_overridden")
   // Destination tax regime for this sale, so reports can separate VAT from GST (AU),
   // Japanese Consumption Tax (JP) and US-style sales tax. Derived from the destination
   // country and snapshotted at sale time. vat | gst | jct | sales_tax | none.
-  taxType               String?   @map("tax_type")
+  taxType           String? @map("tax_type")
   // Fulfilment lifecycle (operations): 'cancelled' is used by the returns layer. The
   // platform "shipped" state is derived from whether an outbound shipment is registered
   // in the Shipments module — this stored value is no longer the source of truth for it.
-  fulfilmentStatus      String    @default("pending") @map("fulfilment_status") // pending | shipped | cancelled
+  fulfilmentStatus String @default("pending") @map("fulfilment_status") // pending | shipped | cancelled
   // Shipment status as reported by the sales channel's API (e.g. OnBuy shipped_at/dispatched).
   // Kept separate from the platform status so a mismatch can later raise an alarm.
-  channelShipmentStatus String?   @map("channel_shipment_status") // shipped | not_shipped
+  channelShipmentStatus String? @map("channel_shipment_status") // shipped | not_shipped
   // How the order was fulfilled, from the channel (Amazon FulfillmentChannel: AFN→FBA, MFN→FBM).
   // Drives the profit cost basis: FBM = purchase cost + outbound shipping; FBA = purchase cost +
   // average inbound-to-Amazon cost + Amazon FBA fulfilment fee. Null where the concept doesn't apply.
-  fulfilmentType        String?   @map("fulfilment_type") // FBA | FBM
+  fulfilmentType String? @map("fulfilment_type") // FBA | FBM
   // Local sales only. There is no carrier, weight or zone to estimate from, so the cost is
   // entered ad-hoc per transaction and the delivery method is just a label for the record.
-  deliveryMethod        String?   @map("delivery_method") // pickup | own_delivery
-  localShippingCostEur  Float?    @map("local_shipping_cost_eur")
+  deliveryMethod      String? @map("delivery_method") // pickup | own_delivery
+  localShippingCostEur Float? @map("local_shipping_cost_eur")
   // Sale-level discount, spread across the lines in proportion to their net so each line's
   // VAT falls with it. Stored as entered ('percentage' of the net total, or a fixed EUR
   // amount) so reopening the sale shows what was actually keyed in, not a derived figure.
-  discountType          String?   @map("discount_type") // percentage | fixed
-  discountValue         Float?    @map("discount_value")
+  discountType  String? @map("discount_type") // percentage | fixed
+  discountValue Float?  @map("discount_value")
   // Whether the discount is taken off the net total ('net', default) or the
   // VAT-inclusive total ('gross'). Only changes the maths for a fixed amount.
-  discountBase          String?   @map("discount_base") // net | gross
+  discountBase  String? @map("discount_base") // net | gross
   // Order resolution (returns/cancellations/refunds). Adjusts revenue/COGS in the profit calc.
-  resolution            String    @default("none") @map("resolution") // none | cancelled | returned | replaced
-  refundAmount          Float?    @map("refund_amount") // our-revenue portion refunded (net+shipping, exc VAT), native currency
-  restockItems          Boolean   @default(false) @map("restock_items") // returned goods resellable → reverse COGS
-  feeRefunded           Boolean   @default(false) @map("fee_refunded") // channel refunded its selling fee
-  resolutionNotes       String?   @map("resolution_notes")
-  resolvedAt            DateTime? @map("resolved_at")
+  resolution      String   @default("none") @map("resolution") // none | cancelled | returned | replaced
+  refundAmount    Float?   @map("refund_amount") // our-revenue portion refunded (net+shipping, exc VAT), native currency
+  restockItems    Boolean  @default(false) @map("restock_items") // returned goods resellable → reverse COGS
+  feeRefunded     Boolean  @default(false) @map("fee_refunded") // channel refunded its selling fee
+  resolutionNotes String?  @map("resolution_notes")
+  resolvedAt      DateTime? @map("resolved_at")
   // Where a returned FBM unit was physically put back (null = not restocked). Its presence
   // encodes "restocked"; the warehouse's include_in_inventory flag decides resellability,
   // which in turn drives restockItems (reverse COGS) vs keeping the cost as a loss. FBA
   // returns never set this — the goods go back to Amazon, not to us.
-  returnWarehouseId     String?   @map("return_warehouse_id") @db.Uuid
+  returnWarehouseId String? @map("return_warehouse_id") @db.Uuid
   // Set once the operator has made the return decision on a defective (cancelled/refunded)
   // order. A refund pulled from Amazon lands with this false — the "needs action" worklist.
-  returnHandled         Boolean   @default(false) @map("return_handled")
+  returnHandled   Boolean  @default(false) @map("return_handled")
   // Who set the resolution: 'manual' (operator) or 'amazon' (auto-ingested). Lets a re-sync
   // apply a fresh refund without ever clobbering a decision the operator already made.
-  resolutionSource      String?   @map("resolution_source") // manual | amazon
+  resolutionSource String? @map("resolution_source") // manual | amazon
   // Provenance: 'manual' or an importer key like 'onbuy'; integrationId links the
   // source integration so a re-sync only ever touches its own imported records.
-  source                String    @default("manual") @map("source")
-  integrationId         String?   @map("integration_id") @db.Uuid
+  source        String  @default("manual") @map("source")
+  integrationId String? @map("integration_id") @db.Uuid
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -1719,10 +1667,10 @@ model SalesTransaction {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  salesChannel       SalesChannel?                   @relation(fields: [salesChannelId], references: [id], onDelete: SetNull)
-  destinationCountry Country?                        @relation(fields: [destinationCountryId], references: [id], onDelete: SetNull)
-  company            Company?                        @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  shippingService    ShippingService?                @relation("TxShippingService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
+  salesChannel       SalesChannel?    @relation(fields: [salesChannelId], references: [id], onDelete: SetNull)
+  destinationCountry Country?         @relation(fields: [destinationCountryId], references: [id], onDelete: SetNull)
+  company            Company?         @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  shippingService    ShippingService? @relation("TxShippingService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
   stockOwed          StockOwed[]
   items              SalesTransactionItem[]
   unlockRequests     SalesTransactionUnlockRequest[]
@@ -1786,20 +1734,20 @@ model SalesTransactionUnlockRequest {
 }
 
 model SalesTransactionItem {
-  id            String  @id @default(uuid()) @db.Uuid
-  transactionId String  @map("transaction_id") @db.Uuid
+  id            String @id @default(uuid()) @db.Uuid
+  transactionId String @map("transaction_id") @db.Uuid
   productId     String? @map("product_id") @db.Uuid
   sku           String
-  quantity      Int     @default(1)
+  quantity      Int    @default(1)
 
   netSalesAmount             Float? @map("net_sales_amount")
   vatAmount                  Float? @map("vat_amount")
   shippingAmount             Float? @map("shipping_amount")
   shippingAmountVat          Float? @map("shipping_amount_vat")
   salesChannelSalesFeeAmount Float? @map("sales_channel_sales_fee_amount") // referral / selling fee (excludes FBA)
-  fbaFulfilmentFeeAmount     Float? @map("fba_fulfilment_fee_amount") // Amazon FBA fulfilment fee (FBA orders)
-  amazonPointsAmount         Float? @map("amazon_points_amount") // Amazon Points awarded (JP); a deduction from our proceeds
-  salesTaxAmount             Float? @map("sales_tax_amount") // total tax the channel charged (item+shipping); reporting only, not used in calcs
+  fbaFulfilmentFeeAmount     Float? @map("fba_fulfilment_fee_amount")      // Amazon FBA fulfilment fee (FBA orders)
+  amazonPointsAmount         Float? @map("amazon_points_amount")           // Amazon Points awarded (JP); a deduction from our proceeds
+  salesTaxAmount             Float? @map("sales_tax_amount")               // total tax the channel charged (item+shipping); reporting only, not used in calcs
 
   // Per-line unit purchase cost override (EUR). When set, it replaces the product's stored
   // purchase cost in this transaction's profit calc — for the times the actual cost of the
@@ -1817,8 +1765,8 @@ model SalesTransactionItem {
   // Only used when "deduct stock on sale" is on; lets a re-submit deduct just the delta
   // and an un-submit put back exactly what it took. The remainder that stock couldn't
   // cover is carried as StockOwed, not here.
-  stockDeductedQty Int     @default(0) @map("stock_deducted_qty")
-  stockWarehouseId String? @map("stock_warehouse_id") @db.Uuid
+  stockDeductedQty  Int     @default(0) @map("stock_deducted_qty")
+  stockWarehouseId  String? @map("stock_warehouse_id") @db.Uuid
 
   // How many units of this line have been taken off channel Availability (the sellable number
   // broadcast to every channel). Independent of physical stock: a sale on any channel lowers
@@ -1850,28 +1798,28 @@ model SalesTransactionItem {
 // feeds the profit calc for FBA orders.
 // ===========================================================================
 model FbaShipment {
-  id                   String   @id @default(uuid()) @db.Uuid
+  id                   String  @id @default(uuid()) @db.Uuid
   // Owning company. FBA shipments are company-isolated.
-  companyId            String?  @map("company_id") @db.Uuid
+  companyId            String? @map("company_id") @db.Uuid
   date                 DateTime
-  salesChannelId       String?  @map("sales_channel_id") @db.Uuid
+  salesChannelId       String? @map("sales_channel_id") @db.Uuid
   // Snapshot of the channel's native country at creation (the destination).
-  destinationCountryId String?  @map("destination_country_id") @db.Uuid
+  destinationCountryId String? @map("destination_country_id") @db.Uuid
   // Unique FBA shipment identifier generated by the target sales channel (Amazon).
-  fbaShipmentRef       String?  @map("fba_shipment_ref")
-  shippingServiceId    String?  @map("shipping_service_id") @db.Uuid
+  fbaShipmentRef       String? @map("fba_shipment_ref")
+  shippingServiceId    String? @map("shipping_service_id") @db.Uuid
   // Snapshot of the resolved zone + calc method at estimate time.
-  shippingZoneId       String?  @map("shipping_zone_id") @db.Uuid
-  calcMethod           String?  @map("calc_method") // 'actual_weight' | 'volumetric_weight'
+  shippingZoneId       String? @map("shipping_zone_id") @db.Uuid
+  calcMethod           String? @map("calc_method") // 'actual_weight' | 'volumetric_weight'
   // Packaging uplift % added on top of summed product weight (actual-weight services).
-  packagingPct         Decimal  @default(10) @map("packaging_pct") @db.Decimal(6, 2)
+  packagingPct         Decimal @default(10) @map("packaging_pct") @db.Decimal(6, 2)
   // Raw summed basis weight (before packaging) and the final weight used for the rate band.
   basisWeightKg        Decimal? @map("basis_weight_kg") @db.Decimal(12, 3)
   chargeableWeightKg   Decimal? @map("chargeable_weight_kg") @db.Decimal(12, 3)
   estimatedCostEur     Decimal? @map("estimated_cost_eur") @db.Decimal(12, 2)
   // Actual cost registered by operations; when set it overrides the estimate for allocation.
   actualCostEur        Decimal? @map("actual_cost_eur") @db.Decimal(12, 2)
-  status               String   @default("draft") // draft | confirmed
+  status               String  @default("draft") // draft | confirmed
   comments             String?
 
   createdAt   DateTime  @default(now()) @map("created_at")
@@ -1883,11 +1831,11 @@ model FbaShipment {
   // Total empty-box weight (Σ box weights) snapshotted at estimate time.
   emptyBoxesWeightKg Decimal? @map("empty_boxes_weight_kg") @db.Decimal(12, 3)
 
-  salesChannel       SalesChannel?     @relation(fields: [salesChannelId], references: [id], onDelete: SetNull)
-  destinationCountry Country?          @relation(fields: [destinationCountryId], references: [id], onDelete: SetNull)
-  shippingService    ShippingService?  @relation("FbaShipmentService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
-  shippingZone       ShippingZone?     @relation(fields: [shippingZoneId], references: [id], onDelete: SetNull)
-  company            Company?          @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  salesChannel       SalesChannel?    @relation(fields: [salesChannelId], references: [id], onDelete: SetNull)
+  destinationCountry Country?         @relation(fields: [destinationCountryId], references: [id], onDelete: SetNull)
+  shippingService    ShippingService? @relation("FbaShipmentService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
+  shippingZone       ShippingZone?    @relation(fields: [shippingZoneId], references: [id], onDelete: SetNull)
+  company            Company?         @relation(fields: [companyId], references: [id], onDelete: SetNull)
   boxes              FbaShipmentBox[]
   items              FbaShipmentItem[]
 
@@ -1900,15 +1848,15 @@ model FbaShipment {
 // (so the box weight/volume feeds the shipping-cost calc) and an optional tracking
 // number added later by operations (boxes may share or have distinct tracking).
 model FbaShipmentBox {
-  id             String   @id @default(uuid()) @db.Uuid
-  shipmentId     String   @map("shipment_id") @db.Uuid
+  id             String  @id @default(uuid()) @db.Uuid
+  shipmentId     String  @map("shipment_id") @db.Uuid
   label          String? // e.g. "Box 1"
   emptyWeightKg  Decimal? @map("empty_weight_kg") @db.Decimal(12, 3)
   lengthCm       Decimal? @map("length_cm") @db.Decimal(10, 2)
   widthCm        Decimal? @map("width_cm") @db.Decimal(10, 2)
   heightCm       Decimal? @map("height_cm") @db.Decimal(10, 2)
-  trackingNumber String?  @map("tracking_number")
-  sortOrder      Int      @default(0) @map("sort_order")
+  trackingNumber String? @map("tracking_number")
+  sortOrder      Int     @default(0) @map("sort_order")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -1922,17 +1870,17 @@ model FbaShipmentBox {
 }
 
 model FbaShipmentItem {
-  id               String   @id @default(uuid()) @db.Uuid
-  shipmentId       String   @map("shipment_id") @db.Uuid
-  boxId            String?  @map("box_id") @db.Uuid
-  productId        String?  @map("product_id") @db.Uuid
-  sku              String
-  title            String? // snapshot of the product title at add time
-  quantity         Int      @default(1)
+  id         String  @id @default(uuid()) @db.Uuid
+  shipmentId String  @map("shipment_id") @db.Uuid
+  boxId      String? @map("box_id") @db.Uuid
+  productId  String? @map("product_id") @db.Uuid
+  sku        String
+  title      String? // snapshot of the product title at add time
+  quantity   Int     @default(1)
   // Per-unit basis weight used for allocation (actual or volumetric per the service).
-  unitWeightKg     Decimal? @map("unit_weight_kg") @db.Decimal(12, 3)
+  unitWeightKg         Decimal? @map("unit_weight_kg") @db.Decimal(12, 3)
   // Shipping cost allocated to this line (effective cost × its weight×qty share).
-  allocatedCostEur Decimal? @map("allocated_cost_eur") @db.Decimal(12, 4)
+  allocatedCostEur     Decimal? @map("allocated_cost_eur") @db.Decimal(12, 4)
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -2057,11 +2005,11 @@ model ExpenseTag {
 // Effective-dated base amount. A new row from month M is the "apply to all following
 // months" change; the value in effect for a month is the latest row with effectiveMonth <= M.
 model ExpenseAmount {
-  id             String   @id @default(uuid()) @db.Uuid
-  expenseId      String   @map("expense_id") @db.Uuid
-  effectiveMonth String   @map("effective_month") // 'YYYY-MM'
-  amount         Decimal  @db.Decimal(14, 2) // in the expense's currency
-  amountEur      Decimal  @map("amount_eur") @db.Decimal(14, 2) // converted at booking
+  id             String  @id @default(uuid()) @db.Uuid
+  expenseId      String  @map("expense_id") @db.Uuid
+  effectiveMonth String  @map("effective_month") // 'YYYY-MM'
+  amount         Decimal @db.Decimal(14, 2) // in the expense's currency
+  amountEur      Decimal @map("amount_eur") @db.Decimal(14, 2) // converted at booking
   fxRate         Decimal? @map("fx_rate") @db.Decimal(18, 8) // EUR per 1 unit of currency
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -2075,11 +2023,11 @@ model ExpenseAmount {
 
 // "Apply to this month only" — a single-month override that wins over the effective amount.
 model ExpenseMonthOverride {
-  id        String   @id @default(uuid()) @db.Uuid
-  expenseId String   @map("expense_id") @db.Uuid
+  id        String  @id @default(uuid()) @db.Uuid
+  expenseId String  @map("expense_id") @db.Uuid
   month     String // 'YYYY-MM'
-  amount    Decimal  @db.Decimal(14, 2)
-  amountEur Decimal  @map("amount_eur") @db.Decimal(14, 2)
+  amount    Decimal @db.Decimal(14, 2)
+  amountEur Decimal @map("amount_eur") @db.Decimal(14, 2)
   fxRate    Decimal? @map("fx_rate") @db.Decimal(18, 8)
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -2113,8 +2061,8 @@ model RepricingSkuPricing {
   currency      String  @default("EUR")
 
   fulfillment     String // FBA | FBM | SFP
-  strategy        String  @default("BUY_BOX") // BUY_BOX | LOWEST_PRICE | VELOCITY | MANUAL_ONLY
-  automationState String  @default("EXCLUDED") @map("automation_state") // EXCLUDED | SHADOW | LIVE | QUARANTINED | KILLED
+  strategy        String @default("BUY_BOX") // BUY_BOX | LOWEST_PRICE | VELOCITY | MANUAL_ONLY
+  automationState String @default("EXCLUDED") @map("automation_state") // EXCLUDED | SHADOW | LIVE | QUARANTINED | KILLED
   exclusionReason String? @map("exclusion_reason") // e.g. FLOOR_UNKNOWN, COGS_MISSING, FLOOR_STALE
 
   // Floors (§4.3) — absolute never-cross line + strategy floor. Null ⇒ EXCLUDED.
