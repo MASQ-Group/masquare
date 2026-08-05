@@ -2,8 +2,10 @@ import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { AdminGuard } from '../../auth/admin.guard';
+import { CurrentUser, type AuthUser } from '../../common/current-user.decorator';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { FloorService } from '../floor/floor.service';
+import { RepricingControlService } from '../writer/control.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 // Ops console API for the Amazon repricing module (admin-only). Phase-appropriate subset: onboard
@@ -17,8 +19,20 @@ export class RepricingController {
   constructor(
     private readonly onboarding: OnboardingService,
     private readonly floors: FloorService,
+    private readonly control: RepricingControlService,
     private readonly prisma: PrismaService,
   ) {}
+
+  /** Global runtime controls: the kill switch + live-writes master switch (§6.4). */
+  @Get('control')
+  getControl() {
+    return this.control.get();
+  }
+
+  @Post('control')
+  setControl(@Body() dto: { liveWritesEnabled?: boolean; killSwitchEngaged?: boolean }, @CurrentUser() user: AuthUser) {
+    return this.control.update(dto, user.sub);
+  }
 
   /** Seed/refresh RepricingSkuPricing from matched Amazon listings (§3.3). */
   @Post('onboard')

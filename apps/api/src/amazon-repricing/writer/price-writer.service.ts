@@ -6,15 +6,18 @@ import { AutomationState } from '../engine/types';
 import { checkSafety } from '../engine/safety-layer';
 import { REPRICING_DEFAULTS, ISO_TO_MARKETPLACE, MARKETPLACE_TO_ISO } from '../config/repricing.config';
 import { resolveWriteMode } from './write-mode';
+import { RepricingControlService } from './control.service';
 
 // The price-writer (spec §6): the ONLY component that submits a price to Amazon. It runs the
 // independent safety layer (§6.3) as the final gate, then writes via patchListingsItem — as a
-// VALIDATION_PREVIEW dry-run unless the SKU is LIVE and the master switch is on (write-mode.ts).
+// VALIDATION_PREVIEW dry-run unless the SKU is LIVE and live-writes are enabled (write-mode.ts).
 // It records the submission outcome on the decision row and the SKU's volatile state. It has NO
 // strategy knowledge — the intended price is already decided upstream.
+//
+// Live-writes + the kill switch are read from the DB control row (RepricingControlService) so ops
+// can flip them at runtime; the env AMZ_REPRICING_KILL_SWITCH ORs in as a last-resort hard stop.
 
-const liveWritesEnabled = (): boolean => process.env.AMZ_REPRICING_LIVE_WRITES === 'true';
-const killSwitchEngaged = (): boolean => process.env.AMZ_REPRICING_KILL_SWITCH === 'true';
+const envKillSwitch = (): boolean => process.env.AMZ_REPRICING_KILL_SWITCH === 'true';
 
 export interface SubmitInput {
   decisionId: string;
@@ -43,14 +46,20 @@ export class PriceWriterService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly integrations: IntegrationsService,
+    private readonly control: RepricingControlService,
   ) {}
 
   async submit(input: SubmitInput): Promise<SubmitResult> {
+    // Runtime controls (DB) + the env kill switch as an extra hard stop.
+    const ctl = await this.control.get();
+    const killed = ctl.killSwitchEngaged || envKillSwitch();
+    const liveWrites = ctl.liveWritesEnabled;
+
     // 1. Write mode — kill switch / LIVE gate / master switch (all default to no real write).
-    const mode = resolveWriteMode({ automationState: input.automationState, liveWritesEnabled: liveWritesEnabled(), killSwitchEngaged: killSwitchEngaged() });
+    const mode = resolveWriteMode({ automationState: input.automationState, liveWritesEnabled: liveWrites, killSwitchEngaged: killed });
     if (mode === 'SKIP') {
       await this.recordVerdict(input.decisionId, { ok: false, veto: 'WRITE_SKIPPED' }, 'SKIPPED');
-      return { status: 'SKIPPED', reason: killSwitchEngaged() ? 'kill switch engaged' : `state=${input.automationState}` };
+      return { status: 'SKIPPED', reason: killed ? 'kill switch engaged' : `state=${input.automationState}` };
     }
 
     // 2. Safety layer (§6.3) — the boring, exception-free final check.
@@ -63,7 +72,7 @@ export class PriceWriterService {
       currentPriceCents: input.currentPriceCents,
       maxStepPct: REPRICING_DEFAULTS.maxStepPctHard,
       automationState: input.automationState,
-      killSwitchEngaged: killSwitchEngaged(),
+      killSwitchEngaged: killed,
     });
     if (!verdict.ok) {
       await this.recordVerdict(input.decisionId, verdict, 'VETOED');

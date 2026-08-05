@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCcw, DownloadCloud } from 'lucide-react';
+import { RefreshCcw, DownloadCloud, ShieldAlert } from 'lucide-react';
 import { repricingApi, type RepricingSkuRow, type RepricingDecisionRow } from '../lib/api';
 
 // Amazon Buy Box repricing — ops console (Phase-appropriate: readiness, SKU floors, decision
@@ -48,6 +48,14 @@ export function RepricingPage() {
   const onboard = useMutation({ mutationFn: repricingApi.onboard, onSuccess: refreshAll });
   const recompute = useMutation({ mutationFn: repricingApi.recomputeFloors, onSuccess: refreshAll });
 
+  const control = useQuery({ queryKey: ['repricing', 'control'], queryFn: repricingApi.getControl });
+  const setControl = useMutation({
+    mutationFn: repricingApi.setControl,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['repricing', 'control'] }),
+  });
+  const killed = control.data?.killSwitchEngaged ?? false;
+  const liveWrites = control.data?.liveWritesEnabled ?? false;
+
   const total = readiness.data?.total ?? 0;
   const byState = readiness.data?.byState ?? {};
   const byExclusion = readiness.data?.byExclusion ?? {};
@@ -78,6 +86,39 @@ export function RepricingPage() {
             <RefreshCcw size={15} /> {recompute.isPending ? 'Recomputing…' : 'Recompute floors'}
           </button>
         </div>
+      </div>
+
+      {/* Safety controls (§6.4): DB-backed kill switch + live-writes master (both default OFF). */}
+      <div className={`mb-5 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border px-4 py-3 ${killed ? 'border-red-300 bg-red-50' : 'border-n-200 bg-n-0'}`}>
+        <div className="flex items-center gap-2.5">
+          <ShieldAlert size={17} className={killed ? 'text-red-600' : 'text-n-400'} />
+          <span className="text-[13px] font-semibold text-n-800">Global kill switch</span>
+          <button
+            onClick={() => setControl.mutate({ killSwitchEngaged: !killed })}
+            disabled={setControl.isPending}
+            className={`inline-flex h-9 items-center gap-2 rounded-md px-3.5 text-[13px] font-bold text-white disabled:opacity-50 ${killed ? 'bg-n-500 hover:bg-n-600' : 'bg-red-600 hover:bg-red-700'}`}
+          >
+            {killed ? 'Kill switch ENGAGED — click to release' : 'STOP all writes'}
+          </button>
+          {killed && <span className="text-[12px] font-semibold text-red-700">No prices will be submitted.</span>}
+        </div>
+        <div className="h-6 w-px bg-n-200 max-md:hidden" />
+        <div className="flex items-center gap-2.5">
+          <span className="text-[13px] font-semibold text-n-800">Live writes</span>
+          <button
+            role="switch"
+            aria-checked={liveWrites}
+            disabled={setControl.isPending || killed}
+            onClick={() => setControl.mutate({ liveWritesEnabled: !liveWrites })}
+            className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-50 ${liveWrites ? 'bg-teal-500' : 'bg-n-200'}`}
+            title={liveWrites ? 'Disable live writes (fall back to VALIDATION_PREVIEW dry-runs)' : 'Enable live writes for LIVE SKUs'}
+          >
+            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${liveWrites ? 'left-[22px]' : 'left-0.5'}`} />
+          </button>
+          <span className="text-[12px] text-n-500">{liveWrites ? 'ON — LIVE SKUs submit real prices' : 'OFF — LIVE SKUs only dry-run (VALIDATION_PREVIEW)'}</span>
+        </div>
+        <div className="flex-1" />
+        <span className="text-[11px] text-n-400">Env kill switch also forces STOP regardless of this.</span>
       </div>
 
       {(onboard.data || recompute.data) && (

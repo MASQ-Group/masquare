@@ -808,8 +808,15 @@ export interface RepricingDecisionRow {
   submissionStatus: string | null;
 }
 
+export interface RepricingControl {
+  liveWritesEnabled: boolean;
+  killSwitchEngaged: boolean;
+}
+
 export const repricingApi = {
   readiness: () => api.get<RepricingReadiness>('/amazon-repricing/readiness').then((r) => r.data),
+  getControl: () => api.get<RepricingControl>('/amazon-repricing/control').then((r) => r.data),
+  setControl: (patch: Partial<RepricingControl>) => api.post<RepricingControl>('/amazon-repricing/control', patch).then((r) => r.data),
   onboard: () => api.post<{ scannedListings: number; created: number; updated: number; skipped: number }>('/amazon-repricing/onboard', {}).then((r) => r.data),
   recomputeFloors: () => api.post<{ processed: number; ok: number }>('/amazon-repricing/floors/recompute', {}).then((r) => r.data),
   skuPricing: (take = 100) => api.get<RepricingSkuRow[]>('/amazon-repricing/sku-pricing', { params: { take } }).then((r) => r.data),
