@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { SchedulerRegistry } from '@nestjs/schedule';
+import { CronJob } from 'cron';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { StorageService } from '../storage/storage.service';
@@ -19,15 +20,23 @@ interface FeeBucket { bySku: Map<string, number>; total: number }
 interface AmazonFees { sales: FeeBucket; fba: FeeBucket }
 
 @Injectable()
-export class IntegrationsService {
+export class IntegrationsService implements OnModuleInit {
   private readonly logger = new Logger(IntegrationsService.name);
+  private static readonly AUTO_SYNC_JOB = 'channel-auto-sync';
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     private readonly salesTx: SalesTransactionsService,
     private readonly storage: StorageService,
+    private readonly scheduler: SchedulerRegistry,
   ) {}
+
+  /** On boot, schedule the daily auto-sync at the configured time (best-effort). */
+  async onModuleInit(): Promise<void> {
+    const { channelSyncTime } = await this.getSyncSettings().catch(() => ({ channelSyncTime: '05:00' }));
+    this.scheduleDailySync(channelSyncTime);
+  }
 
   connectors() {
     return listConnectors();
@@ -1735,17 +1744,76 @@ export class IntegrationsService {
     }
   }
 
-  /** Daily automatic pull for integrations that opted in. */
-  @Cron('0 5 * * *')
-  async scheduledSync() {
+  /** Daily automatic pull for integrations that opted in — runs at the configured channelSyncTime. */
+  async runScheduledSync() {
     const rows = await this.prisma.channelIntegration.findMany({
       where: { deletedAt: null, status: 'active', autoSyncEnabled: true, mappingVerifiedAt: { not: null }, channelType: { in: ['onbuy', 'amazon', 'ebay'] } },
       select: { id: true, name: true },
     });
+    this.logger.log(`Daily auto-sync: ${rows.length} connection(s).`);
     for (const r of rows) {
-      this.logger.log(`Auto-sync: ${r.name}`);
       await this.syncOrders(r.id, 'schedule').catch((e) => this.logger.error(`Auto-sync failed for ${r.name}: ${e?.message ?? e}`));
     }
+  }
+
+  // ---- Sync automation: configurable daily time (server time = UTC) + scope toggles ----------
+
+  /** "HH:MM" → a daily cron expression "M H * * *"; falls back to 05:00 on a malformed value. */
+  private cronFromTime(time: string): string {
+    const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec((time ?? '').trim());
+    const hour = m ? Number(m[1]) : 5;
+    const minute = m ? Number(m[2]) : 0;
+    return `${minute} ${hour} * * *`;
+  }
+
+  /** (Re)register the daily auto-sync CronJob at the given time. Replaces any existing job. */
+  private scheduleDailySync(time: string): void {
+    const name = IntegrationsService.AUTO_SYNC_JOB;
+    try {
+      if (this.scheduler.doesExist('cron', name)) {
+        this.scheduler.getCronJob(name).stop();
+        this.scheduler.deleteCronJob(name);
+      }
+    } catch {
+      /* no existing job */
+    }
+    const job = new CronJob(this.cronFromTime(time), () => {
+      void this.runScheduledSync().catch((e) => this.logger.error(`Scheduled sync failed: ${e?.message ?? e}`));
+    });
+    this.scheduler.addCronJob(name, job as unknown as Parameters<SchedulerRegistry['addCronJob']>[1]);
+    job.start();
+    this.logger.log(`Daily channel auto-sync scheduled at ${time} (server time).`);
+  }
+
+  /** Get the platform sync-automation settings, creating the singleton row on first read. */
+  async getSyncSettings(): Promise<{ channelSyncTime: string }> {
+    let s = await this.prisma.platformSettings.findFirst({ select: { channelSyncTime: true } });
+    if (!s) s = await this.prisma.platformSettings.create({ data: {}, select: { channelSyncTime: true } });
+    return { channelSyncTime: s.channelSyncTime };
+  }
+
+  /** Update the daily sync time and re-schedule the cron immediately. */
+  async setSyncSettings(dto: { channelSyncTime?: string }, actorId?: string): Promise<{ channelSyncTime: string }> {
+    if (dto.channelSyncTime != null && !/^([01]?\d|2[0-3]):([0-5]\d)$/.test(dto.channelSyncTime)) {
+      throw new BadRequestException('channelSyncTime must be "HH:MM" (24-hour).');
+    }
+    const existing = await this.prisma.platformSettings.findFirst({ select: { id: true } });
+    const row = existing
+      ? await this.prisma.platformSettings.update({ where: { id: existing.id }, data: { channelSyncTime: dto.channelSyncTime }, select: { channelSyncTime: true } })
+      : await this.prisma.platformSettings.create({ data: { channelSyncTime: dto.channelSyncTime ?? '05:00' }, select: { channelSyncTime: true } });
+    this.scheduleDailySync(row.channelSyncTime);
+    await this.audit('platform', actorId, 'sync-time', row.channelSyncTime);
+    return { channelSyncTime: row.channelSyncTime };
+  }
+
+  /** Enable/disable daily auto-sync across a scope (all, a channel family, or explicit ids). */
+  async bulkSetAutoSync(scope: { ids?: string[]; channelType?: string; all?: boolean }, enabled: boolean): Promise<{ updated: number }> {
+    const where: any = { deletedAt: null };
+    if (scope.ids?.length) where.id = { in: scope.ids };
+    else if (scope.channelType) where.channelType = scope.channelType;
+    else if (!scope.all) throw new BadRequestException('Specify ids, channelType, or all.');
+    const res = await this.prisma.channelIntegration.updateMany({ where, data: { autoSyncEnabled: enabled } });
+    return { updated: res.count };
   }
 
   private async audit(integrationId: string, actorId: string | undefined, action: string, detail?: string) {

@@ -472,6 +472,10 @@ model PlatformSettings {
   // it stays dormant until deliberately enabled. Forward-only, like deductStockOnSale.
   autoAdjustAvailabilityOnSale Boolean @default(false) @map("auto_adjust_availability_on_sale")
 
+  // Time of day the daily channel auto-sync runs, as "HH:MM" (24h, server time = UTC). Drives a
+  // dynamically-scheduled cron (integrations.service) — editable from the Integrations page.
+  channelSyncTime String @default("05:00") @map("channel_sync_time")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -2220,4 +2224,18 @@ model RepricingNotifDedupe {
 
   @@index([expiresAt])
   @@map("repricing_notif_dedupe")
+}
+
+// Global runtime controls for the price-writer (spec §6.4). A single row (id="singleton"). These
+// are DB-backed so ops can flip them at runtime WITHOUT a redeploy — the whole point of a kill
+// switch (you can't redeploy to stop a price war). An env kill switch (AMZ_REPRICING_KILL_SWITCH)
+// remains an additional last-resort hard stop that ORs with this.
+model RepricingControl {
+  id                String   @id @default("singleton")
+  liveWritesEnabled Boolean  @default(false) @map("live_writes_enabled")
+  killSwitchEngaged Boolean  @default(false) @map("kill_switch_engaged")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  updatedById       String?  @map("updated_by") @db.Uuid
+
+  @@map("repricing_control")
 }

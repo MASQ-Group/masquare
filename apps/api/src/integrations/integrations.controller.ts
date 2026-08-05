@@ -37,6 +37,23 @@ export class IntegrationsController {
     return this.svc.removeChannelLogo(channelType);
   }
 
+  /** Sync-automation settings: the daily auto-sync time (HH:MM, server/UTC). */
+  @Get('sync-settings')
+  getSyncSettings() {
+    return this.svc.getSyncSettings();
+  }
+
+  @Patch('sync-settings')
+  setSyncSettings(@Body() dto: { channelSyncTime?: string }, @CurrentUser() user: AuthUser) {
+    return this.svc.setSyncSettings(dto, user.sub);
+  }
+
+  /** Enable/disable daily auto-sync across a scope (all, a channel family, or explicit ids). */
+  @Post('bulk/auto-sync')
+  bulkSetAutoSync(@Body() dto: { ids?: string[]; channelType?: string; all?: boolean; enabled: boolean }) {
+    return this.svc.bulkSetAutoSync({ ids: dto.ids, channelType: dto.channelType, all: dto.all }, dto.enabled !== false);
+  }
+
   @Get()
   list() {
     return this.svc.list();

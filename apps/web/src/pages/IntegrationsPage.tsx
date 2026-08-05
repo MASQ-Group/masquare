@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle, CalendarRange, CheckCircle2, ChevronRight, Download, ExternalLink, Eye, EyeOff, Globe,
+  AlertTriangle, CalendarRange, CheckCircle2, ChevronRight, Clock, Download, ExternalLink, Eye, EyeOff, Globe,
   KeyRound, ListChecks, MoreHorizontal, Pause, Pencil, Play, Plug, Plus, RefreshCw, Search, Trash2, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -10,6 +10,7 @@ import { IntegrationModal } from '../components/integrations/IntegrationModal';
 import { MappingVerifyModal } from '../components/integrations/MappingVerifyModal';
 import { ListingsPreviewModal } from '../components/integrations/ListingsPreviewModal';
 import { BackfillModal } from '../components/integrations/BackfillModal';
+import { GroupBackfillModal } from '../components/integrations/GroupBackfillModal';
 import { ChannelLogoTile } from '../components/integrations/ChannelLogoTile';
 import { Flag } from '../components/common/Flag';
 
@@ -91,6 +92,8 @@ export function IntegrationsPage() {
   const [modal, setModal] = useState<ModalTarget>(undefined);
   const [mapVerify, setMapVerify] = useState<ChannelIntegration | undefined>();
   const [backfill, setBackfill] = useState<ChannelIntegration | undefined>();
+  const [groupBackfill, setGroupBackfill] = useState<{ label: string; list: ChannelIntegration[] } | undefined>();
+  const [syncTime, setSyncTime] = useState('05:00');
   const [listingsPreview, setListingsPreview] = useState<ChannelIntegration | undefined>();
 
   const [tab, setTab] = useState<Tab>('all');
@@ -106,6 +109,20 @@ export function IntegrationsPage() {
   const { data: channelLogos = {} } = useQuery({ queryKey: ['channel-logos'], queryFn: () => integrationsApi.channelLogos() });
   const refetchLogos = () => qc.invalidateQueries({ queryKey: ['channel-logos'] });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['integrations'] });
+
+  // Sync automation: the configurable daily auto-sync time.
+  const { data: syncSettings } = useQuery({ queryKey: ['integrations', 'sync-settings'], queryFn: () => integrationsApi.getSyncSettings() });
+  useEffect(() => { if (syncSettings?.channelSyncTime) setSyncTime(syncSettings.channelSyncTime); }, [syncSettings?.channelSyncTime]);
+  const saveSyncTime = useMutation({
+    mutationFn: (t: string) => integrationsApi.setSyncSettings(t),
+    onSuccess: (r) => { toast.success(`Daily sync time set to ${r.channelSyncTime} (UTC)`); qc.invalidateQueries({ queryKey: ['integrations', 'sync-settings'] }); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save'),
+  });
+  const setAutoSync = useMutation({
+    mutationFn: ({ scope, enabled }: { scope: { ids?: string[]; channelType?: string; all?: boolean }; enabled: boolean }) => integrationsApi.bulkSetAutoSync(scope, enabled),
+    onSuccess: ({ updated }) => { toast.success(`Auto-sync ${updated ? `updated on ${updated}` : 'unchanged'} connection${updated === 1 ? '' : 's'}`); invalidate(); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not update'),
+  });
 
   // Each integration sells on a channel with a native country — that country's flag sits
   // beside the account name. Falls back to the marketplace code (Flag aliases UK -> GB)
@@ -254,6 +271,48 @@ export function IntegrationsPage() {
             <StatCard label="Sync errors" value={stats.errors} sub="in last run" icon={<XCircle size={17} />} tone="danger" active={tab === 'errors'} onClick={() => setTab('errors')} />
           </div>
 
+          {/* Sync automation */}
+          {(() => {
+            const autoOn = integrations.filter((i) => i.autoSyncEnabled).length;
+            const allOn = syncableCount > 0 && integrations.filter(canSync).every((i) => i.autoSyncEnabled);
+            return (
+              <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-n-200 bg-n-0 px-4 py-3">
+                <div className="flex items-center gap-2.5">
+                  <Clock size={16} className="text-n-400" />
+                  <span className="text-[13px] font-semibold text-n-800">Daily auto-sync at</span>
+                  <input type="time" value={syncTime} onChange={(e) => setSyncTime(e.target.value)} className="h-9 rounded-md border border-n-200 bg-n-0 px-2.5 font-mono text-[13px] text-n-900 outline-none focus:border-teal-400" />
+                  <span className="text-[12px] text-n-400">UTC</span>
+                  <button
+                    className="btn btn-ghost h-9"
+                    disabled={saveSyncTime.isPending || syncTime === syncSettings?.channelSyncTime}
+                    onClick={() => saveSyncTime.mutate(syncTime)}
+                  >
+                    {saveSyncTime.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+                <div className="h-6 w-px bg-n-200 max-md:hidden" />
+                <div className="flex items-center gap-2.5">
+                  <span className="text-[13px] font-semibold text-n-800">Auto-sync all connections</span>
+                  <button
+                    role="switch"
+                    aria-checked={allOn}
+                    disabled={setAutoSync.isPending || syncableCount === 0}
+                    onClick={() => setAutoSync.mutate({ scope: { all: true }, enabled: !allOn })}
+                    className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-50 ${allOn ? 'bg-teal-500' : 'bg-n-200'}`}
+                    title={allOn ? 'Disable daily auto-sync for all connections' : 'Enable daily auto-sync for all connections'}
+                  >
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${allOn ? 'left-[22px]' : 'left-0.5'}`} />
+                  </button>
+                  <span className="text-[12px] text-n-500">{autoOn} of {integrations.length} on</span>
+                </div>
+                <div className="flex-1" />
+                <button className="btn btn-ghost h-9" onClick={() => setGroupBackfill({ label: 'all connections', list: integrations })}>
+                  <CalendarRange size={15} /> Pull older orders…
+                </button>
+              </div>
+            );
+          })()}
+
           {/* Toolbar */}
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <div className="flex rounded-lg border border-n-200 bg-n-0 p-[3px]">
@@ -333,6 +392,33 @@ export function IntegrationsPage() {
                       {gAttn > 0 && <HealthChip dot="var(--warning)" color="text-warning" text={`${gAttn} to verify`} />}
                       {gErr > 0 && <HealthChip dot="var(--danger)" color="text-danger" text={`${gErr} error${gErr === 1 ? '' : 's'}`} />}
                     </div>
+                    {(() => {
+                      const gReady = all.filter(canSync);
+                      const gAllOn = gReady.length > 0 && gReady.every((i) => i.autoSyncEnabled);
+                      const gAutoOn = all.filter((i) => i.autoSyncEnabled).length;
+                      return (
+                        <label className="mr-1 flex items-center gap-1.5 text-[12px] text-n-600" title={`Daily auto-sync for ${all[0].connectorLabel} (${gAutoOn}/${all.length} on)`}>
+                          <button
+                            role="switch"
+                            aria-checked={gAllOn}
+                            disabled={setAutoSync.isPending || gReady.length === 0}
+                            onClick={() => setAutoSync.mutate({ scope: { channelType: family }, enabled: !gAllOn })}
+                            className={`relative h-5 w-9 rounded-full transition-colors disabled:opacity-40 ${gAllOn ? 'bg-teal-500' : 'bg-n-200'}`}
+                          >
+                            <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${gAllOn ? 'left-[18px]' : 'left-0.5'}`} />
+                          </button>
+                          Auto-sync
+                        </label>
+                      );
+                    })()}
+                    <button
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50"
+                      disabled={all.filter(canSync).length === 0}
+                      title="Pull older orders for this marketplace"
+                      onClick={() => setGroupBackfill({ label: all[0].connectorLabel, list: all })}
+                    >
+                      <CalendarRange size={14} /> Older orders
+                    </button>
                     <button
                       className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50"
                       disabled={bulkSync.isPending || all.filter(canSync).length === 0}
@@ -404,6 +490,9 @@ export function IntegrationsPage() {
       )}
       {backfill && (
         <BackfillModal integration={backfill} onClose={() => setBackfill(undefined)} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }} />
+      )}
+      {groupBackfill && (
+        <GroupBackfillModal scopeLabel={groupBackfill.label} integrations={groupBackfill.list} onClose={() => setGroupBackfill(undefined)} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }} />
       )}
       {listingsPreview && (
         <ListingsPreviewModal integration={listingsPreview} onClose={() => setListingsPreview(undefined)} />
