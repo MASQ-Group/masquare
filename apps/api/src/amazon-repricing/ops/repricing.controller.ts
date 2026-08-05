@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { AdminGuard } from '../../auth/admin.guard';
@@ -6,6 +6,7 @@ import { CurrentUser, type AuthUser } from '../../common/current-user.decorator'
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { FloorService } from '../floor/floor.service';
 import { RepricingControlService } from '../writer/control.service';
+import { BlocklistService, type BlockedSellerDto } from './blocklist.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 // Ops console API for the Amazon repricing module (admin-only). Phase-appropriate subset: onboard
@@ -20,8 +21,25 @@ export class RepricingController {
     private readonly onboarding: OnboardingService,
     private readonly floors: FloorService,
     private readonly control: RepricingControlService,
+    private readonly blocklist: BlocklistService,
     private readonly prisma: PrismaService,
   ) {}
+
+  /** Seller blocklist (§5.2): unauthorized / MAP-violating / hijacker sellers excluded from pricing. */
+  @Get('blocklist')
+  listBlocklist() {
+    return this.blocklist.list();
+  }
+
+  @Post('blocklist')
+  addBlocklist(@Body() dto: BlockedSellerDto, @CurrentUser() user: AuthUser) {
+    return this.blocklist.add(dto, user.sub);
+  }
+
+  @Delete('blocklist/:id')
+  removeBlocklist(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.blocklist.remove(id, user.sub);
+  }
 
   /** Global runtime controls: the kill switch + live-writes master switch (§6.4). */
   @Get('control')

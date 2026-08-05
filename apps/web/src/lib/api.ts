@@ -812,11 +812,24 @@ export interface RepricingControl {
   liveWritesEnabled: boolean;
   killSwitchEngaged: boolean;
 }
+export interface BlockedSeller {
+  id: string;
+  sellerId: string;
+  marketplaceId: string | null;
+  sellerName: string | null;
+  reason: string | null;
+  brand: string | null;
+  createdAt: string;
+}
 
 export const repricingApi = {
   readiness: () => api.get<RepricingReadiness>('/amazon-repricing/readiness').then((r) => r.data),
   getControl: () => api.get<RepricingControl>('/amazon-repricing/control').then((r) => r.data),
   setControl: (patch: Partial<RepricingControl>) => api.post<RepricingControl>('/amazon-repricing/control', patch).then((r) => r.data),
+  blocklist: () => api.get<BlockedSeller[]>('/amazon-repricing/blocklist').then((r) => r.data),
+  addBlocked: (dto: { sellerId: string; marketplaceId?: string | null; sellerName?: string | null; reason?: string | null; brand?: string | null }) =>
+    api.post<BlockedSeller>('/amazon-repricing/blocklist', dto).then((r) => r.data),
+  removeBlocked: (id: string) => api.delete<{ removed: boolean }>(`/amazon-repricing/blocklist/${id}`).then((r) => r.data),
   onboard: () => api.post<{ scannedListings: number; created: number; updated: number; skipped: number }>('/amazon-repricing/onboard', {}).then((r) => r.data),
   recomputeFloors: () => api.post<{ processed: number; ok: number }>('/amazon-repricing/floors/recompute', {}).then((r) => r.data),
   skuPricing: (take = 100) => api.get<RepricingSkuRow[]>('/amazon-repricing/sku-pricing', { params: { take } }).then((r) => r.data),

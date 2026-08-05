@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCcw, DownloadCloud, ShieldAlert } from 'lucide-react';
+import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X } from 'lucide-react';
 import { repricingApi, type RepricingSkuRow, type RepricingDecisionRow } from '../lib/api';
 
 // Amazon Buy Box repricing — ops console (Phase-appropriate: readiness, SKU floors, decision
@@ -149,6 +150,8 @@ export function RepricingPage() {
       <SkuTable rows={skus.data ?? []} loading={skus.isLoading} />
       <div className="h-6" />
       <DecisionTable rows={decisions.data ?? []} loading={decisions.isLoading} />
+      <div className="h-6" />
+      <BlocklistCard />
     </div>
   );
 }
@@ -254,6 +257,89 @@ function DecisionTable({ rows, loading }: { rows: RepricingDecisionRow[]; loadin
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+const REASONS = ['UNAUTHORIZED', 'MAP_VIOLATOR', 'HIJACKER', 'OTHER'];
+
+/** Seller blocklist (§5.2) — sellers excluded from the competitor set so they can't drag our price. */
+function BlocklistCard() {
+  const qc = useQueryClient();
+  const blocklist = useQuery({ queryKey: ['repricing', 'blocklist'], queryFn: repricingApi.blocklist });
+  const [sellerId, setSellerId] = useState('');
+  const [sellerName, setSellerName] = useState('');
+  const [marketplaceId, setMarketplaceId] = useState('');
+  const [reason, setReason] = useState('UNAUTHORIZED');
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['repricing', 'blocklist'] });
+  const add = useMutation({
+    mutationFn: () => repricingApi.addBlocked({ sellerId, sellerName: sellerName || null, marketplaceId: marketplaceId || null, reason }),
+    onSuccess: () => { setSellerId(''); setSellerName(''); setMarketplaceId(''); invalidate(); },
+  });
+  const remove = useMutation({ mutationFn: (id: string) => repricingApi.removeBlocked(id), onSuccess: invalidate });
+
+  const rows = blocklist.data ?? [];
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex items-center gap-2 border-b border-n-100 px-4 py-2.5">
+        <Ban size={15} className="text-n-500" />
+        <span className="text-[13px] font-semibold text-n-800">Seller blocklist</span>
+        <span className="text-[12px] text-n-500">{rows.length}</span>
+        <span className="ml-2 text-[11.5px] text-n-400">Excluded from the competitor set (unauthorized / MAP-violating / hijacker sellers).</span>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2 border-b border-n-100 bg-n-25 px-4 py-2.5">
+        <label className="flex flex-col gap-0.5"><span className="text-[10.5px] uppercase tracking-wide text-n-500">Seller ID *</span>
+          <input value={sellerId} onChange={(e) => setSellerId(e.target.value)} placeholder="A1B2C3…" className="h-8 w-40 rounded-md border border-n-200 px-2 font-mono text-[12.5px] outline-none focus:border-teal-400" />
+        </label>
+        <label className="flex flex-col gap-0.5"><span className="text-[10.5px] uppercase tracking-wide text-n-500">Name</span>
+          <input value={sellerName} onChange={(e) => setSellerName(e.target.value)} placeholder="optional" className="h-8 w-40 rounded-md border border-n-200 px-2 text-[12.5px] outline-none focus:border-teal-400" />
+        </label>
+        <label className="flex flex-col gap-0.5"><span className="text-[10.5px] uppercase tracking-wide text-n-500">Marketplace</span>
+          <select value={marketplaceId} onChange={(e) => setMarketplaceId(e.target.value)} className="h-8 rounded-md border border-n-200 px-2 text-[12.5px] outline-none focus:border-teal-400">
+            <option value="">All</option>
+            <option value="A1PA6795UKMFR9">DE</option>
+            <option value="A13V1IB3VIYZZH">FR</option>
+            <option value="A1RKKUPIHCS9HS">ES</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-0.5"><span className="text-[10.5px] uppercase tracking-wide text-n-500">Reason</span>
+          <select value={reason} onChange={(e) => setReason(e.target.value)} className="h-8 rounded-md border border-n-200 px-2 text-[12.5px] outline-none focus:border-teal-400">
+            {REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </label>
+        <button
+          onClick={() => add.mutate()}
+          disabled={!sellerId.trim() || add.isPending}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-teal-500 px-3 text-[12.5px] font-semibold text-white hover:bg-teal-600 disabled:opacity-50"
+        >
+          <Plus size={14} /> Block
+        </button>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="px-4 py-6 text-center text-[12.5px] text-n-500">No blocked sellers.</div>
+      ) : (
+        <table className="w-full text-[12.5px]">
+          <tbody>
+            {rows.map((b) => (
+              <tr key={b.id} className="border-t border-n-100 hover:bg-n-25">
+                <td className="px-4 py-1.5 font-mono text-n-800">{b.sellerId}</td>
+                <td className="px-3 py-1.5 text-n-600">{b.sellerName ?? '—'}</td>
+                <td className="px-3 py-1.5 font-mono">{b.marketplaceId ? mkt(b.marketplaceId) : 'All'}</td>
+                <td className="px-3 py-1.5"><span className="rounded border border-n-200 bg-n-50 px-1.5 py-0.5 text-[11px] text-n-600">{b.reason ?? 'OTHER'}</span></td>
+                <td className="px-3 py-1.5 text-right">
+                  <button onClick={() => remove.mutate(b.id)} disabled={remove.isPending} className="inline-flex items-center gap-1 text-[12px] text-n-500 hover:text-red-600" title="Unblock">
+                    <X size={13} /> Remove
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
