@@ -2,11 +2,12 @@ import { ReactNode, useEffect, useRef, useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 
 // Unified top bar for every page (Top Bar Redesign). Two rows max:
-//   • header row (48px, 44px collapsed): breadcrumb "MODULE › Title" + ⓘ description tooltip,
+//   • header row (48px): breadcrumb "MODULE › Title" + ⓘ description tooltip,
 //     optional inline tabs, right-aligned actions (secondaries + ⋯ overflow + one primary).
 //   • toolbar row (44px, optional): page-supplied search / filters / view controls.
-// Sticky at the top of the scroll area; the toolbar collapses away on scroll-down. Purely
-// presentational — pages pass their existing actions/controls as slots (no behaviour changes).
+// Sticky at the top of the scroll area; the whole bar slides out of view on scroll-down and
+// slides back on scroll-up (per the design guide). Purely presentational — pages pass their
+// existing actions/controls as slots (no behaviour changes).
 
 export interface PageHeaderTab {
   key: string;
@@ -88,10 +89,12 @@ function OverflowMenu({ items }: { items: PageHeaderOverflowItem[] }) {
 
 export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, actions, overflow, primary, toolbar }: PageHeaderProps) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  // `hidden` slides the whole bar out of view on scroll-down; `stuck` adds a shadow once scrolled.
+  const [hidden, setHidden] = useState(false);
+  const [stuck, setStuck] = useState(false);
 
-  // Collapse the toolbar row once the scroll area moves past the top (design: shrink on scroll-down).
   useEffect(() => {
+    // Find the scroll container (AppShell's <main>, which has px-8 py-7 padding).
     let scroller: HTMLElement | Window = window;
     let el = rootRef.current?.parentElement;
     while (el) {
@@ -100,16 +103,32 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
       el = el.parentElement;
     }
     const read = () => (scroller === window ? window.scrollY : (scroller as HTMLElement).scrollTop);
-    const onScroll = () => setCollapsed(read() > 8);
-    onScroll();
+    let last = read();
+    let ticking = false;
+    const update = () => {
+      ticking = false;
+      const y = read();
+      setStuck(y > 4);
+      const delta = y - last;
+      // Always reveal at the very top; otherwise follow scroll direction (dead-zone kills jitter).
+      if (y < 8) setHidden(false);
+      else if (delta > 6) setHidden(true);   // scrolling down → hide
+      else if (delta < -6) setHidden(false); // scrolling up → reveal
+      last = y;
+    };
+    const onScroll = () => { if (!ticking) { ticking = true; requestAnimationFrame(update); } };
+    update();
     scroller.addEventListener('scroll', onScroll, { passive: true });
     return () => scroller.removeEventListener('scroll', onScroll);
   }, []);
 
   return (
-    <div ref={rootRef} className="sticky top-0 z-30 -mx-8 -mt-7 mb-5 border-b border-n-200 bg-n-0/95 backdrop-blur supports-[backdrop-filter]:bg-n-0/80 max-[760px]:-mx-4 max-[760px]:-mt-5">
+    <div
+      ref={rootRef}
+      className={`sticky -top-7 z-30 -mx-8 -mt-7 mb-5 border-b border-n-200 bg-n-0 transition-transform duration-200 will-change-transform max-[760px]:-top-5 max-[760px]:-mx-4 max-[760px]:-mt-5 ${hidden ? '-translate-y-full' : 'translate-y-0'} ${stuck ? 'shadow-[0_6px_16px_-12px_rgba(15,23,42,0.35)]' : ''}`}
+    >
       {/* Header row */}
-      <div className={`flex items-center gap-3 px-8 transition-[height] duration-200 max-[760px]:px-4 ${collapsed ? 'h-11' : 'h-12'}`}>
+      <div className="flex h-12 items-center gap-3 px-8 max-[760px]:px-4">
         <div className="flex items-baseline gap-2 whitespace-nowrap">
           <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-n-400">{module}</span>
           <span className="text-[12px] text-n-300">›</span>
@@ -145,9 +164,7 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
 
       {/* Toolbar row */}
       {toolbar && (
-        <div
-          className={`flex items-center gap-2 px-8 transition-all duration-200 max-[760px]:px-4 ${collapsed ? 'pointer-events-none h-0 overflow-hidden opacity-0' : 'min-h-11 py-1.5 opacity-100'}`}
-        >
+        <div className="flex min-h-11 items-center gap-2 px-8 py-1.5 max-[760px]:px-4">
           {toolbar}
         </div>
       )}
