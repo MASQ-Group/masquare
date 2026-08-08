@@ -17,6 +17,7 @@ import { BulkEditModal } from '../components/products/BulkEditModal';
 import { ProductImportModal } from '../components/products/ProductImportModal';
 import { ConfirmDeleteModal } from '../components/products/ConfirmDeleteModal';
 import { EXPORT_COLUMNS } from '../components/products/columns';
+import { PageHeader } from '../components/common/PageHeader';
 
 const SEARCH_FIELDS = [
   { key: '', label: 'All fields' },
@@ -183,77 +184,80 @@ export function ProductsPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <div className="eyebrow mb-1.5">Products module</div>
-          <h1 className="text-[24px] font-semibold tracking-tight text-n-900">All products</h1>
-          <p className="mt-1 text-[13.5px] text-n-500">
-            Master catalogue{user?.companies.length ? `, co-owned by ${user.companies.map((c) => c.officialName).join(' & ')}` : ''}.
-          </p>
-        </div>
-        <button className="btn btn-ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button>
-        <button className="btn btn-ghost" onClick={onExport}><Download size={16} /> Export</button>
-        <button className="btn btn-primary" onClick={() => setEditing(null)}><Plus size={17} /> Add product</button>
-      </div>
+      <PageHeader
+        module="Products"
+        title="All products"
+        info={`Master catalogue${user?.companies.length ? `, co-owned by ${user.companies.map((c) => c.officialName).join(' & ')}` : ''}.`}
+        actions={
+          <>
+            <button className="hbtn" onClick={() => setImportOpen(true)}><Upload size={15} className="text-n-500" /> Import</button>
+            <button className="hbtn" onClick={onExport}><Download size={15} className="text-n-500" /> Export</button>
+          </>
+        }
+        primary={<button className="hbtn-primary" onClick={() => setEditing(null)}><Plus size={16} /> Add product</button>}
+        toolbar={
+          <>
+            <span className="flex h-8 flex-[0_1_380px] items-stretch overflow-hidden rounded-lg border border-n-200 bg-n-0 focus-within:border-teal-400">
+              <select value={field} onChange={(e) => setField(e.target.value)} className="h-full border-r border-n-200 bg-n-25 px-2 text-[12.5px] font-medium text-n-600 outline-none">
+                {SEARCH_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+              </select>
+              <span className="flex flex-1 items-center gap-2 px-2.5">
+                <Search size={15} className="text-n-400" />
+                <input className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none" placeholder="Search SKU, title, attributes…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
+              </span>
+            </span>
 
-      {/* Toolbar */}
-      <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <div className="flex h-[38px] min-w-[280px] flex-1 items-center overflow-hidden rounded-md border border-n-200 bg-n-0 focus-within:border-teal-400">
-          <select value={field} onChange={(e) => setField(e.target.value)} className="h-full border-r border-n-200 bg-n-50 px-2 text-[12.5px] font-medium text-n-600 outline-none">
-            {SEARCH_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
-          </select>
-          <Search size={16} className="ml-2.5 text-n-400" />
-          <input className="h-full flex-1 px-2 text-[13px] outline-none" placeholder="Search SKU, title, attributes…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
-        </div>
+            <div className="relative">
+              <button className="hbtn" onClick={() => setOpenMenu(openMenu === 'filters' ? null : 'filters')}>
+                <Filter size={15} className="opacity-60" /> Filters {activeChips.length > 0 && <span className="mono rounded-pill bg-teal-100 px-1.5 text-[11px] text-teal-700">{activeChips.length}</span>}
+              </button>
+              {openMenu === 'filters' && (
+                <FilterPanel
+                  onClose={() => setOpenMenu(null)}
+                  groups={[
+                    { key: 'vendorId', label: 'Vendor', options: vendors.data ?? [] },
+                    { key: 'brandId', label: 'Brand', options: brands.data ?? [] },
+                    { key: 'fulfilmentTypeId', label: 'Fulfilment', options: ftypes.data ?? [] },
+                    { key: 'productTypeId', label: 'Product type', options: ptypes.data ?? [] },
+                    { key: 'categoryId', label: 'Category', options: (categories.data ?? []).map((c) => ({ id: c.id, name: c.name })) },
+                  ]}
+                  filters={filters}
+                  onToggle={toggle}
+                  country={filters.country}
+                  onCountry={(v) => { setFilters((f) => ({ ...f, country: v })); setPage(1); }}
+                />
+              )}
+            </div>
 
-        <div className="relative">
-          <button className="filter-btn inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300" onClick={() => setOpenMenu(openMenu === 'filters' ? null : 'filters')}>
-            <Filter size={15} className="opacity-60" /> Filters {activeChips.length > 0 && <span className="mono rounded-pill bg-teal-100 px-1.5 text-[11px] text-teal-700">{activeChips.length}</span>}
-          </button>
-          {openMenu === 'filters' && (
-            <FilterPanel
-              onClose={() => setOpenMenu(null)}
-              groups={[
-                { key: 'vendorId', label: 'Vendor', options: vendors.data ?? [] },
-                { key: 'brandId', label: 'Brand', options: brands.data ?? [] },
-                { key: 'fulfilmentTypeId', label: 'Fulfilment', options: ftypes.data ?? [] },
-                { key: 'productTypeId', label: 'Product type', options: ptypes.data ?? [] },
-                { key: 'categoryId', label: 'Category', options: (categories.data ?? []).map((c) => ({ id: c.id, name: c.name })) },
-              ]}
-              filters={filters}
-              onToggle={toggle}
-              country={filters.country}
-              onCountry={(v) => { setFilters((f) => ({ ...f, country: v })); setPage(1); }}
-            />
-          )}
-        </div>
-
-        {view === 'list' && (
-          <div className="relative">
-            <button className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300" onClick={() => setOpenMenu(openMenu === 'columns' ? null : 'columns')}>
-              <Columns3 size={15} className="opacity-60" /> Columns
-            </button>
-            {openMenu === 'columns' && (
-              <div className="absolute right-0 top-11 z-40 w-56 rounded-lg border border-n-200 bg-n-0 p-2 shadow-lg" onMouseLeave={() => setOpenMenu(null)}>
-                <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-n-500">Optional columns</div>
-                {OPTIONAL_COLUMNS.map((c) => (
-                  <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-n-50">
-                    <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={cols.has(c.key)} onChange={() => setCols((s) => { const n = new Set(s); n.has(c.key) ? n.delete(c.key) : n.add(c.key); return n; })} />
-                    <span className="text-[13px] text-n-700">{c.label}</span>
-                  </label>
-                ))}
+            {view === 'list' && (
+              <div className="relative">
+                <button className="hbtn" onClick={() => setOpenMenu(openMenu === 'columns' ? null : 'columns')}>
+                  <Columns3 size={15} className="opacity-60" /> Columns
+                </button>
+                {openMenu === 'columns' && (
+                  <div className="absolute right-0 top-9 z-50 w-56 rounded-lg border border-n-200 bg-n-0 p-2 shadow-lg" onMouseLeave={() => setOpenMenu(null)}>
+                    <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-n-500">Optional columns</div>
+                    {OPTIONAL_COLUMNS.map((c) => (
+                      <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-n-50">
+                        <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={cols.has(c.key)} onChange={() => setCols((s) => { const n = new Set(s); n.has(c.key) ? n.delete(c.key) : n.add(c.key); return n; })} />
+                        <span className="text-[13px] text-n-700">{c.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
-          </div>
-        )}
 
-        {anyFilter && <button className="inline-flex h-[38px] items-center rounded-md border border-orange-200 px-3 text-[13px] font-medium text-orange-600 hover:bg-orange-50" onClick={clearAll}>Clear all</button>}
+            {anyFilter && <button className="inline-flex h-8 items-center rounded-lg border border-orange-200 px-3 text-[13px] font-medium text-orange-600 hover:bg-orange-50" onClick={clearAll}>Clear all</button>}
 
-        <div className="ml-auto inline-flex gap-0.5 rounded-md bg-n-100 p-0.5">
-          <button className={`grid h-8 w-9 place-items-center rounded ${view === 'list' ? 'bg-n-0 text-teal-700 shadow-xs' : 'text-n-500'}`} onClick={() => setView('list')} title="List"><List size={16} /></button>
-          <button className={`grid h-8 w-9 place-items-center rounded ${view === 'grid' ? 'bg-n-0 text-teal-700 shadow-xs' : 'text-n-500'}`} onClick={() => setView('grid')} title="Grid"><Grid size={16} /></button>
-        </div>
-      </div>
+            <div className="flex-1" />
+            <div className="hseg">
+              <button className={view === 'list' ? 'hseg-on' : ''} onClick={() => setView('list')} title="List"><List size={15} /></button>
+              <button className={view === 'grid' ? 'hseg-on' : ''} onClick={() => setView('grid')} title="Grid"><Grid size={15} /></button>
+            </div>
+          </>
+        }
+      />
 
       {/* Chips */}
       {activeChips.length > 0 && (
