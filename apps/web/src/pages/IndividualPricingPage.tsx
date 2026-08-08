@@ -7,6 +7,7 @@ import {
   pricingApi, salesChannelsApi, shippingServicesApi, profitTiersApi,
   type IndividualPricingResult, type Product, type ProfitTier,
 } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { ProductSkuField } from '../components/sales/ProductSkuField';
 import { SalesChannelSelect } from '../components/common/SalesChannelSelect';
 import { Flag } from '../components/common/Flag';
@@ -109,23 +110,19 @@ export function IndividualPricingPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <div className="text-eyebrow text-n-500">PRICING</div>
-          <h1 className="text-[22px] font-bold tracking-tight text-n-900">Individual Pricing</h1>
-          <p className="mt-1 text-[13px] text-n-500">
-            Set a listing price for one product on one channel and see exactly what it earns.
-          </p>
-        </div>
-        {hasOverrides && (
+      <PageHeader
+        module="Pricing"
+        title="Individual Pricing"
+        info="Set a listing price for one product on one channel and see exactly what it earns."
+        actions={hasOverrides ? (
           <button
             onClick={() => setOv({ cost: '', shipping: '', vat: '', fee: '', importPct: '' })}
-            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-n-300 hover:bg-n-25"
+            className="hbtn"
           >
             <RotateCcw size={15} /> Reset Overrides
           </button>
-        )}
-      </div>
+        ) : undefined}
+      />
 
       <div className="flex items-start gap-5 max-[1100px]:flex-col">
         {/* ---------- inputs ---------- */}

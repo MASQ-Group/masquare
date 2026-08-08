@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, ClipboardList, Package, Search, ShoppingCart } from 'lucide-react';
 import { DateRangePicker, DEFAULT_PAGE_SIZES, Pagination, Select, type DateRangeValue } from '@masquare/ui';
 import { procurementApi, salesChannelsApi, type DemandRow, type StockStatus } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
 import { formatDate } from '../lib/format';
 import { GenerateOrdersModal } from '../components/procurement/GenerateOrdersModal';
@@ -53,14 +54,11 @@ export function ProcurementPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <h1 className="text-[22px] font-bold tracking-tight text-n-900">Procurement</h1>
-          <p className="mt-1 text-[13px] text-n-500">
-            What your open orders need versus what's on hand. Select what's short and raise purchase orders in one go.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        module="Purchasing"
+        title="Procurement"
+        info="What your open orders need versus what's on hand. Select what's short and raise purchase orders in one go."
+      />
 
       {/* Demand summary — click to filter */}
       {summary && (

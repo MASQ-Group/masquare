@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LockOpen, Plus, Search, Send } from 'lucide-react';
 import { DateRangePicker, DEFAULT_PAGE_SIZES, ModalShell, Pagination, Select, type DateRangeValue } from '@masquare/ui';
 import { purchaseOrdersApi, vendorsApi, type PurchaseOrderStatus } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
 import { formatDate } from '../lib/format';
 import { toast } from 'sonner';
@@ -120,26 +121,24 @@ export function PurchaseOrdersPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <h1 className="text-[22px] font-bold tracking-tight text-n-900">Purchase orders</h1>
-          <p className="mt-1 text-[13px] text-n-500">Orders raised to your vendors. Draft, submit, then receive against them.</p>
-        </div>
-        {isAdmin && (
-          <button
-            onClick={() => setReqOpen(true)}
-            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300"
-          >
+      <PageHeader
+        module="Purchasing"
+        title="Purchase orders"
+        info="Orders raised to your vendors. Draft, submit, then receive against them."
+        actions={isAdmin ? (
+          <button onClick={() => setReqOpen(true)} className="hbtn">
             <LockOpen size={15} className="opacity-70" /> Unlock requests
             {unlockReqs.length > 0 && (
               <span className="mono rounded-pill bg-orange-100 px-1.5 text-[11px] font-semibold text-orange-700">{unlockReqs.length}</span>
             )}
           </button>
-        )}
-        <button onClick={() => navigate('/purchase-orders/new')} className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md bg-teal-500 px-3.5 text-[13px] font-semibold text-white hover:bg-teal-600">
-          <Plus size={15} /> New purchase order
-        </button>
-      </div>
+        ) : undefined}
+        primary={
+          <button onClick={() => navigate('/purchase-orders/new')} className="hbtn-primary">
+            <Plus size={15} /> New purchase order
+          </button>
+        }
+      />
 
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-3">

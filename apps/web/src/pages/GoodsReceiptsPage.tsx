@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PackageCheck, Search } from 'lucide-react';
 import { DEFAULT_PAGE_SIZES, Pagination, Select } from '@masquare/ui';
 import { goodsReceiptsApi, vendorsApi, type GoodsReceiptStatus } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
 import { formatDate } from '../lib/format';
 import { ReceiveModal } from '../components/purchase-orders/ReceiveModal';
@@ -48,14 +49,11 @@ export function GoodsReceiptsPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <h1 className="text-[22px] font-bold tracking-tight text-n-900">Goods Receipts</h1>
-          <p className="mt-1 text-[13px] text-n-500">
-            What's on its way in. Receiving a delivery is what puts stock on hand; a short delivery raises a backorder automatically.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        module="Purchasing"
+        title="Goods Receipts"
+        info="What's on its way in. Receiving a delivery is what puts stock on hand; a short delivery raises a backorder automatically."
+      />
 
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-3">

@@ -7,6 +7,7 @@ import {
   pricingApi, productsApi, salesChannelsApi, shippingServicesApi,
   type BulkPricingResult, type PricingGroup,
 } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { Flag } from '../components/common/Flag';
 
 type Mode = 'specific' | 'vendor' | 'brand' | 'type';
@@ -126,18 +127,16 @@ export function BulkPricingPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-4 flex items-start gap-4">
-        <div className="flex-1">
-          <div className="text-eyebrow text-n-500">PRICING</div>
-          <h1 className="text-[22px] font-bold tracking-tight text-n-900">Bulk Pricing</h1>
-          <p className="mt-1 text-[13px] text-n-500">
-            Work out what to list a whole set of products at, on every channel, to hit a target margin.
-          </p>
-        </div>
-        <div className="shrink-0 text-[13px] text-n-500">
-          Step <strong className="text-n-900">{step}</strong> of 4
-        </div>
-      </div>
+      <PageHeader
+        module="Pricing"
+        title="Bulk Pricing"
+        info="Work out what to list a whole set of products at, on every channel, to hit a target margin."
+        actions={
+          <span className="text-[13px] text-n-500">
+            Step <strong className="text-n-900">{step}</strong> of 4
+          </span>
+        }
+      />
 
       {/* stepper */}
       <div className="card mb-5 px-2">
