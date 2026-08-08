@@ -42,6 +42,9 @@ export interface PageHeaderProps {
   primary?: ReactNode;
   /** Toolbar-row content (search / filters / view toggles). Row omitted when absent. */
   toolbar?: ReactNode;
+  /** Render the toolbar on its own dedicated row below the header (the design-guide 2-row
+   *  layout) instead of inline. Use for pages whose toolbar is too wide for a single line. */
+  toolbarRow?: boolean;
 }
 
 function InfoTooltip({ info }: { info: ReactNode }) {
@@ -88,7 +91,7 @@ function OverflowMenu({ items }: { items: PageHeaderOverflowItem[] }) {
   );
 }
 
-export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, actions, overflow, primary, toolbar }: PageHeaderProps) {
+export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, actions, overflow, primary, toolbar, toolbarRow }: PageHeaderProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   // `hidden` slides the whole bar out of view on scroll-down; `stuck` adds a shadow once scrolled.
   const [hidden, setHidden] = useState(false);
@@ -131,7 +134,7 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
       {/* Single row: breadcrumb › tabs › toolbar (grows) › actions. flex-wrap keeps everything
           on one line while it fits, and only drops the toolbar to a second line when the
           viewport is genuinely too narrow. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-8 py-3.5 max-[760px]:px-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-8 py-3.5 max-[760px]:px-4">
         <div className="flex shrink-0 items-baseline gap-2 whitespace-nowrap">
           <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-n-400">{module}</span>
           <span className="text-[12px] text-n-300">›</span>
@@ -159,8 +162,9 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
           </div>
         )}
 
-        {/* Toolbar controls fill the middle (keeping each page's own internal layout). */}
-        {toolbar ? (
+        {/* Single-row mode: toolbar fills the middle. 2-row mode: a spacer keeps the actions
+            right-aligned and the toolbar drops to its own full-width row below. */}
+        {toolbar && !toolbarRow ? (
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{toolbar}</div>
         ) : (
           <div className="flex-1" />
@@ -172,6 +176,10 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
             {overflow && overflow.length > 0 && <OverflowMenu items={overflow} />}
             {primary}
           </div>
+        )}
+
+        {toolbar && toolbarRow && (
+          <div className="flex w-full flex-wrap items-center gap-2">{toolbar}</div>
         )}
       </div>
     </div>

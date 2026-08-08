@@ -534,6 +534,7 @@ export function SalesTransactionsPage() {
         module="Sales"
         title="Sales transactions"
         info="Register and review sales across all channels. Revenue/profit analytics build on this data."
+        toolbarRow
         actions={
           <button
             className={`hbtn ${alertsOnly ? '!border-orange-300 !bg-orange-50 !text-orange-700' : ''}`}
@@ -581,7 +582,7 @@ export function SalesTransactionsPage() {
               <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={eurOnly} onChange={(e) => setEurOnly(e.target.checked)} />
               EUR
             </label>
-            <button ref={colsBtnRef} className="hbtn" onClick={() => (colsOpen ? setColsOpen(false) : openCols())}>
+            <button ref={colsBtnRef} className="hbtn ml-auto" onClick={() => (colsOpen ? setColsOpen(false) : openCols())}>
               <Columns3 size={15} className="opacity-60" /> Columns
             </button>
             {colsOpen && colsPos && createPortal(
