@@ -7,6 +7,7 @@ import { Pagination, Select } from '@masquare/ui';
 import { brandsApi, channelListingsApi, productTypesApi, vendorsApi, type ChannelListingCell, type ChannelListingChannel } from '../lib/api';
 import { formatAmount } from '../lib/format';
 import { Flag } from '../components/common/Flag';
+import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
 import { CHANNEL_GROUPS, channelGroupOf, sortChannelsCanonical, type ChannelGroup } from '../lib/channelGroups';
 
@@ -239,7 +240,7 @@ function SyncMenu({
   return (
     <div ref={ref} className="relative">
       <button onClick={() => setOpen((o) => !o)} disabled={busy} aria-label="Choose channels to sync"
-        className="inline-flex h-10 items-center rounded-r-md border-l border-teal-600/40 bg-teal-500 px-2 text-white hover:bg-teal-600 disabled:opacity-60">
+        className="inline-flex h-8 items-center rounded-r-lg border-l border-teal-600/40 bg-teal-500 px-2 text-white hover:bg-teal-600 disabled:opacity-60">
         <ChevronDown size={16} />
       </button>
       {open && (
@@ -367,48 +368,33 @@ export function ChannelListingsPage() {
 
   return (
     <div className="w-full">
-      {/* header */}
-      <div className="mb-5 flex flex-wrap items-start gap-4">
-        <div className="flex-1 min-w-[260px]">
-          <div className="eyebrow mb-1.5">Sales channels</div>
-          <h1 className="text-[24px] font-semibold tracking-tight text-n-900">Channel listings</h1>
-          <p className="mt-1 text-[13.5px] text-n-500">Everything live across your connected marketplaces — quantities, prices and listing health in one place.</p>
-        </div>
-        <div className="flex items-center gap-2.5 pt-1">
-          <div className="flex items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 py-1.5">
-            <span className="inline-block h-2 w-2 rounded-full bg-teal-500 shadow-[0_0_0_3px_rgba(20,167,157,.13)]" />
-            <span className="text-[12.5px] font-semibold text-n-700">{connectedCount} channel{connectedCount === 1 ? '' : 's'} · {withListingsCount} with listings</span>
-            <span className="text-[12px] text-n-400">· synced {ago(lastSynced)}</span>
-          </div>
-          <div className="flex">
+      <PageHeader
+        module="Sales channels"
+        title="Channel listings"
+        info="Everything live across your connected marketplaces — quantities, prices and listing health in one place."
+        tabs={[{ key: 'analytics', label: 'Analytics' }, { key: 'listings', label: 'Listings', count: total }]}
+        activeTab={tab}
+        onTabChange={(k) => setTab(k as 'listings' | 'analytics')}
+        actions={
+          <span className="hidden h-8 items-center gap-2 whitespace-nowrap rounded-lg border border-n-200 bg-n-0 px-2.5 text-[12px] text-n-600 lg:inline-flex" title={`${connectedCount} channels · ${withListingsCount} with listings · synced ${ago(lastSynced)}`}>
+            <span className="inline-block h-2 w-2 rounded-full bg-teal-500" />
+            {connectedCount} · {withListingsCount} live · {ago(lastSynced)}
+          </span>
+        }
+        primary={
+          <span className="inline-flex">
             <button onClick={() => sync.mutate(undefined)} disabled={sync.isPending}
-              className="inline-flex h-10 items-center gap-2 rounded-l-md bg-teal-500 px-4 text-[13.5px] font-semibold text-white hover:bg-teal-600 disabled:opacity-60">
-              <RefreshCw size={16} className={sync.isPending ? 'animate-spin' : ''} /> {sync.isPending ? 'Syncing…' : 'Sync all'}
+              className="inline-flex h-8 items-center gap-1.5 rounded-l-lg bg-primary px-3.5 text-[13px] font-semibold text-white hover:bg-primary-hover disabled:opacity-60">
+              <RefreshCw size={15} className={sync.isPending ? 'animate-spin' : ''} /> {sync.isPending ? 'Syncing…' : 'Sync all'}
             </button>
             <SyncMenu groups={presentGroups} channelsInGroup={channelsInGroup} busy={sync.isPending} onSync={(ids) => sync.mutate(ids)} />
-          </div>
-        </div>
-      </div>
-
-      {/* tabs */}
-      <div className="mb-5 flex items-center gap-6 border-b border-n-200">
-        {([['analytics', 'Analytics'], ['listings', 'Listings']] as const).map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)}
-            className={`-mb-px flex items-center gap-2 border-b-[2.5px] px-1 py-2.5 text-[14px] font-semibold transition ${tab === key ? 'border-teal-500 text-n-900' : 'border-transparent text-n-500 hover:text-n-700'}`}>
-            {label}{key === 'listings' && <span className="text-[12px] font-semibold text-n-400">{total.toLocaleString()}</span>}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'analytics' && <AnalyticsTab channels={orderedChannels} />}
-
-      {tab === 'listings' && (
-        <>
-          {/* toolbar */}
-          <div className="mb-3 flex flex-wrap items-center gap-2.5">
-            <div className="flex h-[42px] min-w-[220px] flex-1 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3.5">
-              <Search size={16} className="text-n-400" />
-              <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search SKU or product title…" className="flex-1 bg-transparent text-[13.5px] text-n-900 outline-none placeholder:text-n-400" />
+          </span>
+        }
+        toolbar={tab === 'listings' ? (
+          <>
+            <div className="flex h-8 flex-[0_1_300px] items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-2.5 focus-within:border-teal-400">
+              <Search size={15} className="text-n-400" />
+              <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search SKU or product title…" className="min-w-0 flex-1 bg-transparent text-[13px] text-n-900 outline-none placeholder:text-n-400" />
             </div>
 
             {/* Group filter — show whole marketplace regions at once */}
@@ -482,13 +468,19 @@ export function ChannelListingsPage() {
               { value: 'all', label: 'All statuses' }, { value: 'loss', label: 'Loss-making only' }, { value: 'issues', label: 'Issues only' },
               { value: 'oos', label: 'Out of stock' }, { value: 'low', label: 'Low stock' }, { value: 'error', label: 'Errors' }, { value: 'paused', label: 'Paused' },
             ]} />
-            <div className="flex h-[42px] overflow-hidden rounded-md border border-n-200 bg-n-0">
-              <button onClick={() => setView('matrix')} className={`flex items-center gap-1.5 px-3.5 text-[13px] font-semibold ${view === 'matrix' ? 'bg-teal-50 text-teal-700' : 'text-n-600 hover:bg-n-25'}`}><Grid2x2 size={15} /> Matrix</button>
-              <div className="w-px bg-n-200" />
-              <button onClick={() => setView('product')} className={`flex items-center gap-1.5 px-3.5 text-[13px] font-semibold ${view === 'product' ? 'bg-teal-50 text-teal-700' : 'text-n-600 hover:bg-n-25'}`}><LayoutGrid size={15} /> By product</button>
+            <div className="flex-1" />
+            <div className="hseg">
+              <button className={view === 'matrix' ? 'hseg-on' : ''} onClick={() => setView('matrix')}><Grid2x2 size={14} className="mr-1 inline align-[-2px]" />Matrix</button>
+              <button className={view === 'product' ? 'hseg-on' : ''} onClick={() => setView('product')}><LayoutGrid size={14} className="mr-1 inline align-[-2px]" />By product</button>
             </div>
-          </div>
+          </>
+        ) : undefined}
+      />
 
+      {tab === 'analytics' && <AnalyticsTab channels={orderedChannels} />}
+
+      {tab === 'listings' && (
+        <>
           {/* summary line */}
           {orderedChannels.length > 0 && (
             <div className="mb-3.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-n-500">
