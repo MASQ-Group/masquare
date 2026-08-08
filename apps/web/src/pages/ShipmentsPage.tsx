@@ -14,6 +14,7 @@ import { CombineShipmentModal } from '../components/shipments/CombineShipmentMod
 import { ShipmentImportModal } from '../components/shipments/ShipmentImportModal';
 import { SHIPMENT_HEADER, shipmentRowToCells } from '../components/shipments/shipmentColumns';
 import { FbaActualCostModal } from '../components/fba-shipments/FbaActualCostModal';
+import { PageHeader } from '../components/common/PageHeader';
 
 type Tab = 'pending' | 'all' | 'fba';
 
@@ -174,102 +175,53 @@ export function ShipmentsPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <div className="eyebrow mb-1.5">Operations</div>
-          <h1 className="text-[24px] font-semibold tracking-tight text-n-900">Shipments</h1>
-          <p className="mt-1 text-[13.5px] text-n-500">Record actual shipping cost and duty per transaction. Actuals replace the calculated shipping estimate and update profit.</p>
-        </div>
-        {tab !== 'fba' && (
+      <PageHeader
+        module="Operations"
+        title="Shipments"
+        info="Record actual shipping cost and duty per transaction. Actuals replace the calculated shipping estimate and update profit."
+        tabs={[
+          { key: 'pending', label: 'Pending fulfilment', count: (pendingQ.data?.total ?? 0) > 0 ? pendingQ.data?.total : undefined, attention: true },
+          { key: 'all', label: 'All shipments' },
+          { key: 'fba', label: 'FBA shipments' },
+        ]}
+        activeTab={tab}
+        onTabChange={(k) => setTab(k as Tab)}
+        actions={tab !== 'fba' ? (
           <>
-            <button className="btn btn-ghost" disabled={exporting} onClick={onExport}>
-              <Download size={16} /> {exporting ? 'Exporting…' : 'Export'}
-            </button>
-            <button className="btn btn-ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button>
+            <button className="hbtn" disabled={exporting} onClick={onExport}><Download size={15} className="text-n-500" /> {exporting ? 'Exporting…' : 'Export'}</button>
+            <button className="hbtn" onClick={() => setImportOpen(true)}><Upload size={15} className="text-n-500" /> Import</button>
           </>
-        )}
-      </div>
-
-      {/* Tabs */}
-      <div className="mb-4 flex gap-1 border-b border-n-200">
-        {([['pending', 'Pending fulfilment'], ['all', 'All shipments'], ['fba', 'FBA shipments']] as [Tab, string][]).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`relative whitespace-nowrap px-4 py-2.5 text-[14px] font-medium transition-colors ${
-              tab === key
-                ? 'text-teal-700 after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:bg-teal-500'
-                : 'text-n-500 hover:text-n-800'
-            }`}
-          >
-            {label}
-            {key === 'pending' && (pendingQ.data?.total ?? 0) > 0 && (
-              <span className="ml-2 rounded-pill bg-orange-100 px-1.5 text-[11px] font-semibold text-orange-700">{pendingQ.data?.total}</span>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {/* Toolbar */}
-      <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <div className="flex h-[38px] min-w-[220px] flex-1 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3">
-          <Search size={16} className="text-n-400" />
-          <input className="h-full flex-1 text-[13px] outline-none" placeholder="Search transaction ID or SKU…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
-        </div>
-        <Select
-          dense className="w-40"
-          value={filterChannel}
-          onChange={(v) => { setFilterChannel(v); setPage(1); }}
-          options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]}
-        />
-        {tab === 'all' && (
-          <Select
-            dense className="w-36"
-            value={filterType}
-            onChange={(v) => { setFilterType(v); setPage(1); }}
-            options={[{ value: '', label: 'All types' }, { value: 'outbound', label: 'Outbound' }, { value: 'inbound', label: 'Inbound' }]}
-          />
-        )}
-        {tab === 'pending' && (
-          <Select
-            dense className="w-36"
-            value={pendingKind}
-            onChange={(v) => { setPendingKind(v as '' | 'local' | 'channel'); setPage(1); }}
-            options={[{ value: '', label: 'All sources' }, { value: 'local', label: 'Local only' }, { value: 'channel', label: 'Channel only' }]}
-          />
-        )}
-        {tab === 'pending' && selected.size > 0 && (
+        ) : undefined}
+        toolbar={
           <>
-            {selectedLocalIds.length > 0 && (
-              <button
-                className="inline-flex h-[38px] items-center gap-2 rounded-md bg-primary px-3 text-[13px] font-semibold text-white hover:bg-primary-hover disabled:opacity-50"
-                disabled={bulkFulfil.isPending}
-                onClick={() => bulkFulfil.mutate(selectedLocalIds)}
-              >
-                <Truck size={15} /> Mark {selectedLocalIds.length} fulfilled
-              </button>
+            <div className="flex h-8 flex-[0_1_300px] items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-2.5 focus-within:border-teal-400">
+              <Search size={15} className="text-n-400" />
+              <input className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none" placeholder="Search transaction ID or SKU…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
+            </div>
+            <Select dense className="w-40" value={filterChannel} onChange={(v) => { setFilterChannel(v); setPage(1); }} options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]} />
+            {tab === 'all' && (
+              <Select dense className="w-36" value={filterType} onChange={(v) => { setFilterType(v); setPage(1); }} options={[{ value: '', label: 'All types' }, { value: 'outbound', label: 'Outbound' }, { value: 'inbound', label: 'Inbound' }]} />
             )}
-            {/* Two or more channel orders can go out together as one parcel with a shared,
-                proportionally-split cost. A single one still records individually. */}
-            {selectedChannelCount >= 2 && (
-              <button
-                className="inline-flex h-[38px] items-center gap-2 rounded-md bg-primary px-3 text-[13px] font-semibold text-white hover:bg-primary-hover"
-                onClick={() => setCombineOpen(true)}
-              >
-                <PackagePlus size={15} /> Combine {selectedChannelCount} into one shipment
-              </button>
+            {tab === 'pending' && (
+              <Select dense className="w-36" value={pendingKind} onChange={(v) => { setPendingKind(v as '' | 'local' | 'channel'); setPage(1); }} options={[{ value: '', label: 'All sources' }, { value: 'local', label: 'Local only' }, { value: 'channel', label: 'Channel only' }]} />
             )}
-            {selectedChannelCount === 1 && (
-              <span className="text-[12.5px] text-n-500">
-                1 channel order selected — record a shipment for it individually, or select another to combine.
-              </span>
+            {tab === 'pending' && selected.size > 0 && (
+              <>
+                {selectedLocalIds.length > 0 && (
+                  <button className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-semibold text-white hover:bg-primary-hover disabled:opacity-50" disabled={bulkFulfil.isPending} onClick={() => bulkFulfil.mutate(selectedLocalIds)}><Truck size={15} /> Mark {selectedLocalIds.length} fulfilled</button>
+                )}
+                {selectedChannelCount >= 2 && (
+                  <button className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-semibold text-white hover:bg-primary-hover" onClick={() => setCombineOpen(true)}><PackagePlus size={15} /> Combine {selectedChannelCount} into one shipment</button>
+                )}
+                {selectedChannelCount === 1 && (
+                  <span className="text-[12.5px] text-n-500">1 channel order selected — record a shipment for it individually, or select another to combine.</span>
+                )}
+                <button className="text-[12.5px] font-medium text-teal-700 hover:underline" onClick={() => setSelected(new Set())}>Clear</button>
+              </>
             )}
-            <button className="text-[12.5px] font-medium text-teal-700 hover:underline" onClick={() => setSelected(new Set())}>
-              Clear
-            </button>
           </>
-        )}
-      </div>
+        }
+      />
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">

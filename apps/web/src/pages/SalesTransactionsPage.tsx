@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Columns3, Download, Filter, Lock, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Trash2, Undo2, Unlock, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Columns3, Download, Filter, Lock, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Trash2, Unlock, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DateRangePicker, ModalShell, Pagination, Select } from '@masquare/ui';
 import { countriesApi, profitTiersApi, salesChannelsApi, salesTransactionsApi, settingsApi, type ProfitTier, type SalesTransaction, type TransactionAlert, type TxGroupBy, type TxGroupRow, type TxFilterParams } from '../lib/api';
@@ -16,6 +16,7 @@ import { SalesExportModal } from '../components/sales/SalesExportModal';
 import { SkuCell } from '../components/sales/SkuCell';
 import { CountryTag } from '../components/common/Flag';
 import { ChannelChip, useChannelChips } from '../components/common/ChannelChip';
+import { PageHeader } from '../components/common/PageHeader';
 
 interface TxFilters {
   salesChannelId: string[];
@@ -529,118 +530,80 @@ export function SalesTransactionsPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <div className="eyebrow mb-1.5">Sales Transactions</div>
-          <h1 className="text-[24px] font-semibold tracking-tight text-n-900">Sales transactions</h1>
-          <p className="mt-1 text-[13.5px] text-n-500">Register and review sales across all channels. Revenue/profit analytics build on this data.</p>
-        </div>
-        <button className="btn btn-primary" onClick={() => navigate('/sales-transactions/new')}><Plus size={17} /> Register transaction</button>
-      </div>
-
-      {/* Toolbar */}
-      <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <div className="flex h-[38px] min-w-[220px] flex-1 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3">
-          <Search size={16} className="text-n-400" />
-          <input className="h-full flex-1 text-[13px] outline-none" placeholder="Search transaction ID or SKU…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
-        </div>
-        <div className="relative">
-          <button className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300" onClick={() => setFilterOpen((v) => !v)}>
-            <Filter size={15} className="opacity-60" /> Filters
-            {filterCount > 0 && <span className="mono rounded-pill bg-teal-100 px-1.5 text-[11px] text-teal-700">{filterCount}</span>}
+      <PageHeader
+        module="Sales"
+        title="Sales transactions"
+        info="Register and review sales across all channels. Revenue/profit analytics build on this data."
+        actions={
+          <button
+            className={`hbtn ${alertsOnly ? '!border-orange-300 !bg-orange-50 !text-orange-700' : ''}`}
+            title="Show only orders with an alert (e.g. a SKU not in the product catalogue)"
+            onClick={() => { setAlertsOnly((v) => !v); setPage(1); }}
+          >
+            <AlertTriangle size={15} className={alertsOnly ? '' : 'opacity-60'} /> Alerts
           </button>
-          {filterOpen && (
-            <TxFilterPanel
-              onClose={() => setFilterOpen(false)}
-              channels={channels}
-              profitTiers={profitTiers}
-              countries={countries}
-              filters={filters}
-              onToggle={toggleFilter}
-              onSku={(v) => { setFilters((f) => ({ ...f, sku: v })); setPage(1); }}
-              tierName={tierName}
-            />
-          )}
-        </div>
-        <button
-          className={`inline-flex h-[38px] items-center gap-2 rounded-md border px-3 text-[13px] font-medium transition-colors ${alertsOnly ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-n-200 bg-n-0 text-n-700 hover:border-n-300'}`}
-          title="Show only orders with an alert (e.g. a SKU not in the product catalogue)"
-          onClick={() => { setAlertsOnly((v) => !v); setPage(1); }}
-        >
-          <AlertTriangle size={15} className={alertsOnly ? '' : 'opacity-60'} /> Alerts
-        </button>
-        <button
-          className={`inline-flex h-[38px] items-center gap-2 rounded-md border px-3 text-[13px] font-medium transition-colors ${needsReturnOnly ? 'border-warning-bd bg-warning-bg text-warning' : 'border-n-200 bg-n-0 text-n-700 hover:border-n-300'}`}
-          title="Refunds & cancellations still awaiting a return decision"
-          onClick={() => { setNeedsReturnOnly((v) => !v); setPage(1); }}
-        >
-          <Undo2 size={15} className={needsReturnOnly ? '' : 'opacity-60'} /> Returns
-        </button>
-        <button
-          className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300 disabled:opacity-50"
-          title="Re-check every transaction against current settings — product links & costs, shipping service, destination VAT, channel currency & FX — and refresh the calculated figures. Select rows first to recalculate only those."
-          disabled={recalc.isPending}
-          onClick={() => { setRecalcScope('all'); recalc.mutate(undefined); }}
-        >
-          <RefreshCw size={15} className={`opacity-60 ${recalc.isPending && recalcScope === 'all' ? 'animate-spin' : ''}`} /> {recalc.isPending && recalcScope === 'all' ? 'Recalculating…' : 'Recalculate all'}
-        </button>
-        <div className="w-40">
-          <Select
-            dense
-            value={activeDatePreset}
-            onChange={(v) => { const p = v as DatePreset; if (p === 'custom') return; setDateRange(datePresetRange(p)); setPage(1); }}
-            options={DATE_PRESET_OPTS}
-          />
-        </div>
-        <div className="w-[248px]">
-          <DateRangePicker value={dateRange} onChange={(r) => { setDateRange(r); setPage(1); }} placeholder="Custom range" clearable className="h-[38px]" />
-        </div>
-        <div className="w-48">
-          <Select dense value={groupBy} onChange={(v) => setGroupBy(v as '' | TxGroupBy)} options={GROUP_BY_OPTS} />
-        </div>
-        <label className="inline-flex h-[38px] cursor-pointer items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700">
-          <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={eurOnly} onChange={(e) => setEurOnly(e.target.checked)} />
-          Show in EUR
-        </label>
-        <button
-          className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300 disabled:opacity-50"
-          title={isFiltered ? 'Export the transactions matching the current filters' : 'Export all transactions'}
-          disabled={total === 0}
-          onClick={() => setExportOpen(true)}
-        >
-          <Download size={15} className="opacity-60" /> Export
-        </button>
-        <button ref={colsBtnRef} className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300" onClick={() => (colsOpen ? setColsOpen(false) : openCols())}>
-          <Columns3 size={15} className="opacity-60" /> Columns
-        </button>
-        {colsOpen && colsPos && createPortal(
-          <div ref={colsMenuRef} className="fixed z-[90] max-h-[26rem] w-60 overflow-auto rounded-lg border border-n-200 bg-n-0 p-2 shadow-lg" style={{ top: colsPos.top, left: colsPos.left }}>
-            {ALL_COLUMNS.map((c) => (
-              <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-n-50">
-                <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={cols.has(c.key)} onChange={() => toggleCol(c.key)} />
-                <span className="text-[13px] text-n-700">{c.label}</span>
-              </label>
-            ))}
-            <button className="mt-1 w-full rounded-md px-2 py-1.5 text-left text-[12px] font-medium text-teal-700 hover:bg-teal-50" onClick={resetCols}>Reset to standard view</button>
-            {isAdmin && (
-              <button
-                className="mt-0.5 flex w-full items-center gap-1.5 rounded-md border-t border-n-100 px-2 py-1.5 text-left text-[12px] font-semibold text-n-700 hover:bg-n-50 disabled:opacity-50"
-                disabled={saveStandard.isPending}
-                onClick={() => saveStandard.mutate()}
-              >
-                <Save size={13} className="opacity-70" /> {saveStandard.isPending ? 'Saving…' : 'Save current as standard view'}
+        }
+        overflow={[
+          { label: needsReturnOnly ? 'Returns filter · on' : 'Returns filter', onClick: () => { setNeedsReturnOnly((v) => !v); setPage(1); } },
+          { label: recalc.isPending && recalcScope === 'all' ? 'Recalculating…' : 'Recalculate all', disabled: recalc.isPending, onClick: () => { setRecalcScope('all'); recalc.mutate(undefined); } },
+          ...(isAdmin ? [{ label: `Unlock requests${unlockReqs.length ? ` (${unlockReqs.length})` : ''}`, onClick: () => setReqOpen(true) }] : []),
+          { label: 'Export', disabled: total === 0, onClick: () => setExportOpen(true) },
+        ]}
+        primary={<button className="hbtn-primary" onClick={() => navigate('/sales-transactions/new')}><Plus size={16} /> Register transaction</button>}
+        toolbar={
+          <>
+            <div className="flex h-8 flex-[0_1_300px] items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-2.5 focus-within:border-teal-400">
+              <Search size={15} className="text-n-400" />
+              <input className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none" placeholder="Search transaction ID or SKU…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
+            </div>
+            <div className="relative">
+              <button className="hbtn" onClick={() => setFilterOpen((v) => !v)}>
+                <Filter size={15} className="opacity-60" /> Filters
+                {filterCount > 0 && <span className="mono rounded-pill bg-teal-100 px-1.5 text-[11px] text-teal-700">{filterCount}</span>}
               </button>
+              {filterOpen && (
+                <TxFilterPanel
+                  onClose={() => setFilterOpen(false)}
+                  channels={channels}
+                  profitTiers={profitTiers}
+                  countries={countries}
+                  filters={filters}
+                  onToggle={toggleFilter}
+                  onSku={(v) => { setFilters((f) => ({ ...f, sku: v })); setPage(1); }}
+                  tierName={tierName}
+                />
+              )}
+            </div>
+            <div className="w-40"><Select dense value={activeDatePreset} onChange={(v) => { const p = v as DatePreset; if (p === 'custom') return; setDateRange(datePresetRange(p)); setPage(1); }} options={DATE_PRESET_OPTS} /></div>
+            <div className="w-[248px]"><DateRangePicker value={dateRange} onChange={(r) => { setDateRange(r); setPage(1); }} placeholder="Custom range" clearable className="h-8" /></div>
+            <div className="w-48"><Select dense value={groupBy} onChange={(v) => setGroupBy(v as '' | TxGroupBy)} options={GROUP_BY_OPTS} /></div>
+            <label className="inline-flex h-8 cursor-pointer items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700">
+              <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={eurOnly} onChange={(e) => setEurOnly(e.target.checked)} />
+              EUR
+            </label>
+            <button ref={colsBtnRef} className="hbtn" onClick={() => (colsOpen ? setColsOpen(false) : openCols())}>
+              <Columns3 size={15} className="opacity-60" /> Columns
+            </button>
+            {colsOpen && colsPos && createPortal(
+              <div ref={colsMenuRef} className="fixed z-[90] max-h-[26rem] w-60 overflow-auto rounded-lg border border-n-200 bg-n-0 p-2 shadow-lg" style={{ top: colsPos.top, left: colsPos.left }}>
+                {ALL_COLUMNS.map((c) => (
+                  <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-n-50">
+                    <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={cols.has(c.key)} onChange={() => toggleCol(c.key)} />
+                    <span className="text-[13px] text-n-700">{c.label}</span>
+                  </label>
+                ))}
+                <button className="mt-1 w-full rounded-md px-2 py-1.5 text-left text-[12px] font-medium text-teal-700 hover:bg-teal-50" onClick={resetCols}>Reset to standard view</button>
+                {isAdmin && (
+                  <button className="mt-0.5 flex w-full items-center gap-1.5 rounded-md border-t border-n-100 px-2 py-1.5 text-left text-[12px] font-semibold text-n-700 hover:bg-n-50 disabled:opacity-50" disabled={saveStandard.isPending} onClick={() => saveStandard.mutate()}>
+                    <Save size={13} className="opacity-70" /> {saveStandard.isPending ? 'Saving…' : 'Save current as standard view'}
+                  </button>
+                )}
+              </div>,
+              document.body,
             )}
-          </div>,
-          document.body,
-        )}
-        {isAdmin && (
-          <button className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300" onClick={() => setReqOpen(true)}>
-            <Unlock size={15} className="opacity-70" /> Unlock requests
-            {unlockReqs.length > 0 && <span className="mono rounded-pill bg-orange-100 px-1.5 text-[11px] font-semibold text-orange-700">{unlockReqs.length}</span>}
-          </button>
-        )}
-      </div>
+          </>
+        }
+      />
 
       {activeChips.length > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -894,7 +857,7 @@ function TxFilterPanel({
 
   return (
     <div
-      className="absolute left-0 top-11 z-40 grid w-[620px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-x-5 gap-y-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:left-0 max-[760px]:w-[92vw] max-[760px]:grid-cols-1"
+      className="absolute left-0 top-9 z-50 grid w-[620px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-x-5 gap-y-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:w-[92vw] max-[760px]:grid-cols-1"
       onMouseLeave={onClose}
     >
       <div>
