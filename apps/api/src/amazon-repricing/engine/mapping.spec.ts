@@ -100,4 +100,27 @@ describe('buildDecideInput', () => {
     expect(['PRICED', 'HELD', 'QUARANTINED', 'SKIPPED']).toContain(d.outcome);
     if (d.finalPriceCents != null) expect(d.finalPriceCents).toBeGreaterThanOrEqual(1750);
   });
+
+  it('wires the trailing Buy-Box median into the §6.1 anomalous-competitor guard', () => {
+    const out = buildDecideInput(cfg(), snap([comp]), { ...OPTS, medianBuyBoxLandedCents: 2000 });
+    if ('skip' in out) throw new Error('unexpected skip');
+    expect(out.competitorSetOptions?.medianBuyBoxLandedCents).toBe(2000);
+    expect(out.competitorSetOptions?.anomalousFraction).toBe(0.3);
+  });
+
+  it('leaves the anomalous-competitor guard off when no median is available', () => {
+    const out = buildDecideInput(cfg(), snap([comp]), OPTS);
+    if ('skip' in out) throw new Error('unexpected skip');
+    expect(out.competitorSetOptions?.medianBuyBoxLandedCents).toBeNull();
+  });
+
+  it('drops a glitch/hijacker offer (landed < 30% of the median) from the effective set', () => {
+    // Legit competitor at 1950, plus a €0.10 hijacker bait. Median Buy Box = 2000 → floor 600c.
+    const bait: Offer = { sellerId: 'BAIT', listingPriceCents: 10, shippingCents: 0, isBuyBoxWinner: false, isFulfilledByAmazon: false, feedbackRatingPct: 0.99, feedbackCount: 1000, shippingMaxHours: 24, shipsDomestic: true, subCondition: 'new' };
+    const out = buildDecideInput(cfg(), snap([comp, bait]), { ...OPTS, medianBuyBoxLandedCents: 2000 });
+    if ('skip' in out) throw new Error('unexpected skip');
+    const d = decide(out);
+    expect(d.competitorSet?.dropped.some((x) => x.sellerId === 'BAIT' && x.reason === 'ANOMALOUS_PRICE')).toBe(true);
+    expect(d.competitorSet?.effective.some((o) => o.sellerId === 'BAIT')).toBe(false);
+  });
 });

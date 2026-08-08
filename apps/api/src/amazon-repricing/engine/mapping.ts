@@ -41,6 +41,9 @@ export interface BuildOptions {
   amazonRetailSellerIds: string[];
   nowMs: number;
   safetyOverride?: boolean;
+  /** Trailing 7-day median Buy Box landed for this ASIN × marketplace — the reference the
+   *  anomalous-competitor guard (§6.1) drops glitch/hijacker offers against. Null ⇒ guard off. */
+  medianBuyBoxLandedCents?: number | null;
 }
 
 /** A reason the SKU can't be evaluated into a priced decision (still logged as SKIPPED). */
@@ -87,7 +90,12 @@ export function buildDecideInput(
       blocklistedSellerIds: opts.blocklistedSellerIds,
       amazonRetailSellerIds: opts.amazonRetailSellerIds,
     },
-    // Anomalous-price guard needs a trailing Buy-Box median we don't compute yet (follow-up) — omit.
+    // §6.1 anomalous-competitor guard: drop offers far below the trailing Buy-Box median (glitch /
+    // hijacker bait). No median (new listing, no history) ⇒ the guard is simply off for this eval.
+    competitorSetOptions: {
+      medianBuyBoxLandedCents: opts.medianBuyBoxLandedCents ?? null,
+      anomalousFraction: D.anomalousCompetitorFraction,
+    },
     bounds: {
       breakevenCents: cfg.breakevenCents,
       strategyFloorCents: cfg.strategyFloorCents,

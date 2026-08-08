@@ -6,6 +6,10 @@ import { AutomationState, MarketSnapshot } from './types';
 import { RepricerConfig, buildDecideInput } from './mapping';
 import { decide, Decision } from './decision-core';
 import { PriceWriterService } from '../writer/price-writer.service';
+import { medianCents } from '../common/median';
+
+/** Trailing window for the Buy-Box reference median behind the §6.1 anomalous-competitor guard. */
+const MEDIAN_WINDOW_DAYS = 7;
 
 // The repricer I/O shell (spec §5.1, findings §G) — the thin layer around the pure decision core.
 // For one fresh snapshot it: loads our SKU rows on that ASIN × marketplace + the blocklist, builds
@@ -49,16 +53,40 @@ export class RepricerService {
     const amazonRetailSellerIds: string[] = []; // `TO VERIFY` EU Amazon-Retail SellerIds (§5.2)
     const nowMs = Date.now();
 
+    // Trailing Buy-Box reference median for the §6.1 anomalous-competitor guard. Computed once per
+    // ASIN × marketplace from our own decision history, plus this event's observation so a listing
+    // with no history still has a reference. Null (nothing observed) simply leaves the guard off.
+    const medianBuyBoxLandedCents = await this.trailingBuyBoxMedian(snapshot, nowMs);
+
     let count = 0;
     for (const row of rows) {
       try {
-        await this.evaluateRow(row, snapshot, trigger, blocklistedSellerIds, amazonRetailSellerIds, nowMs);
+        await this.evaluateRow(row, snapshot, trigger, blocklistedSellerIds, amazonRetailSellerIds, nowMs, medianBuyBoxLandedCents);
         count += 1;
       } catch (e) {
         this.logger.error(`Evaluation failed for ${row.sku}:${row.marketplaceId}: ${(e as Error).message}`);
       }
     }
     return count;
+  }
+
+  /** Median Buy Box landed over the trailing window for this ASIN × marketplace (our decision
+   *  history), including the current observation. Null when nothing has ever been observed. */
+  private async trailingBuyBoxMedian(snapshot: MarketSnapshot, nowMs: number): Promise<number | null> {
+    if (snapshot.asin == null) return snapshot.buyBoxLandedCents ?? null;
+    const since = new Date(nowMs - MEDIAN_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const history = await this.prisma.repricingDecision.findMany({
+      where: {
+        asin: snapshot.asin,
+        marketplaceId: snapshot.marketplaceId,
+        at: { gte: since },
+        buyBoxLandedCents: { not: null },
+      },
+      select: { buyBoxLandedCents: true },
+    });
+    const values = history.map((h) => h.buyBoxLandedCents as number);
+    if (snapshot.buyBoxLandedCents != null) values.push(snapshot.buyBoxLandedCents);
+    return medianCents(values);
   }
 
   private async evaluateRow(
@@ -68,6 +96,7 @@ export class RepricerService {
     blocklistedSellerIds: string[],
     amazonRetailSellerIds: string[],
     nowMs: number,
+    medianBuyBoxLandedCents: number | null,
   ): Promise<void> {
     const cfg = this.toConfig(row);
 
@@ -80,7 +109,13 @@ export class RepricerService {
     }
     const evalSnapshot = row.suppressed && !restored ? { ...snapshot, pricingHealthFired: true } : snapshot;
 
-    const built = buildDecideInput(cfg, evalSnapshot, { blocklistedSellerIds, amazonRetailSellerIds, nowMs, safetyOverride: trigger.safetyOverride });
+    const built = buildDecideInput(cfg, evalSnapshot, {
+      blocklistedSellerIds,
+      amazonRetailSellerIds,
+      nowMs,
+      safetyOverride: trigger.safetyOverride,
+      medianBuyBoxLandedCents,
+    });
 
     if ('skip' in built) {
       await this.persistDecision(row, snapshot, trigger, {
@@ -149,6 +184,7 @@ export class RepricerService {
         rawTargetCents: decision.rawTargetCents,
         finalPriceCents: decision.finalPriceCents,
         beforePriceCents: row.currentPriceCents,
+        buyBoxLandedCents: snapshot.buyBoxLandedCents ?? null,
         clamps: (decision.clampSteps as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
         competitorSet: (decision.competitorSet as unknown as Prisma.InputJsonValue) ?? Prisma.JsonNull,
         safetyVerdict: Prisma.JsonNull, // filled by the price-writer's safety layer (later phase)
