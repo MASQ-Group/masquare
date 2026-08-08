@@ -51,7 +51,6 @@ const ExpenseCategoriesPage = lazyPage(() => import('./pages/expenses/ExpenseCat
 const ExpenseNamesPage = lazyPage(() => import('./pages/expenses/ExpenseNamesPage'), 'ExpenseNamesPage');
 const ExpenseTagsPage = lazyPage(() => import('./pages/expenses/ExpenseTagsPage'), 'ExpenseTagsPage');
 const IntegrationsPage = lazyPage(() => import('./pages/IntegrationsPage'), 'IntegrationsPage');
-const RepricingPage = lazyPage(() => import('./pages/RepricingPage'), 'RepricingPage');
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -98,7 +97,6 @@ export function App() {
         <Route path="/availability" element={<AvailabilityPage />} />
         <Route path="/channel-listings" element={<ChannelListingsPage />} />
         <Route path="/channel-listings/:productId" element={<ChannelListingDetailPage />} />
-        <Route path="/repricing" element={<RequireAdmin><RepricingPage /></RequireAdmin>} />
         <Route path="/stock-owed" element={<StockOwedPage />} />
         <Route path="/warehouses" element={<WarehousesPage />} />
         <Route path="/procurement" element={<ProcurementPage />} />

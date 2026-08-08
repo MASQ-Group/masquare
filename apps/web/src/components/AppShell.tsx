@@ -11,7 +11,6 @@ import {
   Coins,
   Container,
   FolderTree,
-  Gauge,
   Globe,
   HelpCircle,
   Tags,
@@ -94,7 +93,6 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
     label: 'Sales channels',
     items: [
       { to: '/channel-listings', label: 'Channel Listings', icon: Share2 },
-      { to: '/repricing', label: 'Amazon Repricing', icon: Gauge, adminOnly: true },
     ],
   },
   {

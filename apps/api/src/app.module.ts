@@ -31,7 +31,6 @@ import { ExpensesModule } from './expenses/expenses.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { ChannelListingsModule } from './channel-listings/channel-listings.module';
 import { StorageModule } from './storage/storage.module';
-import { AmazonRepricingModule } from './amazon-repricing/amazon-repricing.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -83,7 +82,6 @@ import { HealthController } from './health.controller';
     AvailabilityModule,
     ChannelListingsModule,
     IntegrationsModule,
-    AmazonRepricingModule,
   ],
   controllers: [HealthController],
   providers: [
