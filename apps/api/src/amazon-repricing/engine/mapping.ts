@@ -44,6 +44,8 @@ export interface BuildOptions {
   /** Trailing 7-day median Buy Box landed for this ASIN × marketplace — the reference the
    *  anomalous-competitor guard (§6.1) drops glitch/hijacker offers against. Null ⇒ guard off. */
   medianBuyBoxLandedCents?: number | null;
+  /** §5.4 C-5: a repeat undercutter is looping us → hold current price instead of chasing. */
+  holdForLoop?: boolean;
 }
 
 /** A reason the SKU can't be evaluated into a priced decision (still logged as SKIPPED). */
@@ -115,7 +117,7 @@ export function buildDecideInput(
       holdingBuyBox: cfg.holdingBuyBox,
       probeAnchorCents: cfg.probeAnchorCents,
       competitorSetShrank: false, // needs prior-event competitor count (follow-up)
-      holdForLoop: false, // full undercut-loop state machine is a follow-up (§5.5 C-5)
+      holdForLoop: opts.holdForLoop ?? false, // §5.4 C-5 undercut-loop guard (computed in repricer)
     },
     signals: { amazonRetailLandedCents },
     targetParams: {

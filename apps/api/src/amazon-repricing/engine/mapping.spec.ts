@@ -114,6 +114,17 @@ describe('buildDecideInput', () => {
     expect(out.competitorSetOptions?.medianBuyBoxLandedCents).toBeNull();
   });
 
+  it('threads the undercut-loop hold flag into engine state (§5.4 C-5)', () => {
+    const held = buildDecideInput(cfg(), snap([comp]), { ...OPTS, holdForLoop: true });
+    if ('skip' in held) throw new Error('unexpected skip');
+    expect(held.state.holdForLoop).toBe(true);
+    expect(decide(held).outcome).toBe('HELD');
+
+    const normal = buildDecideInput(cfg(), snap([comp]), OPTS);
+    if ('skip' in normal) throw new Error('unexpected skip');
+    expect(normal.state.holdForLoop).toBe(false);
+  });
+
   it('drops a glitch/hijacker offer (landed < 30% of the median) from the effective set', () => {
     // Legit competitor at 1950, plus a €0.10 hijacker bait. Median Buy Box = 2000 → floor 600c.
     const bait: Offer = { sellerId: 'BAIT', listingPriceCents: 10, shippingCents: 0, isBuyBoxWinner: false, isFulfilledByAmazon: false, feedbackRatingPct: 0.99, feedbackCount: 1000, shippingMaxHours: 24, shipsDomestic: true, subCondition: 'new' };

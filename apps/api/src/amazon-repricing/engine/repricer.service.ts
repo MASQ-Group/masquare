@@ -7,6 +7,8 @@ import { RepricerConfig, buildDecideInput } from './mapping';
 import { decide, Decision } from './decision-core';
 import { PriceWriterService } from '../writer/price-writer.service';
 import { medianCents } from '../common/median';
+import { detectUndercutLoop, UndercutEvent } from './undercut-loop';
+import { REPRICING_DEFAULTS } from '../config/repricing.config';
 
 /** Trailing window for the Buy-Box reference median behind the §6.1 anomalous-competitor guard. */
 const MEDIAN_WINDOW_DAYS = 7;
@@ -58,10 +60,24 @@ export class RepricerService {
     // with no history still has a reference. Null (nothing observed) simply leaves the guard off.
     const medianBuyBoxLandedCents = await this.trailingBuyBoxMedian(snapshot, nowMs);
 
+    // §5.4 C-5 undercut-loop guard: if a repeat offender is looping us on this listing, hold rather
+    // than chase. One offender per listing, so compute once and apply to all our SKU rows on it.
+    const loop = detectUndercutLoop(await this.trailingUndercutEvents(snapshot, nowMs), {
+      count: REPRICING_DEFAULTS.undercutLoopCount,
+      windowMs: REPRICING_DEFAULTS.undercutLoopWindowMinutes * 60 * 1000,
+      quietMs: REPRICING_DEFAULTS.undercutLoopQuietHours * 60 * 60 * 1000,
+      nowMs,
+    });
+    if (loop.hold) {
+      this.logger.warn(
+        `Undercut loop on ${snapshot.asin}:${snapshot.marketplaceId} — holding; offender ${loop.offenderSellerId} (${loop.offenderCount}× in ${REPRICING_DEFAULTS.undercutLoopWindowMinutes}m). Consider blocklisting.`,
+      );
+    }
+
     let count = 0;
     for (const row of rows) {
       try {
-        await this.evaluateRow(row, snapshot, trigger, blocklistedSellerIds, amazonRetailSellerIds, nowMs, medianBuyBoxLandedCents);
+        await this.evaluateRow(row, snapshot, trigger, blocklistedSellerIds, amazonRetailSellerIds, nowMs, medianBuyBoxLandedCents, loop.hold);
         count += 1;
       } catch (e) {
         this.logger.error(`Evaluation failed for ${row.sku}:${row.marketplaceId}: ${(e as Error).message}`);
@@ -89,6 +105,28 @@ export class RepricerService {
     return medianCents(values);
   }
 
+  /** Reconstruct undercut events for this listing from our decision history over the quiet window:
+   *  a decision whose lowest effective competitor was priced below our then-current price is one
+   *  undercut by that seller. Feeds the §5.4 C-5 loop detector without needing a separate table. */
+  private async trailingUndercutEvents(snapshot: MarketSnapshot, nowMs: number): Promise<UndercutEvent[]> {
+    if (snapshot.asin == null) return [];
+    const since = new Date(nowMs - REPRICING_DEFAULTS.undercutLoopQuietHours * 60 * 60 * 1000);
+    const decisions = await this.prisma.repricingDecision.findMany({
+      where: { asin: snapshot.asin, marketplaceId: snapshot.marketplaceId, at: { gte: since } },
+      select: { at: true, beforePriceCents: true, competitorSet: true },
+      orderBy: { at: 'asc' },
+    });
+    const events: UndercutEvent[] = [];
+    for (const d of decisions) {
+      const cs = d.competitorSet as { effective?: { sellerId: string; listingPriceCents?: number; shippingCents?: number }[] } | null;
+      const lowest = cs?.effective?.[0];
+      if (!lowest || d.beforePriceCents == null) continue;
+      const landed = (lowest.listingPriceCents ?? 0) + (lowest.shippingCents ?? 0);
+      if (landed < d.beforePriceCents) events.push({ atMs: d.at.getTime(), sellerId: lowest.sellerId });
+    }
+    return events;
+  }
+
   private async evaluateRow(
     row: Prisma.RepricingSkuPricingGetPayload<object>,
     snapshot: MarketSnapshot,
@@ -97,6 +135,7 @@ export class RepricerService {
     amazonRetailSellerIds: string[],
     nowMs: number,
     medianBuyBoxLandedCents: number | null,
+    holdForLoop: boolean,
   ): Promise<void> {
     const cfg = this.toConfig(row);
 
@@ -115,6 +154,7 @@ export class RepricerService {
       nowMs,
       safetyOverride: trigger.safetyOverride,
       medianBuyBoxLandedCents,
+      holdForLoop,
     });
 
     if ('skip' in built) {
