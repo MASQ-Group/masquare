@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Columns3, Download, Filter, Grid, List, Package, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
+import { Columns3, ChevronsUpDown, Download, Filter, Grid, List, Package, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadSheet, Pagination } from '@masquare/ui';
 import {
@@ -82,7 +82,7 @@ export function ProductsPage() {
   const [bulkEdit, setBulkEdit] = useState(false);
   const [exportProducts, setExportProducts] = useState<Product[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [openMenu, setOpenMenu] = useState<'filters' | 'columns' | null>(null);
+  const [openMenu, setOpenMenu] = useState<'filters' | 'columns' | 'scope' | null>(null);
   // Pending delete awaiting confirmation: a single product, or a bulk delete of the selection.
   const [pendingDelete, setPendingDelete] = useState<{ kind: 'single'; product: Product } | { kind: 'bulk'; ids: string[] } | null>(null);
 
@@ -197,15 +197,35 @@ export function ProductsPage() {
         primary={<button className="hbtn-primary" onClick={() => setEditing(null)}><Plus size={16} /> Add product</button>}
         toolbar={
           <>
-            <span className="flex h-8 flex-[0_1_380px] items-stretch overflow-hidden rounded-lg border border-n-200 bg-n-0 focus-within:border-teal-400">
-              <select value={field} onChange={(e) => setField(e.target.value)} className="h-full border-r border-n-200 bg-n-25 px-2 text-[12.5px] font-medium text-n-600 outline-none">
-                {SEARCH_FIELDS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
-              </select>
-              <span className="flex flex-1 items-center gap-2 px-2.5">
-                <Search size={15} className="text-n-400" />
-                <input className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none" placeholder="Search SKU, title, attributes…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
+            <div className="relative flex-[0_1_380px]">
+              <span className="flex h-8 items-stretch overflow-hidden rounded-lg border border-n-200 bg-n-0 focus-within:border-teal-400">
+                <button
+                  type="button"
+                  onClick={() => setOpenMenu(openMenu === 'scope' ? null : 'scope')}
+                  className="flex items-center gap-1 border-r border-n-200 bg-n-25 px-2.5 text-[12.5px] font-medium text-n-600 hover:bg-n-100"
+                >
+                  {SEARCH_FIELDS.find((f) => f.key === field)?.label ?? 'All fields'}
+                  <ChevronsUpDown size={13} className="text-n-400" />
+                </button>
+                <span className="flex flex-1 items-center gap-2 px-2.5">
+                  <Search size={15} className="text-n-400" />
+                  <input className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none" placeholder="Search SKU, title, attributes…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
+                </span>
               </span>
-            </span>
+              {openMenu === 'scope' && (
+                <div className="absolute left-0 top-9 z-50 min-w-[160px] rounded-lg border border-n-200 bg-n-0 p-1 shadow-lg" onMouseLeave={() => setOpenMenu(null)}>
+                  {SEARCH_FIELDS.map((f) => (
+                    <button
+                      key={f.key}
+                      onClick={() => { setField(f.key); setOpenMenu(null); }}
+                      className={`block w-full rounded-md px-2.5 py-1.5 text-left text-[13px] hover:bg-n-50 ${f.key === field ? 'font-semibold text-teal-700' : 'text-n-700'}`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div className="relative">
               <button className="hbtn" onClick={() => setOpenMenu(openMenu === 'filters' ? null : 'filters')}>
@@ -485,7 +505,7 @@ function FilterPanel({
   onClose: () => void;
 }) {
   return (
-    <div className="absolute right-0 top-11 z-40 grid w-[560px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:left-0 max-[760px]:right-auto max-[760px]:w-[92vw] max-[760px]:grid-cols-1" onMouseLeave={onClose}>
+    <div className="absolute left-0 top-9 z-50 grid w-[560px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:w-[92vw] max-[760px]:grid-cols-1" onMouseLeave={onClose}>
       {groups.map((g) => (
         <div key={g.key}>
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-n-500">{g.label}</div>

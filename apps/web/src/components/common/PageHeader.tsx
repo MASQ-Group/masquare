@@ -48,7 +48,7 @@ function InfoTooltip({ info }: { info: ReactNode }) {
     <span className="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <span className="inline-flex h-4 w-4 translate-y-[2px] cursor-default items-center justify-center rounded-full border border-n-300 text-[10px] font-semibold text-n-400">i</span>
       {open && (
-        <span className="absolute left-1/2 top-6 z-50 w-[280px] -translate-x-1/2 rounded-lg bg-n-900 px-3 py-2.5 text-[12px] font-normal normal-case leading-relaxed tracking-normal text-n-200 shadow-xl">
+        <span className="absolute left-0 top-6 z-50 block w-[280px] whitespace-normal break-words rounded-lg bg-n-900 px-3 py-2.5 text-[12px] font-normal normal-case leading-relaxed tracking-normal text-n-200 shadow-xl">
           {info}
         </span>
       )}
