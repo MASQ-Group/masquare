@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, FolderTree, Pencil, Plus, Trash2 } from 'luc
 import { toast } from 'sonner';
 import { ModalShell, Select } from '@masquare/ui';
 import { expenseCategoriesApi, type ExpenseCategoryNode } from '../../lib/api';
+import { PageHeader } from '../../components/common/PageHeader';
 
 /** Indented options for the parent picker, excluding a subtree (when editing, so a
  *  category can't be reparented under itself). */
@@ -46,15 +47,12 @@ export function ExpenseCategoriesPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <h1 className="text-[22px] font-bold tracking-tight text-n-900">Expense Categories</h1>
-          <p className="mt-1 text-[13px] text-n-500">Organise expenses into a tree of categories and sub-categories.</p>
-        </div>
-        <button onClick={() => setModal({})} className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md bg-teal-500 px-3.5 text-[13px] font-semibold text-white hover:bg-teal-600">
-          <Plus size={15} /> New category
-        </button>
-      </div>
+      <PageHeader
+        module="Expenses"
+        title="Expense Categories"
+        info="Organise expenses into a tree of categories and sub-categories."
+        primary={<button onClick={() => setModal({})} className="hbtn-primary"><Plus size={15} /> New category</button>}
+      />
 
       <div className="card overflow-hidden">
         <div className="border-b border-n-100 px-4 py-2.5 text-[12px] text-n-500">{rows.length} categor{rows.length === 1 ? 'y' : 'ies'}</div>

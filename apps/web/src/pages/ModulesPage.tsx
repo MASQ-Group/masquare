@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Share2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { companiesApi, modulesApi, type ModuleCatalogItem } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 
 export function ModulesPage() {
   const qc = useQueryClient();
@@ -27,13 +28,11 @@ export function ModulesPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5">
-        <div className="eyebrow mb-1.5">Administration</div>
-        <h1 className="text-[24px] font-semibold tracking-tight text-n-900">Modules &amp; sharing</h1>
-        <p className="mt-1 text-[13.5px] text-n-500">
-          Enable modules per company. Shareable modules (e.g. Products) co-own their records across every participating company.
-        </p>
-      </div>
+      <PageHeader
+        module="Setup"
+        title="Modules & sharing"
+        info="Enable modules per company. Shareable modules (e.g. Products) co-own their records across every participating company."
+      />
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">

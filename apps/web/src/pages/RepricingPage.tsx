@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X } from 'lucide-react';
 import { repricingApi, type RepricingSkuRow, type RepricingDecisionRow } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 
 // Amazon Buy Box repricing — ops console (Phase-appropriate: readiness, SKU floors, decision
 // audit, onboard + recompute actions). Read-only insight into the shadow pipeline; the engine
@@ -63,31 +64,29 @@ export function RepricingPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <h1 className="text-[22px] font-bold tracking-tight text-n-900">Amazon Repricing</h1>
-          <p className="mt-1 text-[13px] text-n-500">
-            Buy Box repricing engine — running in <strong>shadow mode</strong>. Intended prices are logged; nothing is
-            submitted unless a SKU is LIVE and live-writes are enabled server-side.
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+      <PageHeader
+        module="Sales channels"
+        title="Amazon Repricing"
+        info="Buy Box repricing engine — running in shadow mode. Intended prices are logged; nothing is submitted unless a SKU is LIVE and live-writes are enabled server-side."
+        actions={
           <button
             onClick={() => onboard.mutate()}
             disabled={onboard.isPending}
-            className="inline-flex h-9 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-n-300 hover:bg-n-25 disabled:opacity-50"
+            className="hbtn"
           >
             <DownloadCloud size={15} /> {onboard.isPending ? 'Onboarding…' : 'Onboard SKUs'}
           </button>
+        }
+        primary={
           <button
             onClick={() => recompute.mutate()}
             disabled={recompute.isPending}
-            className="inline-flex h-9 items-center gap-2 rounded-md bg-teal-500 px-3.5 text-[13px] font-semibold text-white hover:bg-teal-600 disabled:opacity-50"
+            className="hbtn-primary"
           >
             <RefreshCcw size={15} /> {recompute.isPending ? 'Recomputing…' : 'Recompute floors'}
           </button>
-        </div>
-      </div>
+        }
+      />
 
       {/* Safety controls (§6.4): DB-backed kill switch + live-writes master (both default OFF). */}
       <div className={`mb-5 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border px-4 py-3 ${killed ? 'border-red-300 bg-red-50' : 'border-n-200 bg-n-0'}`}>

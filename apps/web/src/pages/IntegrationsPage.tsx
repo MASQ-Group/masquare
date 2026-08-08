@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { integrationsApi, salesChannelsApi, type ChannelIntegration } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { IntegrationModal } from '../components/integrations/IntegrationModal';
 import { MappingVerifyModal } from '../components/integrations/MappingVerifyModal';
 import { ListingsPreviewModal } from '../components/integrations/ListingsPreviewModal';
@@ -229,26 +230,23 @@ export function IntegrationsPage() {
 
   return (
     <div className="w-full">
-      {/* Header */}
-      <div className="flex items-start gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="eyebrow mb-1.5">Integrations module</div>
-          <h1 className="text-[24px] font-semibold tracking-tight text-n-900">Marketplace integrations</h1>
-          <p className="mt-1 max-w-2xl text-[13.5px] text-n-500">Connected marketplace accounts syncing orders, fees &amp; refunds into the platform. API keys are encrypted and never leave it.</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2 pt-1">
+      <PageHeader
+        module="Setup"
+        title="Marketplace integrations"
+        info="Connected marketplace accounts syncing orders, fees & refunds into the platform. API keys are encrypted and never leave it."
+        actions={
           <button
-            className="btn btn-ghost"
+            className="hbtn"
             disabled={syncableCount === 0 || bulkSync.isPending}
             title={syncableCount === 0 ? 'No connections are ready to sync — verify mapping and set the target first' : `Sync all ${syncableCount} ready connection${syncableCount === 1 ? '' : 's'} now`}
             onClick={() => bulkSync.mutate(integrations)}
           >
-            <RefreshCw size={16} className={bulkSync.isPending ? 'animate-spin' : ''} />
+            <RefreshCw size={15} className={bulkSync.isPending ? 'animate-spin' : ''} />
             {bulkProgress ? `Syncing ${bulkProgress.done}/${bulkProgress.total}…` : `Sync all${syncableCount ? ` (${syncableCount})` : ''}`}
           </button>
-          <button className="btn btn-primary" onClick={() => setModal(null)}><Plus size={17} /> Add connection</button>
-        </div>
-      </div>
+        }
+        primary={<button className="hbtn-primary" onClick={() => setModal(null)}><Plus size={16} /> Add connection</button>}
+      />
 
       {isLoading && <div className="py-16 text-center text-[13px] text-n-500">Loading…</div>}
 

@@ -4,6 +4,7 @@ import { Pencil, Plus, Search, Tag as TagIcon, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell, Select } from '@masquare/ui';
 import { expenseTagsApi, type ExpenseTag } from '../../lib/api';
+import { PageHeader } from '../../components/common/PageHeader';
 import { usePersistentState } from '../../lib/usePersistentState';
 
 export function ExpenseTagsPage() {
@@ -34,26 +35,24 @@ export function ExpenseTagsPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <h1 className="text-[22px] font-bold tracking-tight text-n-900">Tags</h1>
-          <p className="mt-1 text-[13px] text-n-500">Track expenses against a specific thing — a company car by plate, a project, an office. Group related tags (e.g. all cars) to report on the whole group or one item.</p>
-        </div>
-        <button onClick={() => setModal({})} className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md bg-teal-500 px-3.5 text-[13px] font-semibold text-white hover:bg-teal-600">
-          <Plus size={15} /> New tag
-        </button>
-      </div>
-
-      <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <div className="flex h-9 min-w-[200px] max-w-[300px] flex-1 items-center gap-2 rounded-md border border-n-200 bg-n-50 px-3">
-          <Search size={15} className="text-n-400" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search tags…" className="flex-1 bg-transparent text-[13px] text-n-900 outline-none placeholder:text-n-400" />
-        </div>
-        <Select dense className="w-48" value={groupFilter} onChange={setGroupFilter} options={[{ value: '', label: 'All groups' }, ...groups.map((g) => ({ value: g, label: g }))]} />
-        <label className="ml-auto flex cursor-pointer items-center gap-2 text-[12.5px] text-n-600">
-          <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Show inactive
-        </label>
-      </div>
+      <PageHeader
+        module="Expenses"
+        title="Tags"
+        info="Track expenses against a specific thing — a company car by plate, a project, an office. Group related tags (e.g. all cars) to report on the whole group or one item."
+        primary={<button onClick={() => setModal({})} className="hbtn-primary"><Plus size={15} /> New tag</button>}
+        toolbar={
+          <>
+            <div className="flex h-8 min-w-[200px] max-w-[300px] flex-1 items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-3">
+              <Search size={15} className="text-n-400" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search tags…" className="flex-1 bg-transparent text-[13px] text-n-900 outline-none placeholder:text-n-400" />
+            </div>
+            <Select dense className="w-48" value={groupFilter} onChange={setGroupFilter} options={[{ value: '', label: 'All groups' }, ...groups.map((g) => ({ value: g, label: g }))]} />
+            <label className="ml-auto flex cursor-pointer items-center gap-2 text-[12.5px] text-n-600">
+              <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Show inactive
+            </label>
+          </>
+        }
+      />
 
       <div className="card overflow-hidden">
         <div className="border-b border-n-100 px-4 py-2.5 text-[12px] text-n-500">{rows.length} tag{rows.length === 1 ? '' : 's'}</div>

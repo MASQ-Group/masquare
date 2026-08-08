@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, Ban, ChevronLeft, ChevronRight, Pencil, Plus, Searc
 import { toast } from 'sonner';
 import { DatePicker, ModalShell, MonthPicker, Select, SmartReferenceInput, type ReferenceOption } from '@masquare/ui';
 import { expenseCategoriesApi, expenseDefinitionsApi, expensesApi, expenseTagsApi, type AmountScope, type Expense, type ExpenseCategoryNode, type ExpenseMonthRow, type ExpenseOccurrence } from '../../lib/api';
+import { PageHeader } from '../../components/common/PageHeader';
 import { useAuth } from '../../lib/auth';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { CurrencySelect } from '../../components/common/CurrencySelect';
@@ -100,37 +101,37 @@ export function ExpensesPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <h1 className="text-[22px] font-bold tracking-tight text-n-900">Expenses</h1>
-          <p className="mt-1 text-[13px] text-n-500">Company operating expenses (COGS lives in Purchase Orders). Recurring expenses accrue every month until cancelled.</p>
-        </div>
-        <button
-          onClick={() => setImportOpen(true)}
-          disabled={!activeCompanyId}
-          title={activeCompanyId ? 'Bulk-register expenses from a spreadsheet' : 'Select an active company first'}
-          className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3.5 text-[13px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50"
-        >
-          <Upload size={15} /> Import
-        </button>
-        <button
-          onClick={() => setModalOpen(true)}
-          disabled={!activeCompanyId}
-          title={activeCompanyId ? undefined : 'Select an active company first'}
-          className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md bg-teal-500 px-3.5 text-[13px] font-semibold text-white hover:bg-teal-600 disabled:opacity-50"
-        >
-          <Plus size={15} /> Register expense
-        </button>
-      </div>
-
-      <div className="mb-4 flex items-center gap-2 border-b border-n-200">
-        {([['registered', 'Registered'], ['ledger', 'Monthly ledger']] as const).map(([key, label]) => (
-          <button key={key} onClick={() => setView(key)}
-            className={`-mb-px border-b-2 px-3 py-2 text-[13px] font-semibold transition ${view === key ? 'border-teal-500 text-teal-700' : 'border-transparent text-n-500 hover:text-n-700'}`}>
-            {label}
+      <PageHeader
+        module="Expenses"
+        title="Expenses"
+        info="Company operating expenses (COGS lives in Purchase Orders). Recurring expenses accrue every month until cancelled."
+        tabs={[
+          { key: 'registered', label: 'Registered' },
+          { key: 'ledger', label: 'Monthly ledger' },
+        ]}
+        activeTab={view}
+        onTabChange={(k) => setView(k as 'registered' | 'ledger')}
+        actions={
+          <button
+            onClick={() => setImportOpen(true)}
+            disabled={!activeCompanyId}
+            title={activeCompanyId ? 'Bulk-register expenses from a spreadsheet' : 'Select an active company first'}
+            className="hbtn"
+          >
+            <Upload size={15} /> Import
           </button>
-        ))}
-      </div>
+        }
+        primary={
+          <button
+            onClick={() => setModalOpen(true)}
+            disabled={!activeCompanyId}
+            title={activeCompanyId ? undefined : 'Select an active company first'}
+            className="hbtn-primary"
+          >
+            <Plus size={15} /> Register expense
+          </button>
+        }
+      />
 
       {view === 'ledger' && (activeCompanyId
         ? <MonthlyLedger companyId={activeCompanyId} />

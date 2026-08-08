@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { usersApi, type User } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { UserModal } from '../components/UserModal';
 
 export function UsersPage() {
@@ -22,18 +23,12 @@ export function UsersPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <div className="eyebrow mb-1.5">Administration</div>
-          <h1 className="text-[24px] font-semibold tracking-tight text-n-900">Users &amp; roles</h1>
-          <p className="mt-1 text-[13.5px] text-n-500">
-            People and what they can reach — companies &times; modules.
-          </p>
-        </div>
-        <button className="btn btn-primary" onClick={() => setEditing(null)}>
-          <Plus size={17} /> Add user
-        </button>
-      </div>
+      <PageHeader
+        module="Setup"
+        title="Users & roles"
+        info="People and what they can reach — companies × modules."
+        primary={<button className="hbtn-primary" onClick={() => setEditing(null)}><Plus size={16} /> Add user</button>}
+      />
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">

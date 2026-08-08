@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Building2, Lock, Settings, Users } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { PageHeader } from '../components/common/PageHeader';
 
 export function DashboardPage() {
   const { user, activeCompany } = useAuth();
@@ -13,21 +14,18 @@ export function DashboardPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-6">
-        <div className="eyebrow mb-1.5">Foundation</div>
-        <h1 className="text-[24px] font-semibold tracking-tight text-n-900">
-          Welcome, {user?.fullName?.split(' ')[0]}
-        </h1>
-        <p className="mt-1 text-[13.5px] text-n-500">
-          {activeCompany ? (
-            <>
-              Active company: <span className="font-medium text-n-700">{activeCompany.officialName}</span>
-            </>
-          ) : (
-            'No active company selected.'
-          )}
-        </p>
-      </div>
+      <PageHeader
+        module="Home"
+        title={`Welcome, ${user?.fullName?.split(' ')[0] ?? ''}`.trim()}
+        info="Your MASQ home. Jump into any module from the sidebar, or use the shortcuts below."
+        actions={activeCompany ? (
+          <span className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-n-200 bg-n-0 px-3 text-[12.5px] text-n-600">
+            <Building2 size={14} className="text-n-400" /> <span className="font-medium text-n-700">{activeCompany.officialName}</span>
+          </span>
+        ) : (
+          <span className="inline-flex h-8 items-center rounded-lg border border-n-200 bg-n-0 px-3 text-[12.5px] text-n-500">No active company selected</span>
+        )}
+      />
 
       {user?.isAdmin && (
         <section className="mb-8">
