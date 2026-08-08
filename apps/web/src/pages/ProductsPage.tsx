@@ -185,7 +185,7 @@ export function ProductsPage() {
   return (
     <div className="w-full">
       <PageHeader
-        module="Products"
+        module="Catalogue & Inventory"
         title="All products"
         info={`Master catalogue${user?.companies.length ? `, co-owned by ${user.companies.map((c) => c.officialName).join(' & ')}` : ''}.`}
         actions={

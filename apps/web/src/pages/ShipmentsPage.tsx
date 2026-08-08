@@ -176,7 +176,7 @@ export function ShipmentsPage() {
   return (
     <div className="w-full">
       <PageHeader
-        module="Operations"
+        module="Sales"
         title="Shipments"
         info="Record actual shipping cost and duty per transaction. Actuals replace the calculated shipping estimate and update profit."
         tabs={[

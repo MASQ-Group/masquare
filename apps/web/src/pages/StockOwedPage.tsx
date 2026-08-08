@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, PackageX } from 'lucide-react';
 import { DEFAULT_PAGE_SIZES, Pagination, Select } from '@masquare/ui';
 import { inventoryApi, type StockOwedRow } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { formatDate } from '../lib/format';
 
 const STATUS_OPTIONS = [
@@ -36,20 +37,16 @@ export function StockOwedPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[22px] font-bold tracking-tight text-n-900">Stock Owed</h1>
-          <p className="mt-1 text-[13px] text-n-500">
-            Units sold before they were in stock. Each clears automatically when the product is next received.
-          </p>
-        </div>
-        {(data?.totalOpenUnits ?? 0) > 0 && (
-          <div className="rounded-lg border border-warning-bd bg-warning-bg px-4 py-2.5 text-center">
-            <div className="mono text-[20px] font-bold text-warning">{data!.totalOpenUnits}</div>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-warning">units owed</div>
-          </div>
-        )}
-      </div>
+      <PageHeader
+        module="Catalogue & Inventory"
+        title="Stock Owed"
+        info="Units sold before they were in stock. Each clears automatically when the product is next received."
+        actions={(data?.totalOpenUnits ?? 0) > 0 ? (
+          <span className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-warning-bd bg-warning-bg px-3 text-[12px] font-semibold text-warning">
+            <span className="mono text-[14px] font-bold">{data!.totalOpenUnits}</span> units owed
+          </span>
+        ) : undefined}
+      />
 
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-3">

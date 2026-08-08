@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, Coins, Download, Lock, Pencil, Plus, Search, Trash2
 import { toast } from 'sonner';
 import { BulkImport, ModalShell, Pagination, Select, downloadSheet, type ImportField } from '@masquare/ui';
 import { fbaShipmentsApi, salesChannelsApi, type FbaShipment } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { useAuth } from '../lib/auth';
 import { usePersistentState } from '../lib/usePersistentState';
 import { CountryTag } from '../components/common/Flag';
@@ -91,51 +92,46 @@ export function FbaShipmentsPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <div className="eyebrow mb-1.5">Operations</div>
-          <h1 className="text-[24px] font-semibold tracking-tight text-n-900">FBA Shipments</h1>
-          <p className="mt-1 text-[13.5px] text-n-500">Ship stock to Amazon fulfilment centers. The estimated (then actual) shipping cost is allocated per SKU and feeds each product's average inbound FBA cost.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button className="btn btn-ghost" onClick={downloadFbaTemplate}><Download size={16} /> Template</button>
-          <button className="btn btn-ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button>
-          <button className="btn btn-primary" onClick={() => setModal({})}><Plus size={17} /> New FBA shipment</button>
-        </div>
-      </div>
-
-      <div className="mb-3 inline-flex rounded-md border border-n-200 bg-n-0 p-0.5">
-        {([['shipments', 'Shipments'], ['costs', 'Allocated cost per SKU']] as const).map(([key, label]) => (
-          <button
-            key={key}
-            className={`rounded px-3 py-1.5 text-[13px] font-medium transition-colors ${view === key ? 'bg-primary text-white' : 'text-n-600 hover:text-n-800'}`}
-            onClick={() => setView(key)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <div className="flex h-[38px] min-w-[220px] flex-1 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3">
-          <Search size={16} className="text-n-400" />
-          <input className="h-full flex-1 text-[13px] outline-none" placeholder={view === 'costs' ? 'Search SKU…' : 'Search FBA ID or SKU…'} value={qInput} onChange={(e) => setQInput(e.target.value)} />
-        </div>
-        <Select
-          dense className="w-40"
-          value={filterChannel}
-          onChange={(v) => { setFilterChannel(v); setPage(1); }}
-          options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]}
-        />
-        {view === 'shipments' && (
-          <Select
-            dense className="w-36"
-            value={filterStatus}
-            onChange={(v) => { setFilterStatus(v); setPage(1); }}
-            options={[{ value: '', label: 'All statuses' }, { value: 'draft', label: 'Draft' }, { value: 'confirmed', label: 'Confirmed' }]}
-          />
-        )}
-      </div>
+      <PageHeader
+        module="Sales"
+        title="FBA Shipments"
+        info="Ship stock to Amazon fulfilment centers. The estimated (then actual) shipping cost is allocated per SKU and feeds each product's average inbound FBA cost."
+        tabs={[
+          { key: 'shipments', label: 'Shipments' },
+          { key: 'costs', label: 'Allocated cost per SKU' },
+        ]}
+        activeTab={view}
+        onTabChange={(k) => setView(k as 'shipments' | 'costs')}
+        actions={
+          <>
+            <button className="hbtn" onClick={downloadFbaTemplate}><Download size={15} /> Template</button>
+            <button className="hbtn" onClick={() => setImportOpen(true)}><Upload size={15} /> Import</button>
+          </>
+        }
+        primary={<button className="hbtn-primary" onClick={() => setModal({})}><Plus size={16} /> New FBA shipment</button>}
+        toolbar={
+          <>
+            <div className="flex h-8 min-w-[220px] flex-1 items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-3">
+              <Search size={15} className="text-n-400" />
+              <input className="h-full flex-1 bg-transparent text-[13px] outline-none" placeholder={view === 'costs' ? 'Search SKU…' : 'Search FBA ID or SKU…'} value={qInput} onChange={(e) => setQInput(e.target.value)} />
+            </div>
+            <Select
+              dense className="w-40"
+              value={filterChannel}
+              onChange={(v) => { setFilterChannel(v); setPage(1); }}
+              options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]}
+            />
+            {view === 'shipments' && (
+              <Select
+                dense className="w-36"
+                value={filterStatus}
+                onChange={(v) => { setFilterStatus(v); setPage(1); }}
+                options={[{ value: '', label: 'All statuses' }, { value: 'draft', label: 'Draft' }, { value: 'confirmed', label: 'Confirmed' }]}
+              />
+            )}
+          </>
+        }
+      />
 
       {view === 'costs' && (
         <>

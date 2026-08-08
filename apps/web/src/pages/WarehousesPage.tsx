@@ -7,6 +7,7 @@ import { stockApi, warehousesApi, type Warehouse, type WarehouseNode } from '../
 import { usePersistentState } from '../lib/usePersistentState';
 import { WarehouseModal } from '../components/warehouses/WarehouseModal';
 import { StockAdjustModal } from '../components/warehouses/StockAdjustModal';
+import { PageHeader } from '../components/common/PageHeader';
 
 const STOCK_IMPORT_FIELDS: ImportField[] = [
   { key: 'sku', label: 'SKU', required: true },
@@ -64,25 +65,18 @@ export function WarehousesPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex items-start gap-4">
-        <div className="flex-1">
-          <h1 className="text-[22px] font-bold tracking-tight text-n-900">Warehouses</h1>
-          <p className="mt-1 text-[13px] text-n-500">
-            Where stock is held. Only warehouses marked as available count toward what you can sell.
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button onClick={() => setImportOpen(true)} className="inline-flex h-9 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-n-300 hover:bg-n-25">
-            <Upload size={15} /> Import stock
-          </button>
-          <button onClick={() => setAdjustOpen({})} className="inline-flex h-9 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-n-300 hover:bg-n-25">
-            <Plus size={15} /> Adjust stock
-          </button>
-          <button onClick={() => setModal({})} className="inline-flex h-9 items-center gap-2 rounded-md bg-teal-500 px-3.5 text-[13px] font-semibold text-white hover:bg-teal-600">
-            <Plus size={15} /> New warehouse
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        module="Catalogue & Inventory"
+        title="Warehouses"
+        info="Where stock is held. Only warehouses marked as available count toward what you can sell."
+        actions={
+          <>
+            <button className="hbtn" onClick={() => setImportOpen(true)}><Upload size={15} className="text-n-500" /> Import stock</button>
+            <button className="hbtn" onClick={() => setAdjustOpen({})}><Plus size={15} className="text-n-500" /> Adjust stock</button>
+          </>
+        }
+        primary={<button className="hbtn-primary" onClick={() => setModal({})}><Plus size={16} /> New warehouse</button>}
+      />
 
       <div className="mb-4 flex items-center gap-2 border-b border-n-200">
         {([['tree', 'Warehouses'], ['stock', 'Stock on hand'], ['movements', 'Movement history']] as const).map(([key, label]) => (

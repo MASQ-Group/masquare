@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ScanBarcode, Search } from 'lucide-react';
 import { DEFAULT_PAGE_SIZES, Pagination, Select } from '@masquare/ui';
 import { serialsApi, warehousesApi, type SerialNumberRow } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
 import { formatDate } from '../lib/format';
 
@@ -42,12 +43,11 @@ export function SerialsPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5">
-        <h1 className="text-[22px] font-bold tracking-tight text-n-900">Serial Numbers</h1>
-        <p className="mt-1 text-[13px] text-n-500">
-          Individual units of serial-tracked products. Received into stock, and retired when sold or sent back.
-        </p>
-      </div>
+      <PageHeader
+        module="Catalogue & Inventory"
+        title="Serial Numbers"
+        info="Individual units of serial-tracked products. Received into stock, and retired when sold or sent back."
+      />
 
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-3">

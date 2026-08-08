@@ -4,6 +4,7 @@ import { AlertTriangle, Check, CheckCircle2, ClipboardCopy, Info, Minus, Search,
 import { toast } from 'sonner';
 import { ModalShell, Pagination, Select } from '@masquare/ui';
 import { availabilityApi, brandsApi, channelListingsApi, productTypesApi, vendorsApi, type AvailabilityRow, type ChannelPushResult } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
 import { CHANNEL_GROUPS, channelGroupOf, channelPlatform, type ChannelPlatform } from '../lib/channelGroups';
 
@@ -81,33 +82,36 @@ export function AvailabilityPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5">
-        <div className="eyebrow mb-1.5">Catalogue &amp; Inventory</div>
-        <h1 className="text-[24px] font-semibold tracking-tight text-n-900">Availability</h1>
-        <p className="mt-1 text-[13.5px] text-n-500">The sellable quantity broadcast to your sales channels — the single source of truth for how much of each SKU is available. Separate from warehouse stock; set it from your vendors' availability.</p>
-      </div>
-
-      <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <div className="flex h-9 min-w-[220px] max-w-[300px] flex-1 items-center gap-2 rounded-md border border-n-200 bg-n-50 px-3">
-          <Search size={15} className="text-n-400" />
-          <input value={qInput} onChange={(e) => setQInput(e.target.value)} placeholder="Search SKU or title…" className="flex-1 bg-transparent text-[13px] text-n-900 outline-none placeholder:text-n-400" />
-        </div>
-        <Select dense className="w-40" value={brandId} onChange={setBrandId} options={opts(brands, 'All brands')} />
-        <Select dense className="w-40" value={vendorId} onChange={setVendorId} options={opts(vendors, 'All vendors')} />
-        <Select dense className="w-40" value={productTypeId} onChange={setProductTypeId} options={opts(types, 'All types')} />
-        <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-n-600">
-          <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={onlyUnset} onChange={(e) => setOnlyUnset(e.target.checked)} /> Not set yet
-        </label>
-        {hasFilters && <button onClick={resetFilters} className="text-[12.5px] font-semibold text-n-500 hover:text-n-700">Reset</button>}
-        <div className="ml-auto flex items-center gap-2.5">
-          {selected.size > 0 && <button onClick={() => setSelected(new Set())} className="text-[12.5px] font-semibold text-n-500 hover:text-n-700">Clear ({selected.size})</button>}
+      <PageHeader
+        module="Catalogue & Inventory"
+        title="Availability"
+        info="The sellable quantity broadcast to your sales channels — the single source of truth for how much of each SKU is available. Separate from warehouse stock; set it from your vendors' availability."
+        actions={selected.size > 0 ? (
+          <button onClick={() => setSelected(new Set())} className="hbtn">Clear ({selected.size})</button>
+        ) : undefined}
+        primary={
           <button disabled={selected.size === 0} onClick={() => setPushOpen(true)}
-            className="inline-flex h-9 items-center gap-2 rounded-md bg-teal-500 px-3.5 text-[13px] font-semibold text-white hover:bg-teal-600 disabled:opacity-50"
+            className="hbtn-primary"
             title={selected.size === 0 ? 'Select products to push their availability to the channels' : 'Push the selected products’ availability to all their channel listings'}>
             <Send size={15} /> Push to channels{selected.size > 0 ? ` (${selected.size})` : ''}
           </button>
-        </div>
-      </div>
+        }
+        toolbar={
+          <>
+            <div className="flex h-8 min-w-[220px] max-w-[300px] flex-1 items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-3">
+              <Search size={15} className="text-n-400" />
+              <input value={qInput} onChange={(e) => setQInput(e.target.value)} placeholder="Search SKU or title…" className="flex-1 bg-transparent text-[13px] text-n-900 outline-none placeholder:text-n-400" />
+            </div>
+            <Select dense className="w-40" value={brandId} onChange={setBrandId} options={opts(brands, 'All brands')} />
+            <Select dense className="w-40" value={vendorId} onChange={setVendorId} options={opts(vendors, 'All vendors')} />
+            <Select dense className="w-40" value={productTypeId} onChange={setProductTypeId} options={opts(types, 'All types')} />
+            <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-n-600">
+              <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={onlyUnset} onChange={(e) => setOnlyUnset(e.target.checked)} /> Not set yet
+            </label>
+            {hasFilters && <button onClick={resetFilters} className="text-[12.5px] font-semibold text-n-500 hover:text-n-700">Reset</button>}
+          </>
+        }
+      />
 
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-n-100 px-4 py-2.5 text-[12px] text-n-500">

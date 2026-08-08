@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Boxes, Search } from 'lucide-react';
 import { DEFAULT_PAGE_SIZES, Pagination, Select } from '@masquare/ui';
 import { inventoryApi, productsApi, vendorsApi, type InventoryRow, type Product } from '../lib/api';
+import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
 import { ProductModal } from '../components/products/ProductModal';
 
@@ -45,12 +46,11 @@ export function InventoryPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5">
-        <h1 className="text-[22px] font-bold tracking-tight text-n-900">Inventory</h1>
-        <p className="mt-1 text-[13px] text-n-500">
-          What you hold, what's spoken for, and what's on its way. Click a product to see its stock by warehouse.
-        </p>
-      </div>
+      <PageHeader
+        module="Catalogue & Inventory"
+        title="Inventory"
+        info="What you hold, what's spoken for, and what's on its way. Click a product to see its stock by warehouse."
+      />
 
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-3">
