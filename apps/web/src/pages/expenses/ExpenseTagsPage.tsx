@@ -56,7 +56,7 @@ export function ExpenseTagsPage() {
 
       <div className="card overflow-hidden">
         <div className="border-b border-n-100 px-4 py-2.5 text-[12px] text-n-500">{rows.length} tag{rows.length === 1 ? '' : 's'}</div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-[767px]:hidden">
           <table className="w-full min-w-[640px] border-collapse">
             <thead>
               <tr>
@@ -87,6 +87,26 @@ export function ExpenseTagsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile: card list (guide Principle 3 — no horizontal scroll). */}
+        <div className="hidden flex-col gap-2 p-3 max-[767px]:flex">
+          {rows.map((t) => (
+            <div key={t.id} className={`flex flex-col gap-1.5 rounded-[10px] border border-n-200 p-3 ${t.isActive ? '' : 'opacity-55'}`}>
+              <div className="flex items-center gap-2">
+                <span className="inline-flex min-w-0 flex-1 items-center gap-1.5 truncate font-semibold text-n-800"><TagIcon size={13} className="shrink-0 text-n-400" />{t.name}</span>
+                {!t.isActive && <span className="tag shrink-0">Inactive</span>}
+                <div className="flex shrink-0 gap-0.5">
+                  <IconBtn title="Edit" onClick={() => setModal({ tag: t })}><Pencil size={14} /></IconBtn>
+                  <IconBtn title="Delete" danger onClick={() => setConfirmDelete(t)}><Trash2 size={14} /></IconBtn>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[12px] text-n-500">
+                {t.group && <span className="tag border border-n-200 bg-n-50 text-n-600">{t.group}</span>}
+                {t.description && <span className="min-w-0 truncate">{t.description}</span>}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

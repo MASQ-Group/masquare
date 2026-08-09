@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { integrationsApi, salesChannelsApi, type ChannelIntegration } from '../lib/api';
+import { useIsMobile } from '../lib/useIsMobile';
 import { PageHeader } from '../components/common/PageHeader';
 import { IntegrationModal } from '../components/integrations/IntegrationModal';
 import { MappingVerifyModal } from '../components/integrations/MappingVerifyModal';
@@ -234,6 +235,7 @@ export function IntegrationsPage() {
         module="Setup"
         title="Marketplace integrations"
         info="Connected marketplace accounts syncing orders, fees & refunds into the platform. API keys are encrypted and never leave it."
+        summary={`${stats.total} connection${stats.total === 1 ? '' : 's'} · ${stats.healthy} healthy${stats.attention ? ` · ${stats.attention} attention` : ''}`}
         actions={
           <button
             className="hbtn"
@@ -261,12 +263,30 @@ export function IntegrationsPage() {
 
       {!isLoading && integrations.length > 0 && (
         <>
-          {/* Health summary */}
-          <div className="mt-5 grid grid-cols-4 gap-3.5 max-[900px]:grid-cols-2">
+          {/* Health summary — full stat cards on desktop; a compact one-row mini-KPI strip on mobile
+              (guide Principle 4). Both drive the same tab filter. */}
+          <div className="mt-5 grid grid-cols-4 gap-3.5 max-[900px]:grid-cols-2 max-[767px]:hidden">
             <StatCard label="Connections" value={stats.total} sub="total" icon={<Plug size={17} />} tone="teal" active={tab === 'all'} onClick={() => setTab('all')} />
             <StatCard label="Healthy" value={stats.healthy} sub="syncing OK" icon={<CheckCircle2 size={17} />} tone="teal" active={tab === 'healthy'} onClick={() => setTab('healthy')} />
             <StatCard label="Needs attention" value={stats.attention} sub="mapping / never synced" icon={<AlertTriangle size={17} />} tone="warning" active={tab === 'attention'} onClick={() => setTab('attention')} />
             <StatCard label="Sync errors" value={stats.errors} sub="in last run" icon={<XCircle size={17} />} tone="danger" active={tab === 'errors'} onClick={() => setTab('errors')} />
+          </div>
+          <div className="mt-4 hidden grid-cols-4 gap-1.5 max-[767px]:grid">
+            {([
+              { label: 'Connections', value: stats.total, tab: 'all', color: 'text-n-900' },
+              { label: 'Healthy', value: stats.healthy, tab: 'healthy', color: 'text-teal-600' },
+              { label: 'Attention', value: stats.attention, tab: 'attention', color: 'text-warning' },
+              { label: 'Errors', value: stats.errors, tab: 'errors', color: 'text-danger' },
+            ] as const).map((s) => (
+              <button
+                key={s.label}
+                onClick={() => setTab(s.tab)}
+                className={`flex flex-col items-center gap-0.5 rounded-[10px] bg-n-0 px-1 py-2 ${tab === s.tab ? 'border-[1.5px] border-teal-500' : 'border border-n-200'}`}
+              >
+                <span className={`text-[18px] font-bold ${s.color}`}>{s.value}</span>
+                <span className="text-center text-[10.5px] leading-tight text-n-500">{s.label}</span>
+              </button>
+            ))}
           </div>
 
           {/* Sync automation */}
@@ -378,7 +398,7 @@ export function IntegrationsPage() {
               return (
                 <div key={family} className="overflow-hidden rounded-xl border border-n-200 bg-n-0">
                   {/* Group header */}
-                  <div className={`flex items-center gap-3 bg-n-25 px-4 py-3 ${open ? 'border-b border-n-100' : ''}`}>
+                  <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 bg-n-25 px-4 py-3 ${open ? 'border-b border-n-100' : ''}`}>
                     <button onClick={() => setCollapsedGroups((c) => ({ ...c, [family]: !c[family] }))} className="grid h-6 w-6 place-items-center rounded text-n-400 hover:bg-n-100 hover:text-n-700" title={open ? 'Collapse' : 'Expand'}>
                       <ChevronRight size={16} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
                     </button>
@@ -429,9 +449,9 @@ export function IntegrationsPage() {
 
                   {open && (
                     <div className="overflow-x-auto">
-                      <div className="min-w-[900px]">
-                        {/* column header */}
-                        <div className="grid h-10 items-center border-b border-n-100 px-4 text-[11px] font-semibold uppercase tracking-wide text-n-500" style={GRID}>
+                      <div className="min-w-[900px] max-[767px]:min-w-0">
+                        {/* column header (desktop grid only; mobile uses cards) */}
+                        <div className="grid h-10 items-center border-b border-n-100 px-4 text-[11px] font-semibold uppercase tracking-wide text-n-500 max-[767px]:hidden" style={GRID}>
                           <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={allSelected} onChange={(e) => setGroupSel(all, e.target.checked)} title="Select all in group" />
                           <div>Account</div>
                           <div>Status</div>
@@ -544,8 +564,42 @@ function IntegrationRow({
 }) {
   const error = hasError(i);
   const chips = syncChips(i);
+  const isMobile = useIsMobile();
   return (
     <div className={error ? 'shadow-[inset_3px_0_0_var(--danger)]' : selected ? 'shadow-[inset_3px_0_0_var(--teal-500)]' : ''}>
+      {isMobile ? (
+        <div className={`p-3 ${last && !expanded ? '' : 'border-b border-n-100'} ${selected ? 'bg-teal-50/50' : error ? 'bg-danger-bg/30' : ''}`}>
+          <div className="flex items-center gap-2">
+            {i.channelType === 'ebay'
+              ? (logoUrl ? <img src={logoUrl} alt="eBay" className="h-4 w-6 shrink-0 rounded object-contain" /> : <Globe size={15} className="shrink-0 text-n-400" />)
+              : <Flag code={countryCode} className="shrink-0" />}
+            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-n-900">{i.name}</span>
+            {i.status === 'active'
+              ? <span className="shrink-0 rounded-full bg-teal-50 px-2 py-0.5 text-[10.5px] font-semibold text-teal-700">active</span>
+              : <span className="shrink-0 rounded-full bg-n-100 px-2 py-0.5 text-[10.5px] font-semibold text-n-500">paused</span>}
+          </div>
+          <div className="mt-1.5 flex items-center gap-1.5 overflow-hidden text-[11.5px]">
+            {i.mappingVerifiedAt
+              ? <span className="flex shrink-0 items-center gap-1 font-semibold text-teal-700"><CheckCircle2 size={12} /> Verified</span>
+              : <span className="flex shrink-0 items-center gap-1 font-semibold text-warning"><AlertTriangle size={12} /> Verify mapping</span>}
+            <span className="shrink-0 text-n-300">·</span>
+            <span className={`shrink-0 ${syncing ? 'text-teal-700' : syncFailed(i) ? 'text-danger' : !i.lastSyncRunAt ? 'text-warning' : 'text-n-500'}`}>{syncing ? 'Syncing…' : relTime(i.lastSyncRunAt)}</span>
+            {chips[0] && <span className={`min-w-0 truncate rounded px-1.5 py-px text-[11px] font-semibold ${CHIP_TONE[chips[0].tone]}`}>{chips[0].text}</span>}
+          </div>
+          <div className="mt-2.5 flex items-center gap-1.5">
+            <button
+              className={`inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md px-2.5 text-[12.5px] font-semibold ${canSync && !syncing ? 'bg-teal-500 text-white' : 'bg-n-200 text-n-400'}`}
+              disabled={!canSync || syncing}
+              onClick={onSync}
+            >
+              <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Syncing' : 'Sync now'}
+            </button>
+            <button className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-n-200 bg-n-0 text-n-500" title="Details" onClick={onToggleExpand}>
+              <MoreHorizontal size={16} />
+            </button>
+          </div>
+        </div>
+      ) : (
       <div
         className={`grid items-center px-4 ${last && !expanded ? '' : 'border-b border-n-100'} ${selected ? 'bg-teal-50/50' : error ? 'bg-danger-bg/30' : 'hover:bg-n-25'}`}
         style={{ ...GRID, minHeight: 60 }}
@@ -610,9 +664,10 @@ function IntegrationRow({
           </button>
         </div>
       </div>
+      )}
 
       {expanded && (
-        <div className="grid grid-cols-[1.1fr_1fr] gap-7 border-b border-n-100 bg-n-25/60 px-4 py-4 pl-[58px] max-[760px]:grid-cols-1" style={{ gridColumn: '1 / -1' }}>
+        <div className="grid grid-cols-[1.1fr_1fr] gap-7 border-b border-n-100 bg-n-25/60 px-4 py-4 pl-[58px] max-[767px]:gap-4 max-[767px]:pl-4 max-[760px]:grid-cols-1" style={{ gridColumn: '1 / -1' }}>
           {/* credentials */}
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Credentials</div>

@@ -31,7 +31,7 @@ export function UsersPage() {
       />
 
       <div className="card overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-[767px]:hidden">
           <table className="w-full min-w-[760px] border-collapse">
             <thead>
               <tr>
@@ -93,6 +93,29 @@ export function UsersPage() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile: card list (guide Principle 3 — no horizontal scroll). */}
+        <div className="hidden flex-col gap-2 p-3 max-[767px]:flex">
+          {users.map((u) => (
+            <div key={u.id} className="flex flex-col gap-2 rounded-[10px] border border-n-200 p-3">
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13.5px] font-medium text-n-800">{u.fullName}</div>
+                  <div className="truncate text-[12px] text-n-500">{u.email}</div>
+                </div>
+                <div className="flex shrink-0 gap-0.5">
+                  <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" onClick={() => setEditing(u)} title="Edit"><Pencil size={15} /></button>
+                  <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" onClick={() => { if (confirm(`Remove ${u.fullName}?`)) removeMut.mutate(u.id); }} title="Remove"><Trash2 size={15} /></button>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                {u.isAdmin ? <span className="tag border border-info-bd bg-info-bg text-info">Admin</span> : <span className="tag border border-n-200 bg-n-100 text-n-600">Member</span>}
+                {u.status === 'active' ? <span className="tag border border-success-bd bg-success-bg text-success">Active</span> : <span className="tag border border-n-200 bg-n-100 text-n-500">Disabled</span>}
+                <span className="text-n-500">Companies {u.isAdmin ? 'all' : u.companyIds.length} · Modules {u.isAdmin ? 'all' : u.moduleIds.length}</span>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

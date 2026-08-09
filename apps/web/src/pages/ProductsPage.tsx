@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Columns3, ChevronsUpDown, Download, Filter, Grid, List, Package, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
@@ -18,6 +18,8 @@ import { ProductImportModal } from '../components/products/ProductImportModal';
 import { ConfirmDeleteModal } from '../components/products/ConfirmDeleteModal';
 import { EXPORT_COLUMNS } from '../components/products/columns';
 import { PageHeader } from '../components/common/PageHeader';
+import { AnchoredPanel } from '../components/common/AnchoredPanel';
+import { useIsMobile } from '../lib/useIsMobile';
 
 const SEARCH_FIELDS = [
   { key: '', label: 'All fields' },
@@ -52,6 +54,11 @@ export function ProductsPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const [view, setView] = useState<'list' | 'grid'>('list');
+  const isMobile = useIsMobile();
+  // On mobile the wide list table is unusable — always show the responsive card grid instead.
+  const effectiveGrid = view === 'grid' || isMobile;
+  const scopeBtnRef = useRef<HTMLButtonElement>(null);
+  const filterBtnRef = useRef<HTMLButtonElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const urlQ = searchParams.get('q') ?? '';
   const [qInput, setQInput] = useState(urlQ);
@@ -188,6 +195,7 @@ export function ProductsPage() {
         module="Catalogue & Inventory"
         title="All products"
         info={`Master catalogue${user?.companies.length ? `, co-owned by ${user.companies.map((c) => c.officialName).join(' & ')}` : ''}.`}
+        summary={`${total.toLocaleString()} product${total === 1 ? '' : 's'}${activeChips.length ? ` · ${activeChips.length} filter${activeChips.length === 1 ? '' : 's'}` : ''}`}
         actions={
           <>
             <button className="hbtn" onClick={() => setImportOpen(true)}><Upload size={15} className="text-n-500" /> Import</button>
@@ -201,6 +209,7 @@ export function ProductsPage() {
               <span className="flex h-8 items-stretch overflow-hidden rounded-lg border border-n-200 bg-n-0 focus-within:border-teal-400">
                 <button
                   type="button"
+                  ref={scopeBtnRef}
                   onClick={() => setOpenMenu(openMenu === 'scope' ? null : 'scope')}
                   className="flex items-center gap-1 border-r border-n-200 bg-n-25 px-2.5 text-[12.5px] font-medium text-n-600 hover:bg-n-100"
                 >
@@ -213,7 +222,7 @@ export function ProductsPage() {
                 </span>
               </span>
               {openMenu === 'scope' && (
-                <div className="absolute left-0 top-9 z-50 min-w-[160px] rounded-lg border border-n-200 bg-n-0 p-1 shadow-lg" onMouseLeave={() => setOpenMenu(null)}>
+                <AnchoredPanel anchorRef={scopeBtnRef} onClose={() => setOpenMenu(null)} align="left" className="min-w-[160px] p-1">
                   {SEARCH_FIELDS.map((f) => (
                     <button
                       key={f.key}
@@ -223,17 +232,18 @@ export function ProductsPage() {
                       {f.label}
                     </button>
                   ))}
-                </div>
+                </AnchoredPanel>
               )}
             </div>
 
             <div className="relative">
-              <button className="hbtn" onClick={() => setOpenMenu(openMenu === 'filters' ? null : 'filters')}>
+              <button ref={filterBtnRef} className="hbtn" onClick={() => setOpenMenu(openMenu === 'filters' ? null : 'filters')}>
                 <Filter size={15} className="opacity-60" /> Filters {activeChips.length > 0 && <span className="mono rounded-pill bg-teal-100 px-1.5 text-[11px] text-teal-700">{activeChips.length}</span>}
               </button>
               {openMenu === 'filters' && (
                 <FilterPanel
                   onClose={() => setOpenMenu(null)}
+                  anchorRef={filterBtnRef}
                   groups={[
                     { key: 'vendorId', label: 'Vendor', options: vendors.data ?? [] },
                     { key: 'brandId', label: 'Brand', options: brands.data ?? [] },
@@ -249,7 +259,7 @@ export function ProductsPage() {
               )}
             </div>
 
-            {view === 'list' && (
+            {view === 'list' && !isMobile && (
               <div className="relative">
                 <button className="hbtn" onClick={() => setOpenMenu(openMenu === 'columns' ? null : 'columns')}>
                   <Columns3 size={15} className="opacity-60" /> Columns
@@ -271,7 +281,7 @@ export function ProductsPage() {
             {anyFilter && <button className="inline-flex h-8 items-center rounded-lg border border-orange-200 px-3 text-[13px] font-medium text-orange-600 hover:bg-orange-50" onClick={clearAll}>Clear all</button>}
 
             <div className="flex-1" />
-            <div className="hseg">
+            <div className="hseg max-[767px]:hidden">
               <button className={view === 'list' ? 'hseg-on' : ''} onClick={() => setView('list')} title="List"><List size={15} /></button>
               <button className={view === 'grid' ? 'hseg-on' : ''} onClick={() => setView('grid')} title="Grid"><Grid size={15} /></button>
             </div>
@@ -308,7 +318,7 @@ export function ProductsPage() {
         </div>
       )}
 
-      {view === 'list' ? (
+      {!effectiveGrid ? (
         <ListView items={items} loading={isLoading} cols={cols} selected={selected} allSelected={allSelected} onToggleAll={toggleAll} onToggleOne={toggleOne} onEdit={setEditing} onDelete={(p) => setPendingDelete({ kind: 'single', product: p })} />
       ) : (
         <GridView
@@ -495,7 +505,7 @@ function GridView({ items, loading, selected, onToggleOne, onEdit, rangeStart, t
 }
 
 function FilterPanel({
-  groups, filters, onToggle, country, onCountry, onClose,
+  groups, filters, onToggle, country, onCountry, onClose, anchorRef,
 }: {
   groups: { key: keyof Filters; label: string; options: { id: string; name: string }[] }[];
   filters: Filters;
@@ -503,9 +513,10 @@ function FilterPanel({
   country: string;
   onCountry: (v: string) => void;
   onClose: () => void;
+  anchorRef: RefObject<HTMLElement | null>;
 }) {
   return (
-    <div className="absolute left-0 top-9 z-50 grid w-[560px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:w-[92vw] max-[760px]:grid-cols-1" onMouseLeave={onClose}>
+    <AnchoredPanel anchorRef={anchorRef} onClose={onClose} align="left" showClose className="grid w-[560px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-4 p-4 max-[760px]:w-[92vw] max-[760px]:grid-cols-1">
       {groups.map((g) => (
         <div key={g.key}>
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-n-500">{g.label}</div>
@@ -524,6 +535,6 @@ function FilterPanel({
         <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-n-500">Country of origin</div>
         <input className="input mono" placeholder="e.g. CN" value={country} onChange={(e) => onCountry(e.target.value)} />
       </div>
-    </div>
+    </AnchoredPanel>
   );
 }

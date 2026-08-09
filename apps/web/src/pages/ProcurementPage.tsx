@@ -101,7 +101,7 @@ export function ProcurementPage() {
           </div>
         )}
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-[767px]:hidden">
           <table className="w-full border-collapse">
             <thead>
               <tr>
@@ -169,6 +169,28 @@ export function ProcurementPage() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile: card list (guide Principle 3 — no horizontal scroll). */}
+        <div className="hidden flex-col gap-2 p-3 max-[767px]:flex">
+          {isLoading && <div className="py-8 text-center text-[13px] text-n-500">Loading…</div>}
+          {!isLoading && rows.length === 0 && <div className="py-10 text-center text-[13px] text-n-500">Nothing to procure.</div>}
+          {rows.map((r) => (
+            <div key={r.productId} className={`flex flex-col gap-2 rounded-[10px] border border-n-200 p-3 ${selected[r.productId] ? 'bg-teal-50/50' : ''}`}>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" className="h-4 w-4 shrink-0 accent-[var(--teal-500)]" checked={!!selected[r.productId]} onChange={() => setSelected((s) => ({ ...s, [r.productId]: !s[r.productId] }))} />
+                <span className="code min-w-0 flex-1 truncate text-[12.5px] font-semibold text-n-800">{r.sku}</span>
+                <span className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STOCK_CHIP[r.stockStatus].cls}`}>{STOCK_CHIP[r.stockStatus].label}</span>
+              </div>
+              <div className="truncate text-[13px] text-n-700">{r.productName}</div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-n-500">
+                <span>Req <b className="mono text-n-800">{r.requiredQuantity}</b></span>
+                <span>Avail <b className="mono">{r.availableQuantity}</b></span>
+                {r.shortfall > 0 && <span>Short <b className="mono text-danger">{r.shortfall}</b></span>}
+                {r.vendor ? <span>{r.vendor.name}</span> : <span className="font-semibold text-warning">no vendor</span>}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

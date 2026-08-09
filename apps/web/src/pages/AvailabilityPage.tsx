@@ -128,7 +128,7 @@ export function AvailabilityPage() {
             <span className="text-n-500">All {total} selected · <button onClick={() => setSelected(new Set())} className="font-semibold text-teal-600 hover:text-teal-700">Clear</button></span>
           )}
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-[767px]:hidden">
           <table className="w-full min-w-[860px] border-collapse">
             <thead>
               <tr>
@@ -181,6 +181,48 @@ export function AvailabilityPage() {
               })}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile: card list with the same inline availability editor (guide Principle 3). */}
+        <div className="hidden flex-col gap-2 p-3 max-[767px]:flex">
+          {isLoading && <div className="py-8 text-center text-[13px] text-n-500">Loading…</div>}
+          {!isLoading && items.length === 0 && <div className="py-10 text-center text-[13px] text-n-500">{hasFilters ? 'No products match these filters.' : 'No products yet.'}</div>}
+          {items.map((r) => {
+            const val = edits[r.productId] ?? String(r.quantity ?? '');
+            return (
+              <div key={r.productId} className={`flex flex-col gap-2 rounded-[10px] border border-n-200 p-3 ${selected.has(r.productId) ? 'bg-teal-50/40' : ''}`}>
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-[var(--teal-500)]" checked={selected.has(r.productId)} onChange={() => toggleOne(r.productId)} />
+                  <span className="code min-w-0 flex-1 truncate text-[12.5px] font-semibold text-n-800">{r.mainSku}</span>
+                  <span className="shrink-0 text-[11.5px] text-n-400">{fmtDate(r.updatedAt)}</span>
+                </div>
+                <div className="truncate text-[13px] text-n-700">{r.title}</div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-n-500">
+                  {r.brand && <span>{r.brand}</span>}
+                  {r.vendor && <span>· {r.vendor}</span>}
+                  {r.productType && <span>· {r.productType}</span>}
+                  {r.lastSource && <span className="tag border border-n-200 bg-n-50 text-n-500">{SOURCE_LABEL[r.lastSource] ?? r.lastSource}</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] font-medium text-n-600">Available</span>
+                  <input
+                    className={`mono w-24 rounded-md border px-2 py-1.5 text-right text-[13px] outline-none focus:border-teal-400 ${edited(r) ? 'border-teal-300 bg-teal-50/40' : 'border-n-200 bg-n-0'} ${r.quantity == null && !edited(r) ? 'text-n-300' : 'text-n-900'}`}
+                    inputMode="numeric"
+                    placeholder="—"
+                    value={val}
+                    onChange={(e) => setEdits((s) => ({ ...s, [r.productId]: e.target.value.replace(/[^\d]/g, '') }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && edited(r)) commit(r); if (e.key === 'Escape') setEdits((s) => { const n = { ...s }; delete n[r.productId]; return n; }); }}
+                  />
+                  {edited(r) && (
+                    <div className="ml-auto flex gap-1">
+                      <button title="Save" disabled={save.isPending} onClick={() => commit(r)} className="grid h-8 w-8 place-items-center rounded-md border border-teal-300 bg-teal-500 text-white disabled:opacity-50"><Check size={15} /></button>
+                      <button title="Cancel" onClick={() => setEdits((s) => { const n = { ...s }; delete n[r.productId]; return n; })} className="grid h-8 w-8 place-items-center rounded-md border border-n-200 bg-n-0 text-n-500"><X size={15} /></button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 

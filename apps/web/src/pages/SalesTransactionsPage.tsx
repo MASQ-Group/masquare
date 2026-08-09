@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { AnchoredPanel } from '../components/common/AnchoredPanel';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Columns3, Download, Filter, Lock, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Trash2, Unlock, X } from 'lucide-react';
@@ -196,6 +197,7 @@ export function SalesTransactionsPage() {
   // clipped or hidden behind the sidebar when the toolbar wraps to a second row.
   const colsBtnRef = useRef<HTMLButtonElement>(null);
   const colsMenuRef = useRef<HTMLDivElement>(null);
+  const filterBtnRef = useRef<HTMLButtonElement>(null);
   const [colsPos, setColsPos] = useState<{ top: number; left: number } | null>(null);
   const openCols = () => {
     const r = colsBtnRef.current?.getBoundingClientRect();
@@ -528,13 +530,45 @@ export function SalesTransactionsPage() {
     </tr>
   );
 
+  // Mobile: each transaction as a tappable 3-line card (guide Principle 3 — no horizontal table
+  // scroll). Reuses renderCell() so every value formats exactly like the desktop table.
+  const txCard = (t: SalesTransaction): ReactNode => (
+    <button
+      key={t.id}
+      onClick={() => setViewing(t)}
+      className={`flex flex-col gap-2 rounded-[10px] border border-n-200 p-3 text-left ${t.resolution !== 'none' ? 'bg-violet-50' : t.hasAlerts ? 'bg-orange-50' : 'bg-n-0'}`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="flex shrink-0 items-center gap-1.5">
+          {renderCell('status', t)}
+          {t.hasAlerts && <AlertBadge alerts={t.alerts} />}
+        </span>
+        <span className="code min-w-0 flex-1 truncate text-[12.5px] text-n-900">{t.transactionRef}</span>
+        <span className="mono shrink-0 text-[12px] text-n-400">{renderCell('date', t)}</span>
+      </div>
+      <div className="flex items-center gap-1.5 overflow-hidden">
+        {t.salesChannel && <span className="shrink-0">{renderCell('channel', t)}</span>}
+        {t.fulfilmentType && <span className="shrink-0">{renderCell('fulfilment', t)}</span>}
+        <span className="min-w-0 flex-1 overflow-hidden">{renderCell('skus', t)}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="mono text-[13px] font-semibold text-n-900">{renderCell('netSales', t)}</span>
+        <span className="mono text-[12px]">{renderCell('feePct', t)}</span>
+        <div className="flex-1" />
+        <span className="mono text-[13px] font-semibold">{renderCell('profit', t)}</span>
+        {renderCell('profitPct', t)}
+        <span className="text-[14px] text-n-400">›</span>
+      </div>
+    </button>
+  );
+
   return (
     <div className="w-full">
       <PageHeader
         module="Sales"
         title="Sales transactions"
         info="Register and review sales across all channels. Revenue/profit analytics build on this data."
-        toolbarRow
+        summary={`${total.toLocaleString()} transaction${total === 1 ? '' : 's'}${filterCount ? ` · ${filterCount} filter${filterCount === 1 ? '' : 's'}` : ''}`}
         actions={
           <button
             className={`hbtn ${alertsOnly ? '!border-orange-300 !bg-orange-50 !text-orange-700' : ''}`}
@@ -558,13 +592,14 @@ export function SalesTransactionsPage() {
               <input className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none" placeholder="Search transaction ID or SKU…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
             </div>
             <div className="relative">
-              <button className="hbtn" onClick={() => setFilterOpen((v) => !v)}>
+              <button ref={filterBtnRef} className="hbtn" onClick={() => setFilterOpen((v) => !v)}>
                 <Filter size={15} className="opacity-60" /> Filters
                 {filterCount > 0 && <span className="mono rounded-pill bg-teal-100 px-1.5 text-[11px] text-teal-700">{filterCount}</span>}
               </button>
               {filterOpen && (
                 <TxFilterPanel
                   onClose={() => setFilterOpen(false)}
+                  anchorRef={filterBtnRef}
                   channels={channels}
                   profitTiers={profitTiers}
                   countries={countries}
@@ -642,7 +677,7 @@ export function SalesTransactionsPage() {
         </div>
       )}
 
-      <div className="card overflow-hidden">
+      <div className={`card overflow-hidden ${!groupBy ? 'max-[767px]:hidden' : ''}`}>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] border-collapse">
             <thead>
@@ -706,6 +741,16 @@ export function SalesTransactionsPage() {
           </table>
         </div>
       </div>
+
+      {/* Mobile: card list replaces the horizontally-scrolling table (guide Principle 3). Grouped
+          view keeps the scrollable table on mobile (advanced desktop feature). */}
+      {!groupBy && (
+        <div className="hidden flex-col gap-2 max-[767px]:flex">
+          {isLoading && <div className="py-8 text-center text-[13px] text-n-500">Loading…</div>}
+          {!isLoading && items.length === 0 && <div className="py-10 text-center text-[13px] text-n-500">No transactions match. Register your first sale.</div>}
+          {items.map(txCard)}
+        </div>
+      )}
 
       {!groupBy && <Pagination
         page={page}
@@ -828,9 +873,10 @@ function AlertBadge({ alerts }: { alerts: TransactionAlert[] }) {
 
 /** Combined filter dropdown for the sales-transactions list (mirrors the Products filter panel). */
 function TxFilterPanel({
-  onClose, channels, profitTiers, countries, filters, onToggle, onSku, tierName,
+  onClose, anchorRef, channels, profitTiers, countries, filters, onToggle, onSku, tierName,
 }: {
   onClose: () => void;
+  anchorRef: RefObject<HTMLElement | null>;
   channels: { id: string; name: string }[];
   profitTiers: ProfitTier[];
   countries: { id: string; name: string; isoCode: string }[];
@@ -857,9 +903,12 @@ function TxFilterPanel({
   );
 
   return (
-    <div
-      className="absolute left-0 top-9 z-50 grid w-[620px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-x-5 gap-y-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:w-[92vw] max-[760px]:grid-cols-1"
-      onMouseLeave={onClose}
+    <AnchoredPanel
+      anchorRef={anchorRef}
+      onClose={onClose}
+      align="left"
+      showClose
+      className="grid w-[620px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-x-5 gap-y-4 p-4 max-[760px]:w-[92vw] max-[760px]:grid-cols-1"
     >
       <div>
         <GroupTitle>Sales channel</GroupTitle>
@@ -913,6 +962,6 @@ function TxFilterPanel({
         <GroupTitle>SKU</GroupTitle>
         <input className="input code h-8" placeholder="Filter by SKU (contains)…" value={filters.sku} onChange={(e) => onSku(e.target.value)} />
       </div>
-    </div>
+    </AnchoredPanel>
   );
 }

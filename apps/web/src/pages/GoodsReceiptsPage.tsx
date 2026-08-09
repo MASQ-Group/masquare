@@ -74,7 +74,7 @@ export function GoodsReceiptsPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-[767px]:hidden">
           <table className="w-full border-collapse">
             <thead>
               <tr>
@@ -133,6 +133,34 @@ export function GoodsReceiptsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile: card list (guide Principle 3 — no horizontal scroll). */}
+        <div className="hidden flex-col gap-2 p-3 max-[767px]:flex">
+          {isLoading && <div className="py-8 text-center text-[13px] text-n-500">Loading…</div>}
+          {!isLoading && rows.length === 0 && <div className="py-10 text-center text-[13px] text-n-500">No goods receipts.</div>}
+          {rows.map((r) => (
+            <div key={r.id} className="flex flex-col gap-1.5 rounded-[10px] border border-n-200 p-3">
+              <div className="flex items-center gap-2">
+                <span className="code min-w-0 flex-1 truncate text-[12.5px] font-semibold text-n-800">{r.receiptNumber}</span>
+                {r.isBackorder && <span className="shrink-0 rounded bg-warning-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase text-warning">Backorder</span>}
+                <span className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_STYLE[r.status]}`}>{STATUS_LABEL[r.status]}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-n-500">
+                {r.purchaseOrder && <button className="code text-teal-700" onClick={() => navigate(`/purchase-orders/${r.purchaseOrder!.id}`)}>{r.purchaseOrder.poNumber}</button>}
+                {r.vendor?.name && <span>· {r.vendor.name}</span>}
+                <span>· {r.destinationWarehouse?.name ?? 'at receiving'}</span>
+              </div>
+              <div className="flex items-center gap-3 text-[12px] text-n-500">
+                <span>Exp <b className="mono text-n-700">{r.expectedQuantity}</b></span>
+                <span>Rcvd <b className={`mono ${r.status === 'posted' ? 'text-n-800' : 'text-n-400'}`}>{r.receivedQuantity || '—'}</b></span>
+                <span className="ml-auto">{formatDate(r.createdAt)}</span>
+              </div>
+              {r.status === 'pending' && (
+                <button onClick={() => setReceiving(r.id)} className="mt-1 inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-teal-500 px-3 text-[12.5px] font-semibold text-white"><PackageCheck size={14} /> Receive</button>
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
