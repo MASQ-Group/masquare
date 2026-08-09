@@ -222,7 +222,7 @@ export function ProductsPage() {
                 </span>
               </span>
               {openMenu === 'scope' && (
-                <AnchoredPanel anchorRef={scopeBtnRef} onClose={() => setOpenMenu(null)} align="left" className="min-w-[160px] rounded-lg border border-n-200 bg-n-0 p-1 shadow-lg">
+                <AnchoredPanel anchorRef={scopeBtnRef} onClose={() => setOpenMenu(null)} align="left" className="min-w-[160px] p-1">
                   {SEARCH_FIELDS.map((f) => (
                     <button
                       key={f.key}
@@ -516,7 +516,7 @@ function FilterPanel({
   anchorRef: RefObject<HTMLElement | null>;
 }) {
   return (
-    <AnchoredPanel anchorRef={anchorRef} onClose={onClose} align="left" className="grid w-[560px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:w-[92vw] max-[760px]:grid-cols-1">
+    <AnchoredPanel anchorRef={anchorRef} onClose={onClose} align="left" showClose className="grid w-[560px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-4 p-4 max-[760px]:w-[92vw] max-[760px]:grid-cols-1">
       {groups.map((g) => (
         <div key={g.key}>
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-n-500">{g.label}</div>

@@ -907,7 +907,8 @@ function TxFilterPanel({
       anchorRef={anchorRef}
       onClose={onClose}
       align="left"
-      className="grid w-[620px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-x-5 gap-y-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:w-[92vw] max-[760px]:grid-cols-1"
+      showClose
+      className="grid w-[620px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-x-5 gap-y-4 p-4 max-[760px]:w-[92vw] max-[760px]:grid-cols-1"
     >
       <div>
         <GroupTitle>Sales channel</GroupTitle>

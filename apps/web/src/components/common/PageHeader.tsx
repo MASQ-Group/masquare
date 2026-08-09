@@ -70,7 +70,7 @@ function OverflowMenu({ items }: { items: PageHeaderOverflowItem[] }) {
     <div className="relative">
       <button ref={btnRef} className="hbtn-icon" title="More actions" onClick={() => setOpen((o) => !o)}><MoreHorizontal size={16} /></button>
       {open && (
-        <AnchoredPanel anchorRef={btnRef} onClose={() => setOpen(false)} align="right" className="min-w-[200px] rounded-lg border border-n-200 bg-n-0 p-1 shadow-lg">
+        <AnchoredPanel anchorRef={btnRef} onClose={() => setOpen(false)} align="right" className="min-w-[200px] p-1">
           {items.map((it, i) => (
             <button
               key={i}
