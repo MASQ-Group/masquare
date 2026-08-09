@@ -575,7 +575,7 @@ export function SalesTransactionsPage() {
             title="Show only orders with an alert (e.g. a SKU not in the product catalogue)"
             onClick={() => { setAlertsOnly((v) => !v); setPage(1); }}
           >
-            <AlertTriangle size={15} className={alertsOnly ? '' : 'opacity-60'} /> Alerts
+            <AlertTriangle size={15} className={alertsOnly ? '' : 'opacity-60'} /> <span className="max-[767px]:hidden">Alerts</span>
           </button>
         }
         overflow={[
@@ -584,7 +584,7 @@ export function SalesTransactionsPage() {
           ...(isAdmin ? [{ label: `Unlock requests${unlockReqs.length ? ` (${unlockReqs.length})` : ''}`, onClick: () => setReqOpen(true) }] : []),
           { label: 'Export', disabled: total === 0, onClick: () => setExportOpen(true) },
         ]}
-        primary={<button className="hbtn-primary" onClick={() => navigate('/sales-transactions/new')}><Plus size={16} /> Register transaction</button>}
+        primary={<button className="hbtn-primary" onClick={() => navigate('/sales-transactions/new')}><Plus size={16} /> Register<span className="max-[767px]:hidden"> transaction</span></button>}
         toolbar={
           <>
             <div className="flex h-8 flex-[0_1_300px] items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-2.5 focus-within:border-teal-400">

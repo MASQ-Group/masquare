@@ -52,7 +52,7 @@ export interface PageHeaderProps {
 function InfoTooltip({ info }: { info: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <span className="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    <span className="relative inline-flex shrink-0" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <span className="inline-flex h-4 w-4 cursor-default items-center justify-center rounded-full border border-n-300 text-[10px] font-semibold text-n-400">i</span>
       {open && (
         <span className="absolute left-0 top-6 z-50 block w-[280px] whitespace-normal break-words rounded-lg bg-n-900 px-3 py-2.5 text-[12px] font-normal normal-case leading-relaxed tracking-normal text-n-200 shadow-xl">
@@ -140,9 +140,11 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
         <div className="flex min-w-0 shrink items-baseline gap-2 whitespace-nowrap">
           <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-n-400">{module}</span>
           <span className="text-[12px] text-n-300">›</span>
-          {/* Title + ⓘ in their own centered group so the icon sits on the title's vertical axis. */}
+          {/* Title + ⓘ in their own centered group so the icon sits on the title's vertical axis.
+              min-w-0 on the title lets it ellipsize; the ⓘ never shrinks — so neither can spill
+              into the right-hand actions on a narrow screen. */}
           <span className="inline-flex min-w-0 items-center gap-2">
-            <span className="truncate text-[16px] font-bold text-n-900 max-[767px]:text-[15px]">{title}</span>
+            <span className="min-w-0 truncate text-[16px] font-bold text-n-900 max-[767px]:text-[15px]">{title}</span>
             {info && <InfoTooltip info={info} />}
           </span>
         </div>
