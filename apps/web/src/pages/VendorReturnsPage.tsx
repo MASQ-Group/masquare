@@ -61,7 +61,7 @@ export function VendorReturnsPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-[767px]:hidden">
           <table className="w-full border-collapse">
             <thead>
               <tr>
@@ -122,6 +122,27 @@ export function VendorReturnsPage() {
               </tfoot>
             )}
           </table>
+        </div>
+
+        {/* Mobile: card list (guide Principle 3 — no horizontal scroll). */}
+        <div className="hidden flex-col gap-2 p-3 max-[767px]:flex">
+          {isLoading && <div className="py-8 text-center text-[13px] text-n-500">Loading…</div>}
+          {!isLoading && rows.length === 0 && <div className="py-10 text-center text-[13px] text-n-500">No returns to vendor.</div>}
+          {rows.map((r) => (
+            <div key={r.id} onClick={() => r.purchaseOrder && navigate(`/purchase-orders/${r.purchaseOrder!.id}`)} className={`flex flex-col gap-1.5 rounded-[10px] border border-n-200 p-3 ${r.purchaseOrder ? 'cursor-pointer' : ''}`}>
+              <div className="flex items-center gap-2">
+                <span className="code min-w-0 flex-1 truncate text-[12.5px] font-semibold text-n-800">{r.returnNumber}</span>
+                <span className="mono shrink-0 text-[13px] font-semibold text-n-800">{money(r.totalCostEur)}</span>
+              </div>
+              <div className="truncate text-[13px] text-n-700" title={r.reason}>{r.reason}</div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-n-500">
+                {r.vendor?.name && <span>{r.vendor.name}</span>}
+                {r.purchaseOrder?.poNumber && <span className="code text-teal-700">{r.purchaseOrder.poNumber}</span>}
+                <span className="mono font-semibold text-danger">−{r.totalQuantity} u</span>
+                <span>{formatDate(r.postedAt)}</span>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

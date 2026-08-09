@@ -185,7 +185,7 @@ export function PurchaseOrdersPage() {
           </div>
         )}
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-[767px]:hidden">
           <table className="w-full border-collapse">
             <thead>
               <tr>
@@ -240,6 +240,27 @@ export function PurchaseOrdersPage() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile: card list (guide Principle 3 — no horizontal scroll). */}
+        <div className="hidden flex-col gap-2 p-3 max-[767px]:flex">
+          {isLoading && <div className="py-8 text-center text-[13px] text-n-500">Loading…</div>}
+          {!isLoading && rows.length === 0 && <div className="py-10 text-center text-[13px] text-n-500">No purchase orders yet.</div>}
+          {rows.map((po) => (
+            <div key={po.id} onClick={() => navigate(`/purchase-orders/${po.id}`)} className={`flex cursor-pointer flex-col gap-1.5 rounded-[10px] border border-n-200 p-3 ${selected.has(po.id) ? 'bg-teal-50/60' : ''}`}>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" onClick={(e) => e.stopPropagation()} className="h-4 w-4 shrink-0 accent-[var(--teal-500)]" checked={selected.has(po.id)} onChange={() => toggleOne(po.id)} aria-label={`Select ${po.poNumber}`} />
+                <span className="code min-w-0 flex-1 truncate text-[12.5px] font-semibold text-n-800">{po.poNumber}</span>
+                <span className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_STYLE[po.status]}`}>{STATUS_LABEL[po.status]}</span>
+              </div>
+              <div className="truncate text-[13px] text-n-700">{po.vendor.name}</div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-n-500">
+                <span>{po.lineCount} lines · {po.totalQuantity} u</span>
+                <span className="mono font-semibold text-n-800">{money(po.total, po.currency)}</span>
+                {po.expectedDeliveryDate && <span>Exp {formatDate(po.expectedDeliveryDate)}</span>}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
