@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
+import { useIsMobile } from '../../lib/useIsMobile';
 
 // Unified top bar for every page (Top Bar Redesign). Two rows:
 //   • Row 1 — header: breadcrumb "MODULE › Title" + ⓘ description tooltip on the left,
@@ -42,6 +43,9 @@ export interface PageHeaderProps {
   primary?: ReactNode;
   /** Second-row content (search / filters / view toggles). Row omitted when absent. */
   toolbar?: ReactNode;
+  /** Mobile-only status line shown in the collapsed summary strip (≤767px) when the options row
+   *  scrolls away, e.g. "1,248 transactions · All time · 2 filters". Falls back to a generic label. */
+  summary?: ReactNode;
 }
 
 function InfoTooltip({ info }: { info: ReactNode }) {
@@ -88,9 +92,11 @@ function OverflowMenu({ items }: { items: PageHeaderOverflowItem[] }) {
   );
 }
 
-export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, actions, overflow, primary, toolbar }: PageHeaderProps) {
+export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, actions, overflow, primary, toolbar, summary }: PageHeaderProps) {
   const rootRef = useRef<HTMLDivElement>(null);
-  // `hidden` slides the whole bar out of view on scroll-down; `stuck` adds a shadow once scrolled.
+  const isMobile = useIsMobile();
+  // `hidden` = scrolled down past the threshold. Desktop slides the whole bar out of view; mobile
+  // keeps the title row and collapses the options row to a summary strip instead (never vanishes).
   const [hidden, setHidden] = useState(false);
   const [stuck, setStuck] = useState(false);
 
@@ -125,20 +131,23 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
 
   // The second "options" row exists only when the page supplies tabs and/or a toolbar.
   const hasOptions = (tabs != null && tabs.length > 0) || toolbar != null;
+  // On mobile, scrolling down collapses the options row into a summary strip instead of hiding the
+  // whole bar (the desktop behaviour). The title row always stays visible.
+  const mobileCollapsed = isMobile && hidden && hasOptions;
 
   return (
     <div
       ref={rootRef}
-      className={`sticky -top-7 z-30 -mx-8 -mt-7 mb-5 border-b border-n-200 bg-n-0 transition-transform duration-200 will-change-transform max-[760px]:-top-5 max-[760px]:-mx-4 max-[760px]:-mt-5 ${hidden ? '-translate-y-full' : 'translate-y-0'} ${stuck ? 'shadow-[0_6px_16px_-12px_rgba(15,23,42,0.35)]' : ''}`}
+      className={`sticky -top-7 z-30 -mx-8 -mt-7 mb-5 border-b border-n-200 bg-n-0 transition-transform duration-200 will-change-transform max-[760px]:-top-5 max-[760px]:-mx-4 max-[760px]:-mt-5 ${hidden && !isMobile ? '-translate-y-full' : 'translate-y-0'} ${stuck ? 'shadow-[0_6px_16px_-12px_rgba(15,23,42,0.35)]' : ''}`}
     >
       {/* Row 1 — page header: breadcrumb "MODULE › Title" + ⓘ on the left, actions on the right. */}
-      <div className={`flex items-center gap-3 px-8 pt-3.5 max-[760px]:px-4 ${hasOptions ? 'pb-2.5' : 'pb-3.5'}`}>
+      <div className={`flex items-center gap-3 px-8 pt-3.5 max-[760px]:px-4 ${hasOptions && !mobileCollapsed ? 'pb-2.5' : 'pb-3.5'}`}>
         <div className="flex min-w-0 shrink items-baseline gap-2 whitespace-nowrap">
           <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-n-400">{module}</span>
           <span className="text-[12px] text-n-300">›</span>
           {/* Title + ⓘ in their own centered group so the icon sits on the title's vertical axis. */}
           <span className="inline-flex min-w-0 items-center gap-2">
-            <span className="truncate text-[16px] font-bold text-n-900">{title}</span>
+            <span className="truncate text-[16px] font-bold text-n-900 max-[767px]:text-[15px]">{title}</span>
             {info && <InfoTooltip info={info} />}
           </span>
         </div>
@@ -154,11 +163,13 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
         )}
       </div>
 
-      {/* Row 2 — options: the page's tabs and toolbar (search / filters / view controls). Always a
-          single line — tabs never shrink; the toolbar takes the rest (right-aligned when there are
-          tabs) and its search shrinks (min-w-0) rather than wrapping to a new row. */}
+      {/* Row 2 — options: the page's tabs and toolbar. Single line on desktop (tabs never shrink,
+          search shrinks); on mobile it scrolls horizontally rather than overflowing the page, and
+          collapses to height 0 (→ summary strip) when scrolled down. */}
       {hasOptions && (
-        <div className="flex items-center gap-4 px-8 pb-3.5 max-[760px]:px-4">
+        <div
+          className={`flex items-center gap-4 px-8 max-[760px]:px-4 max-[767px]:overflow-x-auto max-[767px]:[scrollbar-width:none] transition-all duration-200 ${mobileCollapsed ? 'max-h-0 overflow-hidden pb-0 opacity-0 pointer-events-none' : 'max-h-28 pb-3.5 opacity-100'}`}
+        >
           {tabs && tabs.length > 0 && (
             <div className="flex shrink-0 items-center gap-4">
               {tabs.map((t) => {
@@ -183,6 +194,22 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
               {toolbar}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Mobile summary strip — appears only when the options row is collapsed (never a blank gap). */}
+      {isMobile && hasOptions && (
+        <div
+          className={`flex items-center gap-2 overflow-hidden px-4 transition-all duration-200 ${mobileCollapsed ? 'h-[34px] pb-1.5 opacity-100' : 'h-0 opacity-0 pointer-events-none'}`}
+        >
+          <span className="min-w-0 truncate text-[12px] text-n-500">{summary ?? 'Search & filters'}</span>
+          <div className="flex-1" />
+          <button
+            onClick={() => setHidden(false)}
+            className="inline-flex h-[26px] shrink-0 items-center gap-1 rounded-pill border border-n-200 bg-n-0 px-2.5 text-[12px] font-medium text-n-700"
+          >
+            Filters <span className="text-[10px]">▾</span>
+          </button>
         </div>
       )}
     </div>
