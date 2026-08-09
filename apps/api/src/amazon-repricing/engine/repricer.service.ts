@@ -192,6 +192,17 @@ export class RepricerService {
 
     const decision = decide(built);
     const decisionId = await this.persistDecision(row, snapshot, trigger, decision, cfg);
+
+    // §5.5: an unresolvable conflict quarantines the SKU — take it off automation until a human
+    // clears it (decide() then SKIPs it), and alert ops. The reason is on the logged decision.
+    if (decision.outcome === 'QUARANTINED' && row.automationState !== 'QUARANTINED') {
+      await this.prisma.repricingSkuPricing.update({
+        where: { id: row.id },
+        data: { automationState: 'QUARANTINED', lastEventAt: new Date() },
+      });
+      this.logger.warn(`QUARANTINED ${row.sku}:${row.marketplaceId} — ${decision.reason}. Needs human review.`);
+      return;
+    }
     await this.prisma.repricingSkuPricing.update({ where: { id: row.id }, data: { lastEventAt: new Date() } });
 
     // Only a LIVE SKU with a priced decision and a known floor reaches the price-writer — and the

@@ -91,12 +91,41 @@ export class RepricingController {
     });
   }
 
-  /** Recent decision audit records (shadow-mode intended prices). */
+  /** Decision audit search (§6.6): recent records, optionally filtered by SKU and/or outcome. */
   @Get('decisions')
-  decisions(@Query('take') take = '50') {
+  decisions(@Query('take') take = '50', @Query('sku') sku?: string, @Query('outcome') outcome?: string) {
     return this.prisma.repricingDecision.findMany({
+      where: {
+        ...(sku?.trim() ? { sku: { contains: sku.trim(), mode: 'insensitive' as const } } : {}),
+        ...(outcome ? { outcome } : {}),
+      },
       orderBy: { at: 'desc' },
       take: Math.min(Number(take) || 50, 200),
     });
+  }
+
+  /** Quarantine queue (§5.5, §7): SKUs taken off automation by an unresolvable conflict, oldest
+   *  first. `total`/`oldestHours` drive the §7 escalation flag (> 20 open or > 24h old). */
+  @Get('quarantine')
+  async quarantine() {
+    const items = await this.prisma.repricingSkuPricing.findMany({
+      where: { deletedAt: null, automationState: 'QUARANTINED' },
+      orderBy: { updatedAt: 'asc' },
+      select: { id: true, sku: true, asin: true, marketplaceId: true, strategy: true, strategyFloorCents: true, mapCents: true, maxPriceCents: true, fairPricingCeilingCents: true, updatedAt: true },
+      take: 200,
+    });
+    const oldestHours = items.length ? Math.floor((Date.now() - items[0].updatedAt.getTime()) / 3_600_000) : 0;
+    return { total: items.length, oldestHours, items };
+  }
+
+  /** Resolve a quarantined SKU: after the human fixes the conflicting values, return it to shadow
+   *  so the next event re-evaluates it. */
+  @Post('quarantine/:id/resolve')
+  async resolveQuarantine(@Param('id') id: string) {
+    await this.prisma.repricingSkuPricing.updateMany({
+      where: { id, automationState: 'QUARANTINED' },
+      data: { automationState: 'SHADOW' },
+    });
+    return { resolved: true };
   }
 }

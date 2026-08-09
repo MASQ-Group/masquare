@@ -56,8 +56,10 @@ export function decide(input: DecideInput): Decision {
     alert: false,
   });
 
-  // 1. Non-automatable states never price (§5.1). MANUAL_ONLY evaluates but never writes.
-  if (input.automationState === 'EXCLUDED' || input.automationState === 'KILLED') {
+  // 1. Non-automatable states never price (§5.1). QUARANTINED waits for a human to resolve the
+  //    conflict that tripped it (§5.5); EXCLUDED/KILLED are off automation. MANUAL_ONLY (below)
+  //    evaluates but never writes.
+  if (input.automationState === 'EXCLUDED' || input.automationState === 'KILLED' || input.automationState === 'QUARANTINED') {
     return empty('SKIPPED', `automationState=${input.automationState}`);
   }
   if (input.strategy === 'MANUAL_ONLY') {

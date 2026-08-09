@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X } from 'lucide-react';
-import { repricingApi, type RepricingSkuRow, type RepricingDecisionRow } from '../lib/api';
+import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle } from 'lucide-react';
+import { repricingApi, type RepricingSkuRow } from '../lib/api';
 import { PageHeader } from '../components/common/PageHeader';
 
 // Amazon Buy Box repricing — ops console (Phase-appropriate: readiness, SKU floors, decision
@@ -43,7 +43,6 @@ export function RepricingPage() {
   const qc = useQueryClient();
   const readiness = useQuery({ queryKey: ['repricing', 'readiness'], queryFn: repricingApi.readiness });
   const skus = useQuery({ queryKey: ['repricing', 'sku-pricing'], queryFn: () => repricingApi.skuPricing(100) });
-  const decisions = useQuery({ queryKey: ['repricing', 'decisions'], queryFn: () => repricingApi.decisions(100) });
 
   const refreshAll = () => qc.invalidateQueries({ queryKey: ['repricing'] });
 
@@ -146,9 +145,10 @@ export function RepricingPage() {
         </div>
       )}
 
+      <QuarantineCard />
       <SkuTable rows={skus.data ?? []} loading={skus.isLoading} />
       <div className="h-6" />
-      <DecisionTable rows={decisions.data ?? []} loading={decisions.isLoading} />
+      <DecisionTable />
       <div className="h-6" />
       <BlocklistCard />
     </div>
@@ -213,12 +213,29 @@ function SkuTable({ rows, loading }: { rows: RepricingSkuRow[]; loading: boolean
   );
 }
 
-function DecisionTable({ rows, loading }: { rows: RepricingDecisionRow[]; loading: boolean }) {
+const OUTCOMES = ['PRICED', 'HELD', 'SKIPPED', 'QUARANTINED'];
+
+/** Decision audit (§6.6) with search by SKU and outcome — the shadow-mode monitoring surface. */
+function DecisionTable() {
+  const [sku, setSku] = useState('');
+  const [outcome, setOutcome] = useState('');
+  const decisions = useQuery({
+    queryKey: ['repricing', 'decisions', sku, outcome],
+    queryFn: () => repricingApi.decisions({ take: 100, sku, outcome }),
+  });
+  const rows = decisions.data ?? [];
+  const loading = decisions.isLoading;
   return (
     <div className="card overflow-hidden">
-      <div className="flex items-center justify-between border-b border-n-100 px-4 py-2.5">
-        <span className="text-[13px] font-semibold text-n-800">Recent decisions (shadow)</span>
-        <span className="text-[12px] text-n-500">{rows.length} row{rows.length === 1 ? '' : 's'}</span>
+      <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-2.5">
+        <span className="text-[13px] font-semibold text-n-800">Decision audit (shadow)</span>
+        <div className="flex-1" />
+        <input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Filter by SKU…" className="h-8 w-44 rounded-md border border-n-200 px-2.5 font-mono text-[12.5px] outline-none focus:border-teal-400" />
+        <select value={outcome} onChange={(e) => setOutcome(e.target.value)} className="h-8 rounded-md border border-n-200 px-2 text-[12.5px] outline-none focus:border-teal-400">
+          <option value="">All outcomes</option>
+          {OUTCOMES.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <span className="text-[12px] text-n-500">{rows.length}</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
@@ -253,6 +270,74 @@ function DecisionTable({ rows, loading }: { rows: RepricingDecisionRow[]; loadin
                 </tr>
               ))
             )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** Quarantine queue (§5.5, §7): SKUs an unresolvable conflict took off automation. Hidden when
+ *  empty; flags escalation at > 20 open or > 24h old. Resolve returns a SKU to shadow. */
+function QuarantineCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['repricing', 'quarantine'], queryFn: repricingApi.quarantine });
+  const resolve = useMutation({
+    mutationFn: (id: string) => repricingApi.resolveQuarantine(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['repricing', 'quarantine'] });
+      qc.invalidateQueries({ queryKey: ['repricing', 'sku-pricing'] });
+      qc.invalidateQueries({ queryKey: ['repricing', 'readiness'] });
+    },
+  });
+  const data = q.data;
+  if (!data || data.total === 0) return null;
+  const escalate = data.total > 20 || data.oldestHours > 24;
+  return (
+    <div className={`mb-6 overflow-hidden rounded-xl border ${escalate ? 'border-red-300' : 'border-orange-200'} bg-n-0`}>
+      <div className={`flex items-center gap-2 px-4 py-2.5 ${escalate ? 'bg-red-50' : 'bg-orange-50'}`}>
+        <AlertTriangle size={15} className={escalate ? 'text-red-600' : 'text-orange-600'} />
+        <span className="text-[13px] font-semibold text-n-800">Quarantine queue</span>
+        <span className="rounded-pill bg-n-0 px-2 py-0.5 text-[11px] font-bold text-n-700">{data.total}</span>
+        <span className="text-[12px] text-n-500">oldest {data.oldestHours}h</span>
+        {escalate && <span className="text-[11px] font-bold uppercase tracking-wide text-red-600">escalate</span>}
+        <span className="ml-2 text-[11.5px] text-n-400">Conflicting bounds took these off automation — fix the values, then resolve.</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12.5px]">
+          <thead className="bg-n-25 text-left text-[11px] uppercase tracking-wide text-n-500">
+            <tr>
+              <th className="px-4 py-2 font-semibold">SKU</th>
+              <th className="px-3 py-2 font-semibold">Mkt</th>
+              <th className="px-3 py-2 text-right font-semibold">Floor</th>
+              <th className="px-3 py-2 text-right font-semibold">MAP</th>
+              <th className="px-3 py-2 text-right font-semibold">Max</th>
+              <th className="px-3 py-2 text-right font-semibold">Ceiling</th>
+              <th className="px-3 py-2 font-semibold">Since</th>
+              <th className="px-3 py-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {data.items.map((r) => (
+              <tr key={r.id} className="border-t border-n-100 hover:bg-n-25">
+                <td className="px-4 py-1.5 font-mono text-n-800">{r.sku}</td>
+                <td className="px-3 py-1.5 font-mono">{mkt(r.marketplaceId)}</td>
+                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.strategyFloorCents)}</td>
+                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.mapCents)}</td>
+                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.maxPriceCents)}</td>
+                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.fairPricingCeilingCents)}</td>
+                <td className="px-3 py-1.5 text-n-600">{when(r.updatedAt)}</td>
+                <td className="px-3 py-1.5 text-right">
+                  <button
+                    onClick={() => resolve.mutate(r.id)}
+                    disabled={resolve.isPending}
+                    className="inline-flex h-7 items-center rounded-md border border-n-200 bg-n-0 px-2.5 text-[12px] font-semibold text-teal-700 hover:border-teal-300 disabled:opacity-50"
+                  >
+                    Resolve
+                  </button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

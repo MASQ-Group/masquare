@@ -60,6 +60,12 @@ describe('decide — end to end', () => {
     expect(d.outcome).toBe('SKIPPED');
   });
 
+  it('SKIPPED for a QUARANTINED SKU (waits for human resolution, §5.5)', () => {
+    const d = decide(baseInput([comp('C1', 1900)], { automationState: 'QUARANTINED' }));
+    expect(d.outcome).toBe('SKIPPED');
+    expect(d.reason).toContain('QUARANTINED');
+  });
+
   it('PRICED on a contested listing, target within floor/ceiling', () => {
     // We out-deliver an FBM competitor → +3% above Buy Box 2000 = 2060, a real (> epsilon) move.
     const d = decide(baseInput([compFbm('C1', 1950)]));
