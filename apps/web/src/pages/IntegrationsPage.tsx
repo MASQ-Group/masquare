@@ -234,6 +234,7 @@ export function IntegrationsPage() {
         module="Setup"
         title="Marketplace integrations"
         info="Connected marketplace accounts syncing orders, fees & refunds into the platform. API keys are encrypted and never leave it."
+        summary={`${stats.total} connection${stats.total === 1 ? '' : 's'} · ${stats.healthy} healthy${stats.attention ? ` · ${stats.attention} attention` : ''}`}
         actions={
           <button
             className="hbtn"
@@ -261,12 +262,30 @@ export function IntegrationsPage() {
 
       {!isLoading && integrations.length > 0 && (
         <>
-          {/* Health summary */}
-          <div className="mt-5 grid grid-cols-4 gap-3.5 max-[900px]:grid-cols-2">
+          {/* Health summary — full stat cards on desktop; a compact one-row mini-KPI strip on mobile
+              (guide Principle 4). Both drive the same tab filter. */}
+          <div className="mt-5 grid grid-cols-4 gap-3.5 max-[900px]:grid-cols-2 max-[767px]:hidden">
             <StatCard label="Connections" value={stats.total} sub="total" icon={<Plug size={17} />} tone="teal" active={tab === 'all'} onClick={() => setTab('all')} />
             <StatCard label="Healthy" value={stats.healthy} sub="syncing OK" icon={<CheckCircle2 size={17} />} tone="teal" active={tab === 'healthy'} onClick={() => setTab('healthy')} />
             <StatCard label="Needs attention" value={stats.attention} sub="mapping / never synced" icon={<AlertTriangle size={17} />} tone="warning" active={tab === 'attention'} onClick={() => setTab('attention')} />
             <StatCard label="Sync errors" value={stats.errors} sub="in last run" icon={<XCircle size={17} />} tone="danger" active={tab === 'errors'} onClick={() => setTab('errors')} />
+          </div>
+          <div className="mt-4 hidden grid-cols-4 gap-1.5 max-[767px]:grid">
+            {([
+              { label: 'Connections', value: stats.total, tab: 'all', color: 'text-n-900' },
+              { label: 'Healthy', value: stats.healthy, tab: 'healthy', color: 'text-teal-600' },
+              { label: 'Attention', value: stats.attention, tab: 'attention', color: 'text-warning' },
+              { label: 'Errors', value: stats.errors, tab: 'errors', color: 'text-danger' },
+            ] as const).map((s) => (
+              <button
+                key={s.label}
+                onClick={() => setTab(s.tab)}
+                className={`flex flex-col items-center gap-0.5 rounded-[10px] bg-n-0 px-1 py-2 ${tab === s.tab ? 'border-[1.5px] border-teal-500' : 'border border-n-200'}`}
+              >
+                <span className={`text-[18px] font-bold ${s.color}`}>{s.value}</span>
+                <span className="text-center text-[10.5px] leading-tight text-n-500">{s.label}</span>
+              </button>
+            ))}
           </div>
 
           {/* Sync automation */}
@@ -378,7 +397,7 @@ export function IntegrationsPage() {
               return (
                 <div key={family} className="overflow-hidden rounded-xl border border-n-200 bg-n-0">
                   {/* Group header */}
-                  <div className={`flex items-center gap-3 bg-n-25 px-4 py-3 ${open ? 'border-b border-n-100' : ''}`}>
+                  <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 bg-n-25 px-4 py-3 ${open ? 'border-b border-n-100' : ''}`}>
                     <button onClick={() => setCollapsedGroups((c) => ({ ...c, [family]: !c[family] }))} className="grid h-6 w-6 place-items-center rounded text-n-400 hover:bg-n-100 hover:text-n-700" title={open ? 'Collapse' : 'Expand'}>
                       <ChevronRight size={16} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
                     </button>
