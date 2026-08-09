@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { useIsMobile } from '../../lib/useIsMobile';
+import { AnchoredPanel } from './AnchoredPanel';
 
 // Unified top bar for every page (Top Bar Redesign). Two rows:
 //   • Row 1 — header: breadcrumb "MODULE › Title" + ⓘ description tooltip on the left,
@@ -64,18 +65,12 @@ function InfoTooltip({ info }: { info: ReactNode }) {
 
 function OverflowMenu({ items }: { items: PageHeaderOverflowItem[] }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+  const btnRef = useRef<HTMLButtonElement>(null);
   return (
-    <div className="relative" ref={ref}>
-      <button className="hbtn-icon" title="More actions" onClick={() => setOpen((o) => !o)}><MoreHorizontal size={16} /></button>
+    <div className="relative">
+      <button ref={btnRef} className="hbtn-icon" title="More actions" onClick={() => setOpen((o) => !o)}><MoreHorizontal size={16} /></button>
       {open && (
-        <div className="absolute right-0 top-9 z-50 min-w-[200px] rounded-lg border border-n-200 bg-n-0 p-1 shadow-lg">
+        <AnchoredPanel anchorRef={btnRef} onClose={() => setOpen(false)} align="right" className="min-w-[200px] rounded-lg border border-n-200 bg-n-0 p-1 shadow-lg">
           {items.map((it, i) => (
             <button
               key={i}
@@ -86,7 +81,7 @@ function OverflowMenu({ items }: { items: PageHeaderOverflowItem[] }) {
               {it.label}
             </button>
           ))}
-        </div>
+        </AnchoredPanel>
       )}
     </div>
   );

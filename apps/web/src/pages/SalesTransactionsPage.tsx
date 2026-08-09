@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { AnchoredPanel } from '../components/common/AnchoredPanel';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Columns3, Download, Filter, Lock, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Trash2, Unlock, X } from 'lucide-react';
@@ -196,6 +197,7 @@ export function SalesTransactionsPage() {
   // clipped or hidden behind the sidebar when the toolbar wraps to a second row.
   const colsBtnRef = useRef<HTMLButtonElement>(null);
   const colsMenuRef = useRef<HTMLDivElement>(null);
+  const filterBtnRef = useRef<HTMLButtonElement>(null);
   const [colsPos, setColsPos] = useState<{ top: number; left: number } | null>(null);
   const openCols = () => {
     const r = colsBtnRef.current?.getBoundingClientRect();
@@ -590,13 +592,14 @@ export function SalesTransactionsPage() {
               <input className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none" placeholder="Search transaction ID or SKU…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
             </div>
             <div className="relative">
-              <button className="hbtn" onClick={() => setFilterOpen((v) => !v)}>
+              <button ref={filterBtnRef} className="hbtn" onClick={() => setFilterOpen((v) => !v)}>
                 <Filter size={15} className="opacity-60" /> Filters
                 {filterCount > 0 && <span className="mono rounded-pill bg-teal-100 px-1.5 text-[11px] text-teal-700">{filterCount}</span>}
               </button>
               {filterOpen && (
                 <TxFilterPanel
                   onClose={() => setFilterOpen(false)}
+                  anchorRef={filterBtnRef}
                   channels={channels}
                   profitTiers={profitTiers}
                   countries={countries}
@@ -870,9 +873,10 @@ function AlertBadge({ alerts }: { alerts: TransactionAlert[] }) {
 
 /** Combined filter dropdown for the sales-transactions list (mirrors the Products filter panel). */
 function TxFilterPanel({
-  onClose, channels, profitTiers, countries, filters, onToggle, onSku, tierName,
+  onClose, anchorRef, channels, profitTiers, countries, filters, onToggle, onSku, tierName,
 }: {
   onClose: () => void;
+  anchorRef: RefObject<HTMLElement | null>;
   channels: { id: string; name: string }[];
   profitTiers: ProfitTier[];
   countries: { id: string; name: string; isoCode: string }[];
@@ -899,9 +903,11 @@ function TxFilterPanel({
   );
 
   return (
-    <div
-      className="absolute left-0 top-9 z-50 grid w-[620px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-x-5 gap-y-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:w-[92vw] max-[760px]:grid-cols-1"
-      onMouseLeave={onClose}
+    <AnchoredPanel
+      anchorRef={anchorRef}
+      onClose={onClose}
+      align="left"
+      className="grid w-[620px] max-w-[calc(100vw-2rem)] grid-cols-2 gap-x-5 gap-y-4 rounded-lg border border-n-200 bg-n-0 p-4 shadow-lg max-[760px]:w-[92vw] max-[760px]:grid-cols-1"
     >
       <div>
         <GroupTitle>Sales channel</GroupTitle>
@@ -955,6 +961,6 @@ function TxFilterPanel({
         <GroupTitle>SKU</GroupTitle>
         <input className="input code h-8" placeholder="Filter by SKU (contains)…" value={filters.sku} onChange={(e) => onSku(e.target.value)} />
       </div>
-    </div>
+    </AnchoredPanel>
   );
 }
