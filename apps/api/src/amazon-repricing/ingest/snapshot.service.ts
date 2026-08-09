@@ -3,8 +3,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ParseError, ParsedNotification, isStaleEvent, parseAnyOfferChanged, parseFeePromotion, parsePricingHealth } from './parser';
 import { RawNotificationEnvelope } from './any-offer-changed.types';
-import { RepricerService } from '../engine/repricer.service';
 import { FloorService } from '../floor/floor.service';
+import { RepriceSchedulerService } from './reprice-scheduler.service';
 
 // notif-ingest persistence + routing (spec §2.2–2.3): dedupe on NotificationId, then dispatch by
 // notification type — ANY_OFFER_CHANGED → snapshot + shadow evaluate; PRICING_HEALTH → mark the
@@ -26,7 +26,7 @@ export class SnapshotService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly repricer: RepricerService,
+    private readonly scheduler: RepriceSchedulerService,
     private readonly floors: FloorService,
   ) {}
 
@@ -122,19 +122,11 @@ export class SnapshotService {
       },
     });
 
-    // Trigger a shadow evaluation of our SKU(s) on this listing (spec §6.5 — logs the intended
-    // price, submits nothing). A work-queue with per-ASIN ordering + a 30s debounce window (§5.1)
-    // is the eventual decoupling (Deviation D-1); for now, low single-seller volume, we evaluate
-    // inline and never let an evaluation failure fail the ingest.
-    try {
-      await this.repricer.evaluate(parsed.snapshot, {
-        triggerType: 'ANY_OFFER_CHANGED',
-        notificationId: parsed.notificationId,
-        safetyOverride: false,
-      });
-    } catch (e) {
-      this.logger.error(`Shadow evaluation failed for ${snapshotId}: ${(e as Error).message}`);
-    }
+    // Coalesce the evaluation into this listing's debounce window (spec §5.1 step 0): a single
+    // price move fires ANY_OFFER_CHANGED for every seller, so we persist each event but evaluate
+    // the LATEST snapshot once per window (default 30s), shadow-only. Non-blocking — scheduling
+    // never fails the ingest, and an evaluation error is logged inside the scheduler.
+    this.scheduler.schedule(parsed.snapshot, parsed.notificationId);
 
     return { status: 'PERSISTED', asin: parsed.asin, marketplaceId: parsed.marketplaceId };
   }

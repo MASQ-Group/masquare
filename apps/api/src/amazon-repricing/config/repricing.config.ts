@@ -13,6 +13,9 @@ export const REPRICING_DEFAULTS = {
   epsilonPct: 0.005,
   /** §9-#8 Per-SKU cooldown between submissions. ENGINEERING. */
   cooldownSeconds: 300,
+  /** §5.1 step 0 — per-ASIN debounce window: coalesce an ANY_OFFER_CHANGED burst into a single
+   *  evaluation of the latest snapshot. ENGINEERING. */
+  debounceWindowSeconds: 30,
   /** §9-#12 Quarantine single-step deviation: hard reject / warn. ENGINEERING. */
   maxStepPctHard: 0.15,
   maxStepPctWarn: 0.1,
