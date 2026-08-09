@@ -534,7 +534,6 @@ export function SalesTransactionsPage() {
         module="Sales"
         title="Sales transactions"
         info="Register and review sales across all channels. Revenue/profit analytics build on this data."
-        toolbarRow
         actions={
           <button
             className={`hbtn ${alertsOnly ? '!border-orange-300 !bg-orange-50 !text-orange-700' : ''}`}
