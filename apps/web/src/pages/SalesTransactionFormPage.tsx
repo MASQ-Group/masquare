@@ -173,6 +173,10 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
   // toggle below sets the channel rather than a separate flag the server can't see.
   const isLocal = selected?.kind === 'local';
   const localChannel = channels.find((c) => c.kind === 'local');
+  // A transaction pulled from a sales-channel API is inherently a channel sale (integrationId is
+  // set only on imported records) — it can never be converted to a local sale, so the Local option
+  // is removed from the mode toggle when editing one.
+  const channelApiSourced = transaction?.integrationId != null;
   const nativeCcy = isLocal ? 'EUR' : selected?.nativeCurrency ?? '';
   const feeCcy = selected ? (selected.feeChargedInNativeCurrency ? selected.nativeCurrency : selected.feeCurrency) ?? '' : '';
 
@@ -415,9 +419,12 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
           </h1>
         </div>
 
-        {/* Mode toggle — selects the sales channel, which is what actually drives the mode. */}
+        {/* Mode toggle — selects the sales channel, which is what actually drives the mode. Channel
+            API-sourced transactions can't become local sales, so the Local option is dropped. */}
         <div className="flex rounded-[11px] bg-n-100 p-[3px]">
-          {([['marketplace', 'Marketplace'], ['local', 'Local sale']] as const).map(([m, label]) => {
+          {([['marketplace', 'Marketplace'], ['local', 'Local sale']] as const)
+            .filter(([m]) => m !== 'local' || !channelApiSourced)
+            .map(([m, label]) => {
             const active = m === 'local' ? isLocal : !isLocal;
             return (
               <button
