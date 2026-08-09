@@ -176,7 +176,13 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
               })}
             </div>
           )}
-          {toolbar && <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{toolbar}</div>}
+          {/* With tabs present, push the search/filters to the right so they don't butt up against
+              the tabs; on a tab-less page the toolbar just fills the row (search stays leftmost). */}
+          {toolbar && (
+            <div className={`flex min-w-0 flex-wrap items-center gap-2 ${tabs && tabs.length > 0 ? 'ml-auto justify-end' : 'flex-1'}`}>
+              {toolbar}
+            </div>
+          )}
         </div>
       )}
     </div>
