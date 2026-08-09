@@ -114,6 +114,18 @@ describe('buildDecideInput', () => {
     expect(out.competitorSetOptions?.medianBuyBoxLandedCents).toBeNull();
   });
 
+  it('derives the §6.2 fair-pricing ceiling from the 30-day median when not overridden', () => {
+    const out = buildDecideInput(cfg({ fairPricingCeilingCents: null }), snap([comp]), { ...OPTS, fairCeilingReferenceMedianCents: 2000 });
+    if ('skip' in out) throw new Error('unexpected skip');
+    expect(out.clampBounds.fairPricingCeilingCents).toBe(2200); // 2000 × 1.1, under the 3000 max
+  });
+
+  it('keeps a per-SKU fair-pricing ceiling override over the derived one', () => {
+    const out = buildDecideInput(cfg(), snap([comp]), { ...OPTS, fairCeilingReferenceMedianCents: 2000 });
+    if ('skip' in out) throw new Error('unexpected skip');
+    expect(out.clampBounds.fairPricingCeilingCents).toBe(2800); // cfg() sets 2800 — the override wins
+  });
+
   it('threads the undercut-loop hold flag into engine state (§5.4 C-5)', () => {
     const held = buildDecideInput(cfg(), snap([comp]), { ...OPTS, holdForLoop: true });
     if ('skip' in held) throw new Error('unexpected skip');

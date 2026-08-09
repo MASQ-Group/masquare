@@ -1,6 +1,7 @@
 import { DecideInput } from './decision-core';
 import { AutomationState, MarketSnapshot, Offer, Strategy, landedCents } from './types';
 import { REPRICING_DEFAULTS } from '../config/repricing.config';
+import { computeFairCeilingCents } from './fair-ceiling';
 
 // Pure translation from a SKU's stored config/state + a normalized snapshot to the engine's
 // DecideInput (spec §5.1). Kept separate from repricer.service (the DB I/O) so it is unit-testable
@@ -49,6 +50,10 @@ export interface BuildOptions {
   /** Effective-competitor count at the previous evaluation for this listing (§5.4 C-1). decide()
    *  compares it to the current set to decide whether to probe up faster. Null ⇒ no history. */
   prevCompetitorCount?: number | null;
+  /** §6.2 fair-pricing ceiling reference — trailing 30-day median Buy Box landed for this listing.
+   *  Used to derive the default ceiling (min(maxPrice, median × mult)) unless the SKU has a manual
+   *  override. Null ⇒ no reference yet, so only the business max caps the price. */
+  fairCeilingReferenceMedianCents?: number | null;
 }
 
 /** A reason the SKU can't be evaluated into a priced decision (still logged as SKIPPED). */
@@ -111,7 +116,10 @@ export function buildDecideInput(
       strategyFloorCents: cfg.strategyFloorCents,
       breakevenCents: cfg.breakevenCents,
       maxPriceCents: cfg.maxPriceCents,
-      fairPricingCeilingCents: cfg.fairPricingCeilingCents,
+      // §6.2: a per-SKU manual override wins; otherwise derive the ceiling from the 30-day median.
+      fairPricingCeilingCents:
+        cfg.fairPricingCeilingCents ??
+        computeFairCeilingCents(opts.fairCeilingReferenceMedianCents, cfg.maxPriceCents, D.fairPricingCeilingMultiplier),
       amazonMinAllowedCents: cfg.amazonMinAllowedCents,
       amazonMaxAllowedCents: cfg.amazonMaxAllowedCents,
     },

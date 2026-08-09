@@ -12,6 +12,8 @@ import { REPRICING_DEFAULTS } from '../config/repricing.config';
 
 /** Trailing window for the Buy-Box reference median behind the §6.1 anomalous-competitor guard. */
 const MEDIAN_WINDOW_DAYS = 7;
+/** §6.2 fair-pricing ceiling reference window (trailing 30-day Buy Box median). */
+const FAIR_CEILING_WINDOW_DAYS = 30;
 
 // The repricer I/O shell (spec §5.1, findings §G) — the thin layer around the pure decision core.
 // For one fresh snapshot it: loads our SKU rows on that ASIN × marketplace + the blocklist, builds
@@ -55,10 +57,10 @@ export class RepricerService {
     const amazonRetailSellerIds: string[] = []; // `TO VERIFY` EU Amazon-Retail SellerIds (§5.2)
     const nowMs = Date.now();
 
-    // Trailing Buy-Box reference median for the §6.1 anomalous-competitor guard. Computed once per
-    // ASIN × marketplace from our own decision history, plus this event's observation so a listing
-    // with no history still has a reference. Null (nothing observed) simply leaves the guard off.
-    const medianBuyBoxLandedCents = await this.trailingBuyBoxMedian(snapshot, nowMs);
+    // Trailing Buy-Box medians (once per ASIN × marketplace from our decision history + this event):
+    // 7-day feeds the §6.1 anomaly guard, 30-day the §6.2 fair-pricing ceiling. Null ⇒ that guard/
+    // ceiling is simply off until enough history accrues.
+    const { median7: medianBuyBoxLandedCents, median30: fairCeilingReferenceMedianCents } = await this.trailingBuyBoxMedians(snapshot, nowMs);
 
     // §5.4 C-5 undercut-loop guard: if a repeat offender is looping us on this listing, hold rather
     // than chase. One offender per listing, so compute once and apply to all our SKU rows on it.
@@ -81,7 +83,7 @@ export class RepricerService {
     let count = 0;
     for (const row of rows) {
       try {
-        await this.evaluateRow(row, snapshot, trigger, blocklistedSellerIds, amazonRetailSellerIds, nowMs, medianBuyBoxLandedCents, loop.hold, prevCompetitorCount);
+        await this.evaluateRow(row, snapshot, trigger, blocklistedSellerIds, amazonRetailSellerIds, nowMs, medianBuyBoxLandedCents, loop.hold, prevCompetitorCount, fairCeilingReferenceMedianCents);
         count += 1;
       } catch (e) {
         this.logger.error(`Evaluation failed for ${row.sku}:${row.marketplaceId}: ${(e as Error).message}`);
@@ -90,23 +92,30 @@ export class RepricerService {
     return count;
   }
 
-  /** Median Buy Box landed over the trailing window for this ASIN × marketplace (our decision
-   *  history), including the current observation. Null when nothing has ever been observed. */
-  private async trailingBuyBoxMedian(snapshot: MarketSnapshot, nowMs: number): Promise<number | null> {
-    if (snapshot.asin == null) return snapshot.buyBoxLandedCents ?? null;
-    const since = new Date(nowMs - MEDIAN_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  /** Trailing Buy Box landed medians for this ASIN × marketplace from our decision history (plus the
+   *  current observation): a 7-day median for the §6.1 anomaly guard and a 30-day median for the
+   *  §6.2 fair-pricing ceiling. One query over the wider window; null when nothing observed. */
+  private async trailingBuyBoxMedians(snapshot: MarketSnapshot, nowMs: number): Promise<{ median7: number | null; median30: number | null }> {
+    const current = snapshot.buyBoxLandedCents ?? null;
+    if (snapshot.asin == null) return { median7: current, median30: current };
+    const since30 = new Date(nowMs - FAIR_CEILING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const cutoff7Ms = nowMs - MEDIAN_WINDOW_DAYS * 24 * 60 * 60 * 1000;
     const history = await this.prisma.repricingDecision.findMany({
       where: {
         asin: snapshot.asin,
         marketplaceId: snapshot.marketplaceId,
-        at: { gte: since },
+        at: { gte: since30 },
         buyBoxLandedCents: { not: null },
       },
-      select: { buyBoxLandedCents: true },
+      select: { at: true, buyBoxLandedCents: true },
     });
-    const values = history.map((h) => h.buyBoxLandedCents as number);
-    if (snapshot.buyBoxLandedCents != null) values.push(snapshot.buyBoxLandedCents);
-    return medianCents(values);
+    const all = history.map((h) => h.buyBoxLandedCents as number);
+    const recent7 = history.filter((h) => h.at.getTime() >= cutoff7Ms).map((h) => h.buyBoxLandedCents as number);
+    if (current != null) {
+      all.push(current);
+      recent7.push(current);
+    }
+    return { median7: medianCents(recent7), median30: medianCents(all) };
   }
 
   /** Reconstruct undercut events for this listing from our decision history over the quiet window:
@@ -154,6 +163,7 @@ export class RepricerService {
     medianBuyBoxLandedCents: number | null,
     holdForLoop: boolean,
     prevCompetitorCount: number | null,
+    fairCeilingReferenceMedianCents: number | null,
   ): Promise<void> {
     const cfg = this.toConfig(row);
 
@@ -174,6 +184,7 @@ export class RepricerService {
       medianBuyBoxLandedCents,
       holdForLoop,
       prevCompetitorCount,
+      fairCeilingReferenceMedianCents,
     });
 
     if ('skip' in built) {
