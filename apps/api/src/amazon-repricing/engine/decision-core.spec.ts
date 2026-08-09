@@ -117,4 +117,26 @@ describe('decide — end to end', () => {
     expect(d.branch).toBe('B_AMAZON');
     expect(d.competitorSet?.amazonRetailPresent).toBe(true);
   });
+
+  it('derives competitorSetShrank (§5.4 C-1: 2× probe step) when the set is smaller than before', () => {
+    // Holding the Buy Box at 2000, one competitor left in the set (at 2100, above us so we keep it).
+    // Previous evaluation had 2 competitors → the set shrank → probe at 2× the 1% step (2040 not 2020).
+    const shrank = decide(
+      baseInput([comp('C1', 2100)], {
+        state: { currentPriceLandedCents: 2000, holdingBuyBox: true, probeAnchorCents: 2000, prevCompetitorCount: 2 },
+      }),
+    );
+    expect(shrank.outcome).toBe('PRICED');
+    expect(shrank.reason).toContain('set shrank');
+    expect(shrank.finalPriceCents).toBe(2040);
+
+    // Same picture but the previous count matches the current one → normal 1% step (2020).
+    const steady = decide(
+      baseInput([comp('C1', 2100)], {
+        state: { currentPriceLandedCents: 2000, holdingBuyBox: true, probeAnchorCents: 2000, prevCompetitorCount: 1 },
+      }),
+    );
+    expect(steady.reason).not.toContain('set shrank');
+    expect(steady.finalPriceCents).toBe(2020);
+  });
 });

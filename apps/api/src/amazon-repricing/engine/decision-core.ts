@@ -68,6 +68,11 @@ export function decide(input: DecideInput): Decision {
   const set = buildCompetitorSet(input.snapshot, input.filters, input.competitorSetOptions);
   const branch = classifyBranch(input.snapshot, set);
 
+  // The set shrank vs the last evaluation (a competitor left / stocked out) → §5.4 C-1 probes
+  // toward max faster. Derived here because the current set isn't known until now.
+  const competitorSetShrank =
+    input.state.prevCompetitorCount != null && set.effective.length < input.state.prevCompetitorCount;
+
   // 4. Raw target.
   const target = computeRawTarget(
     branch,
@@ -75,7 +80,7 @@ export function decide(input: DecideInput): Decision {
     input.snapshot,
     set,
     input.ourOffer,
-    input.state,
+    { ...input.state, competitorSetShrank },
     input.bounds,
     input.targetParams,
     input.signals ?? {},

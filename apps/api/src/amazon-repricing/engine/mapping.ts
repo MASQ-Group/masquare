@@ -46,6 +46,9 @@ export interface BuildOptions {
   medianBuyBoxLandedCents?: number | null;
   /** §5.4 C-5: a repeat undercutter is looping us → hold current price instead of chasing. */
   holdForLoop?: boolean;
+  /** Effective-competitor count at the previous evaluation for this listing (§5.4 C-1). decide()
+   *  compares it to the current set to decide whether to probe up faster. Null ⇒ no history. */
+  prevCompetitorCount?: number | null;
 }
 
 /** A reason the SKU can't be evaluated into a priced decision (still logged as SKIPPED). */
@@ -116,7 +119,7 @@ export function buildDecideInput(
       currentPriceLandedCents: cfg.currentPriceCents,
       holdingBuyBox: cfg.holdingBuyBox,
       probeAnchorCents: cfg.probeAnchorCents,
-      competitorSetShrank: false, // needs prior-event competitor count (follow-up)
+      prevCompetitorCount: opts.prevCompetitorCount ?? null, // §5.4 C-1: decide() derives competitorSetShrank
       holdForLoop: opts.holdForLoop ?? false, // §5.4 C-5 undercut-loop guard (computed in repricer)
     },
     signals: { amazonRetailLandedCents },

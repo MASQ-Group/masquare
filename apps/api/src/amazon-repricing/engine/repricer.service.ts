@@ -74,10 +74,14 @@ export class RepricerService {
       );
     }
 
+    // §5.4 C-1: effective-competitor count at the previous evaluation for this listing — decide()
+    // compares it to the fresh set to probe up faster when a competitor has left / stocked out.
+    const prevCompetitorCount = await this.previousCompetitorCount(snapshot);
+
     let count = 0;
     for (const row of rows) {
       try {
-        await this.evaluateRow(row, snapshot, trigger, blocklistedSellerIds, amazonRetailSellerIds, nowMs, medianBuyBoxLandedCents, loop.hold);
+        await this.evaluateRow(row, snapshot, trigger, blocklistedSellerIds, amazonRetailSellerIds, nowMs, medianBuyBoxLandedCents, loop.hold, prevCompetitorCount);
         count += 1;
       } catch (e) {
         this.logger.error(`Evaluation failed for ${row.sku}:${row.marketplaceId}: ${(e as Error).message}`);
@@ -127,6 +131,19 @@ export class RepricerService {
     return events;
   }
 
+  /** Effective-competitor count from the most recent prior decision for this listing (§5.4 C-1),
+   *  or null if there's no history yet. */
+  private async previousCompetitorCount(snapshot: MarketSnapshot): Promise<number | null> {
+    if (snapshot.asin == null) return null;
+    const last = await this.prisma.repricingDecision.findFirst({
+      where: { asin: snapshot.asin, marketplaceId: snapshot.marketplaceId, competitorSet: { not: Prisma.JsonNull } },
+      select: { competitorSet: true },
+      orderBy: { at: 'desc' },
+    });
+    const cs = last?.competitorSet as { effective?: unknown[] } | null;
+    return Array.isArray(cs?.effective) ? cs!.effective.length : null;
+  }
+
   private async evaluateRow(
     row: Prisma.RepricingSkuPricingGetPayload<object>,
     snapshot: MarketSnapshot,
@@ -136,6 +153,7 @@ export class RepricerService {
     nowMs: number,
     medianBuyBoxLandedCents: number | null,
     holdForLoop: boolean,
+    prevCompetitorCount: number | null,
   ): Promise<void> {
     const cfg = this.toConfig(row);
 
@@ -155,6 +173,7 @@ export class RepricerService {
       safetyOverride: trigger.safetyOverride,
       medianBuyBoxLandedCents,
       holdForLoop,
+      prevCompetitorCount,
     });
 
     if ('skip' in built) {

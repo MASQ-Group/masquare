@@ -24,8 +24,12 @@ export interface EngineState {
   currentPriceLandedCents: number | null;
   holdingBuyBox: boolean;
   probeAnchorCents: number | null;
-  /** The effective set shrank vs the last evaluation (a competitor left/stocked out) → probe faster. */
+  /** The effective set shrank vs the last evaluation (a competitor left/stocked out) → probe faster.
+   *  Derived in decide() from `prevCompetitorCount` and the freshly-built set. */
   competitorSetShrank?: boolean;
+  /** Effective-competitor count at the previous evaluation for this listing (from decision history),
+   *  or null if none. decide() compares it to the current set to set `competitorSetShrank`. */
+  prevCompetitorCount?: number | null;
   /** Precomputed undercut-loop verdict (§5.5 C-5): true ⇒ stop following, hold. */
   holdForLoop?: boolean;
 }
