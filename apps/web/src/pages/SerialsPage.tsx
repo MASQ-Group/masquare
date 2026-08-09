@@ -68,7 +68,7 @@ export function SerialsPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-[767px]:hidden">
           <table className="w-full border-collapse">
             <thead>
               <tr>
@@ -113,6 +113,29 @@ export function SerialsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile: card list (guide Principle 3 — no horizontal scroll). */}
+        <div className="hidden flex-col gap-2 p-3 max-[767px]:flex">
+          {isLoading && <div className="py-8 text-center text-[13px] text-n-500">Loading…</div>}
+          {!isLoading && rows.length === 0 && <div className="py-10 text-center text-[13px] text-n-500">No serial numbers.</div>}
+          {rows.map((s: SerialNumberRow) => (
+            <div key={s.id} className="flex flex-col gap-1.5 rounded-[10px] border border-n-200 p-3">
+              <div className="flex items-center gap-2">
+                <span className="code min-w-0 flex-1 truncate text-[12.5px] font-semibold text-n-800">{s.serial}</span>
+                <span className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_STYLE[s.status] ?? ''}`}>{s.status.replace(/_/g, ' ')}</span>
+              </div>
+              <div className="flex items-center gap-2 text-[13px]">
+                <span className="code shrink-0 text-teal-700">{s.product?.mainSku ?? '—'}</span>
+                <span className="min-w-0 truncate text-n-700">{s.product?.title ?? '—'}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-n-500">
+                {s.warehouse?.name && <span>{s.warehouse.name}</span>}
+                <span>Rcvd {s.receivedAt ? formatDate(s.receivedAt) : '—'}</span>
+                {s.dispatchedAt && <span>Left {formatDate(s.dispatchedAt)}</span>}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

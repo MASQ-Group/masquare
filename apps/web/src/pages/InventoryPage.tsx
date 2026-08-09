@@ -71,7 +71,7 @@ export function InventoryPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-[767px]:hidden">
           <table className="w-full border-collapse">
             <thead>
               <tr>
@@ -109,6 +109,27 @@ export function InventoryPage() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile: card list replaces the table (guide Principle 3 — no horizontal scroll). */}
+        <div className="hidden flex-col gap-2 p-3 max-[767px]:flex">
+          {isLoading && <div className="py-8 text-center text-[13px] text-n-500">Loading…</div>}
+          {!isLoading && rows.length === 0 && <div className="py-10 text-center text-[13px] text-n-500">No products match.</div>}
+          {rows.map((r: InventoryRow) => (
+            <button key={r.productId} onClick={() => setOpenId(r.productId)} className="flex flex-col gap-1.5 rounded-[10px] border border-n-200 p-3 text-left">
+              <div className="flex items-center gap-2">
+                <span className="code min-w-0 flex-1 truncate text-[12.5px] font-semibold text-teal-700">{r.sku}</span>
+                <span className="mono shrink-0 text-[13px] font-semibold text-n-900">{eur(r.stockValueEur)}</span>
+              </div>
+              <div className="truncate text-[13px] text-n-700">{r.title}</div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-n-500">
+                <span>On hand <b className="mono text-n-900">{r.onHand}</b></span>
+                <span>Avail <b className={`mono ${r.available > 0 ? 'text-teal-700' : 'text-n-400'}`}>{r.available}</b></span>
+                {r.committed > 0 && <span>Committed <b className="mono text-warning">{r.committed}</b></span>}
+                {r.onOrder > 0 && <span>On order <b className="mono text-info">{r.onOrder}</b></span>}
+              </div>
+            </button>
+          ))}
         </div>
       </div>
 
