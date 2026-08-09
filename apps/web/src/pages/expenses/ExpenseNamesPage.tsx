@@ -75,7 +75,7 @@ export function ExpenseNamesPage() {
 
       <div className="card overflow-hidden">
         <div className="border-b border-n-100 px-4 py-2.5 text-[12px] text-n-500">{rows.length} expense name{rows.length === 1 ? '' : 's'}</div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-[767px]:hidden">
           <table className="w-full min-w-[720px] border-collapse">
             <thead>
               <tr>
@@ -112,6 +112,27 @@ export function ExpenseNamesPage() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile: card list (guide Principle 3 — no horizontal scroll). */}
+        <div className="hidden flex-col gap-2 p-3 max-[767px]:flex">
+          {rows.map((d) => (
+            <div key={d.id} className={`flex flex-col gap-1.5 rounded-[10px] border border-n-200 p-3 ${d.isActive ? '' : 'opacity-55'}`}>
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate font-semibold text-n-800">{d.name}</span>
+                {!d.isActive && <span className="tag shrink-0">Inactive</span>}
+                <div className="flex shrink-0 gap-0.5">
+                  <IconBtn title="Edit" onClick={() => setModal({ def: d })}><Pencil size={14} /></IconBtn>
+                  <IconBtn title="Delete" danger onClick={() => setConfirmDelete(d)}><Trash2 size={14} /></IconBtn>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[12px] text-n-500">
+                <span className="code">{d.code}</span>
+                {d.categoryName && <span>· {d.categoryName}</span>}
+                {d.defaultOccurrence && <span className={`tag border ${OCCURRENCE_TONE[d.defaultOccurrence]}`}>{OCCURRENCE_LABEL[d.defaultOccurrence]}</span>}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
