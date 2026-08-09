@@ -196,22 +196,26 @@ export function ProductsPage() {
         title="All products"
         info={`Master catalogue${user?.companies.length ? `, co-owned by ${user.companies.map((c) => c.officialName).join(' & ')}` : ''}.`}
         summary={`${total.toLocaleString()} product${total === 1 ? '' : 's'}${activeChips.length ? ` · ${activeChips.length} filter${activeChips.length === 1 ? '' : 's'}` : ''}`}
-        actions={
+        actions={isMobile ? undefined : (
           <>
             <button className="hbtn" onClick={() => setImportOpen(true)}><Upload size={15} className="text-n-500" /> Import</button>
             <button className="hbtn" onClick={onExport}><Download size={15} className="text-n-500" /> Export</button>
           </>
-        }
-        primary={<button className="hbtn-primary" onClick={() => setEditing(null)}><Plus size={16} /> Add product</button>}
+        )}
+        overflow={isMobile ? [
+          { label: 'Import products', onClick: () => setImportOpen(true) },
+          { label: 'Export selected', onClick: onExport },
+        ] : undefined}
+        primary={<button className="hbtn-primary" onClick={() => setEditing(null)}><Plus size={16} /> Add<span className="max-[767px]:hidden"> product</span></button>}
         toolbar={
           <>
-            <div className="relative flex-[0_1_380px]">
+            <div className="relative flex-[0_1_380px] max-[767px]:min-w-0 max-[767px]:flex-1">
               <span className="flex h-8 items-stretch overflow-hidden rounded-lg border border-n-200 bg-n-0 focus-within:border-teal-400">
                 <button
                   type="button"
                   ref={scopeBtnRef}
                   onClick={() => setOpenMenu(openMenu === 'scope' ? null : 'scope')}
-                  className="flex items-center gap-1 border-r border-n-200 bg-n-25 px-2.5 text-[12.5px] font-medium text-n-600 hover:bg-n-100"
+                  className="flex shrink-0 items-center gap-1 whitespace-nowrap border-r border-n-200 bg-n-25 px-2.5 text-[12.5px] font-medium text-n-600 hover:bg-n-100"
                 >
                   {SEARCH_FIELDS.find((f) => f.key === field)?.label ?? 'All fields'}
                   <ChevronsUpDown size={13} className="text-n-400" />

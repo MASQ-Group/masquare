@@ -244,10 +244,10 @@ export function IntegrationsPage() {
             onClick={() => bulkSync.mutate(integrations)}
           >
             <RefreshCw size={15} className={bulkSync.isPending ? 'animate-spin' : ''} />
-            {bulkProgress ? `Syncing ${bulkProgress.done}/${bulkProgress.total}…` : `Sync all${syncableCount ? ` (${syncableCount})` : ''}`}
+            <span className="max-[767px]:hidden">{bulkProgress ? `Syncing ${bulkProgress.done}/${bulkProgress.total}…` : `Sync all${syncableCount ? ` (${syncableCount})` : ''}`}</span>
           </button>
         }
-        primary={<button className="hbtn-primary" onClick={() => setModal(null)}><Plus size={16} /> Add connection</button>}
+        primary={<button className="hbtn-primary" onClick={() => setModal(null)}><Plus size={16} /> Add<span className="max-[767px]:hidden"> connection</span></button>}
       />
 
       {isLoading && <div className="py-16 text-center text-[13px] text-n-500">Loading…</div>}
