@@ -154,9 +154,11 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
         )}
       </div>
 
-      {/* Row 2 — options: the page's tabs and toolbar (search / filters / view controls). */}
+      {/* Row 2 — options: the page's tabs and toolbar (search / filters / view controls). Always a
+          single line — tabs never shrink; the toolbar takes the rest (right-aligned when there are
+          tabs) and its search shrinks (min-w-0) rather than wrapping to a new row. */}
       {hasOptions && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-8 pb-3.5 max-[760px]:px-4">
+        <div className="flex items-center gap-4 px-8 pb-3.5 max-[760px]:px-4">
           {tabs && tabs.length > 0 && (
             <div className="flex shrink-0 items-center gap-4">
               {tabs.map((t) => {
@@ -176,10 +178,8 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
               })}
             </div>
           )}
-          {/* With tabs present, push the search/filters to the right so they don't butt up against
-              the tabs; on a tab-less page the toolbar just fills the row (search stays leftmost). */}
           {toolbar && (
-            <div className={`flex min-w-0 flex-wrap items-center gap-2 ${tabs && tabs.length > 0 ? 'ml-auto justify-end' : 'flex-1'}`}>
+            <div className={`flex min-w-0 flex-1 items-center gap-2 ${tabs && tabs.length > 0 ? 'justify-end' : ''}`}>
               {toolbar}
             </div>
           )}
