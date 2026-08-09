@@ -240,9 +240,9 @@ export function ProductsPage() {
               )}
             </div>
 
-            <div className="relative">
+            <div className="relative shrink-0">
               <button ref={filterBtnRef} className="hbtn" onClick={() => setOpenMenu(openMenu === 'filters' ? null : 'filters')}>
-                <Filter size={15} className="opacity-60" /> Filters {activeChips.length > 0 && <span className="mono rounded-pill bg-teal-100 px-1.5 text-[11px] text-teal-700">{activeChips.length}</span>}
+                <Filter size={15} className="opacity-60" /> <span className="max-[767px]:hidden">Filters</span> {activeChips.length > 0 && <span className="mono rounded-pill bg-teal-100 px-1.5 text-[11px] text-teal-700">{activeChips.length}</span>}
               </button>
               {openMenu === 'filters' && (
                 <FilterPanel
@@ -282,9 +282,9 @@ export function ProductsPage() {
               </div>
             )}
 
-            {anyFilter && <button className="inline-flex h-8 items-center rounded-lg border border-orange-200 px-3 text-[13px] font-medium text-orange-600 hover:bg-orange-50" onClick={clearAll}>Clear all</button>}
+            {anyFilter && <button className="inline-flex h-8 shrink-0 items-center rounded-lg border border-orange-200 px-3 text-[13px] font-medium text-orange-600 hover:bg-orange-50 max-[767px]:hidden" onClick={clearAll}>Clear all</button>}
 
-            <div className="flex-1" />
+            <div className="flex-1 max-[767px]:hidden" />
             <div className="hseg max-[767px]:hidden">
               <button className={view === 'list' ? 'hseg-on' : ''} onClick={() => setView('list')} title="List"><List size={15} /></button>
               <button className={view === 'grid' ? 'hseg-on' : ''} onClick={() => setView('grid')} title="Grid"><Grid size={15} /></button>

@@ -587,13 +587,13 @@ export function SalesTransactionsPage() {
         primary={<button className="hbtn-primary" onClick={() => navigate('/sales-transactions/new')}><Plus size={16} /> Register<span className="max-[767px]:hidden"> transaction</span></button>}
         toolbar={
           <>
-            <div className="flex h-8 flex-[0_1_300px] items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-2.5 focus-within:border-teal-400">
+            <div className="flex h-8 flex-[0_1_300px] items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-2.5 focus-within:border-teal-400 max-[767px]:min-w-[240px]">
               <Search size={15} className="text-n-400" />
               <input className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none" placeholder="Search transaction ID or SKU…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
             </div>
-            <div className="relative">
+            <div className="relative shrink-0">
               <button ref={filterBtnRef} className="hbtn" onClick={() => setFilterOpen((v) => !v)}>
-                <Filter size={15} className="opacity-60" /> Filters
+                <Filter size={15} className="opacity-60" /> <span className="max-[767px]:hidden">Filters</span>
                 {filterCount > 0 && <span className="mono rounded-pill bg-teal-100 px-1.5 text-[11px] text-teal-700">{filterCount}</span>}
               </button>
               {filterOpen && (
