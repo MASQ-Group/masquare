@@ -216,14 +216,36 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
               {t.shippingCostSource === 'actual' && t.estimatedShippingCost != null && (
                 <div className="text-[10.5px] text-n-400">est. was €{t.estimatedShippingCost.toFixed(2)}</div>
               )}
-              {/* FBA has no carrier leg — this cost IS Amazon's fulfilment fee plus the average
-                  inbound-to-Amazon cost. Spell it out: the FBA fee is easy to mistake for missing,
-                  since Amazon's own screen bundles it with the referral fee. */}
-              {t.fulfilmentType === 'FBA' && t.fbaFeeEur != null && (
-                <div className={`text-[10.5px] ${t.fbaFeeEstimated ? 'text-amber-700' : 'text-n-400'}`}>
-                  {t.fbaFeeEstimated ? '~' : ''}€{t.fbaFeeEur.toFixed(2)} FBA fee
-                  {t.fbaInboundCostEur != null && ` + €${t.fbaInboundCostEur.toFixed(2)} inbound`}
-                  {t.fbaFeeEstimated && ' (est. — not settled)'}
+              {/* What that single figure is actually made of. FBA has no carrier leg of ours: the
+                  cost is the allocated inbound-to-Amazon shipping plus Amazon's fulfilment fee —
+                  easy to read as "missing" otherwise, since Amazon's own screen bundles the FBA
+                  fee in with the referral fee. */}
+              {t.fulfilmentType === 'FBA' && (t.fbaInboundCostEur != null || t.fbaFeeEur != null) && (
+                <div className="mt-1 flex flex-col gap-0.5 border-t border-n-100 pt-1 text-[10.5px]">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-n-500">Inbound to Amazon</span>
+                    <span className="mono text-n-600">€{(t.fbaInboundCostEur ?? 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className={t.fbaFeeEstimated ? 'text-amber-700' : 'text-n-500'}>
+                      FBA fulfilment fee{t.fbaFeeEstimated ? ' · est.' : ''}
+                    </span>
+                    <span className={`mono ${t.fbaFeeEstimated ? 'text-amber-700' : 'text-n-600'}`}>
+                      {t.fbaFeeEstimated ? '~' : ''}€{(t.fbaFeeEur ?? 0).toFixed(2)}
+                    </span>
+                  </div>
+                  {t.fbaFeeEstimated && (
+                    <div className="text-[10px] text-n-400">Amazon hasn’t settled the actual fee yet.</div>
+                  )}
+                </div>
+              )}
+              {/* FBM: the estimate is our own outbound carrier charge, so name the service. */}
+              {t.fulfilmentType !== 'FBA' && t.salesChannel?.kind !== 'local' && t.shippingCostSource === 'estimated' && t.estimatedShippingCost != null && (
+                <div className="mt-1 flex flex-col gap-0.5 border-t border-n-100 pt-1 text-[10.5px]">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-n-500">Outbound shipping{t.shippingService?.name ? ` · ${t.shippingService.name}` : ''}</span>
+                    <span className="mono text-n-600">€{t.estimatedShippingCost.toFixed(2)}</span>
+                  </div>
                 </div>
               )}
             </div>
