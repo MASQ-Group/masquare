@@ -951,6 +951,8 @@ export interface SalesTransaction {
   shippingCostSource: 'actual' | 'estimated';
   fbaInboundCostEur: number | null;
   fbaFeeEur: number | null;
+  /** True while the FBA fulfilment fee is our estimate (Amazon settles it ~2 weeks after the sale). */
+  fbaFeeEstimated: boolean;
   returnShippingCost: number;
   dutyImportCost: number;
   /** 'partial' = some outbound shipments recorded, but not yet marked fully shipped. */
