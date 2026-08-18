@@ -804,6 +804,26 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                         <div className="flex flex-col gap-2">
                           <Row label="Product cost" value={eur(productCost)} small />
                           <Row label={shipLabel} value={shipVal != null ? eur(shipVal) : '—'} small />
+                          {/* What that shipping figure is made of. On FBA there's no carrier leg of
+                              ours: it's the allocated inbound-to-Amazon cost plus Amazon's
+                              fulfilment fee — which otherwise reads as an unexplained gap against
+                              the SKU's allocated inbound cost. */}
+                          {!actual && t.fulfilmentType === 'FBA' && (t.fbaInboundCostEur != null || t.fbaFeeEur != null) && (
+                            <div className="-mt-1 flex flex-col gap-1 border-l-2 border-n-100 pl-2.5">
+                              <div className="flex items-baseline justify-between">
+                                <span className="text-[12px] text-n-500">Inbound to Amazon</span>
+                                <span className="mono text-[12px] text-n-600">{eur(t.fbaInboundCostEur ?? 0)}</span>
+                              </div>
+                              <div className="flex items-baseline justify-between">
+                                <span className={`text-[12px] ${t.fbaFeeEstimated ? 'text-amber-700' : 'text-n-500'}`}>
+                                  FBA fulfilment fee{t.fbaFeeEstimated ? ' · est.' : ''}
+                                </span>
+                                <span className={`mono text-[12px] ${t.fbaFeeEstimated ? 'text-amber-700' : 'text-n-600'}`}>
+                                  {t.fbaFeeEstimated ? '~' : ''}{eur(t.fbaFeeEur ?? 0)}
+                                </span>
+                              </div>
+                            </div>
+                          )}
                           {!isLocal && <Row label="Sales fee" value={t.effectiveSalesFee != null ? money(t.effectiveSalesFee, feeCcy) : '—'} sub={eurSub(t.effectiveSalesFee, true)} small />}
                           {!isLocal && t.amazonPoints > 0 && <Row label="Amazon points" value={money(t.amazonPoints, feeCcy)} sub={eurSub(t.amazonPoints, true)} small />}
                           {t.dutyImportCost > 0 && <Row label="Import tax / duty" value={eur(t.dutyImportCost)} small />}
