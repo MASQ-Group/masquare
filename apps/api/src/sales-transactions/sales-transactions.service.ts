@@ -83,6 +83,21 @@ const normFulfil = (ft?: { code?: string | null; name?: string | null } | null):
 };
 const round = (v: number, d: number) => Number(v.toFixed(d));
 
+/**
+ * Historical fee averages used to estimate a channel fee Amazon hasn't posted yet (it settles
+ * ~2 weeks after the sale). Both are keyed `sku:channelId`, with a channel-level fallback.
+ *   • bySku/byChannel      — referral fee as a RATIO of net sales.
+ *   • fbaBySku/fbaByChannel — FBA fulfilment fee as a flat amount PER UNIT (native currency).
+ * Without these, an unsettled order books zero cost and its profit reads far too high.
+ */
+interface FeeEstimateMaps {
+  bySku: Map<string, number>;
+  byChannel: Map<string, number>;
+  fbaBySku: Map<string, number>;
+  fbaByChannel: Map<string, number>;
+}
+const EMPTY_FEE_MAPS: FeeEstimateMaps = { bySku: new Map(), byChannel: new Map(), fbaBySku: new Map(), fbaByChannel: new Map() };
+
 @Injectable()
 export class SalesTransactionsService {
   constructor(
@@ -125,7 +140,7 @@ export class SalesTransactionsService {
     return this.moduleRef.get<ChannelListingsService>('CHANNEL_LISTINGS_SERVICE', { strict: false });
   }
 
-  private serialize(t: any, serviceMap: Map<string, any>, fbaAvgMap: Map<string, number> = new Map(), skuFulfilmentMap: Map<string, 'FBA' | 'FBM'> = new Map(), feePctMap: { bySku: Map<string, number>; byChannel: Map<string, number> } = { bySku: new Map(), byChannel: new Map() }, fxFallback: Map<string, number> = new Map()) {
+  private serialize(t: any, serviceMap: Map<string, any>, fbaAvgMap: Map<string, number> = new Map(), skuFulfilmentMap: Map<string, 'FBA' | 'FBM'> = new Map(), feePctMap: FeeEstimateMaps = EMPTY_FEE_MAPS, fxFallback: Map<string, number> = new Map()) {
     const items = t.items ?? [];
     // FBA: Amazon collects the buyer-paid shipping (it's not the seller's revenue), and there's
     // no seller-paid outbound leg. So for FBA the shipping charged to the buyer is excluded from
@@ -269,6 +284,16 @@ export class SalesTransactionsService {
       }
     }
 
+    // --- Effective FX ---------------------------------------------------------
+    // The stored historical rate, or — when it couldn't be fetched at save time — the last known
+    // rate for this currency, so profit still computes (flagged as an estimate). Resolved HERE,
+    // before the FBA block, so the fee conversion and the profit calc always use the same rate;
+    // reading t.exchangeRate directly would silently drop the FBA fee on a null-FX order.
+    const storedFx = t.exchangeRate;
+    const fxRate = storedFx ?? (fxFallback.get((t.currency ?? '').toUpperCase()) ?? null);
+    const fxEstimated = storedFx == null && fxRate != null;
+    const feeFx = t.feeExchangeRate ?? fxRate;
+
     // --- FBA orders: shipping cost = average inbound-to-Amazon cost + FBA fulfilment fee ---
     // FBA orders aren't shipped via our own services (Amazon fulfils), so the FBM estimate
     // above doesn't apply. Instead: the SKU's average allocated inbound cost to this sales
@@ -276,13 +301,26 @@ export class SalesTransactionsService {
     // the order's "estimated shipping" and feeds the profit calc as the shipping cost.
     let fbaInboundCostEur = 0;
     let fbaFeeEur = 0;
+    let fbaFeeEstimated = false;
     if (isFba) {
-      const fx = t.exchangeRate;
-      const feeFxR = t.feeExchangeRate ?? t.exchangeRate;
+      const fx = fxRate;
+      const feeFxR = feeFx;
+      // Like the referral fee, Amazon posts the FBA fulfilment fee only at settlement (~2 weeks).
+      // Until then estimate it from this SKU's own average per-unit fee on this channel (else the
+      // channel average) — otherwise the order books zero fulfilment fee and reads far too
+      // profitable. It's a flat size/weight-tier fee, so the per-unit average is a close proxy,
+      // and the real fee replaces it as soon as it backfills.
+      const estFbaUnitFee = (sku: string) =>
+        feePctMap.fbaBySku.get(`${(sku ?? '').trim().toLowerCase()}:${chId}`) ?? feePctMap.fbaByChannel.get(chId) ?? 0;
       for (const it of items) {
         const avg = this.fbaUnitCost(fbaAvgMap, it, t.salesChannelId);
         fbaInboundCostEur += avg * (it.quantity ?? 1);
-        if (fx != null) fbaFeeEur += n(it.fbaFulfilmentFeeAmount) * (feeFxR ?? fx);
+        if (fx == null) continue;
+        const posted = n(it.fbaFulfilmentFeeAmount);
+        // Only Amazon-sourced lines get an estimate: a manually keyed order states its own costs.
+        const native = posted > 0 || t.source !== 'amazon' ? posted : round(estFbaUnitFee(it.sku) * (it.quantity ?? 1), 2);
+        if (posted <= 0 && native > 0) fbaFeeEstimated = true;
+        fbaFeeEur += native * (feeFxR ?? fx);
       }
       fbaInboundCostEur = round(fbaInboundCostEur, 2);
       fbaFeeEur = round(fbaFeeEur, 2);
@@ -313,13 +351,8 @@ export class SalesTransactionsService {
     const effectiveShippingCost = isLocal ? estimatedShippingCost : actualShippingCost != null ? actualShippingCost : estimatedShippingCost;
 
     // --- Order resolution (returns / cancellations / refunds) ---
+    // (Effective FX — storedFx / fxRate / fxEstimated / feeFx — is resolved above the FBA block.)
     const resolution: string = t.resolution ?? 'none';
-    // Effective FX: the stored historical rate, or — when it couldn't be fetched at save time —
-    // the last known rate for this currency so profit still computes (flagged as an estimate).
-    const storedFx = t.exchangeRate;
-    const fxRate = storedFx ?? (fxFallback.get((t.currency ?? '').toUpperCase()) ?? null);
-    const fxEstimated = storedFx == null && fxRate != null;
-    const feeFx = t.feeExchangeRate ?? fxRate;
     // Refund reverses our revenue (net + shipping portion, exc VAT), in native currency.
     const refundEur = t.refundAmount != null && fxRate != null ? round(n(t.refundAmount) * fxRate, 2) : 0;
     // Cancelled before anything shipped → goods never left: no COGS, no shipping.
@@ -532,6 +565,9 @@ export class SalesTransactionsService {
       // FBA cost breakdown (null for non-FBA) — inbound-to-Amazon avg + Amazon FBA fee.
       fbaInboundCostEur: isFba ? fbaInboundCostEur : null,
       fbaFeeEur: isFba ? fbaFeeEur : null,
+      // True while the FBA fee is our estimate (Amazon hasn't settled it yet), mirroring
+      // salesFeeEstimated — so the UI can mark the figure as provisional.
+      fbaFeeEstimated,
       returnShippingCost,
       dutyImportCost,
       // Platform fulfilment status is derived from shipment registration (the single point
@@ -1017,7 +1053,7 @@ export class SalesTransactionsService {
   /** Effective referral-fee % (fee ÷ net sales) that SKUs have actually incurred, keyed
    *  `${sku}:${channelId}` and per channel, from all order lines with a POSTED fee. Feeds the
    *  estimated sales fee for Amazon lines whose fee hasn't settled yet. */
-  private async buildSalesFeePctMap(): Promise<{ bySku: Map<string, number>; byChannel: Map<string, number> }> {
+  private async buildSalesFeePctMap(): Promise<FeeEstimateMaps> {
     // Blended fee ratio per (sku, channel), aggregated in the DB — one row per sku+channel
     // instead of loading every fee-bearing line item and summing in JS. The per-channel ratio
     // is derived by folding the sku+channel rows together (mathematically identical).
@@ -1039,7 +1075,31 @@ export class SalesTransactionsService {
     }
     const byChannel = new Map<string, number>();
     for (const [k, v] of chAgg) if (v.net > 0) byChannel.set(k, v.fee / v.net);
-    return { bySku, byChannel };
+
+    // Average FBA fulfilment fee PER UNIT per (sku, channel). Unlike the referral fee this is not
+    // a % of price — Amazon charges a flat per-unit fee off the item's size/weight tier, so a
+    // per-unit average is both the right basis and very stable. Native currency: a channel has
+    // one currency, so keying by channel keeps the amounts comparable.
+    const fbaRows = await this.prisma.$queryRaw<Array<{ sku: string; ch: string; fee: number; qty: number }>>`
+      SELECT lower(trim(i.sku)) AS sku, COALESCE(t.sales_channel_id::text, '') AS ch,
+             SUM(i.fba_fulfilment_fee_amount) AS fee, SUM(i.quantity) AS qty
+      FROM sales_transaction_item i
+      JOIN sales_transaction t ON t.id = i.transaction_id
+      WHERE i.deleted_at IS NULL AND t.deleted_at IS NULL
+        AND i.fba_fulfilment_fee_amount > 0 AND i.quantity > 0
+      GROUP BY lower(trim(i.sku)), COALESCE(t.sales_channel_id::text, '')`;
+    const fbaBySku = new Map<string, number>();
+    const fbaChAgg = new Map<string, { fee: number; qty: number }>();
+    for (const r of fbaRows) {
+      const fee = Number(r.fee);
+      const qty = Number(r.qty);
+      if (qty > 0) fbaBySku.set(`${r.sku}:${r.ch}`, fee / qty);
+      const c = fbaChAgg.get(r.ch) ?? { fee: 0, qty: 0 }; c.fee += fee; c.qty += qty; fbaChAgg.set(r.ch, c);
+    }
+    const fbaByChannel = new Map<string, number>();
+    for (const [k, v] of fbaChAgg) if (v.qty > 0) fbaByChannel.set(k, v.fee / v.qty);
+
+    return { bySku, byChannel, fbaBySku, fbaByChannel };
   }
 
   private async countryVatRate(countryId: string | null): Promise<number | null> {

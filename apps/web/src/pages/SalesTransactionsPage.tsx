@@ -467,7 +467,10 @@ export function SalesTransactionsPage() {
           ? <span className="text-amber-700" title="Based on the estimated sales fee — Amazon hasn't posted the actual referral fee yet">~{t.salesFeePct}%</span>
           : `${t.salesFeePct}%`;
       case 'estShip': return t.estimatedShippingCost != null
-        ? <span title={t.fulfilmentType === 'FBA' ? 'FBA: avg inbound-to-Amazon cost + Amazon FBA fee' : undefined}>{money(t.estimatedShippingCost, 'EUR')}</span>
+        ? t.fbaFeeEstimated
+          // The FBA fulfilment fee in here is still our estimate — mark it like the sales fee %.
+          ? <span className="text-amber-700" title={`FBA: avg inbound-to-Amazon cost + estimated FBA fee (${money(t.fbaFeeEur ?? 0, 'EUR')}) — Amazon hasn't settled the actual fee yet`}>~{money(t.estimatedShippingCost, 'EUR')}</span>
+          : <span title={t.fulfilmentType === 'FBA' ? 'FBA: avg inbound-to-Amazon cost + Amazon FBA fee' : undefined}>{money(t.estimatedShippingCost, 'EUR')}</span>
         : '—';
       case 'actualShip': return t.actualShippingCost != null ? money(t.actualShippingCost, 'EUR') : '—';
       case 'profit': return t.profit != null ? <span className="font-medium" style={{ color: t.profit >= 0 ? '#14A79D' : 'var(--danger)' }}>{money(t.profit, 'EUR')}</span> : '—';

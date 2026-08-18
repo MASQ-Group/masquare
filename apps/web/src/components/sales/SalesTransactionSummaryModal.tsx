@@ -216,6 +216,16 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
               {t.shippingCostSource === 'actual' && t.estimatedShippingCost != null && (
                 <div className="text-[10.5px] text-n-400">est. was €{t.estimatedShippingCost.toFixed(2)}</div>
               )}
+              {/* FBA has no carrier leg — this cost IS Amazon's fulfilment fee plus the average
+                  inbound-to-Amazon cost. Spell it out: the FBA fee is easy to mistake for missing,
+                  since Amazon's own screen bundles it with the referral fee. */}
+              {t.fulfilmentType === 'FBA' && t.fbaFeeEur != null && (
+                <div className={`text-[10.5px] ${t.fbaFeeEstimated ? 'text-amber-700' : 'text-n-400'}`}>
+                  {t.fbaFeeEstimated ? '~' : ''}€{t.fbaFeeEur.toFixed(2)} FBA fee
+                  {t.fbaInboundCostEur != null && ` + €${t.fbaInboundCostEur.toFixed(2)} inbound`}
+                  {t.fbaFeeEstimated && ' (est. — not settled)'}
+                </div>
+              )}
             </div>
             <Fact label="Duty / import" value={t.dutyImportCost ? `€${t.dutyImportCost.toFixed(2)}` : '—'} mono />
             <div>
