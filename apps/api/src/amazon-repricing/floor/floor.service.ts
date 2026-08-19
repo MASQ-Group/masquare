@@ -6,6 +6,7 @@ import { VatService } from './vat.service';
 import { FeeService } from './fee.service';
 import { FloorInputs, solveFloors } from './floor-solver';
 import { eurToCents } from '../common/money';
+import { PricingFxService } from '../../pricing/fx.service';
 import { REPRICING_DEFAULTS } from '../config/repricing.config';
 import { assertValidSchedule, referralScheduleFor } from '../config/referral-schedule';
 
@@ -18,6 +19,7 @@ import { assertValidSchedule, referralScheduleFor } from '../config/referral-sch
 type ExclusionReason =
   | 'COGS_MISSING'
   | 'VAT_UNKNOWN'
+  | 'FX_UNKNOWN'
   | 'FEES_UNKNOWN'
   | 'FLOOR_INFEASIBLE'
   | 'FLOOR_STALE';
@@ -30,6 +32,7 @@ export class FloorService {
     private readonly prisma: PrismaService,
     private readonly vat: VatService,
     private readonly fees: FeeService,
+    private readonly fx: PricingFxService,
   ) {}
 
   /**
@@ -58,7 +61,17 @@ export class FloorService {
     });
     const cogsEur = product?.averageCostEur ?? product?.purchaseCostAmount ?? null;
     if (cogsEur == null || Number(cogsEur) <= 0) return this.exclude(row.id, 'COGS_MISSING', humanControlled);
-    const cogsLandedCents = eurToCents(Number(cogsEur));
+
+    // EVERYTHING in this solver must be in the MARKETPLACE's currency, because that is what the
+    // engine compares against: competitor offers arrive in it and prices are submitted in it. The
+    // Amazon fees below already are. Our COGS is held in EUR, so convert it here — otherwise a UK
+    // floor would be EUR cost + GBP fees, a figure in no currency at all, and ~17% adrift of the
+    // GBP prices it is clamped against. No rate ⇒ exclude; never guess a floor (§4.3).
+    const ccy = (row.currency ?? 'EUR').toUpperCase();
+    const eurPerUnit = ccy === 'EUR' ? 1 : await this.fx.toEur(ccy);
+    if (eurPerUnit == null || !(eurPerUnit > 0)) return this.exclude(row.id, 'FX_UNKNOWN', humanControlled);
+    // toEur gives native→EUR; we need EUR→native, hence the reciprocal.
+    const cogsLandedCents = eurToCents(Number(cogsEur) / eurPerUnit);
 
     // --- Per-SKU fixed fees: latest getMyFeesEstimate result (fees are DATA, §4.3) ---
     // Unknown fees ⇒ EXCLUDED. FBM has no FBA fulfilment fee; FBM ship cost belongs in fixed costs

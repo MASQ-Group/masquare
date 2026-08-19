@@ -13,7 +13,9 @@ import { parseFeesEstimate } from './fees-parse';
 // API we take the PRICE-INDEPENDENT fixed fees (FBA fulfilment, media closing), so we query at a
 // reference price (the SKU's current price, else a nominal) purely to obtain those.
 
-const NOMINAL_REFERENCE_CENTS = 2000; // €20 fallback when a SKU has no current price yet
+// Reference price used only to ask Amazon for a fee estimate, in the MARKETPLACE's currency
+// (the request is sent with args.currency) — so this is 20 of whatever that currency is, not €20.
+const NOMINAL_REFERENCE_CENTS = 2000;
 
 @Injectable()
 export class FeeService {

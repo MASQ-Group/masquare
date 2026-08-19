@@ -19,7 +19,25 @@ const MARKETPLACE_LABEL: Record<string, string> = {
   A1VC38T7YXB528: 'JP', A39IBJ37TRP1C6: 'AU', A19VAU5U5O7RUS: 'SG',
 };
 const mkt = (id: string) => MARKETPLACE_LABEL[id] ?? id;
-const eur = (cents: number | null) => (cents == null ? '—' : `€${(cents / 100).toFixed(2)}`);
+// A marketplace has exactly one currency. RepricingDecision stores no currency column, so derive
+// it here — otherwise a GBP target price renders as euros and reads ~17% wrong.
+const MARKETPLACE_CCY: Record<string, string> = {
+  US: 'USD', CA: 'CAD', MX: 'MXN', BR: 'BRL', UK: 'GBP', IE: 'EUR', DE: 'EUR', FR: 'EUR',
+  IT: 'EUR', ES: 'EUR', NL: 'EUR', BE: 'EUR', SE: 'SEK', PL: 'PLN', TR: 'TRY', EG: 'EGP',
+  SA: 'SAR', AE: 'AED', IN: 'INR', ZA: 'ZAR', JP: 'JPY', AU: 'AUD', SG: 'SGD',
+};
+const ccyOfMarketplace = (marketplaceId: string) => MARKETPLACE_CCY[MARKETPLACE_LABEL[marketplaceId] ?? ''] ?? 'EUR';
+// Money helper. Repricing figures are denominated in the MARKETPLACE's currency (a UK SKU's
+// breakeven, floor and current price are all GBP), so never hardcode €: label with the row's own
+// currency or the number reads as a different amount entirely.
+const CCY_SYMBOL: Record<string, string> = { EUR: '€', GBP: '£', USD: '$', CAD: 'CA$', AUD: 'A$', JPY: '¥', SEK: 'kr', PLN: 'zł', SGD: 'S$', MXN: 'MX$', TRY: '₺', AED: 'AED ', SAR: 'SAR ', INR: '₹', BRL: 'R$', ZAR: 'R' };
+const money = (cents: number | null, currency?: string | null) => {
+  if (cents == null) return '—';
+  const ccy = (currency ?? 'EUR').toUpperCase();
+  // JPY has no minor unit — Amazon still sends it x100 through our cents convention.
+  const amount = (cents / 100).toFixed(ccy === 'JPY' ? 0 : 2);
+  return `${CCY_SYMBOL[ccy] ?? `${ccy} `}${amount}`;
+};
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '—');
 
 const STATE_STYLES: Record<string, string> = {
@@ -251,9 +269,9 @@ function SkuTable({ rows, loading }: { rows: RepricingSkuRow[]; loading: boolean
                   <td className="px-3 py-1.5 font-mono">{mkt(r.marketplaceId)}</td>
                   <td className="px-3 py-1.5">{r.fulfillment}</td>
                   <td className="px-3 py-1.5"><Badge value={r.automationState} styles={STATE_STYLES} />{r.suppressed && <span className="ml-1 text-[11px] text-orange-600">supp</span>}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.breakevenCents)}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.strategyFloorCents)}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.currentPriceCents)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.breakevenCents, r.currency)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.strategyFloorCents, r.currency)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.currentPriceCents, r.currency)}</td>
                   <td className="px-3 py-1.5 font-mono text-[11px] text-n-500">{r.exclusionReason ?? ''}</td>
                 </tr>
               ))
@@ -316,8 +334,8 @@ function DecisionTable() {
                   <td className="px-3 py-1.5 font-mono">{mkt(r.marketplaceId)}</td>
                   <td className="px-3 py-1.5 font-mono text-[11px] text-n-600">{r.branch ?? '—'}</td>
                   <td className="px-3 py-1.5"><Badge value={r.outcome} styles={OUTCOME_STYLES} /></td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums text-n-600">{eur(r.rawTargetCents)}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.finalPriceCents)}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums text-n-600">{money(r.rawTargetCents, ccyOfMarketplace(r.marketplaceId))}</td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.finalPriceCents, ccyOfMarketplace(r.marketplaceId))}</td>
                   <td className="px-3 py-1.5 font-mono text-[11px] text-n-500">{r.submissionStatus ?? '—'}</td>
                 </tr>
               ))
@@ -374,10 +392,10 @@ function QuarantineCard() {
               <tr key={r.id} className="border-t border-n-100 hover:bg-n-25">
                 <td className="px-4 py-1.5 font-mono text-n-800">{r.sku}</td>
                 <td className="px-3 py-1.5 font-mono">{mkt(r.marketplaceId)}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.strategyFloorCents)}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.mapCents)}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.maxPriceCents)}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{eur(r.fairPricingCeilingCents)}</td>
+                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.strategyFloorCents, r.currency)}</td>
+                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.mapCents, r.currency)}</td>
+                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.maxPriceCents, r.currency)}</td>
+                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.fairPricingCeilingCents, r.currency)}</td>
                 <td className="px-3 py-1.5 text-n-600">{when(r.updatedAt)}</td>
                 <td className="px-3 py-1.5 text-right">
                   <button
