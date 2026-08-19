@@ -146,6 +146,8 @@ export function RepricingPage() {
       )}
 
       <QuarantineCard />
+      <RoleCheckCard />
+      <div className="h-6" />
       <SkuTable rows={skus.data ?? []} loading={skus.isLoading} />
       <div className="h-6" />
       <DecisionTable />
@@ -341,6 +343,77 @@ function QuarantineCard() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/** Pre-flight: do the Amazon connections actually hold the SP-API roles this module needs?
+ *  Read-only (a fees estimate + a destinations list) — safe to run before activation. Not fetched
+ *  on mount: each check makes live SP-API calls, so it runs only when asked. */
+function RoleCheckCard() {
+  const [run, setRun] = useState(false);
+  const q = useQuery({ queryKey: ['repricing', 'roles'], queryFn: repricingApi.roleDiagnostics, enabled: run, staleTime: 60_000 });
+  const d = q.data;
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-2.5">
+        <span className="text-[13px] font-semibold text-n-800">SP-API role check</span>
+        <span className="text-[11.5px] text-n-400">
+          Read-only pre-flight — confirms Pricing &amp; Notifications are granted. Nothing is written or priced.
+        </span>
+        <div className="flex-1" />
+        {d && (
+          <span className="text-[12px] text-n-500">
+            Pricing <b className={d.pricingOk === d.total ? 'text-teal-700' : 'text-danger'}>{d.pricingOk}/{d.total}</b>
+            {' · '}Notifications <b className={d.notificationsOk === d.total ? 'text-teal-700' : 'text-danger'}>{d.notificationsOk}/{d.total}</b>
+          </span>
+        )}
+        <button
+          onClick={() => (run ? q.refetch() : setRun(true))}
+          disabled={q.isFetching}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50"
+        >
+          {q.isFetching ? 'Checking…' : run ? 'Re-check' : 'Run check'}
+        </button>
+      </div>
+
+      {q.isError && <div className="px-4 py-3 text-[12.5px] text-danger">{(q.error as Error)?.message ?? 'Check failed.'}</div>}
+      {!run && !q.isFetching && (
+        <div className="px-4 py-4 text-[12.5px] text-n-500">
+          Run this before activating: it calls each Amazon connection once to confirm the app really has the
+          <b> Product Pricing</b> and <b>Notifications</b> roles. A missing role otherwise only shows up as a 403 mid-sync.
+        </div>
+      )}
+      {d && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead className="bg-n-25 text-left text-[11px] uppercase tracking-wide text-n-500">
+              <tr>
+                <th className="px-4 py-2 font-semibold">Connection</th>
+                <th className="px-3 py-2 font-semibold">Mkt</th>
+                <th className="px-3 py-2 font-semibold">Pricing</th>
+                <th className="px-3 py-2 font-semibold">Notifications</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.results.map((r) => (
+                <tr key={r.integrationId} className="border-t border-n-100 hover:bg-n-25">
+                  <td className="px-4 py-1.5 text-n-800">{r.name}</td>
+                  <td className="px-3 py-1.5 font-mono">{r.marketplace ?? '—'}</td>
+                  <td className="px-3 py-1.5">
+                    <span className={r.pricing.ok ? 'font-semibold text-teal-700' : 'text-danger'}>{r.pricing.ok ? '✓ granted' : '✕ failed'}</span>
+                    {!r.pricing.ok && <div className="text-[11px] text-n-500">{r.pricing.message}</div>}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <span className={r.notifications.ok ? 'font-semibold text-teal-700' : 'text-danger'}>{r.notifications.ok ? '✓ granted' : '✕ failed'}</span>
+                    {!r.notifications.ok && <div className="text-[11px] text-n-500">{r.notifications.message}</div>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
