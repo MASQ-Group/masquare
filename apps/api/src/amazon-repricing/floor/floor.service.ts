@@ -38,6 +38,78 @@ export class FloorService {
     private readonly pricing: PricingService,
   ) {}
 
+  /**
+   * Read-only "show your working" for one SKU's floor: every input, where it came from, and the
+   * figure they produce — WITHOUT persisting anything. When a floor disagrees with Individual
+   * Pricing this says which input differs, instead of leaving us to infer it from the output.
+   * Mirrors computeFloorsForSku's input gathering; keep the two in step.
+   */
+  async explainFloor(skuPricingId: string) {
+    const row = await this.prisma.repricingSkuPricing.findUnique({ where: { id: skuPricingId } });
+    if (!row) return { error: 'SKU pricing row not found' };
+
+    const vatRate = await this.vat.resolveVatRate(row.marketplaceId);
+    const destCountryId = await this.destinationCountryId(row.marketplaceId);
+    const unit = row.productId
+      ? await this.pricing.unitCostInputsEur(row.productId, destCountryId)
+      : { costEur: null, shippingEur: null, serviceName: null, weightKg: null };
+    const ccy = (row.currency ?? 'EUR').toUpperCase();
+    const eurPerUnit = ccy === 'EUR' ? 1 : await this.fx.toEur(ccy);
+    const fee = await this.prisma.repricingFeeEstimate.findFirst({
+      where: { sku: row.sku, marketplaceId: row.marketplaceId },
+      orderBy: { fetchedAt: 'desc' },
+    });
+    const isFba = row.fulfillment === 'FBA' || row.fulfillment === 'SFP';
+
+    const cogsLandedCents = unit.costEur != null && eurPerUnit ? eurToCents(unit.costEur / eurPerUnit) : null;
+    const fixedPerUnitCents = !isFba && unit.shippingEur != null && eurPerUnit ? eurToCents(unit.shippingEur / eurPerUnit) : 0;
+
+    let recomputed: { breakevenCents: number | null; strategyFloorCents: number | null } | null = null;
+    if (vatRate != null && cogsLandedCents != null) {
+      recomputed = solveFloors(
+        {
+          vatRate,
+          referralBrackets: referralScheduleFor(null),
+          fbaFulfillmentFeeCents: isFba ? fee?.fbaFulfillmentFeeCents ?? 0 : 0,
+          closingFeeCents: fee?.closingFeeCents ?? 0,
+          cogsLandedCents,
+          fixedPerUnitCents,
+          searchHiCents: row.amazonMaxAllowedCents ?? undefined,
+        },
+        row.minMarginPct != null ? Number(row.minMarginPct) / 100 : REPRICING_DEFAULTS.minMarginPct,
+      );
+    }
+
+    return {
+      sku: row.sku,
+      marketplaceId: row.marketplaceId,
+      currency: ccy,
+      fulfillment: row.fulfillment,
+      automationState: row.automationState,
+      exclusionReason: row.exclusionReason,
+      inputs: {
+        vatRate,
+        destCountryId,
+        costEur: unit.costEur,
+        shippingEur: unit.shippingEur,
+        shippingService: unit.serviceName,
+        chargeableWeightKg: unit.weightKg,
+        fxNativeToEur: eurPerUnit,
+        cogsLandedCents,
+        fixedPerUnitCents,
+        fbaFulfillmentFeeCents: isFba ? fee?.fbaFulfillmentFeeCents ?? 0 : 0,
+        closingFeeCents: fee?.closingFeeCents ?? 0,
+        minMarginPct: row.minMarginPct != null ? Number(row.minMarginPct) : REPRICING_DEFAULTS.minMarginPct * 100,
+      },
+      stored: {
+        breakevenCents: row.breakevenCents,
+        strategyFloorCents: row.strategyFloorCents,
+        floorsComputedAt: row.floorsComputedAt,
+      },
+      recomputedNow: recomputed,
+    };
+  }
+
   /** The destination Country row id for a marketplace, via its ISO code ('UK' normalises to 'GB').
    *  Null when unmapped — shipping then can't resolve and an FBM SKU is excluded rather than
    *  given a floor that ignores carriage. */
