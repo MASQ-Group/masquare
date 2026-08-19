@@ -390,6 +390,22 @@ export class PricingService {
     return { costEur, shippingEur: ship.costEur, serviceName: service?.name ?? null, weightKg };
   }
 
+  /**
+   * Destination tax for a sales channel at a given gross price, in the channel's own currency.
+   *
+   * Public so the repricing floor uses the SAME tax resolution as Individual Pricing, the listing
+   * grid and a booked sale. It is more than `Country.vatRate`: JP/AU carry their own regimes, and
+   * marketplaces with a VAT threshold (e.g. UK £135) switch rate either side of it — which is why
+   * reading the country rate alone returned 0% for GB and halved every UK floor.
+   *
+   * `grossNative` matters because of that threshold, so pass the price being evaluated.
+   */
+  async channelTaxFor(salesChannelId: string, grossNative: number): Promise<{ taxType: string; vatPct: number; pointsPct: number } | null> {
+    const [channel] = await this.loadChannels([salesChannelId]);
+    if (!channel) return null;
+    return this.resolveTax(channel, grossNative);
+  }
+
   async listingEconomics(cells: Array<{ key: string; productId: string; salesChannelId: string; grossNative: number | null; currency: string | null }>): Promise<Map<string, ListingEconomics>> {
     const out = new Map<string, ListingEconomics>();
     const productIds = [...new Set(cells.map((c) => c.productId))];

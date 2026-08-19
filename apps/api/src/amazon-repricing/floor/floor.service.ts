@@ -48,7 +48,8 @@ export class FloorService {
     const row = await this.prisma.repricingSkuPricing.findUnique({ where: { id: skuPricingId } });
     if (!row) return { error: 'SKU pricing row not found' };
 
-    const vatRate = await this.vat.resolveVatRate(row.marketplaceId);
+    const tax = await this.channelTax(row.marketplaceId, row.currentPriceCents);
+    const vatRate = tax != null ? tax.vatPct / 100 : null;
     const destCountryId = await this.destinationCountryId(row.marketplaceId);
     const unit = row.productId
       ? await this.pricing.unitCostInputsEur(row.productId, destCountryId)
@@ -89,6 +90,8 @@ export class FloorService {
       exclusionReason: row.exclusionReason,
       inputs: {
         vatRate,
+        taxType: tax?.taxType ?? null,
+        vatSource: tax != null ? 'sales channel (threshold-aware)' : 'unresolved',
         destCountryId,
         costEur: unit.costEur,
         shippingEur: unit.shippingEur,
@@ -108,6 +111,22 @@ export class FloorService {
       },
       recomputedNow: recomputed,
     };
+  }
+
+  /** Destination tax for a marketplace, via the Amazon integration's target sales channel — the
+   *  channel carries the threshold rules the country row does not. Null when unresolvable, which
+   *  excludes the SKU rather than defaulting to 0% (a 0% VAT floor is far too low). */
+  private async channelTax(marketplaceId: string, currentPriceCents: number | null) {
+    const iso = MARKETPLACE_TO_ISO[marketplaceId]; // Amazon's code — integrations store 'UK', not 'GB'
+    if (!iso) return null;
+    const integration = await this.prisma.channelIntegration.findFirst({
+      where: { channelType: 'amazon', marketplace: iso, deletedAt: null, targetSalesChannelId: { not: null } },
+      select: { targetSalesChannelId: true },
+    });
+    if (!integration?.targetSalesChannelId) return null;
+    // Threshold rules key off the price, so use what the SKU currently sells at (nominal if unset).
+    const gross = (currentPriceCents ?? 2000) / 100;
+    return this.pricing.channelTaxFor(integration.targetSalesChannelId, gross);
   }
 
   /** The destination Country row id for a marketplace, via its ISO code ('UK' normalises to 'GB').
@@ -134,9 +153,15 @@ export class FloorService {
     // never change their automationState here.
     const humanControlled = ['KILLED', 'QUARANTINED'].includes(row.automationState) || row.strategy === 'MANUAL_ONLY';
 
-    // --- VAT (marketplace standard rate) ---
-    const vatRate = await this.vat.resolveVatRate(row.marketplaceId);
-    if (vatRate == null) return this.exclude(row.id, 'VAT_UNKNOWN', humanControlled);
+    // --- Destination tax, resolved the SAME way as the rest of the platform ---------------
+    // NOT simply Country.vatRate: JP/AU have their own regimes and threshold marketplaces (UK's
+    // £135) switch rate either side of it. The country row for GB carries 0%, because the real
+    // rule lives on the sales channel — reading the country rate alone silently produced a 0% VAT
+    // floor, roughly halving every UK breakeven. Resolve at the SKU's current price, which is the
+    // side of the threshold it actually trades on.
+    const tax = await this.channelTax(row.marketplaceId, row.currentPriceCents);
+    if (tax == null) return this.exclude(row.id, 'VAT_UNKNOWN', humanControlled);
+    const vatRate = tax.vatPct / 100;
 
     // --- Landed COGS from the matched product (moving-average, else purchase cost) ---
     if (!row.productId) return this.exclude(row.id, 'COGS_MISSING', humanControlled);
