@@ -877,8 +877,12 @@ export const repricingApi = {
   addBlocked: (dto: { sellerId: string; marketplaceId?: string | null; sellerName?: string | null; reason?: string | null; brand?: string | null }) =>
     api.post<BlockedSeller>('/amazon-repricing/blocklist', dto).then((r) => r.data),
   removeBlocked: (id: string) => api.delete<{ removed: boolean }>(`/amazon-repricing/blocklist/${id}`).then((r) => r.data),
-  onboard: () => api.post<{ scannedListings: number; created: number; updated: number; skipped: number }>('/amazon-repricing/onboard', {}).then((r) => r.data),
-  recomputeFloors: () => api.post<{ processed: number; ok: number }>('/amazon-repricing/floors/recompute', {}).then((r) => r.data),
+  /** `marketplace` (ISO-2, e.g. 'UK') scopes the run — omit to cover every connected marketplace. */
+  onboard: (marketplace?: string) =>
+    api.post<{ scannedListings: number; created: number; updated: number; skipped: number }>('/amazon-repricing/onboard', { marketplace }).then((r) => r.data),
+  /** Makes ONE live SP-API call per SKU — scope it while piloting. */
+  recomputeFloors: (marketplace?: string) =>
+    api.post<{ processed: number; ok: number; message?: string }>('/amazon-repricing/floors/recompute', { marketplace }).then((r) => r.data),
   skuPricing: (take = 100) => api.get<RepricingSkuRow[]>('/amazon-repricing/sku-pricing', { params: { take } }).then((r) => r.data),
   decisions: (params: { take?: number; sku?: string; outcome?: string } = {}) =>
     api.get<RepricingDecisionRow[]>('/amazon-repricing/decisions', { params: { take: params.take ?? 100, sku: params.sku || undefined, outcome: params.outcome || undefined } }).then((r) => r.data),

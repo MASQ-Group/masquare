@@ -8,6 +8,7 @@ import { FloorService } from '../floor/floor.service';
 import { RepricingControlService } from '../writer/control.service';
 import { BlocklistService, type BlockedSellerDto } from './blocklist.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ISO_TO_MARKETPLACE } from '../config/repricing.config';
 import { IntegrationsService } from '../../integrations/integrations.service';
 
 // Ops console API for the Amazon repricing module (admin-only). Phase-appropriate subset: onboard
@@ -54,10 +55,11 @@ export class RepricingController {
     return this.control.update(dto, user.sub);
   }
 
-  /** Seed/refresh RepricingSkuPricing from matched Amazon listings (§3.3). */
+  /** Seed/refresh RepricingSkuPricing from matched Amazon listings (§3.3). Pass `marketplace`
+   *  (ISO-2, e.g. 'UK') to pilot one marketplace rather than onboarding the whole estate. */
   @Post('onboard')
-  onboard() {
-    return this.onboarding.syncSkuPricingFromListings();
+  onboard(@Body() body: { marketplace?: string } = {}) {
+    return this.onboarding.syncSkuPricingFromListings({ marketplace: body?.marketplace });
   }
 
   /** Data-readiness summary — counts by automation state / exclusion reason. */
@@ -96,10 +98,20 @@ export class RepricingController {
     };
   }
 
-  /** Refresh fees + recompute the floor for every SKU (best-effort; makes live SP-API calls). */
+  /**
+   * Refresh fees + recompute the floor for every SKU (best-effort; makes ONE live SP-API call per
+   * SKU). `marketplace` (ISO-2) scopes it, so a pilot doesn't fire thousands of calls at the whole
+   * estate — the ids come from the connector-derived map, so any connected marketplace works.
+   */
   @Post('floors/recompute')
-  async recomputeFloors() {
-    const rows = await this.prisma.repricingSkuPricing.findMany({ where: { deletedAt: null }, select: { id: true } });
+  async recomputeFloors(@Body() body: { marketplace?: string } = {}) {
+    const iso = body?.marketplace?.trim().toUpperCase();
+    const marketplaceId = iso ? ISO_TO_MARKETPLACE[iso] : undefined;
+    if (iso && !marketplaceId) return { processed: 0, ok: 0, message: `Unknown marketplace '${iso}'` };
+    const rows = await this.prisma.repricingSkuPricing.findMany({
+      where: { deletedAt: null, ...(marketplaceId ? { marketplaceId } : {}) },
+      select: { id: true },
+    });
     let ok = 0;
     for (const { id } of rows) {
       try {

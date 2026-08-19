@@ -51,8 +51,14 @@ export function RepricingPage() {
 
   const refreshAll = () => qc.invalidateQueries({ queryKey: ['repricing'] });
 
-  const onboard = useMutation({ mutationFn: repricingApi.onboard, onSuccess: refreshAll });
-  const recompute = useMutation({ mutationFn: repricingApi.recomputeFloors, onSuccess: refreshAll });
+  // Scope for Onboard / Recompute. Both hit live SP-API per SKU, so during rollout you pilot one
+  // marketplace at a time; '' means the whole estate and is deliberately not the default.
+  const [scope, setScope] = useState('UK');
+  const { data: allIntegrations = [] } = useQuery({ queryKey: ['integrations'], queryFn: integrationsApi.list });
+  const amazonMarkets = [...new Set(allIntegrations.filter((i) => i.channelType === 'amazon' && i.marketplace).map((i) => i.marketplace as string))].sort();
+
+  const onboard = useMutation({ mutationFn: () => repricingApi.onboard(scope || undefined), onSuccess: refreshAll });
+  const recompute = useMutation({ mutationFn: () => repricingApi.recomputeFloors(scope || undefined), onSuccess: refreshAll });
 
   const control = useQuery({ queryKey: ['repricing', 'control'], queryFn: repricingApi.getControl });
   const setControl = useMutation({
@@ -73,13 +79,25 @@ export function RepricingPage() {
         title="Amazon Repricing"
         info="Buy Box repricing engine — running in shadow mode. Intended prices are logged; nothing is submitted unless a SKU is LIVE and live-writes are enabled server-side."
         actions={
-          <button
-            onClick={() => onboard.mutate()}
-            disabled={onboard.isPending}
-            className="hbtn"
-          >
-            <DownloadCloud size={15} /> {onboard.isPending ? 'Onboarding…' : 'Onboard SKUs'}
-          </button>
+          <>
+            {/* Scope guard: both actions below make one live SP-API call per SKU. */}
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value)}
+              title="Which marketplace these actions apply to"
+              className="h-8 rounded-lg border border-n-200 bg-n-0 px-2 text-[12.5px] text-n-700 outline-none focus:border-teal-400"
+            >
+              {amazonMarkets.map((m) => <option key={m} value={m}>{m} only</option>)}
+              <option value="">All marketplaces</option>
+            </select>
+            <button
+              onClick={() => onboard.mutate()}
+              disabled={onboard.isPending}
+              className="hbtn"
+            >
+              <DownloadCloud size={15} /> {onboard.isPending ? 'Onboarding…' : 'Onboard SKUs'}
+            </button>
+          </>
         }
         primary={
           <button
