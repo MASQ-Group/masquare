@@ -129,6 +129,28 @@ export class RepricingController {
     return { processed: rows.length, ok };
   }
 
+  /**
+   * "Show your working" for one SKU's floor — every input and the figure it yields, recomputed
+   * live but NOT saved. Use when a floor disagrees with Individual Pricing: it names the input
+   * that differs (cost, shipping, FX, VAT, fees) instead of leaving it to be inferred.
+   */
+  @Get('diagnostics/floor')
+  explainFloor(@Query('sku') sku?: string, @Query('marketplace') marketplace?: string) {
+    return this.resolveSkuRow(sku, marketplace).then((row) =>
+      row ? this.floors.explainFloor(row.id) : { error: `No SKU pricing row for '${sku}'${marketplace ? ` on ${marketplace}` : ''}` },
+    );
+  }
+
+  private async resolveSkuRow(sku?: string, marketplace?: string) {
+    if (!sku?.trim()) return null;
+    const iso = marketplace?.trim().toUpperCase();
+    const marketplaceId = iso ? ISO_TO_MARKETPLACE[iso] : undefined;
+    return this.prisma.repricingSkuPricing.findFirst({
+      where: { sku: sku.trim(), deletedAt: null, ...(marketplaceId ? { marketplaceId } : {}) },
+      select: { id: true },
+    });
+  }
+
   /** List SKU-pricing rows (paged) for verification. */
   @Get('sku-pricing')
   skuPricing(@Query('take') take = '50', @Query('skip') skip = '0') {
