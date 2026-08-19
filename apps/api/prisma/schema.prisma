@@ -2154,6 +2154,7 @@ model RepricingDecision {
   rawTargetCents    Int?      @map("raw_target_cents")
   finalPriceCents   Int?      @map("final_price_cents")
   beforePriceCents  Int?      @map("before_price_cents")
+  buyBoxLandedCents Int?      @map("buy_box_landed_cents") // observed Buy Box landed at eval time — trailing-median source (§6.1/§6.2)
   clamps            Json? // each clamp with bind/no-bind (§5.5)
   competitorSet     Json?     @map("competitor_set") // post-filter effective set, with drop reasons
   safetyVerdict     Json?     @map("safety_verdict") // §6.3 boring-layer verdict
