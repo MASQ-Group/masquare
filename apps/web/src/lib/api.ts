@@ -826,6 +826,12 @@ export interface RepricingControl {
   liveWritesEnabled: boolean;
   killSwitchEngaged: boolean;
 }
+export interface RepricingSkuPricingPage {
+  items: RepricingSkuRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
 export interface RepricingQuarantineRow {
   id: string;
   sku: string;
@@ -891,7 +897,21 @@ export const repricingApi = {
   /** Makes ONE live SP-API call per SKU — scope by marketplace and cap with `limit` while piloting. */
   recomputeFloors: (marketplace?: string, limit?: number) =>
     api.post<{ processed: number; ok: number; message?: string }>('/amazon-repricing/floors/recompute', { marketplace, limit }).then((r) => r.data),
-  skuPricing: (take = 100) => api.get<RepricingSkuRow[]>('/amazon-repricing/sku-pricing', { params: { take } }).then((r) => r.data),
+  /** Paged + filterable: onboarding seeds thousands of rows, so reaching one SKU needs both. */
+  skuPricing: (params: { take?: number; skip?: number; q?: string; marketplace?: string; brandId?: string; vendorId?: string; state?: string } = {}) =>
+    api
+      .get<RepricingSkuPricingPage>('/amazon-repricing/sku-pricing', {
+        params: {
+          take: params.take ?? 100,
+          skip: params.skip ?? 0,
+          q: params.q || undefined,
+          marketplace: params.marketplace || undefined,
+          brandId: params.brandId || undefined,
+          vendorId: params.vendorId || undefined,
+          state: params.state || undefined,
+        },
+      })
+      .then((r) => r.data),
   decisions: (params: { take?: number; sku?: string; outcome?: string } = {}) =>
     api.get<RepricingDecisionRow[]>('/amazon-repricing/decisions', { params: { take: params.take ?? 100, sku: params.sku || undefined, outcome: params.outcome || undefined } }).then((r) => r.data),
   quarantine: () => api.get<RepricingQuarantine>('/amazon-repricing/quarantine').then((r) => r.data),
