@@ -203,7 +203,8 @@ export class RepricingController {
       ]);
 
     // Read the chain in order — the first broken link is the one to fix.
-    const notifications = dedupe24h > 0 || snapshots24h > 0;
+    const received = (poller as { messages?: { receivedSinceBoot?: number; discardedSinceBoot?: number } }).messages;
+    const notifications = dedupe24h > 0 || snapshots24h > 0 || (received?.receivedSinceBoot ?? 0) > 0;
     const diagnosis =
       (poller as { poller?: string }).poller !== 'running'
         ? 'Poller is not running — set the AMZ_SQS_* variables and redeploy.'
@@ -211,9 +212,11 @@ export class RepricingController {
           ? 'Poller is running but AWS rejected the request — check the keys, the region, and that the IAM user may ReceiveMessage on this queue.'
           : !notifications
             ? 'Connected to the queue, but no notifications have arrived in 24h. Confirm a marketplace is subscribed (Notification subscriptions card); Amazon only publishes when a listing you sell actually changes.'
-            : decisions === 0
-              ? 'Notifications are arriving but no decisions were logged — events are probably for ASINs that have no onboarded SKU row on that marketplace.'
-              : 'Pipeline healthy: notifications in, decisions logged.';
+            : (received?.receivedSinceBoot ?? 0) > 0 && (received?.discardedSinceBoot ?? 0) >= (received?.receivedSinceBoot ?? 0)
+              ? 'Messages ARE arriving but every one failed to parse and was discarded — check the API logs for "Discarding unparseable SQS message".'
+              : decisions === 0
+                ? 'Notifications are arriving but no decisions were logged — events are probably for ASINs that have no onboarded SKU row on that marketplace.'
+                : 'Pipeline healthy: notifications in, decisions logged.';
 
     return {
       diagnosis,

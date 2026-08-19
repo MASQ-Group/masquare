@@ -28,6 +28,12 @@ export class SqsPollerService implements OnModuleInit, OnModuleDestroy {
   private readonly queueUrl = process.env.AMZ_SQS_QUEUE_URL ?? '';
   private client: SQSClient | null = null;
   private running = false;
+  // Since-boot counters. A message that fails to parse is logged and deleted, so without these
+  // "arriving but unusable" is indistinguishable from "nothing arriving at all".
+  private received = 0;
+  private discarded = 0;
+  private lastMessageAt: string | null = null;
+  private lastReceiveError: string | null = null;
 
   constructor(private readonly snapshots: SnapshotService) {}
 
@@ -58,6 +64,8 @@ export class SqsPollerService implements OnModuleInit, OnModuleDestroy {
       return {
         poller: 'running',
         env,
+        // Separates "Amazon has sent nothing" from "messages arrive but we can't use them".
+        messages: { receivedSinceBoot: this.received, discardedSinceBoot: this.discarded, lastMessageAt: this.lastMessageAt, lastReceiveError: this.lastReceiveError },
         queue: {
           reachable: true,
           // Normally 0 on a healthy pipeline: the poller drains messages as fast as they arrive.
@@ -67,7 +75,12 @@ export class SqsPollerService implements OnModuleInit, OnModuleDestroy {
       };
     } catch (e) {
       // Running but AWS rejects us — almost always wrong keys/region or missing IAM permission.
-      return { poller: 'running', env, queue: { reachable: false, error: (e as Error).message } };
+      return {
+        poller: 'running',
+        env,
+        messages: { receivedSinceBoot: this.received, discardedSinceBoot: this.discarded, lastMessageAt: this.lastMessageAt, lastReceiveError: this.lastReceiveError },
+        queue: { reachable: false, error: (e as Error).message },
+      };
     }
   }
 
@@ -92,7 +105,10 @@ export class SqsPollerService implements OnModuleInit, OnModuleDestroy {
   /** Process one message body end-to-end. Real and testable; the transport around it is stubbed. */
   async handleMessage(msg: SqsMessage): Promise<boolean> {
     const result = await this.snapshots.ingestRaw(msg.body);
+    this.received += 1;
+    this.lastMessageAt = new Date().toISOString();
     if (result.status === 'PARSE_ERROR') {
+      this.discarded += 1;
       // Malformed messages must not wedge the queue — log and let it be deleted (or DLQ'd).
       this.logger.error(`Discarding unparseable SQS message ${msg.messageId}: ${result.detail}`);
     }
@@ -106,6 +122,7 @@ export class SqsPollerService implements OnModuleInit, OnModuleDestroy {
       try {
         messages = await this.receiveMessages();
       } catch (e) {
+        this.lastReceiveError = (e as Error).message;
         this.logger.error(`SQS receive failed: ${(e as Error).message}`);
         await this.sleep(5000);
         continue;
