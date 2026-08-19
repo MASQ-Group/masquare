@@ -57,8 +57,13 @@ export function RepricingPage() {
   const { data: allIntegrations = [] } = useQuery({ queryKey: ['integrations'], queryFn: integrationsApi.list });
   const amazonMarkets = [...new Set(allIntegrations.filter((i) => i.channelType === 'amazon' && i.marketplace).map((i) => i.marketplace as string))].sort();
 
+  // Recompute makes one live SP-API call per SKU, so cap the batch while piloting ('' = no cap).
+  const [batch, setBatch] = useState('25');
   const onboard = useMutation({ mutationFn: () => repricingApi.onboard(scope || undefined), onSuccess: refreshAll });
-  const recompute = useMutation({ mutationFn: () => repricingApi.recomputeFloors(scope || undefined), onSuccess: refreshAll });
+  const recompute = useMutation({
+    mutationFn: () => repricingApi.recomputeFloors(scope || undefined, batch ? Number(batch) : undefined),
+    onSuccess: refreshAll,
+  });
 
   const control = useQuery({ queryKey: ['repricing', 'control'], queryFn: repricingApi.getControl });
   const setControl = useMutation({
@@ -100,13 +105,26 @@ export function RepricingPage() {
           </>
         }
         primary={
-          <button
-            onClick={() => recompute.mutate()}
-            disabled={recompute.isPending}
-            className="hbtn-primary"
-          >
-            <RefreshCcw size={15} /> {recompute.isPending ? 'Recomputing…' : 'Recompute floors'}
-          </button>
+          <>
+            <select
+              value={batch}
+              onChange={(e) => setBatch(e.target.value)}
+              title="How many SKUs to fee-refresh in this run (one live SP-API call each)"
+              className="h-8 rounded-lg border border-n-200 bg-n-0 px-2 text-[12.5px] text-n-700 outline-none focus:border-teal-400"
+            >
+              <option value="25">first 25</option>
+              <option value="100">first 100</option>
+              <option value="500">first 500</option>
+              <option value="">no cap</option>
+            </select>
+            <button
+              onClick={() => recompute.mutate()}
+              disabled={recompute.isPending}
+              className="hbtn-primary"
+            >
+              <RefreshCcw size={15} /> {recompute.isPending ? 'Recomputing…' : 'Recompute floors'}
+            </button>
+          </>
         }
       />
 

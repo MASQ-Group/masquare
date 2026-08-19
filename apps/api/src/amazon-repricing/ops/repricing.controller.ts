@@ -104,13 +104,18 @@ export class RepricingController {
    * estate — the ids come from the connector-derived map, so any connected marketplace works.
    */
   @Post('floors/recompute')
-  async recomputeFloors(@Body() body: { marketplace?: string } = {}) {
+  async recomputeFloors(@Body() body: { marketplace?: string; limit?: number } = {}) {
     const iso = body?.marketplace?.trim().toUpperCase();
     const marketplaceId = iso ? ISO_TO_MARKETPLACE[iso] : undefined;
     if (iso && !marketplaceId) return { processed: 0, ok: 0, message: `Unknown marketplace '${iso}'` };
+    // `limit` caps a run: SKUs whose floor was never computed come first, so a small trial run
+    // exercises the fee pipeline on fresh rows rather than re-doing ones that already succeeded.
+    const limit = Number(body?.limit) > 0 ? Math.floor(Number(body.limit)) : undefined;
     const rows = await this.prisma.repricingSkuPricing.findMany({
       where: { deletedAt: null, ...(marketplaceId ? { marketplaceId } : {}) },
       select: { id: true },
+      orderBy: [{ floorsComputedAt: { sort: 'asc', nulls: 'first' } }],
+      ...(limit ? { take: limit } : {}),
     });
     let ok = 0;
     for (const { id } of rows) {

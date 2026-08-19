@@ -880,9 +880,9 @@ export const repricingApi = {
   /** `marketplace` (ISO-2, e.g. 'UK') scopes the run — omit to cover every connected marketplace. */
   onboard: (marketplace?: string) =>
     api.post<{ scannedListings: number; created: number; updated: number; skipped: number }>('/amazon-repricing/onboard', { marketplace }).then((r) => r.data),
-  /** Makes ONE live SP-API call per SKU — scope it while piloting. */
-  recomputeFloors: (marketplace?: string) =>
-    api.post<{ processed: number; ok: number; message?: string }>('/amazon-repricing/floors/recompute', { marketplace }).then((r) => r.data),
+  /** Makes ONE live SP-API call per SKU — scope by marketplace and cap with `limit` while piloting. */
+  recomputeFloors: (marketplace?: string, limit?: number) =>
+    api.post<{ processed: number; ok: number; message?: string }>('/amazon-repricing/floors/recompute', { marketplace, limit }).then((r) => r.data),
   skuPricing: (take = 100) => api.get<RepricingSkuRow[]>('/amazon-repricing/sku-pricing', { params: { take } }).then((r) => r.data),
   decisions: (params: { take?: number; sku?: string; outcome?: string } = {}) =>
     api.get<RepricingDecisionRow[]>('/amazon-repricing/decisions', { params: { take: params.take ?? 100, sku: params.sku || undefined, outcome: params.outcome || undefined } }).then((r) => r.data),
