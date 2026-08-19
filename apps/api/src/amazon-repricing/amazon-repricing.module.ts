@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { IntegrationsModule } from '../integrations/integrations.module';
+import { PricingModule } from '../pricing/pricing.module';
 import { FloorService } from './floor/floor.service';
 import { VatService } from './floor/vat.service';
 import { FeeService } from './floor/fee.service';
@@ -22,7 +23,7 @@ import { RepricingController } from './ops/repricing.controller';
 //     audit; SHADOW mode logs the intended price, submits nothing).
 // Later phases add: price-writer + safety-layer wiring, enrichment, and the ops console.
 @Module({
-  imports: [IntegrationsModule],
+  imports: [IntegrationsModule, PricingModule],
   controllers: [RepricingController],
   providers: [FloorService, VatService, FeeService, SnapshotService, RepriceSchedulerService, SqsPollerService, RepricerService, PriceWriterService, RepricingControlService, OnboardingService, BlocklistService],
   exports: [FloorService, VatService, SnapshotService, RepricerService, PriceWriterService, OnboardingService],

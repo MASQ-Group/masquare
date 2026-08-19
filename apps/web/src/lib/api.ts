@@ -796,6 +796,8 @@ export interface RepricingSkuRow {
   sku: string;
   asin: string | null;
   marketplaceId: string;
+  /** The marketplace's own currency. Breakeven/floor/current are all denominated in THIS, not EUR. */
+  currency: string;
   fulfillment: string;
   strategy: string;
   automationState: string;
@@ -829,6 +831,7 @@ export interface RepricingQuarantineRow {
   sku: string;
   asin: string | null;
   marketplaceId: string;
+  currency: string;
   strategy: string;
   strategyFloorCents: number | null;
   mapCents: number | null;

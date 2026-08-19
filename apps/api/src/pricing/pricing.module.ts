@@ -10,6 +10,6 @@ import { PricingFxService } from './fx.service';
   imports: [PrismaModule],
   controllers: [PricingController],
   providers: [PricingService, PricingFxService],
-  exports: [PricingService],
+  exports: [PricingService, PricingFxService],
 })
 export class PricingModule {}
