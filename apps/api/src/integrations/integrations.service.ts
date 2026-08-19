@@ -709,6 +709,62 @@ export class IntegrationsService implements OnModuleInit {
     return json.access_token as string;
   }
 
+  /**
+   * READ-ONLY probe of whether this Amazon app actually holds the roles the repricing module needs.
+   * Credentials alone aren't enough — a role must be granted to the app AND authorised by the
+   * seller, and a missing one otherwise only surfaces as a 403 deep inside a sync. So ask directly:
+   *   • Pricing       — a feesEstimate call (returns an estimate; changes nothing)
+   *   • Notifications — GET destinations with a grantless token (lists; creates nothing)
+   * Nothing here writes, subscribes or prices, so it is safe to run at any time.
+   */
+  async checkSpApiRoles(
+    integrationId: string,
+    probeSku?: string,
+  ): Promise<{ ok: boolean; pricing: { ok: boolean; message: string }; notifications: { ok: boolean; message: string }; message?: string }> {
+    const fail = (m: string) => ({ ok: false, pricing: { ok: false, message: m }, notifications: { ok: false, message: m }, message: m });
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) return fail('Integration not found');
+    if (row.channelType !== 'amazon') return fail('Not an Amazon integration');
+
+    // Pricing: needs a real SKU on this marketplace — borrow one from its listings if not supplied.
+    let pricing: { ok: boolean; message: string };
+    const listing = await this.prisma.channelListing.findFirst({
+      where: { integrationId: row.id, ...(probeSku ? { channelSku: probeSku } : {}) },
+      select: { channelSku: true, currency: true },
+    });
+    const sku = probeSku ?? listing?.channelSku;
+    if (!sku) {
+      pricing = { ok: false, message: 'No listing to probe with — sync listings first, or pass ?sku=' };
+    } else {
+      try {
+        // The listing's own currency keeps the estimate request self-consistent per marketplace.
+        const res = await this.getMyFeesEstimate(row.id, sku, 10, listing?.currency ?? 'EUR', true);
+        pricing = res.ok
+          ? { ok: true, message: `OK — feesEstimate responded for ${sku}` }
+          : { ok: false, message: `${res.status ?? ''} ${res.message ?? 'feesEstimate failed'}`.trim() };
+      } catch (e) {
+        pricing = { ok: false, message: (e as Error).message };
+      }
+    }
+
+    // Notifications: grantless token for the notifications scope + a plain list of destinations.
+    let notifications: { ok: boolean; message: string };
+    try {
+      const config = (row.config ?? {}) as Record<string, string>;
+      const meta = this.amazonMarketMeta(row);
+      const secrets = await this.decryptedSecrets(row.id);
+      const grantless = await this.amazonGrantlessToken(config, secrets, 'sellingpartnerapi::notifications');
+      const res = await this.amzFetch(`${meta.endpoint}/notifications/v1/destinations`, grantless);
+      notifications = res.ok
+        ? { ok: true, message: 'OK — destinations listed' }
+        : { ok: false, message: `${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`.trim() };
+    } catch (e) {
+      notifications = { ok: false, message: (e as Error).message };
+    }
+
+    return { ok: pricing.ok && notifications.ok, pricing, notifications };
+  }
+
   /** One-time setup of SP-API notifications (repricing, spec §2.2): ensure an SQS destination for
    *  the queue ARN, then subscribe the given notification types to it. createDestination /
    *  getDestinations are grantless; createSubscription uses the seller token + the type's role. */

@@ -3,6 +3,8 @@
 // confirmed by their owners before Phase 2 (see docs/specs/amazon-repricing/decisions.md).
 // Per-SKU overrides live on RepricingSkuPricing.params.* and win over these.
 
+import { getConnector } from '../../integrations/connectors';
+
 export const REPRICING_DEFAULTS = {
   /** §9-#1 Minimum net margin for the strategy floor, as a fraction of net (ex-VAT) revenue. FINANCE. */
   minMarginPct: 0.12,
@@ -47,13 +49,20 @@ export const REPRICING_DEFAULTS = {
   anomalousCompetitorFraction: 0.3,
 } as const;
 
-/** Amazon marketplace id → ISO-2 country code, for VAT resolution against Country. Matches
- *  connectors.ts getMarketplace(); IDs verified in Phase 0 findings §B. */
-export const MARKETPLACE_TO_ISO: Record<string, string> = {
-  A1PA6795UKMFR9: 'DE', // amazon.de
-  A13V1IB3VIYZZH: 'FR', // amazon.fr
-  A1RKKUPIHCS9HS: 'ES', // amazon.es
-};
+/**
+ * Amazon marketplace id → ISO-2 country code, for VAT resolution against Country.
+ *
+ * DERIVED from the connector registry (integrations/connectors.ts) rather than hand-listed, so the
+ * repricing module automatically covers every marketplace the platform can actually connect to and
+ * the two can never drift. The registry is the same table the live order sync uses, so the ids are
+ * already proven against the real SP-API. (This previously listed only DE/FR/ES, which silently made
+ * onboarding skip every other marketplace — AU/JP/SG/UK/… — as "unsupported".)
+ */
+export const MARKETPLACE_TO_ISO: Record<string, string> = Object.fromEntries(
+  (getConnector('amazon')?.marketplaces ?? [])
+    .map((m) => [m.meta?.marketplaceId, m.id] as const)
+    .filter((e): e is readonly [string, string] => !!e[0]),
+);
 
 /** ISO-2 country code → Amazon marketplace id (inverse of MARKETPLACE_TO_ISO). Used to derive a
  *  listing's marketplace id from its integration's country during onboarding. */
