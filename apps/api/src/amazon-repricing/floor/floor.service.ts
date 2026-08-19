@@ -7,7 +7,8 @@ import { FeeService } from './fee.service';
 import { FloorInputs, solveFloors } from './floor-solver';
 import { eurToCents } from '../common/money';
 import { PricingFxService } from '../../pricing/fx.service';
-import { REPRICING_DEFAULTS } from '../config/repricing.config';
+import { PricingService } from '../../pricing/pricing.service';
+import { MARKETPLACE_TO_ISO, REPRICING_DEFAULTS, toCountryIso } from '../config/repricing.config';
 import { assertValidSchedule, referralScheduleFor } from '../config/referral-schedule';
 
 // floor-service (spec §4.3): recompute breakeven + strategy floors per SKU × marketplace, mark
@@ -20,6 +21,7 @@ type ExclusionReason =
   | 'COGS_MISSING'
   | 'VAT_UNKNOWN'
   | 'FX_UNKNOWN'
+  | 'SHIP_UNKNOWN'
   | 'FEES_UNKNOWN'
   | 'FLOOR_INFEASIBLE'
   | 'FLOOR_STALE';
@@ -33,7 +35,18 @@ export class FloorService {
     private readonly vat: VatService,
     private readonly fees: FeeService,
     private readonly fx: PricingFxService,
+    private readonly pricing: PricingService,
   ) {}
+
+  /** The destination Country row id for a marketplace, via its ISO code ('UK' normalises to 'GB').
+   *  Null when unmapped — shipping then can't resolve and an FBM SKU is excluded rather than
+   *  given a floor that ignores carriage. */
+  private async destinationCountryId(marketplaceId: string): Promise<string | null> {
+    const iso = toCountryIso(MARKETPLACE_TO_ISO[marketplaceId]);
+    if (!iso) return null;
+    const c = await this.prisma.country.findUnique({ where: { isoCode: iso }, select: { id: true } });
+    return c?.id ?? null;
+  }
 
   /**
    * Recompute both floors for one SKU × marketplace row and persist them. On any missing/unknown
@@ -55,11 +68,12 @@ export class FloorService {
 
     // --- Landed COGS from the matched product (moving-average, else purchase cost) ---
     if (!row.productId) return this.exclude(row.id, 'COGS_MISSING', humanControlled);
-    const product = await this.prisma.product.findUnique({
-      where: { id: row.productId },
-      select: { averageCostEur: true, purchaseCostAmount: true },
-    });
-    const cogsEur = product?.averageCostEur ?? product?.purchaseCostAmount ?? null;
+    // Cost + outbound shipping come from PricingService so the floor is built on exactly the same
+    // basis as Individual Pricing, the listing grid and a booked sale (it also honours
+    // purchaseCostCurrency, which reading purchaseCostAmount raw would not).
+    const destCountryId = await this.destinationCountryId(row.marketplaceId);
+    const unit = await this.pricing.unitCostInputsEur(row.productId, destCountryId);
+    const cogsEur = unit.costEur;
     if (cogsEur == null || Number(cogsEur) <= 0) return this.exclude(row.id, 'COGS_MISSING', humanControlled);
 
     // EVERYTHING in this solver must be in the MARKETPLACE's currency, because that is what the
@@ -86,12 +100,22 @@ export class FloorService {
     const schedule = referralScheduleFor(null); // per-category tiers pending finance sign-off (§9-#20)
     assertValidSchedule(schedule);
 
+    // FBM has no Amazon fulfilment fee — WE ship it, and that carrier charge is a per-unit cost.
+    // Omitting it understated the floor badly (a 5 kg parcel can cost as much as the goods), so an
+    // FBM SKU with no resolvable shipping is excluded rather than given a too-low floor.
+    let fixedPerUnitCents = 0;
+    if (!isFba) {
+      if (unit.shippingEur == null) return this.exclude(row.id, 'SHIP_UNKNOWN', humanControlled);
+      fixedPerUnitCents = eurToCents(unit.shippingEur / eurPerUnit);
+    }
+
     const inputs: FloorInputs = {
       vatRate,
       referralBrackets: schedule,
       fbaFulfillmentFeeCents: isFba ? fee?.fbaFulfillmentFeeCents ?? 0 : 0,
       closingFeeCents: fee?.closingFeeCents ?? 0,
       cogsLandedCents,
+      fixedPerUnitCents,
       searchHiCents: row.amazonMaxAllowedCents ?? undefined,
     };
 
