@@ -804,6 +804,52 @@ export class IntegrationsService implements OnModuleInit {
     return { ok: pricing.ok && notifications.ok, pricing, notifications };
   }
 
+  /**
+   * READ-ONLY: what Amazon believes is registered for this marketplace — the destinations it will
+   * publish to, and the live subscription for each notification type. Answers "is it subscribed,
+   * and to WHICH queue?", which matters because the destination is created from an ARN while the
+   * poller reads a queue URL: point them at different queues and everything looks configured while
+   * nothing is ever delivered. Creates and changes nothing.
+   */
+  async spApiNotificationStatus(integrationId: string, types = ['ANY_OFFER_CHANGED', 'PRICING_HEALTH', 'FEE_PROMOTION']) {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) return { ok: false, message: 'Integration not found' };
+    if (row.channelType !== 'amazon') return { ok: false, message: 'Not an Amazon integration' };
+    const config = (row.config ?? {}) as Record<string, string>;
+    const meta = this.amazonMarketMeta(row);
+    const secrets = await this.decryptedSecrets(row.id);
+
+    try {
+      const grantless = await this.amazonGrantlessToken(config, secrets, 'sellingpartnerapi::notifications');
+      const destRes = await this.amzFetch(`${meta.endpoint}/notifications/v1/destinations`, grantless);
+      const destJson: any = await destRes.json().catch(() => null);
+      const destinations = (destJson?.payload ?? destJson ?? []).map?.((d: any) => ({
+        destinationId: d?.destinationId,
+        name: d?.name,
+        sqsArn: d?.resource?.sqs?.arn ?? null,
+      })) ?? [];
+
+      // Subscriptions use the seller token and the notification type's own role.
+      const token = await this.amazonAccessToken(config, secrets);
+      const subscriptions: Array<{ type: string; subscribed: boolean; subscriptionId: string | null; destinationId: string | null; message?: string }> = [];
+      for (const type of types) {
+        const r = await this.amzFetch(`${meta.endpoint}/notifications/v1/subscriptions/${type}`, token);
+        const j: any = await r.json().catch(() => null);
+        const p = j?.payload ?? j;
+        subscriptions.push({
+          type,
+          subscribed: r.ok && !!p?.subscriptionId,
+          subscriptionId: p?.subscriptionId ?? null,
+          destinationId: p?.destinationId ?? null,
+          message: r.ok ? undefined : `${r.status} ${IntegrationsService.amzErr(j) ?? ''}`.trim(),
+        });
+      }
+      return { ok: true, marketplace: row.marketplace, destinations, subscriptions };
+    } catch (e) {
+      return { ok: false, message: (e as Error).message };
+    }
+  }
+
   /** One-time setup of SP-API notifications (repricing, spec §2.2): ensure an SQS destination for
    *  the queue ARN, then subscribe the given notification types to it. createDestination /
    *  getDestinations are grantless; createSubscription uses the seller token + the type's role. */
