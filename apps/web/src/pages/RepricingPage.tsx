@@ -527,6 +527,13 @@ function PipelineCard() {
   );
 }
 
+/** An SQS ARN and its queue URL describe the same queue in two notations — compare the parts. */
+function arnMatchesUrl(arn: string | null | undefined, url: string | null | undefined): boolean {
+  if (!arn || !url) return false;
+  const [, , , region, account, name] = arn.split(':');
+  return url.includes(region) && url.includes(account) && url.endsWith(name);
+}
+
 const DEFAULT_SQS_ARN = 'arn:aws:sqs:eu-north-1:631245465175:masquare-spapi-notifications';
 
 /**
@@ -541,6 +548,13 @@ function NotificationSetupCard() {
   const [integrationId, setIntegrationId] = useState('');
   const [arn, setArn] = useState(DEFAULT_SQS_ARN);
   const setup = useMutation({ mutationFn: () => integrationsApi.setupSpApiNotifications(integrationId, arn.trim()) });
+  const [check, setCheck] = useState(false);
+  const statusQ = useQuery({
+    queryKey: ['repricing', 'subscriptions', integrationId],
+    queryFn: () => repricingApi.subscriptionStatus(amazon.find((i) => i.id === integrationId)?.marketplace ?? undefined),
+    enabled: check,
+  });
+  const st = statusQ.data;
   const chosen = amazon.find((i) => i.id === integrationId);
 
   return (
@@ -571,6 +585,44 @@ function NotificationSetupCard() {
         >
           {setup.isPending ? 'Subscribing…' : 'Subscribe'}
         </button>
+      </div>
+
+      {/* What Amazon ACTUALLY has registered. The destination is created from an SQS ARN while the
+          poller reads a queue URL — if those are different queues everything reports healthy and
+          nothing is ever delivered, which is invisible from our side alone. */}
+      <div className="border-b border-n-100 px-4 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[12.5px] font-semibold text-n-700">Currently registered with Amazon</span>
+          <button onClick={() => setCheck(true)} disabled={statusQ.isFetching} className="inline-flex h-7 items-center rounded-md border border-n-200 bg-n-0 px-2.5 text-[12px] font-semibold text-n-700 disabled:opacity-50">
+            {statusQ.isFetching ? 'Checking…' : check ? 'Re-check' : 'Check'}
+          </button>
+          {chosen && <span className="text-[11.5px] text-n-400">for {chosen.name}</span>}
+        </div>
+        {st && (
+          <div className="mt-2 flex flex-col gap-1 text-[12px]">
+            {st.message && <div className="text-danger">{st.message}</div>}
+            <div className="flex flex-wrap items-baseline gap-2">
+              <span className="w-[124px] shrink-0 text-n-500">Poller reads</span>
+              <span className="mono break-all text-[11px] text-n-700">{st.pollerQueueUrl ?? '— not set —'}</span>
+            </div>
+            {(st.destinations ?? []).length === 0 && <div className="text-danger">No destinations registered — Amazon has nowhere to publish.</div>}
+            {(st.destinations ?? []).map((dd) => (
+              <div key={dd.destinationId} className="flex flex-wrap items-baseline gap-2">
+                <span className="w-[124px] shrink-0 text-n-500">Publishes to</span>
+                <span className={`mono break-all text-[11px] ${arnMatchesUrl(dd.sqsArn, st.pollerQueueUrl) ? 'text-teal-700' : 'text-danger'}`}>{dd.sqsArn ?? '—'}</span>
+                {!arnMatchesUrl(dd.sqsArn, st.pollerQueueUrl) && <span className="text-[11px] font-semibold text-danger">≠ the queue we read</span>}
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              {(st.subscriptions ?? []).map((sub) => (
+                <span key={sub.type} className={sub.subscribed ? 'text-teal-700' : 'text-danger'}>
+                  {sub.subscribed ? '✓' : '✕'} {sub.type}
+                  {!sub.subscribed && sub.message ? <span className="text-n-500"> ({sub.message})</span> : null}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="px-4 py-3 text-[12.5px]">

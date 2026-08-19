@@ -835,6 +835,16 @@ export interface RepricingPipelineStatus {
   decisions: { total: number; last24h: number; mostRecent: { sku: string; outcome: string; at: string } | null };
   skus: { onboarded: number; shadow: number };
 }
+/** What Amazon has actually registered: destinations it publishes to + live subscriptions. */
+export interface RepricingSubscriptionStatus {
+  ok?: boolean;
+  message?: string;
+  integration?: string;
+  marketplace?: string | null;
+  pollerQueueUrl: string | null;
+  destinations?: Array<{ destinationId: string; name: string; sqsArn: string | null }>;
+  subscriptions?: Array<{ type: string; subscribed: boolean; subscriptionId: string | null; destinationId: string | null; message?: string }>;
+}
 export interface RepricingSkuPricingPage {
   items: RepricingSkuRow[];
   total: number;
@@ -927,6 +937,8 @@ export const repricingApi = {
   resolveQuarantine: (id: string) => api.post<{ resolved: boolean }>(`/amazon-repricing/quarantine/${id}/resolve`, {}).then((r) => r.data),
   roleDiagnostics: () => api.get<RepricingRoleDiagnostics>('/amazon-repricing/diagnostics/roles').then((r) => r.data),
   pipelineStatus: () => api.get<RepricingPipelineStatus>('/amazon-repricing/diagnostics/pipeline').then((r) => r.data),
+  subscriptionStatus: (marketplace?: string) =>
+    api.get<RepricingSubscriptionStatus>('/amazon-repricing/diagnostics/subscriptions', { params: { marketplace: marketplace || undefined } }).then((r) => r.data),
 };
 
 // ---- Sales Transactions ----
