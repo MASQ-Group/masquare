@@ -879,7 +879,12 @@ export const repricingApi = {
   removeBlocked: (id: string) => api.delete<{ removed: boolean }>(`/amazon-repricing/blocklist/${id}`).then((r) => r.data),
   /** `marketplace` (ISO-2, e.g. 'UK') scopes the run — omit to cover every connected marketplace. */
   onboard: (marketplace?: string) =>
-    api.post<{ scannedListings: number; created: number; updated: number; skipped: number }>('/amazon-repricing/onboard', { marketplace }).then((r) => r.data),
+    api
+      .post<{ scannedListings: number; created: number; updated: number; skipped: number; unmatchedListings: number; totalListings: number }>(
+        '/amazon-repricing/onboard',
+        { marketplace },
+      )
+      .then((r) => r.data),
   /** Makes ONE live SP-API call per SKU — scope by marketplace and cap with `limit` while piloting. */
   recomputeFloors: (marketplace?: string, limit?: number) =>
     api.post<{ processed: number; ok: number; message?: string }>('/amazon-repricing/floors/recompute', { marketplace, limit }).then((r) => r.data),

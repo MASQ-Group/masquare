@@ -13,6 +13,12 @@ export interface SyncResult {
   created: number;
   updated: number;
   skipped: number;
+  /** Channel listings in scope that are NOT matched to a product. They cannot be onboarded —
+   *  without the linked product there is no cost basis, so no floor can be computed (§3.3). This
+   *  is the usual reason the onboarded count is lower than the SKU count Amazon shows. */
+  unmatchedListings: number;
+  /** Every listing in scope, matched or not (= scannedListings + unmatchedListings). */
+  totalListings: number;
 }
 
 /** ChannelListing.fulfilmentChannel (FBM | FBA) → our fulfillment enum. Default FBM (safest). */
@@ -42,7 +48,7 @@ export class OnboardingService {
     });
     if (integrations.length === 0) {
       this.logger.warn(`Onboarding: no Amazon integration${iso ? ` for ${iso}` : ''} — nothing to do.`);
-      return { scannedListings: 0, created: 0, updated: 0, skipped: 0 };
+      return { scannedListings: 0, created: 0, updated: 0, skipped: 0, unmatchedListings: 0, totalListings: 0 };
     }
     const isoByIntegration = new Map(integrations.map((i) => [i.id, i.marketplace]));
 
@@ -52,7 +58,20 @@ export class OnboardingService {
       select: { companyId: true, integrationId: true, channelSku: true, asin: true, productId: true, listedPrice: true, currency: true, fulfilmentChannel: true },
     });
 
-    const result: SyncResult = { scannedListings: listings.length, created: 0, updated: 0, skipped: 0 };
+    // Count the unmatched ones too, so the caller can see WHY the onboarded total is lower than the
+    // SKU count Amazon reports, instead of being left to guess.
+    const unmatchedListings = await this.prisma.channelListing.count({
+      where: { integrationId: { in: [...isoByIntegration.keys()] }, productId: null },
+    });
+
+    const result: SyncResult = {
+      scannedListings: listings.length,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      unmatchedListings,
+      totalListings: listings.length + unmatchedListings,
+    };
 
     for (const l of listings) {
       const iso = isoByIntegration.get(l.integrationId) ?? '';
