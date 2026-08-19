@@ -163,7 +163,14 @@ export function RepricingPage() {
 
       {(onboard.data || recompute.data) && (
         <div className="mb-4 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-[12.5px] text-teal-800">
-          {onboard.data && <span>Onboarded {onboard.data.created} new + {onboard.data.updated} updated ({onboard.data.skipped} skipped) of {onboard.data.scannedListings} listings. </span>}
+          {onboard.data && (
+            <span>
+              Onboarded {onboard.data.created} new + {onboard.data.updated} updated ({onboard.data.skipped} skipped) of {onboard.data.scannedListings} matched listings.
+              {onboard.data.unmatchedListings > 0 && (
+                <> <b>{onboard.data.unmatchedListings}</b> of {onboard.data.totalListings} listings aren’t linked to a product, so they can’t be priced (no cost basis) — link them on Channel Listings to include them.</>
+              )}{' '}
+            </span>
+          )}
           {recompute.data && <span>Recomputed floors: {recompute.data.ok}/{recompute.data.processed} OK.</span>}
         </div>
       )}
