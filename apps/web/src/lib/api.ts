@@ -826,6 +826,15 @@ export interface RepricingControl {
   liveWritesEnabled: boolean;
   killSwitchEngaged: boolean;
 }
+/** End-to-end shadow-pipeline health: SQS -> notifications -> snapshots -> decisions. */
+export interface RepricingPipelineStatus {
+  diagnosis: string;
+  sqs: { poller: string; reason?: string; env?: Record<string, boolean>; queue?: { reachable: boolean; approximateMessages?: number; inFlight?: number; error?: string } };
+  notifications: { dedupedLast24h: number };
+  snapshots: { total: number; last24h: number; mostRecent: { asin: string; marketplaceId: string; updatedAt: string } | null };
+  decisions: { total: number; last24h: number; mostRecent: { sku: string; outcome: string; at: string } | null };
+  skus: { onboarded: number; shadow: number };
+}
 export interface RepricingSkuPricingPage {
   items: RepricingSkuRow[];
   total: number;
@@ -917,6 +926,7 @@ export const repricingApi = {
   quarantine: () => api.get<RepricingQuarantine>('/amazon-repricing/quarantine').then((r) => r.data),
   resolveQuarantine: (id: string) => api.post<{ resolved: boolean }>(`/amazon-repricing/quarantine/${id}/resolve`, {}).then((r) => r.data),
   roleDiagnostics: () => api.get<RepricingRoleDiagnostics>('/amazon-repricing/diagnostics/roles').then((r) => r.data),
+  pipelineStatus: () => api.get<RepricingPipelineStatus>('/amazon-repricing/diagnostics/pipeline').then((r) => r.data),
 };
 
 // ---- Sales Transactions ----

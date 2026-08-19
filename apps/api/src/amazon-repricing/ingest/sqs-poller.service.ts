@@ -4,6 +4,7 @@ import {
   Message,
   ReceiveMessageCommand,
   SQSClient,
+  GetQueueAttributesCommand,
 } from '@aws-sdk/client-sqs';
 import { SnapshotService } from './snapshot.service';
 
@@ -29,6 +30,46 @@ export class SqsPollerService implements OnModuleInit, OnModuleDestroy {
   private running = false;
 
   constructor(private readonly snapshots: SnapshotService) {}
+
+  /**
+   * Health of the notification pipeline's front door, for the ops console. Reports whether each
+   * AMZ_SQS_* var is PRESENT (never its value), whether the poller actually started, and — when it
+   * did — what the queue itself says. Distinguishes "not configured" from "configured but AWS is
+   * refusing us" from "connected but Amazon has sent nothing", which the logs otherwise hold.
+   */
+  async status(): Promise<Record<string, unknown>> {
+    const env = {
+      AMZ_SQS_QUEUE_URL: !!process.env.AMZ_SQS_QUEUE_URL,
+      AMZ_SQS_REGION: !!process.env.AMZ_SQS_REGION,
+      AMZ_SQS_ACCESS_KEY_ID: !!process.env.AMZ_SQS_ACCESS_KEY_ID,
+      AMZ_SQS_SECRET_ACCESS_KEY: !!process.env.AMZ_SQS_SECRET_ACCESS_KEY,
+    };
+    const missing = Object.entries(env).filter(([, present]) => !present).map(([k]) => k);
+    if (!this.running || !this.client) {
+      return { poller: 'dormant', reason: missing.length ? `missing env: ${missing.join(', ')}` : 'not started', env };
+    }
+    try {
+      const attrs = await this.client.send(
+        new GetQueueAttributesCommand({
+          QueueUrl: this.queueUrl,
+          AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'],
+        }),
+      );
+      return {
+        poller: 'running',
+        env,
+        queue: {
+          reachable: true,
+          // Normally 0 on a healthy pipeline: the poller drains messages as fast as they arrive.
+          approximateMessages: Number(attrs.Attributes?.ApproximateNumberOfMessages ?? 0),
+          inFlight: Number(attrs.Attributes?.ApproximateNumberOfMessagesNotVisible ?? 0),
+        },
+      };
+    } catch (e) {
+      // Running but AWS rejects us — almost always wrong keys/region or missing IAM permission.
+      return { poller: 'running', env, queue: { reachable: false, error: (e as Error).message } };
+    }
+  }
 
   onModuleInit(): void {
     const region = process.env.AMZ_SQS_REGION;

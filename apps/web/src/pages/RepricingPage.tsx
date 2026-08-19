@@ -212,6 +212,8 @@ export function RepricingPage() {
       )}
 
       <QuarantineCard />
+      <PipelineCard />
+      <div className="h-6" />
       <RoleCheckCard />
       <div className="h-6" />
       <NotificationSetupCard />
@@ -466,6 +468,55 @@ function QuarantineCard() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Is the shadow loop actually running? "No decisions yet" has several very different causes, so
+ * this walks SQS -> notifications -> snapshots -> decisions and names the first broken link.
+ * Auto-refreshes while open; read-only.
+ */
+function PipelineCard() {
+  const q = useQuery({ queryKey: ['repricing', 'pipeline'], queryFn: repricingApi.pipelineStatus, refetchInterval: 30_000 });
+  const d = q.data;
+  const healthy = d?.decisions.total ? true : false;
+  const tone = !d ? 'border-n-200' : healthy ? 'border-teal-200' : 'border-amber-200';
+  const dot = !d ? 'bg-n-300' : healthy ? 'bg-teal-500' : 'bg-amber-500';
+  return (
+    <div className={`mb-6 overflow-hidden rounded-xl border bg-n-0 ${tone}`}>
+      <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-2.5">
+        <span className={`h-2 w-2 rounded-full ${dot}`} />
+        <span className="text-[13px] font-semibold text-n-800">Shadow pipeline</span>
+        <span className="text-[11.5px] text-n-400">SQS → notifications → snapshots → decisions</span>
+        <div className="flex-1" />
+        <button onClick={() => q.refetch()} disabled={q.isFetching} className="inline-flex h-7 items-center rounded-md border border-n-200 bg-n-0 px-2.5 text-[12px] font-semibold text-n-700 disabled:opacity-50">
+          {q.isFetching ? 'Checking…' : 'Refresh'}
+        </button>
+      </div>
+      {!d ? (
+        <div className="px-4 py-3 text-[12.5px] text-n-500">Checking…</div>
+      ) : (
+        <div className="flex flex-col gap-2 px-4 py-3">
+          <div className={`text-[12.5px] ${healthy ? 'text-teal-700' : 'text-amber-700'}`}>{d.diagnosis}</div>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-[12px] text-n-600">
+            <span>Poller <b className={d.sqs.poller === 'running' ? 'text-teal-700' : 'text-danger'}>{d.sqs.poller}</b>{d.sqs.reason ? ` (${d.sqs.reason})` : ''}</span>
+            {d.sqs.queue && (
+              <span>Queue {d.sqs.queue.reachable ? <b className="text-teal-700">reachable</b> : <b className="text-danger">unreachable</b>}
+                {d.sqs.queue.reachable ? ` · ${d.sqs.queue.approximateMessages ?? 0} waiting` : d.sqs.queue.error ? ` · ${d.sqs.queue.error}` : ''}</span>
+            )}
+            <span>Notifications 24h <b>{d.notifications.dedupedLast24h}</b></span>
+            <span>Snapshots <b>{d.snapshots.total}</b> ({d.snapshots.last24h} in 24h)</span>
+            <span>Decisions <b>{d.decisions.total}</b> ({d.decisions.last24h} in 24h)</span>
+            <span>SKUs onboarded <b>{d.skus.onboarded}</b> · shadow <b>{d.skus.shadow}</b></span>
+          </div>
+          {d.sqs.env && Object.values(d.sqs.env).some((v) => !v) && (
+            <div className="text-[11.5px] text-danger">
+              Missing env: {Object.entries(d.sqs.env).filter(([, v]) => !v).map(([k]) => k).join(', ')}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { BlocklistService, type BlockedSellerDto } from './blocklist.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ISO_TO_MARKETPLACE } from '../config/repricing.config';
 import { IntegrationsService } from '../../integrations/integrations.service';
+import { SqsPollerService } from '../ingest/sqs-poller.service';
 
 // Ops console API for the Amazon repricing module (admin-only). Phase-appropriate subset: onboard
 // SKUs, refresh fees + recompute floors, and inspect the SKU-pricing table + recent decisions.
@@ -26,6 +27,7 @@ export class RepricingController {
     private readonly blocklist: BlocklistService,
     private readonly prisma: PrismaService,
     private readonly integrations: IntegrationsService,
+    private readonly sqs: SqsPollerService,
   ) {}
 
   /** Seller blocklist (§5.2): unauthorized / MAP-violating / hijacker sellers excluded from pricing. */
@@ -149,6 +151,54 @@ export class RepricingController {
       where: { sku: sku.trim(), deletedAt: null, ...(marketplaceId ? { marketplaceId } : {}) },
       select: { id: true },
     });
+  }
+
+  /**
+   * End-to-end health of the shadow pipeline: SQS -> snapshots -> decisions.
+   *
+   * "No decisions yet" has several very different causes — poller dormant, AWS refusing the
+   * credentials, Amazon not publishing, or events arriving for ASINs we never onboarded. This
+   * walks the chain in order and shows where it stops, instead of leaving the logs as the only
+   * way to tell. Read-only.
+   */
+  @Get('diagnostics/pipeline')
+  async pipelineStatus() {
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [poller, snapshots, snapshots24h, lastSnapshot, dedupe24h, decisions, decisions24h, lastDecision, skus, live] =
+      await Promise.all([
+        this.sqs.status(),
+        this.prisma.repricingOfferSnapshot.count(),
+        this.prisma.repricingOfferSnapshot.count({ where: { updatedAt: { gte: dayAgo } } }),
+        this.prisma.repricingOfferSnapshot.findFirst({ orderBy: { updatedAt: 'desc' }, select: { asin: true, marketplaceId: true, updatedAt: true } }),
+        this.prisma.repricingNotifDedupe.count({ where: { receivedAt: { gte: dayAgo } } }),
+        this.prisma.repricingDecision.count(),
+        this.prisma.repricingDecision.count({ where: { at: { gte: dayAgo } } }),
+        this.prisma.repricingDecision.findFirst({ orderBy: { at: 'desc' }, select: { sku: true, outcome: true, at: true } }),
+        this.prisma.repricingSkuPricing.count({ where: { deletedAt: null } }),
+        this.prisma.repricingSkuPricing.count({ where: { deletedAt: null, automationState: 'SHADOW' } }),
+      ]);
+
+    // Read the chain in order — the first broken link is the one to fix.
+    const notifications = dedupe24h > 0 || snapshots24h > 0;
+    const diagnosis =
+      (poller as { poller?: string }).poller !== 'running'
+        ? 'Poller is not running — set the AMZ_SQS_* variables and redeploy.'
+        : (poller as { queue?: { reachable?: boolean } }).queue?.reachable === false
+          ? 'Poller is running but AWS rejected the request — check the keys, the region, and that the IAM user may ReceiveMessage on this queue.'
+          : !notifications
+            ? 'Connected to the queue, but no notifications have arrived in 24h. Confirm a marketplace is subscribed (Notification subscriptions card); Amazon only publishes when a listing you sell actually changes.'
+            : decisions === 0
+              ? 'Notifications are arriving but no decisions were logged — events are probably for ASINs that have no onboarded SKU row on that marketplace.'
+              : 'Pipeline healthy: notifications in, decisions logged.';
+
+    return {
+      diagnosis,
+      sqs: poller,
+      notifications: { dedupedLast24h: dedupe24h },
+      snapshots: { total: snapshots, last24h: snapshots24h, mostRecent: lastSnapshot },
+      decisions: { total: decisions, last24h: decisions24h, mostRecent: lastDecision },
+      skus: { onboarded: skus, shadow: live },
+    };
   }
 
   /**
