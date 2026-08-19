@@ -27,12 +27,23 @@ export class OnboardingService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Seed/refresh RepricingSkuPricing from matched Amazon listings. */
-  async syncSkuPricingFromListings(): Promise<SyncResult> {
+  /**
+   * Seed/refresh RepricingSkuPricing from matched Amazon listings.
+   *
+   * `marketplace` (ISO-2, e.g. 'UK') scopes the run to one marketplace. Onboarding everything at
+   * once is rarely what you want during rollout: every onboarded SKU is then fee-refreshed by the
+   * nightly cron with one live SP-API call apiece, so pilot one marketplace, watch a cycle, widen.
+   */
+  async syncSkuPricingFromListings(opts: { marketplace?: string } = {}): Promise<SyncResult> {
+    const iso = opts.marketplace?.trim().toUpperCase();
     const integrations = await this.prisma.channelIntegration.findMany({
-      where: { channelType: 'amazon', deletedAt: null },
+      where: { channelType: 'amazon', deletedAt: null, ...(iso ? { marketplace: iso } : {}) },
       select: { id: true, marketplace: true },
     });
+    if (integrations.length === 0) {
+      this.logger.warn(`Onboarding: no Amazon integration${iso ? ` for ${iso}` : ''} — nothing to do.`);
+      return { scannedListings: 0, created: 0, updated: 0, skipped: 0 };
+    }
     const isoByIntegration = new Map(integrations.map((i) => [i.id, i.marketplace]));
 
     // Amazon listings matched to a product are the automatable pool (§3.3).
@@ -85,7 +96,7 @@ export class OnboardingService {
       }
     }
 
-    this.logger.log(`Onboarding sync: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped of ${result.scannedListings} listings.`);
+    this.logger.log(`Onboarding sync${iso ? ` [${iso}]` : ' [all marketplaces]'}: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped of ${result.scannedListings} listings.`);
     return result;
   }
 
