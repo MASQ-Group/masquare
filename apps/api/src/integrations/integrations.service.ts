@@ -10,6 +10,20 @@ import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dt
 import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 import { mapAmazonOrder } from './mappings/amazon-mapping';
 import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
+
+/**
+ * Outcome of a read-only SP-API role probe.
+ *   granted      — the call was authorised (HTTP 2xx, or a 200 whose per-item status just means
+ *                  Amazon couldn't price that particular SKU). The ROLE is fine.
+ *   denied       — 401/403: the role is genuinely missing or unauthorised. Needs action.
+ *   inconclusive — nothing to probe with, or a transport error. Neither proves nor disproves.
+ */
+export type RoleState = 'granted' | 'denied' | 'inconclusive';
+export interface RoleProbe {
+  ok: boolean;
+  state: RoleState;
+  message: string;
+}
 import type { MappedOrder } from './mappings/types';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -711,6 +725,7 @@ export class IntegrationsService implements OnModuleInit {
 
   /**
    * READ-ONLY probe of whether this Amazon app actually holds the roles the repricing module needs.
+   * `state` separates a genuine authorisation problem from an unusable probe SKU — see below.
    * Credentials alone aren't enough — a role must be granted to the app AND authorised by the
    * seller, and a missing one otherwise only surfaces as a 403 deep inside a sync. So ask directly:
    *   • Pricing       — a feesEstimate call (returns an estimate; changes nothing)
@@ -720,35 +735,55 @@ export class IntegrationsService implements OnModuleInit {
   async checkSpApiRoles(
     integrationId: string,
     probeSku?: string,
-  ): Promise<{ ok: boolean; pricing: { ok: boolean; message: string }; notifications: { ok: boolean; message: string }; message?: string }> {
-    const fail = (m: string) => ({ ok: false, pricing: { ok: false, message: m }, notifications: { ok: false, message: m }, message: m });
+  ): Promise<{ ok: boolean; pricing: RoleProbe; notifications: RoleProbe; message?: string }> {
+    const fail = (m: string) => ({
+      ok: false,
+      pricing: { ok: false, state: 'denied' as RoleState, message: m },
+      notifications: { ok: false, state: 'denied' as RoleState, message: m },
+      message: m,
+    });
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
     if (!row) return fail('Integration not found');
     if (row.channelType !== 'amazon') return fail('Not an Amazon integration');
 
-    // Pricing: needs a real SKU on this marketplace — borrow one from its listings if not supplied.
-    let pricing: { ok: boolean; message: string };
-    const listing = await this.prisma.channelListing.findFirst({
+    // Pricing. Key distinction: HTTP 401/403 means the ROLE is missing, whereas HTTP 200 with a
+    // per-item Status of ServerError/ClientError means the role is fine and Amazon simply couldn't
+    // price THAT sku there (stale/inactive listing). Reporting the latter as "failed" is misleading,
+    // so probe up to 3 listings and treat any non-auth response as proof the role is granted.
+    let pricing: RoleProbe;
+    const listings = await this.prisma.channelListing.findMany({
       where: { integrationId: row.id, ...(probeSku ? { channelSku: probeSku } : {}) },
       select: { channelSku: true, currency: true },
+      take: 3,
     });
-    const sku = probeSku ?? listing?.channelSku;
-    if (!sku) {
-      pricing = { ok: false, message: 'No listing to probe with — sync listings first, or pass ?sku=' };
+    if (listings.length === 0) {
+      pricing = { ok: false, state: 'inconclusive', message: 'No listing to probe with — sync listings first, or pass ?sku=' };
     } else {
-      try {
-        // The listing's own currency keeps the estimate request self-consistent per marketplace.
-        const res = await this.getMyFeesEstimate(row.id, sku, 10, listing?.currency ?? 'EUR', true);
-        pricing = res.ok
-          ? { ok: true, message: `OK — feesEstimate responded for ${sku}` }
-          : { ok: false, message: `${res.status ?? ''} ${res.message ?? 'feesEstimate failed'}`.trim() };
-      } catch (e) {
-        pricing = { ok: false, message: (e as Error).message };
+      const notes: string[] = [];
+      let outcome: RoleProbe | null = null;
+      for (const l of listings) {
+        try {
+          // The listing's own currency keeps the estimate request self-consistent per marketplace.
+          const res = await this.getMyFeesEstimate(row.id, l.channelSku, 10, l.currency ?? 'EUR', true);
+          if (res.ok) { outcome = { ok: true, state: 'granted', message: `OK — feesEstimate priced ${l.channelSku}` }; break; }
+          if (res.status === 401 || res.status === 403) {
+            outcome = { ok: false, state: 'denied', message: `${res.status} ${res.message ?? 'access denied'} — Pricing role not granted` };
+            break;
+          }
+          notes.push(`${l.channelSku}: ${res.message ?? 'no estimate'}`);
+        } catch (e) {
+          notes.push(`${l.channelSku}: ${(e as Error).message}`);
+        }
       }
+      pricing = outcome ?? {
+        ok: true,
+        state: 'granted',
+        message: `Role OK (call authorised) — but Amazon returned no estimate for the SKUs tried, so those listings are probably inactive on this marketplace. ${notes[0] ?? ''}`.trim(),
+      };
     }
 
     // Notifications: grantless token for the notifications scope + a plain list of destinations.
-    let notifications: { ok: boolean; message: string };
+    let notifications: RoleProbe;
     try {
       const config = (row.config ?? {}) as Record<string, string>;
       const meta = this.amazonMarketMeta(row);
@@ -756,10 +791,14 @@ export class IntegrationsService implements OnModuleInit {
       const grantless = await this.amazonGrantlessToken(config, secrets, 'sellingpartnerapi::notifications');
       const res = await this.amzFetch(`${meta.endpoint}/notifications/v1/destinations`, grantless);
       notifications = res.ok
-        ? { ok: true, message: 'OK — destinations listed' }
-        : { ok: false, message: `${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`.trim() };
+        ? { ok: true, state: 'granted', message: 'OK — destinations listed' }
+        : {
+            ok: false,
+            state: res.status === 401 || res.status === 403 ? 'denied' : 'inconclusive',
+            message: `${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`.trim(),
+          };
     } catch (e) {
-      notifications = { ok: false, message: (e as Error).message };
+      notifications = { ok: false, state: 'inconclusive', message: (e as Error).message };
     }
 
     return { ok: pricing.ok && notifications.ok, pricing, notifications };

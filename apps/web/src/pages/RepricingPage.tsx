@@ -1,17 +1,22 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle } from 'lucide-react';
-import { repricingApi, type RepricingSkuRow } from '../lib/api';
+import { repricingApi, type RepricingSkuRow, type RoleProbe } from '../lib/api';
 import { PageHeader } from '../components/common/PageHeader';
 
 // Amazon Buy Box repricing — ops console (Phase-appropriate: readiness, SKU floors, decision
 // audit, onboard + recompute actions). Read-only insight into the shadow pipeline; the engine
 // submits nothing unless SKUs are LIVE and the master switch is on (server-side env).
 
+// Mirrors the Amazon marketplaces in the connector registry (api integrations/connectors.ts) —
+// without these the tables show raw ids like A39IBJ37TRP1C6 instead of "AU".
 const MARKETPLACE_LABEL: Record<string, string> = {
-  A1PA6795UKMFR9: 'DE',
-  A13V1IB3VIYZZH: 'FR',
-  A1RKKUPIHCS9HS: 'ES',
+  ATVPDKIKX0DER: 'US', A2EUQ1WTGCTBG2: 'CA', A1AM78C64UM0Y8: 'MX', A2Q3Y263D00KWC: 'BR',
+  A1F83G8C2ARO7P: 'UK', A28R8C7NBKEWEA: 'IE', A1PA6795UKMFR9: 'DE', A13V1IB3VIYZZH: 'FR',
+  APJ6JRA9NG5V4: 'IT', A1RKKUPIHCS9HS: 'ES', A1805IZSGTT6HS: 'NL', AMEN7PMS3EDWL: 'BE',
+  A2NODRKZP88ZB9: 'SE', A1C3SOZRARQ6R3: 'PL', A33AVAJ2PDY3EV: 'TR', ARBP9OOSHTCHU: 'EG',
+  A17E79C6D8DWNP: 'SA', A2VIGQ35RCS4UG: 'AE', A21TJRUUN4KGV: 'IN', AE08WJ6YKNBMC: 'ZA',
+  A1VC38T7YXB528: 'JP', A39IBJ37TRP1C6: 'AU', A19VAU5U5O7RUS: 'SG',
 };
 const mkt = (id: string) => MARKETPLACE_LABEL[id] ?? id;
 const eur = (cents: number | null) => (cents == null ? '—' : `€${(cents / 100).toFixed(2)}`);
@@ -347,6 +352,20 @@ function QuarantineCard() {
   );
 }
 
+/** One role result. Only 'denied' (401/403) is a real problem — a call that got through but
+ *  returned no estimate still proves the role is granted, so it must not read as a failure. */
+function RoleCell({ probe }: { probe: RoleProbe }) {
+  const style = probe.state === 'granted' ? 'font-semibold text-teal-700' : probe.state === 'denied' ? 'font-semibold text-danger' : 'text-amber-700';
+  const label = probe.state === 'granted' ? '✓ granted' : probe.state === 'denied' ? '✕ NOT granted' : '? inconclusive';
+  return (
+    <>
+      <span className={style}>{label}</span>
+      {probe.state !== 'granted' && <div className="text-[11px] text-n-500">{probe.message}</div>}
+      {probe.state === 'granted' && !probe.ok && <div className="text-[11px] text-n-400">{probe.message}</div>}
+    </>
+  );
+}
+
 /** Pre-flight: do the Amazon connections actually hold the SP-API roles this module needs?
  *  Read-only (a fees estimate + a destinations list) — safe to run before activation. Not fetched
  *  on mount: each check makes live SP-API calls, so it runs only when asked. */
@@ -400,14 +419,8 @@ function RoleCheckCard() {
                 <tr key={r.integrationId} className="border-t border-n-100 hover:bg-n-25">
                   <td className="px-4 py-1.5 text-n-800">{r.name}</td>
                   <td className="px-3 py-1.5 font-mono">{r.marketplace ?? '—'}</td>
-                  <td className="px-3 py-1.5">
-                    <span className={r.pricing.ok ? 'font-semibold text-teal-700' : 'text-danger'}>{r.pricing.ok ? '✓ granted' : '✕ failed'}</span>
-                    {!r.pricing.ok && <div className="text-[11px] text-n-500">{r.pricing.message}</div>}
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <span className={r.notifications.ok ? 'font-semibold text-teal-700' : 'text-danger'}>{r.notifications.ok ? '✓ granted' : '✕ failed'}</span>
-                    {!r.notifications.ok && <div className="text-[11px] text-n-500">{r.notifications.message}</div>}
-                  </td>
+                  <td className="px-3 py-1.5"><RoleCell probe={r.pricing} /></td>
+                  <td className="px-3 py-1.5"><RoleCell probe={r.notifications} /></td>
                 </tr>
               ))}
             </tbody>

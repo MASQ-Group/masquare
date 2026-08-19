@@ -829,14 +829,17 @@ export interface RepricingQuarantine {
   oldestHours: number;
   items: RepricingQuarantineRow[];
 }
-/** Read-only SP-API role pre-flight per Amazon connection (Pricing + Notifications). */
+/** Read-only SP-API role pre-flight per Amazon connection (Pricing + Notifications).
+ *  `state` separates a real authorisation failure ('denied') from a probe that couldn't conclude. */
+export type RoleState = 'granted' | 'denied' | 'inconclusive';
+export interface RoleProbe { ok: boolean; state: RoleState; message: string }
 export interface RepricingRoleCheck {
   integrationId: string;
   name: string;
   marketplace: string | null;
   ok: boolean;
-  pricing: { ok: boolean; message: string };
-  notifications: { ok: boolean; message: string };
+  pricing: RoleProbe;
+  notifications: RoleProbe;
 }
 export interface RepricingRoleDiagnostics {
   total: number;
