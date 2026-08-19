@@ -829,7 +829,7 @@ export interface RepricingControl {
 /** End-to-end shadow-pipeline health: SQS -> notifications -> snapshots -> decisions. */
 export interface RepricingPipelineStatus {
   diagnosis: string;
-  sqs: { poller: string; reason?: string; env?: Record<string, boolean>; queue?: { reachable: boolean; approximateMessages?: number; inFlight?: number; error?: string } };
+  sqs: { poller: string; reason?: string; env?: Record<string, boolean>; messages?: { receivedSinceBoot: number; discardedSinceBoot: number; lastMessageAt: string | null; lastReceiveError: string | null }; queue?: { reachable: boolean; approximateMessages?: number; inFlight?: number; error?: string } };
   notifications: { dedupedLast24h: number };
   snapshots: { total: number; last24h: number; mostRecent: { asin: string; marketplaceId: string; updatedAt: string } | null };
   decisions: { total: number; last24h: number; mostRecent: { sku: string; outcome: string; at: string } | null };

@@ -505,6 +505,12 @@ function PipelineCard() {
               <span>Queue {d.sqs.queue.reachable ? <b className="text-teal-700">reachable</b> : <b className="text-danger">unreachable</b>}
                 {d.sqs.queue.reachable ? ` · ${d.sqs.queue.approximateMessages ?? 0} waiting` : d.sqs.queue.error ? ` · ${d.sqs.queue.error}` : ''}</span>
             )}
+            {/* Since-boot message counts: separates "Amazon sent nothing" from "arrived unusable". */}
+            {d.sqs.messages && (
+              <span>Msgs received <b className={d.sqs.messages.receivedSinceBoot > 0 ? 'text-teal-700' : ''}>{d.sqs.messages.receivedSinceBoot}</b>
+                {d.sqs.messages.discardedSinceBoot > 0 && <> · discarded <b className="text-danger">{d.sqs.messages.discardedSinceBoot}</b></>}
+              </span>
+            )}
             <span>Notifications 24h <b>{d.notifications.dedupedLast24h}</b></span>
             <span>Snapshots <b>{d.snapshots.total}</b> ({d.snapshots.last24h} in 24h)</span>
             <span>Decisions <b>{d.decisions.total}</b> ({d.decisions.last24h} in 24h)</span>
