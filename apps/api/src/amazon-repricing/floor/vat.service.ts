@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { pctToFraction } from '../common/money';
-import { MARKETPLACE_TO_ISO } from '../config/repricing.config';
+import { MARKETPLACE_TO_ISO, toCountryIso } from '../config/repricing.config';
 
 // The solver must NOT own VAT rate tables (spec §4.3) — it takes the resolved rate as an input.
 // maSquare has no single "VAT determination engine" (Deviation D-2); this thin adapter resolves
@@ -24,7 +24,9 @@ export class VatService {
    * the SKU from automation (VAT_UNKNOWN) rather than guessing.
    */
   async resolveVatRate(marketplaceId: string): Promise<number | null> {
-    const iso = MARKETPLACE_TO_ISO[marketplaceId];
+    // Amazon's marketplace code is not always the ISO code Country uses ('UK' vs 'GB') — normalise,
+    // or the lookup silently misses and every SKU on that marketplace excludes as VAT_UNKNOWN.
+    const iso = toCountryIso(MARKETPLACE_TO_ISO[marketplaceId]);
     if (!iso) {
       this.logger.warn(`No ISO mapping for marketplace ${marketplaceId}; cannot resolve VAT.`);
       return null;

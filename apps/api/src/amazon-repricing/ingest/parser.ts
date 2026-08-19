@@ -1,5 +1,5 @@
 import { MarketSnapshot, Offer } from '../engine/types';
-import { MARKETPLACE_TO_ISO } from '../config/repricing.config';
+import { MARKETPLACE_TO_ISO, toCountryIso } from '../config/repricing.config';
 import {
   RawAnyOfferChangedNotification,
   RawMoney,
@@ -72,8 +72,14 @@ function parseOffer(raw: RawOffer, marketplaceIso: string | undefined): Offer {
     feedbackCount: fb?.FeedbackCount ?? null,
     shippingMaxHours: raw.ShippingTime?.maximumHours ?? null,
     isPrime: raw.PrimeInformation?.IsPrime ?? false,
-    // Domestic iff the offer ships from the marketplace's own country. Unknown → null (never dropped).
-    shipsDomestic: shipsFromCountry == null || marketplaceIso == null ? null : shipsFromCountry === marketplaceIso,
+    // Domestic iff the offer ships from the marketplace's own country. Unknown → null (never
+    // dropped). Compare in ISO-3166 terms: Amazon's ShipsFrom.Country is 'GB' while its marketplace
+    // code is 'UK', so comparing the raw codes would mark every domestic UK seller as foreign and
+    // (with domesticOnly on) silently empty the UK competitor set.
+    shipsDomestic:
+      shipsFromCountry == null || marketplaceIso == null
+        ? null
+        : toCountryIso(shipsFromCountry) === toCountryIso(marketplaceIso),
     subCondition: raw.SubCondition != null ? norm(raw.SubCondition) : undefined,
   };
 }

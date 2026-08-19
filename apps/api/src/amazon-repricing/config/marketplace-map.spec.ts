@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MARKETPLACE_TO_ISO, ISO_TO_MARKETPLACE } from './repricing.config';
+import { MARKETPLACE_TO_ISO, ISO_TO_MARKETPLACE, toCountryIso } from './repricing.config';
 import { getConnector } from '../../integrations/connectors';
 
 // The repricing marketplace map is DERIVED from the connector registry so onboarding can never
@@ -33,5 +33,29 @@ describe('marketplace map', () => {
     for (const [mkt, iso] of Object.entries(MARKETPLACE_TO_ISO)) {
       expect(ISO_TO_MARKETPLACE[iso]).toBe(mkt);
     }
+  });
+});
+
+describe('toCountryIso — Amazon marketplace code → ISO-3166', () => {
+  it("maps Amazon's 'UK' to the ISO 'GB' our Country table uses", () => {
+    // Without this, the VAT lookup misses (every UK SKU excludes as VAT_UNKNOWN) and every
+    // domestic UK competitor reads as foreign, silently emptying the competitor set.
+    expect(toCountryIso('UK')).toBe('GB');
+  });
+
+  it('leaves codes that already match ISO untouched', () => {
+    for (const iso of ['DE', 'FR', 'ES', 'IT', 'NL', 'US', 'CA', 'JP', 'AU', 'SG', 'GB']) {
+      expect(toCountryIso(iso)).toBe(iso);
+    }
+  });
+
+  it('passes undefined through (unknown marketplace stays unresolved, never guessed)', () => {
+    expect(toCountryIso(undefined)).toBeUndefined();
+  });
+
+  it('makes a UK marketplace resolve to a country code that exists in ISO-3166', () => {
+    // The map itself keeps Amazon's code (integrations store 'UK'); only country lookups normalise.
+    expect(MARKETPLACE_TO_ISO.A1F83G8C2ARO7P).toBe('UK');
+    expect(toCountryIso(MARKETPLACE_TO_ISO.A1F83G8C2ARO7P)).toBe('GB');
   });
 });

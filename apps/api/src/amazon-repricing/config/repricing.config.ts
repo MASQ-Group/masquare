@@ -64,6 +64,22 @@ export const MARKETPLACE_TO_ISO: Record<string, string> = Object.fromEntries(
     .filter((e): e is readonly [string, string] => !!e[0]),
 );
 
+/**
+ * Amazon's marketplace code → real ISO-3166 country code.
+ *
+ * Amazon calls the United Kingdom "UK"; the standard — and our `Country` table, and the
+ * `ShipsFrom.Country` Amazon itself sends on offers — say "GB". Anything resolving a REAL country
+ * (VAT rates, domestic-shipping comparisons) must go through this; anything matching our own
+ * integration records keeps Amazon's code, since that is what `ChannelIntegration.marketplace`
+ * stores. Getting this wrong is silent: VAT lookups miss (SKU excluded VAT_UNKNOWN) and every
+ * domestic UK competitor is misread as foreign and dropped from the competitor set.
+ */
+const CHANNEL_ISO_TO_COUNTRY_ISO: Record<string, string> = { UK: 'GB' };
+
+/** Normalise an Amazon marketplace code to the ISO-3166 code used by `Country` / `ShipsFrom`. */
+export const toCountryIso = (channelIso: string | undefined): string | undefined =>
+  channelIso == null ? undefined : CHANNEL_ISO_TO_COUNTRY_ISO[channelIso] ?? channelIso;
+
 /** ISO-2 country code → Amazon marketplace id (inverse of MARKETPLACE_TO_ISO). Used to derive a
  *  listing's marketplace id from its integration's country during onboarding. */
 export const ISO_TO_MARKETPLACE: Record<string, string> = Object.fromEntries(
