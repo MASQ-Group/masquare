@@ -39,6 +39,25 @@ export interface CostInputs {
   taxType: string;
 }
 
+/**
+ * What a listing cell was costed with, alongside the result. The inputs matter as much as the
+ * answer: Individual Pricing can override cost/shipping/fee/VAT, so a disagreement between the two
+ * screens is an input difference, not different maths — both call the same economics().
+ */
+export interface ListingEconomics {
+  profitEur: number | null;
+  marginPct: number | null;
+  loss: boolean;
+  priceEur?: number;
+  costEur?: number;
+  shippingEur?: number;
+  feeEur?: number;
+  vatEur?: number;
+  feePct?: number;
+  vatPct?: number;
+  shippingServiceName?: string | null;
+}
+
 @Injectable()
 export class PricingService {
   constructor(
@@ -353,8 +372,26 @@ export class PricingService {
    * matches what it would earn if it sold. Keyed by the caller's `key`. Batched: products,
    * channels, FX and services are resolved once.
    */
-  async listingEconomics(cells: Array<{ key: string; productId: string; salesChannelId: string; grossNative: number | null; currency: string | null }>): Promise<Map<string, { profitEur: number | null; marginPct: number | null; loss: boolean }>> {
-    const out = new Map<string, { profitEur: number | null; marginPct: number | null; loss: boolean }>();
+  /**
+   * Per-unit cost inputs for one product shipped to one destination country, in EUR.
+   *
+   * Public so the repricing floor solver uses the SAME cost basis as Individual Pricing, the
+   * listing grid and a booked sale — a floor built on different costs is worse than no floor.
+   * `shippingEur` is the outbound carrier charge for FBM (null when no service/zone/weight
+   * resolves); FBA callers ignore it and use Amazon's fulfilment fee instead.
+   */
+  async unitCostInputsEur(productId: string, countryId: string | null): Promise<{ costEur: number | null; shippingEur: number | null; serviceName: string | null; weightKg: number | null }> {
+    const product = await this.prisma.product.findFirst({ where: { id: productId, ...ACTIVE } });
+    if (!product) return { costEur: null, shippingEur: null, serviceName: null, weightKg: null };
+    const costEur = await this.productCostEur(product);
+    const service = await this.resolveService(null, countryId);
+    const weightKg = this.unitWeightKg(product, service?.calcMethod ?? null);
+    const ship = this.lookupShipping(service, countryId, weightKg);
+    return { costEur, shippingEur: ship.costEur, serviceName: service?.name ?? null, weightKg };
+  }
+
+  async listingEconomics(cells: Array<{ key: string; productId: string; salesChannelId: string; grossNative: number | null; currency: string | null }>): Promise<Map<string, ListingEconomics>> {
+    const out = new Map<string, ListingEconomics>();
     const productIds = [...new Set(cells.map((c) => c.productId))];
     const channelIds = [...new Set(cells.map((c) => c.salesChannelId))];
     if (!productIds.length || !channelIds.length) return out;
@@ -395,7 +432,22 @@ export class PricingService {
         taxType: tax.taxType,
       };
       const econ = this.economics(grossEur, inputs);
-      out.set(cell.key, { profitEur: econ.profitEur, marginPct: econ.marginPct, loss: econ.profitEur < 0 });
+      // Return the inputs too, not just the answer. Individual Pricing lets the operator override
+      // cost/shipping/fee/VAT, so when the two screens disagree it is almost always an input that
+      // differs — showing them here makes that visible instead of looking like inconsistent maths.
+      out.set(cell.key, {
+        profitEur: econ.profitEur,
+        marginPct: econ.marginPct,
+        loss: econ.profitEur < 0,
+        priceEur: round(grossEur),
+        costEur: econ.costEur,
+        shippingEur: econ.shippingEur,
+        feeEur: econ.feeEur,
+        vatEur: econ.vatEur,
+        feePct: inputs.feePct,
+        vatPct: inputs.vatPct,
+        shippingServiceName: service?.name ?? null,
+      });
     }
     return out;
   }
