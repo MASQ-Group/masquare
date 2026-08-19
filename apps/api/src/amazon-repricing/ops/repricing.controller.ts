@@ -151,15 +151,59 @@ export class RepricingController {
     });
   }
 
-  /** List SKU-pricing rows (paged) for verification. */
+  /**
+   * SKU-pricing rows, paged and filterable. Onboarding seeds thousands, so an unfiltered slice is
+   * not enough to audit a floor: you need to reach a specific SKU. Brand/vendor live on Product and
+   * there is no Prisma relation from this table, so those resolve to product ids first.
+   */
   @Get('sku-pricing')
-  skuPricing(@Query('take') take = '50', @Query('skip') skip = '0') {
-    return this.prisma.repricingSkuPricing.findMany({
-      where: { deletedAt: null },
-      orderBy: { updatedAt: 'desc' },
-      take: Math.min(Number(take) || 50, 200),
-      skip: Number(skip) || 0,
-    });
+  async skuPricing(
+    @Query('take') take = '100',
+    @Query('skip') skip = '0',
+    @Query('q') q?: string,
+    @Query('marketplace') marketplace?: string,
+    @Query('brandId') brandId?: string,
+    @Query('vendorId') vendorId?: string,
+    @Query('state') state?: string,
+  ) {
+    const pageSize = Math.min(Math.max(Number(take) || 100, 1), 500);
+    const offset = Math.max(Number(skip) || 0, 0);
+
+    const iso = marketplace?.trim().toUpperCase();
+    const marketplaceId = iso ? ISO_TO_MARKETPLACE[iso] : undefined;
+    if (iso && !marketplaceId) return { items: [], total: 0, page: 1, pageSize };
+
+    let productIds: string[] | undefined;
+    if (brandId || vendorId) {
+      const products = await this.prisma.product.findMany({
+        where: { ...(brandId ? { brandId } : {}), ...(vendorId ? { vendorId } : {}) },
+        select: { id: true },
+      });
+      productIds = products.map((p) => p.id);
+      if (productIds.length === 0) return { items: [], total: 0, page: 1, pageSize };
+    }
+
+    const term = q?.trim();
+    const where = {
+      deletedAt: null,
+      ...(marketplaceId ? { marketplaceId } : {}),
+      ...(state ? { automationState: state } : {}),
+      ...(productIds ? { productId: { in: productIds } } : {}),
+      ...(term
+        ? {
+            OR: [
+              { sku: { contains: term, mode: 'insensitive' as const } },
+              { asin: { contains: term, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      this.prisma.repricingSkuPricing.findMany({ where, orderBy: { updatedAt: 'desc' }, take: pageSize, skip: offset }),
+      this.prisma.repricingSkuPricing.count({ where }),
+    ]);
+    return { items, total, page: Math.floor(offset / pageSize) + 1, pageSize };
   }
 
   /** Decision audit search (§6.6): recent records, optionally filtered by SKU and/or outcome. */

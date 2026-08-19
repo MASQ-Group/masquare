@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle } from 'lucide-react';
-import { integrationsApi, repricingApi, type RepricingSkuRow, type RoleProbe } from '../lib/api';
+import { Pagination } from '@masquare/ui';
+import { brandsApi, integrationsApi, repricingApi, vendorsApi, type RoleProbe } from '../lib/api';
 import { PageHeader } from '../components/common/PageHeader';
 
 // Amazon Buy Box repricing — ops console (Phase-appropriate: readiness, SKU floors, decision
@@ -65,7 +66,6 @@ function Badge({ value, styles }: { value: string; styles: Record<string, string
 export function RepricingPage() {
   const qc = useQueryClient();
   const readiness = useQuery({ queryKey: ['repricing', 'readiness'], queryFn: repricingApi.readiness });
-  const skus = useQuery({ queryKey: ['repricing', 'sku-pricing'], queryFn: () => repricingApi.skuPricing(100) });
 
   const refreshAll = () => qc.invalidateQueries({ queryKey: ['repricing'] });
 
@@ -216,7 +216,7 @@ export function RepricingPage() {
       <div className="h-6" />
       <NotificationSetupCard />
       <div className="h-6" />
-      <SkuTable rows={skus.data ?? []} loading={skus.isLoading} />
+      <SkuTable />
       <div className="h-6" />
       <DecisionTable />
       <div className="h-6" />
@@ -234,12 +234,61 @@ function StatTile({ label, value }: { label: string; value: number }) {
   );
 }
 
-function SkuTable({ rows, loading }: { rows: RepricingSkuRow[]; loading: boolean }) {
+const STATES = ['LIVE', 'SHADOW', 'EXCLUDED', 'QUARANTINED', 'KILLED'];
+
+/** SKU pricing & floors. Self-contained: onboarding seeds thousands of rows across marketplaces,
+ *  so reaching one SKU needs search + filters + paging, not a fixed slice. */
+function SkuTable() {
+  const [q, setQ] = useState('');
+  const [marketplace, setMarketplace] = useState('');
+  const [brandId, setBrandId] = useState('');
+  const [vendorId, setVendorId] = useState('');
+  const [state, setState] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
+
+  const { data: integrations = [] } = useQuery({ queryKey: ['integrations'], queryFn: integrationsApi.list });
+  const markets = [...new Set(integrations.filter((i) => i.channelType === 'amazon' && i.marketplace).map((i) => i.marketplace as string))].sort();
+  const { data: brands = [] } = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
+  const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
+
+  // Any filter change returns to page 1 — otherwise a narrowed result set lands on an empty page.
+  const reset = <T,>(set: (v: T) => void) => (v: T) => { set(v); setPage(1); };
+
+  const query = useQuery({
+    queryKey: ['repricing', 'sku-pricing', { q, marketplace, brandId, vendorId, state, page, pageSize }],
+    queryFn: () => repricingApi.skuPricing({ q, marketplace, brandId, vendorId, state, take: pageSize, skip: (page - 1) * pageSize }),
+    placeholderData: (prev) => prev,
+  });
+  const rows = query.data?.items ?? [];
+  const total = query.data?.total ?? 0;
+  const loading = query.isLoading;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const sel = 'h-8 rounded-md border border-n-200 bg-n-0 px-2 text-[12.5px] text-n-700 outline-none focus:border-teal-400';
+
   return (
     <div className="card overflow-hidden">
-      <div className="flex items-center justify-between border-b border-n-100 px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-2.5">
         <span className="text-[13px] font-semibold text-n-800">SKU pricing &amp; floors</span>
-        <span className="text-[12px] text-n-500">{rows.length} row{rows.length === 1 ? '' : 's'}</span>
+        <input value={q} onChange={(e) => reset(setQ)(e.target.value)} placeholder="Search SKU or ASIN…" className="h-8 w-48 rounded-md border border-n-200 px-2.5 font-mono text-[12.5px] outline-none focus:border-teal-400" />
+        <select value={marketplace} onChange={(e) => reset(setMarketplace)(e.target.value)} className={sel}>
+          <option value="">All marketplaces</option>
+          {markets.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <select value={brandId} onChange={(e) => reset(setBrandId)(e.target.value)} className={sel}>
+          <option value="">All brands</option>
+          {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <select value={vendorId} onChange={(e) => reset(setVendorId)(e.target.value)} className={sel}>
+          <option value="">All vendors</option>
+          {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+        </select>
+        <select value={state} onChange={(e) => reset(setState)(e.target.value)} className={sel}>
+          <option value="">All states</option>
+          {STATES.map((st) => <option key={st} value={st}>{st}</option>)}
+        </select>
+        <div className="flex-1" />
+        <span className="text-[12px] text-n-500">{total.toLocaleString()} row{total === 1 ? '' : 's'}</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
@@ -281,6 +330,9 @@ function SkuTable({ rows, loading }: { rows: RepricingSkuRow[]; loading: boolean
             )}
           </tbody>
         </table>
+      </div>
+      <div className="px-4 pb-3">
+        <Pagination page={page} pageCount={pageCount} onPageChange={setPage} pageSize={pageSize} onPageSizeChange={(n) => { setPageSize(n); setPage(1); }} pageSizeOptions={[50, 100, 200, 500]} />
       </div>
     </div>
   );
