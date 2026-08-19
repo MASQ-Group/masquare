@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle } from 'lucide-react';
-import { repricingApi, type RepricingSkuRow, type RoleProbe } from '../lib/api';
+import { integrationsApi, repricingApi, type RepricingSkuRow, type RoleProbe } from '../lib/api';
 import { PageHeader } from '../components/common/PageHeader';
 
 // Amazon Buy Box repricing — ops console (Phase-appropriate: readiness, SKU floors, decision
@@ -152,6 +152,8 @@ export function RepricingPage() {
 
       <QuarantineCard />
       <RoleCheckCard />
+      <div className="h-6" />
+      <NotificationSetupCard />
       <div className="h-6" />
       <SkuTable rows={skus.data ?? []} loading={skus.isLoading} />
       <div className="h-6" />
@@ -347,6 +349,79 @@ function QuarantineCard() {
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+const DEFAULT_SQS_ARN = 'arn:aws:sqs:eu-north-1:631245465175:masquare-spapi-notifications';
+
+/**
+ * Step 1 of activation (§2.2): subscribe a marketplace's SP-API notifications to the SQS queue.
+ * Unlike everything else on this page this WRITES to Amazon — it creates a notification
+ * destination and three subscriptions — so it is deliberately one explicit click per marketplace,
+ * never automatic, and never done for all 18 at once.
+ */
+function NotificationSetupCard() {
+  const { data: integrations = [] } = useQuery({ queryKey: ['integrations'], queryFn: integrationsApi.list });
+  const amazon = integrations.filter((i) => i.channelType === 'amazon');
+  const [integrationId, setIntegrationId] = useState('');
+  const [arn, setArn] = useState(DEFAULT_SQS_ARN);
+  const setup = useMutation({ mutationFn: () => integrationsApi.setupSpApiNotifications(integrationId, arn.trim()) });
+  const chosen = amazon.find((i) => i.id === integrationId);
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-2.5">
+        <span className="text-[13px] font-semibold text-n-800">Notification subscriptions</span>
+        <span className="text-[11.5px] text-n-400">
+          Subscribes ANY_OFFER_CHANGED · PRICING_HEALTH · FEE_PROMOTION for one marketplace to the SQS queue.
+        </span>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2 border-b border-n-100 bg-n-25 px-4 py-2.5">
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10.5px] uppercase tracking-wide text-n-500">Marketplace</span>
+          <select value={integrationId} onChange={(e) => setIntegrationId(e.target.value)} className="h-8 w-56 rounded-md border border-n-200 px-2 text-[12.5px] outline-none focus:border-teal-400">
+            <option value="">Select a connection…</option>
+            {amazon.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-1 flex-col gap-0.5">
+          <span className="text-[10.5px] uppercase tracking-wide text-n-500">SQS queue ARN</span>
+          <input value={arn} onChange={(e) => setArn(e.target.value)} className="h-8 w-full min-w-[280px] rounded-md border border-n-200 px-2 font-mono text-[12px] outline-none focus:border-teal-400" />
+        </label>
+        <button
+          onClick={() => setup.mutate()}
+          disabled={!integrationId || !arn.trim().startsWith('arn:aws:sqs:') || setup.isPending}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-teal-500 px-3 text-[12.5px] font-semibold text-white hover:bg-teal-600 disabled:opacity-50"
+        >
+          {setup.isPending ? 'Subscribing…' : 'Subscribe'}
+        </button>
+      </div>
+
+      <div className="px-4 py-3 text-[12.5px]">
+        {!setup.data && !setup.isError && (
+          <span className="text-n-500">
+            Pick one marketplace to start with{chosen ? ` (${chosen.name})` : ''} — this writes to Amazon, so do it
+            deliberately, one at a time. Nothing is priced: it only starts the flow of events into the queue.
+          </span>
+        )}
+        {setup.isError && <span className="text-danger">{(setup.error as Error)?.message ?? 'Subscription failed.'}</span>}
+        {setup.data && (
+          <div className="flex flex-col gap-1">
+            <div className={setup.data.ok ? 'font-semibold text-teal-700' : 'font-semibold text-danger'}>
+              {setup.data.ok ? 'Subscribed.' : setup.data.message ?? 'Some subscriptions failed.'}
+              {setup.data.destinationId && <span className="ml-2 font-mono text-[11px] font-normal text-n-500">destination {setup.data.destinationId}</span>}
+            </div>
+            {setup.data.results.map((r) => (
+              <div key={r.type} className="flex items-baseline gap-2">
+                <span className={`w-[170px] font-mono text-[11.5px] ${r.ok ? 'text-teal-700' : 'text-danger'}`}>{r.ok ? '✓' : '✕'} {r.type}</span>
+                <span className="text-[11.5px] text-n-500">{r.message}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
