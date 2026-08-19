@@ -154,6 +154,30 @@ export class RepricingController {
   }
 
   /**
+   * READ-ONLY: what Amazon has registered for a marketplace — destinations and live subscriptions.
+   * The destination is created from an SQS ARN while the poller reads a queue URL; if those are
+   * different queues everything looks configured yet nothing is ever delivered. This shows both so
+   * they can be compared.
+   */
+  @Get('diagnostics/subscriptions')
+  async subscriptionStatus(@Query('marketplace') marketplace?: string) {
+    const iso = marketplace?.trim().toUpperCase();
+    const integration = await this.prisma.channelIntegration.findFirst({
+      where: { channelType: 'amazon', deletedAt: null, ...(iso ? { marketplace: iso } : {}) },
+      select: { id: true, name: true, marketplace: true },
+      orderBy: { name: 'asc' },
+    });
+    if (!integration) return { ok: false, message: `No Amazon integration${iso ? ` for ${iso}` : ''}` };
+    const status = await this.integrations.spApiNotificationStatus(integration.id);
+    return {
+      integration: integration.name,
+      // The queue the POLLER reads, so it can be compared with the destination ARN above.
+      pollerQueueUrl: process.env.AMZ_SQS_QUEUE_URL ?? null,
+      ...status,
+    };
+  }
+
+  /**
    * End-to-end health of the shadow pipeline: SQS -> snapshots -> decisions.
    *
    * "No decisions yet" has several very different causes — poller dormant, AWS refusing the
