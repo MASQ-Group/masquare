@@ -829,6 +829,21 @@ export interface RepricingQuarantine {
   oldestHours: number;
   items: RepricingQuarantineRow[];
 }
+/** Read-only SP-API role pre-flight per Amazon connection (Pricing + Notifications). */
+export interface RepricingRoleCheck {
+  integrationId: string;
+  name: string;
+  marketplace: string | null;
+  ok: boolean;
+  pricing: { ok: boolean; message: string };
+  notifications: { ok: boolean; message: string };
+}
+export interface RepricingRoleDiagnostics {
+  total: number;
+  pricingOk: number;
+  notificationsOk: number;
+  results: RepricingRoleCheck[];
+}
 export interface BlockedSeller {
   id: string;
   sellerId: string;
@@ -854,6 +869,7 @@ export const repricingApi = {
     api.get<RepricingDecisionRow[]>('/amazon-repricing/decisions', { params: { take: params.take ?? 100, sku: params.sku || undefined, outcome: params.outcome || undefined } }).then((r) => r.data),
   quarantine: () => api.get<RepricingQuarantine>('/amazon-repricing/quarantine').then((r) => r.data),
   resolveQuarantine: (id: string) => api.post<{ resolved: boolean }>(`/amazon-repricing/quarantine/${id}/resolve`, {}).then((r) => r.data),
+  roleDiagnostics: () => api.get<RepricingRoleDiagnostics>('/amazon-repricing/diagnostics/roles').then((r) => r.data),
 };
 
 // ---- Sales Transactions ----
