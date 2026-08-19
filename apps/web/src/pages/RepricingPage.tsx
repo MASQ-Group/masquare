@@ -253,14 +253,15 @@ function SkuTable({ rows, loading }: { rows: RepricingSkuRow[]; loading: boolean
               <th className="px-3 py-2 text-right font-semibold">Breakeven</th>
               <th className="px-3 py-2 text-right font-semibold">Floor</th>
               <th className="px-3 py-2 text-right font-semibold">Current</th>
+              <th className="px-3 py-2 font-semibold">Computed</th>
               <th className="px-3 py-2 font-semibold">Reason</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={9} className="px-4 py-6 text-center text-n-500">Loading…</td></tr>
+              <tr><td colSpan={10} className="px-4 py-6 text-center text-n-500">Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-6 text-center text-n-500">No SKUs yet — run <strong>Onboard SKUs</strong> to seed from matched Amazon listings.</td></tr>
+              <tr><td colSpan={10} className="px-4 py-6 text-center text-n-500">No SKUs yet — run <strong>Onboard SKUs</strong> to seed from matched Amazon listings.</td></tr>
             ) : (
               rows.map((r) => (
                 <tr key={r.id} className="border-t border-n-100 hover:bg-n-25">
@@ -271,7 +272,9 @@ function SkuTable({ rows, loading }: { rows: RepricingSkuRow[]; loading: boolean
                   <td className="px-3 py-1.5"><Badge value={r.automationState} styles={STATE_STYLES} />{r.suppressed && <span className="ml-1 text-[11px] text-orange-600">supp</span>}</td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.breakevenCents, r.currency)}</td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.strategyFloorCents, r.currency)}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.currentPriceCents, r.currency)}</td>
+                  {/* When these floors were last solved. A figure computed before a pricing fix is
+                      stale until Recompute runs — without this it looks like the maths is wrong. */}
+                  <td className="px-3 py-1.5 text-[11px] text-n-500">{r.floorsComputedAt ? when(r.floorsComputedAt) : <span className="text-n-400">never</span>}</td>
                   <td className="px-3 py-1.5 font-mono text-[11px] text-n-500">{r.exclusionReason ?? ''}</td>
                 </tr>
               ))
