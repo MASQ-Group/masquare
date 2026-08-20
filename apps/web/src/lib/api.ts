@@ -1810,8 +1810,9 @@ export interface IndividualPricingResult {
     fulfilment?: 'FBM' | 'FBA'; fbaFeeEur?: number | null;
     /** 'allocated' = real per-unit cost from FBA shipments; 'estimated' = weight-based fallback. */
     fbaInboundSource?: 'allocated' | 'estimated' | null;
-    /** 'historical' = averaged from settled FBA orders; 'unknown' = none yet, so the fee is 0. */
-    fbaFeeSource?: 'historical' | 'unknown' | null;
+    /** Where the fulfilment fee came from. 'unknown' = none could be established, so it is
+     *  NOT in the profit — a zero FBA fee is never real. */
+    fbaFeeSource?: 'override' | 'product' | 'channel' | 'unknown' | null;
     vatPct: number; taxType: string; taxLabel: string; pointsPct: number; feePct: number; importPct: number;
     actualWeightKg: number | null; volumetricWeightKg: number | null; chargeableWeightKg: number | null;
   };

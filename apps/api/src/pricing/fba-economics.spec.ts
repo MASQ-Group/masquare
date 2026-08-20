@@ -39,3 +39,33 @@ describe('FBA economics', () => {
     expect(allocated ?? weightEstimate).toBe(4.2);
   });
 });
+
+// An FBA shipment or order line that never linked to a product carries only a SKU. Matching on
+// product id alone finds nothing and the cost reads as if the unit had never been sent to Amazon.
+describe('FBA cost matching', () => {
+  const rows = [
+    { productId: null, sku: 'LAG-8.1681.09-FBA', qty: 10, cost: 54 },
+    { productId: 'p1', sku: 'LAG-8.1681.09', qty: 5, cost: 26 },
+  ];
+  const match = (productId: string, skus: string[]) =>
+    rows.filter((r) => r.productId === productId || skus.includes(r.sku.trim().toLowerCase()));
+
+  it('product-only matching misses SKU-only lines', () => {
+    expect(match('p1', []).length).toBe(1);
+  });
+
+  it('matching on product OR any known SKU finds them all', () => {
+    const skus = ['lag-8.1681.09', 'lag-8.1681.09-fba'];
+    const hit = match('p1', skus);
+    expect(hit.length).toBe(2);
+    const perUnit = hit.reduce((s, r) => s + r.cost, 0) / hit.reduce((s, r) => s + r.qty, 0);
+    expect(perUnit).toBeCloseTo(80 / 15, 6);
+  });
+
+  it('an unknown fulfilment fee is null, never 0', () => {
+    const resolve = (byProduct: number | null, byChannel: number | null) => byProduct ?? byChannel ?? null;
+    expect(resolve(null, null)).toBeNull();
+    expect(resolve(null, 6.2)).toBe(6.2);
+    expect(resolve(5.1, 6.2)).toBe(5.1);
+  });
+});

@@ -235,7 +235,12 @@ export function IndividualPricingPage() {
               {fulfilment === 'FBA' && (
                 <Field
                   label="FBA fulfilment fee (€)"
-                  hint={result?.auto.fbaFeeSource === 'historical' ? 'Average per unit from settled orders' : 'No settled FBA order yet — enter it'}
+                  hint={
+                    result?.auto.fbaFeeSource === 'product' ? 'Average per unit from this product’s settled FBA orders'
+                    : result?.auto.fbaFeeSource === 'channel' ? 'Channel average — this product has no settled FBA order'
+                    : result?.auto.fbaFeeSource === 'override' ? 'Your override'
+                    : 'Not known — not included in profit. Enter it.'
+                  }
                 >
                   <input
                     className="input mono text-right" inputMode="decimal"
@@ -331,7 +336,11 @@ export function IndividualPricingPage() {
                   cost
                 />
                 {fulfilment === 'FBA' && (
-                  <Row label="• FBA fulfilment fee" value={b ? `−${eur(b.fbaFeeEur ?? 0)}` : '—'} cost />
+                  <Row
+                    label={`• FBA fulfilment fee${result?.auto.fbaFeeSource === 'channel' ? ' (channel avg)' : ''}`}
+                    value={result?.auto.fbaFeeSource === 'unknown' ? 'not known' : b ? `−${eur(b.fbaFeeEur ?? 0)}` : '—'}
+                    cost
+                  />
                 )}
                 <Row label={`• Import tax (${result?.applied.importPct ?? 0}%)`} value={b ? `−${eur(b.importEur)}` : '—'} cost />
                 <div className="mt-1.5 flex items-baseline justify-between border-t border-n-100 pt-3">
