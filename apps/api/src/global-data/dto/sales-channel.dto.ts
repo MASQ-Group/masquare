@@ -13,6 +13,7 @@ export class CreateSalesChannelDto {
   @IsOptional() @IsString() chipBgColor?: string | null;
   @IsOptional() @IsString() chipTextColor?: string | null;
   @IsOptional() @IsBoolean() vatThresholdEnabled?: boolean;
+  @IsOptional() @IsBoolean() pricesIncludeTax?: boolean;
   @IsOptional() @IsNumber() vatThresholdAmount?: number | null;
   @IsOptional() @IsString() vatThresholdCurrency?: string | null;
   @IsOptional() @IsNumber() vatBelowThresholdPct?: number | null;

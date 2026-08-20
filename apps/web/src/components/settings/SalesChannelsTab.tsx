@@ -110,6 +110,7 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
     chipBgColor: channel?.chipBgColor ?? '#F1F3F5',
     chipTextColor: channel?.chipTextColor ?? '#495057',
     vatThresholdEnabled: channel?.vatThresholdEnabled ?? false,
+    pricesIncludeTax: channel?.pricesIncludeTax ?? true,
     vatThresholdAmount: channel?.vatThresholdAmount?.toString() ?? '',
     vatThresholdCurrency: channel?.vatThresholdCurrency ?? null as string | null,
     vatBelowThresholdPct: channel?.vatBelowThresholdPct?.toString() ?? '',
@@ -162,6 +163,7 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
         generalSalesFeePct: form.generalSalesFeePct.trim() === '' ? null : Number(form.generalSalesFeePct),
         feeChargedInNativeCurrency: form.feeChargedInNativeCurrency,
         feeCurrency: form.feeChargedInNativeCurrency ? null : form.feeCurrency,
+        pricesIncludeTax: form.pricesIncludeTax,
         vatThresholdEnabled: form.vatThresholdEnabled,
         vatThresholdAmount: form.vatThresholdEnabled && form.vatThresholdAmount.trim() !== '' ? Number(form.vatThresholdAmount) : null,
         vatThresholdCurrency: form.vatThresholdEnabled ? form.vatThresholdCurrency : null,
@@ -230,6 +232,17 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
           <p className="pl-6 text-[11.5px] text-n-500">
             Total = net sales + VAT + shipping paid by the customer + its VAT, in the channel's currency.
             Leave off for marketplaces that report tax their own way, where a single total would mislead.
+          </p>
+        </div>
+        <div className="col-span-2 flex flex-col gap-1.5 rounded-md border border-n-200 bg-n-25 p-3">
+          <label className="flex cursor-pointer items-center gap-2.5">
+            <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={form.pricesIncludeTax} onChange={(e) => set({ pricesIncludeTax: e.target.checked })} />
+            <span className="text-[13.5px] text-n-700">The price we list already includes the destination tax</span>
+          </label>
+          <p className="pl-6 text-[11.5px] text-n-500">
+            {form.pricesIncludeTax
+              ? 'Standard for EU marketplaces: the listed price is VAT-inclusive, so profit is calculated from the price less VAT.'
+              : 'The marketplace adds the tax at checkout and remits it (e.g. Amazon AU adding GST for an overseas seller). The listed price is treated as our revenue in full — turning this off raises calculated profit and lowers the breakeven and floor.'}
           </p>
         </div>
         <div className="col-span-2 flex flex-col gap-3 rounded-md border border-n-200 bg-n-25 p-3">

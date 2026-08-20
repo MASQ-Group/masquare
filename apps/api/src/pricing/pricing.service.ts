@@ -58,6 +58,17 @@ export interface ListingEconomics {
   shippingServiceName?: string | null;
 }
 
+/** Tax the channel applies to a listing, and whether our listed price already contains it. */
+export interface ChannelTax {
+  taxType: string;
+  vatPct: number;
+  pointsPct: number;
+  /** false ⇒ the marketplace adds the tax on top at checkout, so the listed price is our revenue. */
+  priceIncludesTax: boolean;
+  /** The tax the buyer pays when the channel adds it on top; 0 when it is already in our price. */
+  collectedByChannelPct: number;
+}
+
 @Injectable()
 export class PricingService {
   constructor(
@@ -122,12 +133,23 @@ export class PricingService {
    * effective rates verified from settled orders (JP consumption tax + Amazon Points, AU GST);
    * everywhere else keeps the destination VAT rate and its consignment-threshold rule.
    */
-  private resolveTax(channel: any, value: number, valueIsNet = false): { taxType: string; vatPct: number; pointsPct: number } {
+  private resolveTax(channel: any, value: number, valueIsNet = false): ChannelTax {
     const iso = channel?.nativeCountry?.isoCode ?? null;
-    if (iso === 'JP') return { taxType: 'jct', vatPct: JCT_RATE_PCT, pointsPct: AMAZON_POINTS_PCT };
-    if (iso === 'AU') return { taxType: 'gst', vatPct: GST_RATE_PCT, pointsPct: 0 };
-    const countryVat = channel?.nativeCountry?.vatRate != null ? Number(channel.nativeCountry.vatRate) : null;
-    return { taxType: 'vat', vatPct: this.channelVatPct(channel, value, countryVat, valueIsNet), pointsPct: 0 };
+    const base = ((): { taxType: string; vatPct: number; pointsPct: number } => {
+      if (iso === 'JP') return { taxType: 'jct', vatPct: JCT_RATE_PCT, pointsPct: AMAZON_POINTS_PCT };
+      if (iso === 'AU') return { taxType: 'gst', vatPct: GST_RATE_PCT, pointsPct: 0 };
+      const countryVat = channel?.nativeCountry?.vatRate != null ? Number(channel.nativeCountry.vatRate) : null;
+      return { taxType: 'vat', vatPct: this.channelVatPct(channel, value, countryVat, valueIsNet), pointsPct: 0 };
+    })();
+
+    // Where the marketplace adds the tax at checkout, the price we list is already our revenue.
+    // Every downstream calculation derives net as price / (1 + vatPct), so carrying the real rate
+    // here would divide out a tax we never received. The rate is reported separately as
+    // `collectedByChannelPct` so the UI can still say which tax the buyer pays.
+    if (channel?.pricesIncludeTax === false) {
+      return { ...base, vatPct: 0, priceIncludesTax: false, collectedByChannelPct: base.vatPct };
+    }
+    return { ...base, priceIncludesTax: true, collectedByChannelPct: 0 };
   }
 
   /**
@@ -400,7 +422,7 @@ export class PricingService {
    *
    * `grossNative` matters because of that threshold, so pass the price being evaluated.
    */
-  async channelTaxFor(salesChannelId: string, grossNative: number): Promise<{ taxType: string; vatPct: number; pointsPct: number } | null> {
+  async channelTaxFor(salesChannelId: string, grossNative: number): Promise<ChannelTax | null> {
     const [channel] = await this.loadChannels([salesChannelId]);
     if (!channel) return null;
     return this.resolveTax(channel, grossNative);
