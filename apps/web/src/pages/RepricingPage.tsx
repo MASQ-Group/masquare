@@ -613,13 +613,27 @@ function NotificationSetupCard() {
                 {!arnMatchesUrl(dd.sqsArn, st.pollerQueueUrl) && <span className="text-[11px] font-semibold text-danger">≠ the queue we read</span>}
               </div>
             ))}
-            <div className="flex flex-wrap gap-x-4 gap-y-1">
-              {(st.subscriptions ?? []).map((sub) => (
-                <span key={sub.type} className={sub.subscribed ? 'text-teal-700' : 'text-danger'}>
-                  {sub.subscribed ? '✓' : '✕'} {sub.type}
-                  {!sub.subscribed && sub.message ? <span className="text-n-500"> ({sub.message})</span> : null}
-                </span>
-              ))}
+            {/* A subscription can be live yet feed the WRONG destination (e.g. a queue we have since
+                moved region). "Subscribed" alone hides that, so name the queue each one publishes to. */}
+            <div className="mt-1 flex flex-col gap-0.5">
+              {(st.subscriptions ?? []).map((sub) => {
+                const dest = (st.destinations ?? []).find((dd) => dd.destinationId === sub.destinationId);
+                const right = dest ? arnMatchesUrl(dest.sqsArn, st.pollerQueueUrl) : false;
+                return (
+                  <div key={sub.type} className="flex flex-wrap items-baseline gap-2">
+                    <span className={`w-[124px] shrink-0 ${sub.subscribed ? 'text-teal-700' : 'text-danger'}`}>
+                      {sub.subscribed ? '✓' : '✕'} {sub.type}
+                    </span>
+                    {sub.subscribed ? (
+                      <span className={`text-[11px] ${right ? 'text-teal-700' : 'text-danger'}`}>
+                        {dest ? (right ? '→ our queue' : `→ ${dest.sqsArn} — WRONG QUEUE, re-subscribe to re-point`) : '→ destination unknown'}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-n-500">{sub.message}</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
