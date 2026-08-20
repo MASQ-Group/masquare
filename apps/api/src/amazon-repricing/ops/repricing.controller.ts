@@ -11,6 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ISO_TO_MARKETPLACE } from '../config/repricing.config';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { SqsPollerService } from '../ingest/sqs-poller.service';
+import { queueForMarketplace } from '../config/notification-queues';
 
 // Ops console API for the Amazon repricing module (admin-only). Phase-appropriate subset: onboard
 // SKUs, refresh fees + recompute floors, and inspect the SKU-pricing table + recent decisions.
@@ -169,12 +170,25 @@ export class RepricingController {
     });
     if (!integration) return { ok: false, message: `No Amazon integration${iso ? ` for ${iso}` : ''}` };
     const status = await this.integrations.spApiNotificationStatus(integration.id);
+    const queue = queueForMarketplace(integration.marketplace);
     return {
       integration: integration.name,
       // The queue the POLLER reads, so it can be compared with the destination ARN above.
       pollerQueueUrl: process.env.AMZ_SQS_QUEUE_URL ?? null,
+      expectedQueueArn: queue.queueArn,
       ...status,
     };
+  }
+
+  /**
+   * The SQS queue a marketplace's notifications must go to, derived from its SP-API region.
+   *
+   * Exists so the subscribe form is never typed from memory: the ARN it offers is the one the
+   * poller actually reads. Reads env only -- no Amazon call -- so it is safe to load on selection.
+   */
+  @Get('diagnostics/queue')
+  queueForMarketplaceDiagnostic(@Query('marketplace') marketplace?: string) {
+    return queueForMarketplace(marketplace);
   }
 
   /**

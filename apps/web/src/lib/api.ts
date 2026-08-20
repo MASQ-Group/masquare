@@ -842,8 +842,18 @@ export interface RepricingSubscriptionStatus {
   integration?: string;
   marketplace?: string | null;
   pollerQueueUrl: string | null;
+  expectedQueueArn?: string | null;
   destinations?: Array<{ destinationId: string; name: string; sqsArn: string | null }>;
   subscriptions?: Array<{ type: string; subscribed: boolean; subscriptionId: string | null; destinationId: string | null; message?: string }>;
+}
+export interface RepricingMarketplaceQueue {
+  marketplace: string | null;
+  region: 'na' | 'eu' | 'fe' | null;
+  queueUrl: string | null;
+  queueArn: string | null;
+  envVar: string | null;
+  configured: boolean;
+  message: string | null;
 }
 export interface RepricingSkuPricingPage {
   items: RepricingSkuRow[];
@@ -937,6 +947,8 @@ export const repricingApi = {
   resolveQuarantine: (id: string) => api.post<{ resolved: boolean }>(`/amazon-repricing/quarantine/${id}/resolve`, {}).then((r) => r.data),
   roleDiagnostics: () => api.get<RepricingRoleDiagnostics>('/amazon-repricing/diagnostics/roles').then((r) => r.data),
   pipelineStatus: () => api.get<RepricingPipelineStatus>('/amazon-repricing/diagnostics/pipeline').then((r) => r.data),
+  queueForMarketplace: (marketplace?: string) =>
+    api.get<RepricingMarketplaceQueue>('/amazon-repricing/diagnostics/queue', { params: { marketplace } }).then((r) => r.data),
   subscriptionStatus: (marketplace?: string) =>
     api.get<RepricingSubscriptionStatus>('/amazon-repricing/diagnostics/subscriptions', { params: { marketplace: marketplace || undefined } }).then((r) => r.data),
 };
