@@ -251,8 +251,13 @@ model Vendor {
   //   reverse_charge — EU B2B supply, 0% with the Art. 196 note on the PDF
   //   outside_scope  — supplier outside the EU VAT zone, 0%
   vatTreatment String @default("standard") @map("vat_treatment")
-  /** Currency this vendor invoices in. New POs default to it. */
+  /** Currency this vendor invoices in. New POs default to it, as do uploaded price files. */
   currency String @default("EUR")
+  // Whether the MAP / suggested retail price this vendor quotes already contains VAT.
+  // Vendors are not consistent: one price list heads the column "SRP (INC)" and another
+  // "DP (EXL)" beside it. Getting it wrong shifts every MAP by the VAT rate, so it is stated
+  // per vendor rather than guessed from the file.
+  mapIncludesVat Boolean @default(false) @map("map_includes_vat")
   // Result of the last VIES lookup. Advisory only — never blocks raising a PO.
   vatNumberValid     Boolean?  @map("vat_number_valid")
   vatNumberCheckedAt DateTime? @map("vat_number_checked_at")

@@ -162,8 +162,10 @@ export interface Vendor {
   vatNumber?: string | null;
   /** Decides whether this vendor's purchase orders carry VAT. */
   vatTreatment?: VendorVatTreatment;
-  /** Currency this vendor invoices in — new POs default to it. */
+  /** Currency this vendor invoices in — new POs and uploaded price files default to it. */
   currency?: string;
+  /** Whether this vendor's quoted MAP / suggested retail already contains VAT. */
+  mapIncludesVat?: boolean;
   vatNumberValid?: boolean | null;
   vatNumberCheckedAt?: string | null;
   vatNumberCheckedName?: string | null;
