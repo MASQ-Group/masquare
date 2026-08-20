@@ -515,6 +515,7 @@ export interface SalesChannel {
   feeChargedInNativeCurrency: boolean;
   feeCurrency: string | null;
   vatThresholdEnabled: boolean;
+  pricesIncludeTax: boolean;
   vatThresholdAmount: number | null;
   vatThresholdCurrency: string | null;
   vatBelowThresholdPct: number | null;

@@ -1429,6 +1429,17 @@ model SalesChannel {
   vatThresholdCurrency String? @map("vat_threshold_currency")
   vatBelowThresholdPct Float?  @map("vat_below_threshold_pct")
   vatAboveThresholdPct Float?  @map("vat_above_threshold_pct")
+  // Whether the price we LIST on this channel already contains the destination tax.
+  //
+  // EU marketplaces are quoted VAT-inclusive, so the listed price has to be divided down to
+  // reach our revenue. Where the marketplace is the deemed collector and adds the tax on top at
+  // checkout -- Amazon AU adding GST for an overseas seller is the case in hand -- the listed
+  // price IS our revenue: the tax never belongs to us and dividing it out understates profit and
+  // pushes the computed floor above where it should be.
+  //
+  // Per channel rather than per country: it depends on where we are established relative to the
+  // marketplace, so two channels in the same country can legitimately differ.
+  pricesIncludeTax Boolean @default(true) @map("prices_include_tax")
   email              String?
   website            String?
   contactName        String? @map("contact_name")
