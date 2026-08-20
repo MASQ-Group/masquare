@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle } from 'lucide-react';
 import { Pagination } from '@masquare/ui';
@@ -534,7 +534,6 @@ function arnMatchesUrl(arn: string | null | undefined, url: string | null | unde
   return url.includes(region) && url.includes(account) && url.endsWith(name);
 }
 
-const DEFAULT_SQS_ARN = 'arn:aws:sqs:eu-north-1:631245465175:masquare-spapi-notifications';
 
 /**
  * Step 1 of activation (§2.2): subscribe a marketplace's SP-API notifications to the SQS queue.
@@ -546,7 +545,21 @@ function NotificationSetupCard() {
   const { data: integrations = [] } = useQuery({ queryKey: ['integrations'], queryFn: integrationsApi.list });
   const amazon = integrations.filter((i) => i.channelType === 'amazon');
   const [integrationId, setIntegrationId] = useState('');
-  const [arn, setArn] = useState(DEFAULT_SQS_ARN);
+  const [arn, setArn] = useState('');
+  const [arnTouched, setArnTouched] = useState(false);
+  const chosenMarketplace = amazon.find((i) => i.id === integrationId)?.marketplace ?? undefined;
+  // The ARN is derived from the queue the poller reads for this marketplace's region, never
+  // remembered. A hand-typed ARN pointing at another region is accepted by Amazon and then
+  // silently delivers nothing, which is exactly how the eu-north-1 queue went unnoticed.
+  const queueQ = useQuery({
+    queryKey: ['repricing', 'queue', chosenMarketplace],
+    queryFn: () => repricingApi.queueForMarketplace(chosenMarketplace),
+    enabled: !!chosenMarketplace,
+  });
+  const queue = queueQ.data;
+  useEffect(() => {
+    if (!arnTouched && queue?.queueArn) setArn(queue.queueArn);
+  }, [queue?.queueArn, arnTouched]);
   const setup = useMutation({ mutationFn: (types?: string[]) => integrationsApi.setupSpApiNotifications(integrationId, arn.trim(), types) });
   const [check, setCheck] = useState(false);
   const statusQ = useQuery({
@@ -577,7 +590,12 @@ function NotificationSetupCard() {
         </label>
         <label className="flex flex-1 flex-col gap-0.5">
           <span className="text-[10.5px] uppercase tracking-wide text-n-500">SQS queue ARN</span>
-          <input value={arn} onChange={(e) => setArn(e.target.value)} className="h-8 w-full min-w-[280px] rounded-md border border-n-200 px-2 font-mono text-[12px] outline-none focus:border-teal-400" />
+          <input
+            value={arn}
+            onChange={(e) => { setArn(e.target.value); setArnTouched(true); }}
+            placeholder={chosenMarketplace ? 'Resolving from the poller queue…' : 'Select a marketplace first'}
+            className={`h-8 w-full min-w-[280px] rounded-md border px-2 font-mono text-[12px] outline-none focus:border-teal-400 ${queue?.queueArn && arn.trim() && arn.trim() !== queue.queueArn ? 'border-amber-400 bg-amber-50' : 'border-n-200'}`}
+          />
         </label>
         <button
           onClick={() => setup.mutate(undefined)}
@@ -598,6 +616,22 @@ function NotificationSetupCard() {
           Test delivery
         </button>
       </div>
+
+      {chosenMarketplace && (
+        <div className="border-b border-n-100 bg-n-25 px-4 pb-2.5 text-[11.5px]">
+          {queue?.configured ? (
+            <span className="text-n-500">
+              {queue.region?.toUpperCase()} region → this is the queue the poller reads ({queue.envVar}). Amazon only delivers to a
+              queue in the same AWS region as the marketplace&rsquo;s endpoint.
+              {arnTouched && arn.trim() !== queue.queueArn && (
+                <span className="ml-1 font-semibold text-amber-700">You have edited it — an ARN in another region will be accepted and then deliver nothing.</span>
+              )}
+            </span>
+          ) : (
+            <span className="text-danger">{queue?.message ?? 'Resolving the queue for this marketplace…'}</span>
+          )}
+        </div>
+      )}
 
       {/* What Amazon ACTUALLY has registered. The destination is created from an SQS ARN while the
           poller reads a queue URL — if those are different queues everything reports healthy and
