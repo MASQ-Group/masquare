@@ -547,7 +547,7 @@ function NotificationSetupCard() {
   const amazon = integrations.filter((i) => i.channelType === 'amazon');
   const [integrationId, setIntegrationId] = useState('');
   const [arn, setArn] = useState(DEFAULT_SQS_ARN);
-  const setup = useMutation({ mutationFn: () => integrationsApi.setupSpApiNotifications(integrationId, arn.trim()) });
+  const setup = useMutation({ mutationFn: (types?: string[]) => integrationsApi.setupSpApiNotifications(integrationId, arn.trim(), types) });
   const [check, setCheck] = useState(false);
   const statusQ = useQuery({
     queryKey: ['repricing', 'subscriptions', integrationId],
@@ -563,6 +563,7 @@ function NotificationSetupCard() {
         <span className="text-[13px] font-semibold text-n-800">Notification subscriptions</span>
         <span className="text-[11.5px] text-n-400">
           Subscribes ANY_OFFER_CHANGED · PRICING_HEALTH · FEE_PROMOTION for one marketplace to the SQS queue.
+          &ldquo;Test delivery&rdquo; subscribes ORDER_CHANGE instead, as a positive control.
         </span>
       </div>
 
@@ -579,11 +580,22 @@ function NotificationSetupCard() {
           <input value={arn} onChange={(e) => setArn(e.target.value)} className="h-8 w-full min-w-[280px] rounded-md border border-n-200 px-2 font-mono text-[12px] outline-none focus:border-teal-400" />
         </label>
         <button
-          onClick={() => setup.mutate()}
+          onClick={() => setup.mutate(undefined)}
           disabled={!integrationId || !arn.trim().startsWith('arn:aws:sqs:') || setup.isPending}
           className="inline-flex h-8 items-center gap-1.5 rounded-md bg-teal-500 px-3 text-[12.5px] font-semibold text-white hover:bg-teal-600 disabled:opacity-50"
         >
           {setup.isPending ? 'Subscribing…' : 'Subscribe'}
+        </button>
+        {/* Positive control. The pricing notifications are only expected on listings that compete,
+            so silence is ambiguous: it can mean "delivery is broken" or "nothing changed". ORDER_CHANGE
+            fires on ordinary sales, which tells those two apart. */}
+        <button
+          onClick={() => setup.mutate(['ORDER_CHANGE'])}
+          disabled={!integrationId || !arn.trim().startsWith('arn:aws:sqs:') || setup.isPending}
+          title="Subscribes ORDER_CHANGE only, to prove Amazon can deliver to this queue. Unsubscribe once proven."
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:bg-n-50 disabled:opacity-50"
+        >
+          Test delivery
         </button>
       </div>
 

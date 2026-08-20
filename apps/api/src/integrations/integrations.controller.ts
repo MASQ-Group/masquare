@@ -71,8 +71,14 @@ export class IntegrationsController {
 
   /** One-time: register SP-API notification subscriptions (repricing) to an SQS queue ARN. */
   @Post(':id/spapi-notifications/setup')
-  setupSpApiNotifications(@Param('id') id: string, @Body() body: { sqsArn: string }) {
-    return this.svc.setupSpApiNotifications(id, body.sqsArn, ['ANY_OFFER_CHANGED', 'PRICING_HEALTH', 'FEE_PROMOTION']);
+  setupSpApiNotifications(@Param('id') id: string, @Body() body: { sqsArn: string; types?: string[] }) {
+    // ORDER_CHANGE is not used by repricing. It exists here as a positive control: it fires on
+    // ordinary daily sales, so it can prove the Amazon -> queue path works when the pricing
+    // notifications are silent and we cannot tell "no events" from "events not being delivered".
+    const allowed = new Set(['ANY_OFFER_CHANGED', 'PRICING_HEALTH', 'FEE_PROMOTION', 'ORDER_CHANGE']);
+    const requested = body.types?.filter((t) => allowed.has(t)) ?? [];
+    const types = requested.length ? requested : ['ANY_OFFER_CHANGED', 'PRICING_HEALTH', 'FEE_PROMOTION'];
+    return this.svc.setupSpApiNotifications(id, body.sqsArn, types);
   }
 
   @Patch(':id')

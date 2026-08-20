@@ -622,8 +622,8 @@ export const integrationsApi = {
   test: (id: string, mode: 'live' | 'test') => api.post<IntegrationTestResult>(`/integrations/${id}/test`, { mode }).then((r) => r.data),
   /** One-time: subscribe this marketplace's SP-API notifications to the SQS queue (repricing §2.2).
    *  This WRITES to Amazon (creates a destination + subscriptions), so it is user-triggered only. */
-  setupSpApiNotifications: (id: string, sqsArn: string) =>
-    api.post<SpApiNotificationSetup>(`/integrations/${id}/spapi-notifications/setup`, { sqsArn }).then((r) => r.data),
+  setupSpApiNotifications: (id: string, sqsArn: string, types?: string[]) =>
+    api.post<SpApiNotificationSetup>(`/integrations/${id}/spapi-notifications/setup`, { sqsArn, types }).then((r) => r.data),
   previewMapping: (id: string) => api.post<MappingPreview>(`/integrations/${id}/preview-mapping`, {}).then((r) => r.data),
   previewListings: (id: string) => api.post<ListingsPreview>(`/integrations/${id}/preview-listings`, {}).then((r) => r.data),
   verifyMapping: (id: string, confirmed: boolean) => api.post<ChannelIntegration>(`/integrations/${id}/verify-mapping`, { confirmed }).then((r) => r.data),
