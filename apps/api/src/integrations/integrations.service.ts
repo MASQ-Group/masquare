@@ -876,45 +876,44 @@ export class IntegrationsService implements OnModuleInit {
     const token = await this.amazonAccessToken(config, secrets);
     const results: Array<{ type: string; ok: boolean; message: string }> = [];
     for (const type of notificationTypes) {
+      // Look up what already exists BEFORE creating. Inferring "already subscribed" from the create
+      // error is unreliable — Amazon signals the conflict with varying HTTP statuses and only a
+      // message ("The resource specified conflicts with the current state"), so a status check
+      // silently missed it and left subscriptions pointing at the old queue.
+      let existing: { subscriptionId?: string; destinationId?: string } | null = null;
+      const cur = await this.amzFetch(`${meta.endpoint}/notifications/v1/subscriptions/${type}`, token);
+      if (cur.ok) {
+        const curJson: any = await cur.json().catch(() => null);
+        existing = curJson?.payload ?? curJson ?? null;
+      }
+
+      if (existing?.subscriptionId && existing.destinationId === dest.destinationId) {
+        results.push({ type, ok: true, message: 'already subscribed to this queue' });
+        continue;
+      }
+
+      // Subscribed to a DIFFERENT destination (e.g. a queue since moved region): Amazon allows one
+      // subscription per type, so the old one must go before the new one can be created.
+      if (existing?.subscriptionId) {
+        const del = await this.amzWrite(
+          `${meta.endpoint}/notifications/v1/subscriptions/${type}/${existing.subscriptionId}`,
+          token,
+          'DELETE',
+        );
+        if (!del.ok) {
+          const delJson: any = await del.json().catch(() => null);
+          results.push({ type, ok: false, message: `could not remove the old subscription (${del.status} ${IntegrationsService.amzErr(delJson) ?? ''})`.trim() });
+          continue;
+        }
+      }
+
       const r = await this.amzWrite(`${meta.endpoint}/notifications/v1/subscriptions/${type}`, token, 'POST', { payloadVersion: '1.0', destinationId: dest.destinationId });
       const j: any = await r.json().catch(() => null);
-      if (r.ok) {
-        results.push({ type, ok: true, message: j?.payload?.subscriptionId ?? 'subscribed' });
-        continue;
-      }
-      if (r.status === 409) {
-        // Already subscribed — but possibly to a DIFFERENT destination (e.g. a queue we have since
-        // moved region). Reporting a bare "already subscribed" would look green while Amazon kept
-        // publishing to the old queue, so check where it actually points and re-point if needed.
-        const cur = await this.amzFetch(`${meta.endpoint}/notifications/v1/subscriptions/${type}`, token);
-        const curJson: any = await cur.json().catch(() => null);
-        const existing = curJson?.payload ?? curJson;
-        if (existing?.destinationId === dest.destinationId) {
-          results.push({ type, ok: true, message: 'already subscribed to this queue' });
-        } else if (existing?.subscriptionId) {
-          const del = await this.amzWrite(
-            `${meta.endpoint}/notifications/v1/subscriptions/${type}/${existing.subscriptionId}`,
-            token,
-            'DELETE',
-            undefined,
-          );
-          if (!del.ok) {
-            results.push({ type, ok: false, message: `points at another destination and could not be removed (${del.status})` });
-          } else {
-            const again = await this.amzWrite(`${meta.endpoint}/notifications/v1/subscriptions/${type}`, token, 'POST', { payloadVersion: '1.0', destinationId: dest.destinationId });
-            const againJson: any = await again.json().catch(() => null);
-            results.push(
-              again.ok
-                ? { type, ok: true, message: `re-pointed to this queue (${againJson?.payload?.subscriptionId ?? 'ok'})` }
-                : { type, ok: false, message: IntegrationsService.amzErr(againJson) || `re-subscribe ${again.status}` },
-            );
-          }
-        } else {
-          results.push({ type, ok: false, message: 'already subscribed but its destination could not be read' });
-        }
-        continue;
-      }
-      results.push({ type, ok: false, message: IntegrationsService.amzErr(j) || `subscribe ${r.status}` });
+      results.push(
+        r.ok
+          ? { type, ok: true, message: existing?.subscriptionId ? `re-pointed to this queue (${j?.payload?.subscriptionId ?? 'ok'})` : (j?.payload?.subscriptionId ?? 'subscribed') }
+          : { type, ok: false, message: IntegrationsService.amzErr(j) || `subscribe ${r.status}` },
+      );
     }
     return { ok: results.every((x) => x.ok), destinationId: dest.destinationId, results };
   }
