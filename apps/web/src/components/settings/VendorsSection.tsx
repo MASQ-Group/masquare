@@ -98,6 +98,7 @@ function VendorModal({ vendor, onClose, onSaved }: { vendor: Vendor | null; onCl
     website: vendor?.website ?? '',
     vatTreatment: vendor?.vatTreatment ?? 'standard',
     currency: vendor?.currency ?? 'EUR',
+    mapIncludesVat: vendor?.mapIncludesVat ?? false,
   });
   const [vies, setVies] = useState<{ valid: boolean | null; name?: string | null; checkedAt: string; message: string } | null>(
     vendor?.vatNumberCheckedAt
@@ -204,6 +205,34 @@ function VendorModal({ vendor, onClose, onSaved }: { vendor: Vendor | null; onCl
                   <span>
                     <span className="block text-sm font-medium">{t.label}</span>
                     <span className="block text-xs text-n-500">{t.hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="label">MAP / suggested retail price basis</div>
+            <p className="text-xs text-n-500 mb-2">
+              How to read the suggested retail price this vendor quotes, in their price list and when one is
+              uploaded. Vendors are not consistent — the same file often heads the dealer price
+              &ldquo;EXC&rdquo; and the retail price &ldquo;INC&rdquo; — and reading it the wrong way shifts every
+              MAP by the VAT rate.
+            </p>
+            <div className="flex flex-col gap-2">
+              {([
+                { value: false, label: 'Excludes VAT', hint: 'The quoted price is net. VAT is added on top to reach the shelf price.' },
+                { value: true, label: 'Includes VAT', hint: 'The quoted price is what the customer pays, VAT already inside it.' },
+              ] as const).map((o) => (
+                <label key={String(o.value)} className="flex items-start gap-2.5 rounded-md border border-n-200 p-3 cursor-pointer hover:bg-n-25">
+                  <input
+                    type="radio" className="mt-0.5" name="mapIncludesVat"
+                    checked={form.mapIncludesVat === o.value}
+                    onChange={() => set({ mapIncludesVat: o.value })}
+                  />
+                  <span>
+                    <span className="block text-sm font-medium">{o.label}</span>
+                    <span className="block text-xs text-n-500">{o.hint}</span>
                   </span>
                 </label>
               ))}
