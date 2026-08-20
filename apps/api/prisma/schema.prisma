@@ -1774,6 +1774,22 @@ model SalesTransactionItem {
   // goods sold differed from the catalogue cost. Null = use the product's cost as usual.
   unitNetCostEur Float? @map("unit_net_cost_eur")
 
+  // COGS frozen at the moment the sale was created or pulled from the channel.
+  //
+  // Revenue and profit are always computed from the product data in place at that time: a later
+  // purchase-cost change applies from that point forward and never restates a sale already
+  // recorded. Without this the cost resolved at READ time, so re-costing a product silently
+  // rewrote the reported profit of every past sale of it — which a vendor price-file upload
+  // would do to a thousand products at once.
+  //
+  // Preserved across an edit: re-saving a transaction must not refresh its cost.
+  // Null means nothing was known when the sale was recorded; those lines keep resolving live
+  // until a cost exists, then freeze.
+  unitCostSnapshotEur Decimal?  @map("unit_cost_snapshot_eur") @db.Decimal(14, 4)
+  /** Where the frozen cost came from: average | catalogue. */
+  costSnapshotSource  String?   @map("cost_snapshot_source")
+  costSnapshotAt      DateTime? @map("cost_snapshot_at")
+
   // Per-line VAT snapshot, written for local sales where we are the one charging VAT.
   // The rate is copied in at save time so changing a VatClass later never rewrites
   // historical sales; the class id is kept alongside it for reporting (a VAT return
