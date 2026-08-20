@@ -1788,7 +1788,7 @@ export const procurementApi = {
 export interface PricingBreakdown {
   netEur: number; vatEur: number; feeEur: number; importEur: number;
   pointsEur: number; taxType: string; taxLabel: string;
-  costEur: number; shippingEur: number; profitEur: number; marginPct: number;
+  costEur: number; shippingEur: number; fbaFeeEur: number; profitEur: number; marginPct: number;
 }
 export interface PricingComparisonRow {
   channelId: string; channelName: string; currency: string; countryIso: string | null;
@@ -1807,17 +1807,23 @@ export interface IndividualPricingResult {
   auto: {
     costEur: number; shippingServiceId: string | null; shippingServiceName: string | null;
     shippingEur: number | null; shippingZone: string | null;
+    fulfilment?: 'FBM' | 'FBA'; fbaFeeEur?: number | null;
+    /** 'allocated' = real per-unit cost from FBA shipments; 'estimated' = weight-based fallback. */
+    fbaInboundSource?: 'allocated' | 'estimated' | null;
+    /** 'historical' = averaged from settled FBA orders; 'unknown' = none yet, so the fee is 0. */
+    fbaFeeSource?: 'historical' | 'unknown' | null;
     vatPct: number; taxType: string; taxLabel: string; pointsPct: number; feePct: number; importPct: number;
     actualWeightKg: number | null; volumetricWeightKg: number | null; chargeableWeightKg: number | null;
   };
-  applied: { costEur: number; shippingEur: number; importPct: number; feePct: number; vatPct: number; pointsPct: number; taxType: string };
+  applied: { costEur: number; shippingEur: number; fbaFeeEur?: number; importPct: number; feePct: number; vatPct: number; pointsPct: number; taxType: string };
   breakdown: PricingBreakdown;
   comparison: PricingComparisonRow[];
 }
 export interface IndividualPricingInput {
   productId: string; salesChannelId: string; price: number;
   taxMode?: 'include' | 'zero'; shippingServiceId?: string | null;
-  costEur?: number; shippingCostEur?: number; vatPct?: number; feePct?: number; importPct?: number;
+  fulfilment?: 'FBM' | 'FBA';
+  costEur?: number; shippingCostEur?: number; fbaFeeEur?: number; vatPct?: number; feePct?: number; importPct?: number;
 }
 export interface BulkPricingCell {
   priceNative: number | null; profitEur: number | null; marginPct: number | null; reason: string | null;

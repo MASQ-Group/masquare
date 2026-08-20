@@ -47,8 +47,9 @@ export function IndividualPricingPage() {
   const [channelId, setChannelId] = useState('');
   const [price, setPrice] = useState('');
   const [taxMode, setTaxMode] = useState<'include' | 'zero'>('include');
+  const [fulfilment, setFulfilment] = useState<'FBM' | 'FBA'>('FBM');
   const [serviceId, setServiceId] = useState('');
-  const [ov, setOv] = useState({ cost: '', shipping: '', vat: '', fee: '', importPct: '' });
+  const [ov, setOv] = useState({ cost: '', shipping: '', vat: '', fee: '', importPct: '', fbaFee: '' });
   const [showComparison, setShowComparison] = useState(false);
 
   const { data: channels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
@@ -69,9 +70,11 @@ export function IndividualPricingPage() {
         salesChannelId: channelId,
         price: Number(price),
         taxMode,
+        fulfilment,
         shippingServiceId: serviceId || null,
         costEur: num(ov.cost),
         shippingCostEur: num(ov.shipping),
+        fbaFeeEur: num(ov.fbaFee),
         vatPct: num(ov.vat),
         feePct: num(ov.fee),
         importPct: num(ov.importPct),
@@ -87,7 +90,7 @@ export function IndividualPricingPage() {
     const t = setTimeout(() => calc.mutate(), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [product.productId, channelId, price, taxMode, serviceId, ov.cost, ov.shipping, ov.vat, ov.fee, ov.importPct, ready]);
+  }, [product.productId, channelId, price, taxMode, fulfilment, serviceId, ov.cost, ov.shipping, ov.vat, ov.fee, ov.importPct, ov.fbaFee, ready]);
 
   const hasOverrides = Object.values(ov).some((v) => v.trim() !== '');
   const b = result?.breakdown;
@@ -116,7 +119,7 @@ export function IndividualPricingPage() {
         info="Set a listing price for one product on one channel and see exactly what it earns."
         actions={hasOverrides ? (
           <button
-            onClick={() => setOv({ cost: '', shipping: '', vat: '', fee: '', importPct: '' })}
+            onClick={() => setOv({ cost: '', shipping: '', vat: '', fee: '', importPct: '', fbaFee: '' })}
             className="hbtn"
           >
             <RotateCcw size={15} /> Reset Overrides
@@ -152,6 +155,25 @@ export function IndividualPricingPage() {
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
                 />
+              </Field>
+              {/* FBM ships from us, FBA from Amazon — which changes what "shipping" even means,
+                  so it belongs next to the price rather than buried in the inputs below. */}
+              <Field label="Fulfilment">
+                <div className="flex h-[38px] items-center gap-1 rounded-md bg-n-100 p-1">
+                  {(['FBM', 'FBA'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setFulfilment(m)}
+                      className={`h-full flex-1 rounded text-[12.5px] font-semibold transition ${
+                        fulfilment === m
+                          ? 'border border-teal-300 bg-teal-50 text-teal-800 shadow-sm'
+                          : 'border border-transparent text-n-500 hover:text-n-700'
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
               </Field>
               <Field label="Tax in selling price">
                 <div className="flex h-[38px] items-center gap-1 rounded-md bg-n-100 p-1">
@@ -194,13 +216,34 @@ export function IndividualPricingPage() {
                 />
               </Field>
               <LockedField label="Shipping zone" value={result?.auto.shippingZone ?? '—'} />
-              <Field label="Shipping cost (€)">
+              <Field
+                label={fulfilment === 'FBA' ? 'Inbound to Amazon (€)' : 'Shipping cost (€)'}
+                hint={
+                  fulfilment === 'FBA'
+                    ? result?.auto.fbaInboundSource === 'allocated'
+                      ? 'Allocated per unit from FBA shipments'
+                      : 'No FBA shipment for this product — weight estimate'
+                    : undefined
+                }
+              >
                 <input
                   className="input mono text-right" inputMode="decimal"
                   placeholder={result?.auto.shippingEur != null ? result.auto.shippingEur.toFixed(2) : '0.00'}
                   value={ov.shipping} onChange={(e) => setOv((o) => ({ ...o, shipping: e.target.value }))}
                 />
               </Field>
+              {fulfilment === 'FBA' && (
+                <Field
+                  label="FBA fulfilment fee (€)"
+                  hint={result?.auto.fbaFeeSource === 'historical' ? 'Average per unit from settled orders' : 'No settled FBA order yet — enter it'}
+                >
+                  <input
+                    className="input mono text-right" inputMode="decimal"
+                    placeholder={result?.auto.fbaFeeEur != null ? result.auto.fbaFeeEur.toFixed(2) : '0.00'}
+                    value={ov.fbaFee} onChange={(e) => setOv((o) => ({ ...o, fbaFee: e.target.value }))}
+                  />
+                </Field>
+              )}
               <LockedField label="Actual weight" value={result?.auto.actualWeightKg != null ? `${result.auto.actualWeightKg} kg` : '—'} />
               <LockedField label="Volumetric weight" value={result?.auto.volumetricWeightKg != null ? `${result.auto.volumetricWeightKg} kg` : '—'} />
               <Field label="Product cost (€)">
@@ -279,10 +322,17 @@ export function IndividualPricingPage() {
                 <Row label={`• Channel fee (${result?.applied.feePct ?? 0}%)`} value={b ? `−${eur(b.feeEur)}` : '—'} cost />
                 <Row label="• Product cost" value={b ? `−${eur(b.costEur)}` : '—'} cost />
                 <Row
-                  label={`• Shipping cost${result?.auto.shippingServiceName ? ` (${result.auto.shippingServiceName})` : ''}`}
+                  label={
+                    fulfilment === 'FBA'
+                      ? `• Inbound to Amazon${result?.auto.fbaInboundSource === 'estimated' ? ' (estimated)' : ''}`
+                      : `• Shipping cost${result?.auto.shippingServiceName ? ` (${result.auto.shippingServiceName})` : ''}`
+                  }
                   value={b ? `−${eur(b.shippingEur)}` : '—'}
                   cost
                 />
+                {fulfilment === 'FBA' && (
+                  <Row label="• FBA fulfilment fee" value={b ? `−${eur(b.fbaFeeEur ?? 0)}` : '—'} cost />
+                )}
                 <Row label={`• Import tax (${result?.applied.importPct ?? 0}%)`} value={b ? `−${eur(b.importEur)}` : '—'} cost />
                 <div className="mt-1.5 flex items-baseline justify-between border-t border-n-100 pt-3">
                   <span className="text-[13.5px] font-bold text-n-900">Net profit</span>
