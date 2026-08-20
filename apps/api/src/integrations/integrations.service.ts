@@ -812,7 +812,7 @@ export class IntegrationsService implements OnModuleInit {
    * poller reads a queue URL: point them at different queues and everything looks configured while
    * nothing is ever delivered. Creates and changes nothing.
    */
-  async spApiNotificationStatus(integrationId: string, types = ['ANY_OFFER_CHANGED', 'PRICING_HEALTH', 'FEE_PROMOTION']) {
+  async spApiNotificationStatus(integrationId: string, types = ['ANY_OFFER_CHANGED', 'PRICING_HEALTH', 'FEE_PROMOTION', 'ORDER_CHANGE']) {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
     if (!row) return { ok: false, message: 'Integration not found' };
     if (row.channelType !== 'amazon') return { ok: false, message: 'Not an Amazon integration' };
