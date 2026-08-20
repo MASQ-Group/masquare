@@ -148,22 +148,28 @@ export class SalesTransactionsService {
     const isFba = t.fulfilmentType === 'FBA';
     // Unit cost used for COGS, in preference order:
     //   1. the line's explicit override — a deliberate act, so it outranks everything;
-    //   2. the product's moving average — what the goods have actually cost us;
-    //   3. the catalogue purchase cost — the best estimate until the first receipt lands.
+    //   2. the cost FROZEN when the sale was created or pulled;
+    //   3. the product's moving average — what the goods have actually cost us;
+    //   4. the catalogue purchase cost — the best estimate until the first receipt lands.
     //
-    // Resolved at read time rather than snapshotted, so a transaction submitted before its
-    // product was ever received picks up the real average on the next recalculation.
+    // The snapshot is what makes profit point-in-time: a sale is valued with the product data in
+    // place when it happened, so re-costing a product applies forward only and never restates a
+    // sale already reported. Steps 3 and 4 remain for lines recorded before any cost was known —
+    // those keep resolving live until one exists, which preserves the original behaviour of a
+    // transaction submitted before its product was ever received.
     //
     // An average of exactly zero is treated as "no average": the costing engine seeds the
     // average from the receipt's unit cost, so a PO booked with no cost would otherwise
     // wipe out a perfectly good catalogue cost and silently report a 100% margin.
-    const costSourceOf = (it: any): 'override' | 'average' | 'catalogue' | 'none' =>
+    const costSourceOf = (it: any): 'override' | 'snapshot' | 'average' | 'catalogue' | 'none' =>
       it.unitNetCostEur != null ? 'override'
+      : it.unitCostSnapshotEur != null ? 'snapshot'
       : Number(it.product?.averageCostEur ?? 0) > 0 ? 'average'
       : it.product?.purchaseCostAmount != null ? 'catalogue' : 'none';
     const unitCostOf = (it: any) => {
       switch (costSourceOf(it)) {
         case 'override': return Number(it.unitNetCostEur);
+        case 'snapshot': return Number(it.unitCostSnapshotEur);
         case 'average': return Number(it.product.averageCostEur);
         case 'catalogue': return Number(it.product.purchaseCostAmount);
         default: return 0;
@@ -620,8 +626,10 @@ export class SalesTransactionsService {
         productCost: it.product?.purchaseCostAmount != null ? Number(it.product.purchaseCostAmount) : null, // catalogue unit cost
         averageCostEur: it.product?.averageCostEur != null ? Number(it.product.averageCostEur) : null, // moving average, once received
         unitNetCostEur: it.unitNetCostEur != null ? Number(it.unitNetCostEur) : null, // per-line override (EUR), if any
+        unitCostSnapshotEur: it.unitCostSnapshotEur != null ? Number(it.unitCostSnapshotEur) : null, // cost frozen at sale time
+        costSnapshotSource: it.costSnapshotSource ?? null,
         unitCostEur: unitCostOf(it), // what COGS actually used
-        costSource: costSourceOf(it), // override | average | catalogue | none
+        costSource: costSourceOf(it), // override | snapshot | average | catalogue | none
 
         productWeightKg: it.product?.packageWeightKg != null ? Number(it.product.packageWeightKg) : it.product?.productWeightKg != null ? Number(it.product.productWeightKg) : null,
         sku: it.sku,
@@ -980,6 +988,47 @@ export class SalesTransactionsService {
     const map = new Map<string, number>();
     for (const r of rows) if (r.cur && r.rate != null) map.set(r.cur, Number(r.rate));
     return map;
+  }
+
+  /**
+   * Freeze COGS onto each line at the moment the sale is recorded.
+   *
+   * Revenue and profit always use the product data in place when the sale was created or pulled,
+   * so a later purchase-cost change applies forward only. `keep` carries the snapshots an existing
+   * transaction already has: editing a sale must not re-cost it, and the update path deletes and
+   * recreates its lines, which would otherwise silently refresh every one.
+   *
+   * A line whose product has no cost at all is left null rather than frozen at zero — zero is not
+   * a cost, and freezing it would report a 100% margin forever.
+   */
+  private async freezeUnitCosts<T extends { productId?: string | null; sku?: string | null }>(
+    items: T[],
+    keep?: Map<string, { eur: number; source: string; at: Date }>,
+  ): Promise<Array<T & { unitCostSnapshotEur: number | null; costSnapshotSource: string | null; costSnapshotAt: Date | null }>> {
+    const ids = [...new Set(items.map((i) => i.productId).filter((x): x is string => !!x))];
+    const products = ids.length
+      ? await this.prisma.product.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, averageCostEur: true, purchaseCostAmount: true },
+        })
+      : [];
+    const byId = new Map(products.map((p) => [p.id, p]));
+    const now = new Date();
+
+    return items.map((i) => {
+      const prior = keep?.get(String(i.sku ?? '').trim().toLowerCase());
+      if (prior) {
+        return { ...i, unitCostSnapshotEur: prior.eur, costSnapshotSource: prior.source, costSnapshotAt: prior.at };
+      }
+      const p = i.productId ? byId.get(i.productId) : undefined;
+      // Same preference order the reader uses, so freezing changes no reported figure.
+      const avg = Number(p?.averageCostEur ?? 0);
+      if (p && avg > 0) return { ...i, unitCostSnapshotEur: avg, costSnapshotSource: 'average', costSnapshotAt: now };
+      if (p?.purchaseCostAmount != null) {
+        return { ...i, unitCostSnapshotEur: Number(p.purchaseCostAmount), costSnapshotSource: 'catalogue', costSnapshotAt: now };
+      }
+      return { ...i, unitCostSnapshotEur: null, costSnapshotSource: null, costSnapshotAt: null };
+    });
   }
 
   /** Average allocated inbound (to-Amazon) cost per unit, keyed `${productId}:${salesChannelId}`,
@@ -1426,7 +1475,7 @@ export class SalesTransactionsService {
         unlockedForEdit: false,
         createdById: actorId,
         updatedById: actorId,
-        items: { create: items },
+        items: { create: await this.freezeUnitCosts(items) },
       },
     });
 
@@ -1774,9 +1823,25 @@ export class SalesTransactionsService {
         await this.serials.restockWithin(tx, { salesTransactionId: id });
       }
       if (items) {
+        // Lines are replaced wholesale on edit, so carry the frozen costs over first — re-saving
+        // a sale must not re-cost it at today's prices.
+        const existing = await tx.salesTransactionItem.findMany({
+          where: { transactionId: id },
+          select: { sku: true, unitCostSnapshotEur: true, costSnapshotSource: true, costSnapshotAt: true },
+        });
+        const keep = new Map<string, { eur: number; source: string; at: Date }>();
+        for (const e of existing) {
+          if (e.unitCostSnapshotEur == null) continue;
+          keep.set(String(e.sku ?? '').trim().toLowerCase(), {
+            eur: Number(e.unitCostSnapshotEur),
+            source: e.costSnapshotSource ?? 'catalogue',
+            at: e.costSnapshotAt ?? new Date(),
+          });
+        }
+        const frozen = await this.freezeUnitCosts(items, keep);
         await tx.salesTransactionItem.deleteMany({ where: { transactionId: id } });
         await tx.salesTransactionItem.createMany({
-          data: items.map((i) => ({ ...i, transactionId: id, productId: i.productId ?? null })),
+          data: frozen.map((i) => ({ ...i, transactionId: id, productId: i.productId ?? null })),
         });
       }
       await tx.salesTransaction.update({
