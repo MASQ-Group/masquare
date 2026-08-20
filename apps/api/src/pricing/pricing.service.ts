@@ -28,6 +28,14 @@ const AMAZON_POINTS_PCT = 1.0;
 const GST_RATE_PCT = 10;
 
 /** Everything a single price calculation needs, resolved once and reused. */
+interface FbaChannelCosts {
+  inboundEur: number | null;
+  feeEur: number | null;
+  feeSource: 'product' | 'channel' | null;
+  /** Other channels that DO hold FBA data for this product, named with their owning company. */
+  elsewhere: string[];
+}
+
 export interface CostInputs {
   costEur: number;
   /** FBM: outbound shipping to the buyer. FBA: allocated inbound cost of getting the unit to Amazon. */
@@ -251,7 +259,11 @@ export class PricingService {
   private async loadChannels(ids?: string[], companyIds?: string[]) {
     return this.prisma.salesChannel.findMany({
       where: { ...ACTIVE, ...(ids?.length ? { id: { in: ids } } : {}), ...(companyIds ? { companyId: { in: companyIds } } : {}) },
-      include: { nativeCountry: { select: { id: true, name: true, isoCode: true, vatRate: true } } },
+      include: {
+        nativeCountry: { select: { id: true, name: true, isoCode: true, vatRate: true } },
+        // Needed to name the owner when two companies have a channel of the same name.
+        company: { select: { id: true, officialName: true } },
+      },
       orderBy: { name: 'asc' },
     });
   }
@@ -291,8 +303,8 @@ export class PricingService {
     product: any,
     rates: Map<string, number | null>,
     channels: any[],
-  ): Promise<Map<string, { inboundEur: number | null; feeEur: number | null; feeSource: 'product' | 'channel' | null }>> {
-    const out = new Map<string, { inboundEur: number | null; feeEur: number | null; feeSource: 'product' | 'channel' | null }>();
+  ): Promise<Map<string, FbaChannelCosts>> {
+    const out = new Map<string, FbaChannelCosts>();
 
     // Every SKU this product is known by: our own, plus whatever each channel lists it as.
     // NB: ChannelListing has no deletedAt column — do not spread ACTIVE in here.
@@ -356,6 +368,12 @@ export class PricingService {
       if (qty > 0) feeByChannel.set(r.ch, Number(r.fee) / qty);
     }
 
+    // Which channels DO hold FBA data for this product. Channel names repeat across companies,
+    // so "no FBA shipment" is far more often the wrong channel than a genuinely un-stocked SKU.
+    const elsewhere = channels
+      .filter((c) => inbound.has(c.id) || feeByProduct.has(c.id))
+      .map((c) => (c.company?.officialName ? `${c.name} (${c.company.officialName})` : c.name));
+
     for (const c of channels) {
       const ccy = (c.nativeCurrency ?? 'EUR').toUpperCase();
       const rate = ccy === 'EUR' ? 1 : rates.get(ccy) ?? null;
@@ -365,6 +383,7 @@ export class PricingService {
         inboundEur: inbound.get(c.id) ?? null,
         feeEur: nativeFee != null && rate != null ? round(nativeFee * rate, 4) : null,
         feeSource,
+        elsewhere: elsewhere.filter((n) => n !== (c.company?.officialName ? `${c.name} (${c.company.officialName})` : c.name)),
       });
     }
     return out;
@@ -393,7 +412,7 @@ export class PricingService {
     const isFba = dto.fulfilment === 'FBA';
     const fbaCosts = isFba
       ? await this.fbaUnitCostsByChannel(product, rates, channels)
-      : new Map<string, { inboundEur: number | null; feeEur: number | null; feeSource: 'product' | 'channel' | null }>();
+      : new Map<string, FbaChannelCosts>();
 
     // `value` is in the channel's currency: the buyer-paid price for the channel being
     // priced, or a net figure (valueIsNet) for the cross-channel rows, where net revenue
@@ -436,6 +455,7 @@ export class PricingService {
         // cost or fell back to an estimate rather than presenting both as equally solid.
         fbaInboundSource: isFba ? (fbaInboundEur != null ? 'allocated' : 'estimated') : null,
         fbaFeeSource: isFba ? (dto.fbaFeeEur != null ? 'override' : fba?.feeSource === 'product' ? 'product' : fba?.feeSource === 'channel' ? 'channel' : 'unknown') : null,
+        fbaElsewhere: fba?.elsewhere ?? [],
       };
     };
 
@@ -488,7 +508,11 @@ export class PricingService {
       warnings.push('No FBA fulfilment fee could be established for this product or channel — it is NOT included in the profit below. Enter it from Seller Central.');
     }
     if (isFba && p.fbaInboundSource === 'estimated') {
-      warnings.push('This product has no FBA shipment on this channel — the inbound cost is a weight-based estimate, not an allocated cost.');
+      warnings.push(
+        p.fbaElsewhere.length
+          ? `This product has no FBA shipment on this channel — the inbound cost is a weight-based estimate. It DOES have FBA data on: ${p.fbaElsewhere.join(', ')}. Check you have selected the right channel.`
+          : 'This product has no FBA shipment on this channel — the inbound cost is a weight-based estimate, not an allocated cost.',
+      );
     }
     if (!service) warnings.push('No shipping service for this destination — shipping is not included.');
     else if (p.weight == null) warnings.push('This product has no weight or dimensions, so shipping could not be priced.');

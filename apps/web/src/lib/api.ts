@@ -498,6 +498,9 @@ export type SalesChannelKind = 'online' | 'local';
 export interface SalesChannel {
   id: string;
   name: string;
+  /** Owning company. Channel names repeat across companies ("Amazon AUS" under two entities),
+   *  so pickers must disambiguate by owner or the wrong one is chosen silently. */
+  company?: { id: string; officialName: string } | null;
   description: string | null;
   /** 'local' is our own direct/walk-in sales: EUR, FX 1, no fee, VAT charged by us.
    *  Structural — seeded, not editable through the API. */
@@ -1813,6 +1816,8 @@ export interface IndividualPricingResult {
     /** Where the fulfilment fee came from. 'unknown' = none could be established, so it is
      *  NOT in the profit — a zero FBA fee is never real. */
     fbaFeeSource?: 'override' | 'product' | 'channel' | 'unknown' | null;
+    /** Other channels that hold FBA data for this product, named with their owning company. */
+    fbaElsewhere?: string[];
     vatPct: number; taxType: string; taxLabel: string; pointsPct: number; feePct: number; importPct: number;
     actualWeightKg: number | null; volumetricWeightKg: number | null; chargeableWeightKg: number | null;
   };
