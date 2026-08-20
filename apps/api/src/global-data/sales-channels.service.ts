@@ -5,6 +5,11 @@ import { CreateSalesChannelDto, UpdateSalesChannelDto } from './dto/sales-channe
 
 const include = {
   nativeCountry: { select: { id: true, name: true, isoCode: true } },
+  // A user with access to more than one company sees a channel per company, and the names are
+  // routinely identical ("Amazon AUS" under two entities). Without the owner the picker offers
+  // two indistinguishable options, and choosing the wrong one silently costs a listing against
+  // an entity that has no shipments or orders at all.
+  company: { select: { id: true, officialName: true } },
 } satisfies Prisma.SalesChannelInclude;
 
 @Injectable()
