@@ -295,8 +295,9 @@ export class PricingService {
     const out = new Map<string, { inboundEur: number | null; feeEur: number | null; feeSource: 'product' | 'channel' | null }>();
 
     // Every SKU this product is known by: our own, plus whatever each channel lists it as.
+    // NB: ChannelListing has no deletedAt column — do not spread ACTIVE in here.
     const listings = await this.prisma.channelListing.findMany({
-      where: { productId: product.id, ...ACTIVE },
+      where: { productId: product.id },
       select: { channelSku: true },
     });
     const skus = [...new Set(
