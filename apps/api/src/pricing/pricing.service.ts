@@ -29,7 +29,11 @@ const GST_RATE_PCT = 10;
 /** Everything a single price calculation needs, resolved once and reused. */
 export interface CostInputs {
   costEur: number;
+  /** FBM: outbound shipping to the buyer. FBA: allocated inbound cost of getting the unit to Amazon. */
   shippingEur: number;
+  /** Amazon's per-unit FBA fulfilment fee. 0 for FBM. Kept separate from shipping so the
+   *  breakdown can show what is our freight and what is Amazon's charge. */
+  fbaFeeEur?: number;
   importPct: number;
   feePct: number;
   vatPct: number;
@@ -93,7 +97,8 @@ export class PricingService {
     const importEur = c.costEur * (c.importPct / 100);
     // Amazon Points (JP) are a reward funded from our proceeds — a real cost, keyed off net.
     const pointsEur = netEur * (c.pointsPct / 100);
-    const profit = netEur - feeEur - c.costEur - c.shippingEur - importEur - pointsEur;
+    const fbaFeeEur = c.fbaFeeEur ?? 0;
+    const profit = netEur - feeEur - c.costEur - c.shippingEur - importEur - pointsEur - fbaFeeEur;
     return {
       netEur: round(netEur),
       vatEur: round(vatEur),
@@ -104,6 +109,7 @@ export class PricingService {
       taxLabel: taxLabelFor(c.taxType),
       costEur: round(c.costEur),
       shippingEur: round(c.shippingEur),
+      fbaFeeEur: round(fbaFeeEur),
       profitEur: round(profit),
       // Margin against what the buyer pays, matching the transaction module's base.
       marginPct: grossEur > 0 ? round((profit / grossEur) * 100) : 0,
@@ -123,7 +129,7 @@ export class PricingService {
     // Net is (1 − points%) usable after the Amazon Points reward is funded from it.
     const denom = (1 - c.pointsPct / 100) / (1 + c.vatPct / 100) - c.feePct / 100 - target / 100;
     if (denom <= 0) return null;
-    const costs = c.costEur + c.shippingEur + c.costEur * (c.importPct / 100);
+    const costs = c.costEur + c.shippingEur + (c.fbaFeeEur ?? 0) + c.costEur * (c.importPct / 100);
     const gross = costs / denom;
     return gross > 0 && Number.isFinite(gross) ? gross : null;
   }
@@ -266,6 +272,68 @@ export class PricingService {
     return rate != null ? round(amount * rate, 4) : amount;
   }
 
+  /**
+   * Per-unit FBA costs for a product, by sales channel.
+   *
+   * Mirrors how the sales-transaction module values a real FBA order, so a forecast and the
+   * eventual sale agree: the "shipping" of an FBA unit is the allocated cost of getting it INTO
+   * Amazon (from confirmed and draft FBA shipments), and Amazon's fulfilment fee is a separate
+   * flat per-unit charge.
+   *
+   * Both are averages over what actually happened for this product on that channel. The
+   * fulfilment fee is stored in the channel's own currency, so it is converted per channel.
+   */
+  private async fbaUnitCostsByChannel(
+    productId: string,
+    rates: Map<string, number | null>,
+    channels: any[],
+  ): Promise<Map<string, { inboundEur: number | null; feeEur: number | null }>> {
+    const out = new Map<string, { inboundEur: number | null; feeEur: number | null }>();
+
+    // Allocated inbound cost per unit, already in EUR.
+    const inboundRows = await this.prisma.fbaShipmentItem.findMany({
+      where: { deletedAt: null, shipment: { deletedAt: null }, productId },
+      select: { quantity: true, allocatedCostEur: true, shipment: { select: { salesChannelId: true } } },
+    });
+    const inbound = new Map<string, { cost: number; qty: number }>();
+    for (const it of inboundRows) {
+      const ch = it.shipment?.salesChannelId ?? '';
+      const cur = inbound.get(ch) ?? { cost: 0, qty: 0 };
+      cur.cost += it.allocatedCostEur != null ? Number(it.allocatedCostEur) : 0;
+      cur.qty += it.quantity ?? 0;
+      inbound.set(ch, cur);
+    }
+
+    // Amazon's fulfilment fee per unit, in the channel's currency. A flat size/weight-tier fee,
+    // so a per-unit average over settled orders is both the right basis and stable.
+    const feeRows = await this.prisma.$queryRaw<Array<{ ch: string; fee: number; qty: number }>>`
+      SELECT COALESCE(t.sales_channel_id::text, '') AS ch,
+             SUM(i.fba_fulfilment_fee_amount) AS fee, SUM(i.quantity) AS qty
+      FROM sales_transaction_item i
+      JOIN sales_transaction t ON t.id = i.transaction_id
+      WHERE i.deleted_at IS NULL AND t.deleted_at IS NULL
+        AND i.product_id = ${productId}::uuid
+        AND i.fba_fulfilment_fee_amount > 0 AND i.quantity > 0
+      GROUP BY COALESCE(t.sales_channel_id::text, '')`;
+    const feeNative = new Map<string, number>();
+    for (const r of feeRows) {
+      const qty = Number(r.qty);
+      if (qty > 0) feeNative.set(r.ch, Number(r.fee) / qty);
+    }
+
+    for (const c of channels) {
+      const inb = inbound.get(c.id);
+      const ccy = (c.nativeCurrency ?? 'EUR').toUpperCase();
+      const rate = ccy === 'EUR' ? 1 : rates.get(ccy) ?? null;
+      const nativeFee = feeNative.get(c.id) ?? null;
+      out.set(c.id, {
+        inboundEur: inb && inb.qty > 0 ? round(inb.cost / inb.qty, 4) : null,
+        feeEur: nativeFee != null && rate != null ? round(nativeFee * rate, 4) : null,
+      });
+    }
+    return out;
+  }
+
   // ---------------------------------------------------------------- individual
 
   async individual(dto: IndividualPricingDto, companyIds?: string[]) {
@@ -283,6 +351,14 @@ export class PricingService {
     const autoCost = await this.productCostEur(product);
     const rates = await this.fx.ratesFor(channels.map((c) => c.nativeCurrency));
 
+    // FBA changes what "shipping" means: the unit is freighted to Amazon rather than to the
+    // buyer, and Amazon charges a fulfilment fee on top. Resolved for every channel so the
+    // cross-channel comparison stays on the same fulfilment basis as the channel being priced.
+    const isFba = dto.fulfilment === 'FBA';
+    const fbaCosts = isFba
+      ? await this.fbaUnitCostsByChannel(product.id, rates, channels)
+      : new Map<string, { inboundEur: number | null; feeEur: number | null }>();
+
     // `value` is in the channel's currency: the buyer-paid price for the channel being
     // priced, or a net figure (valueIsNet) for the cross-channel rows, where net revenue
     // is the fixed quantity and the gross is what we are deriving.
@@ -296,9 +372,17 @@ export class PricingService {
       const autoFee = channel.generalSalesFeePct != null ? Number(channel.generalSalesFeePct) : 0;
       const zeroTax = dto.taxMode === 'zero';
 
+      // FBA: the allocated inbound cost per unit if this product has actually been sent to
+      // Amazon on this channel; otherwise fall back to the weight-based estimate, which is the
+      // best available proxy for freighting one unit there.
+      const fba = fbaCosts.get(channel.id);
+      const fbaInboundEur = isFba ? fba?.inboundEur ?? null : null;
+      const autoShipEur = isFba ? fbaInboundEur ?? ship.costEur ?? 0 : ship.costEur ?? 0;
+
       const inputs: CostInputs = {
         costEur: dto.costEur ?? autoCost,
-        shippingEur: dto.shippingCostEur ?? ship.costEur ?? 0,
+        shippingEur: dto.shippingCostEur ?? autoShipEur,
+        fbaFeeEur: isFba ? dto.fbaFeeEur ?? fba?.feeEur ?? 0 : 0,
         importPct: dto.importPct ?? 0,
         feePct: dto.feePct ?? autoFee,
         // "No tax" is an explicit choice on the form, so it wins over the resolved rate.
@@ -307,7 +391,13 @@ export class PricingService {
         pointsPct: zeroTax ? 0 : tax.pointsPct,
         taxType: tax.taxType,
       };
-      return { ccy, rate, weight, ship, inputs, autoVat, autoFee, taxType: tax.taxType, pointsPct: inputs.pointsPct };
+      return {
+        ccy, rate, weight, ship, inputs, autoVat, autoFee, taxType: tax.taxType, pointsPct: inputs.pointsPct,
+        // Where each FBA number came from, so the form can say whether it used a real allocated
+        // cost or fell back to an estimate rather than presenting both as equally solid.
+        fbaInboundSource: isFba ? (fbaInboundEur != null ? 'allocated' : 'estimated') : null,
+        fbaFeeSource: isFba ? (fba?.feeEur != null ? 'historical' : 'unknown') : null,
+      };
     };
 
     // --- the channel being priced -------------------------------------------
@@ -371,8 +461,16 @@ export class PricingService {
         costEur: round(autoCost),
         shippingServiceId: service?.id ?? null,
         shippingServiceName: service?.name ?? null,
-        shippingEur: p.ship.costEur,
+        // For FBA this is what the form actually applied (allocated inbound, or the weight
+        // estimate when the product has never been sent in), not the outbound rate.
+        shippingEur: isFba ? p.inputs.shippingEur : p.ship.costEur,
         shippingZone: p.ship.zoneName,
+        fulfilment: isFba ? 'FBA' : 'FBM',
+        fbaFeeEur: isFba ? p.inputs.fbaFeeEur ?? 0 : null,
+        // 'allocated' = a real per-unit cost from FBA shipments; 'estimated' = weight-based
+        // fallback. 'unknown' fee = no settled FBA order for this product on this channel yet.
+        fbaInboundSource: p.fbaInboundSource,
+        fbaFeeSource: p.fbaFeeSource,
         vatPct: p.autoVat,
         taxType: p.taxType,
         taxLabel: taxLabelFor(p.taxType),

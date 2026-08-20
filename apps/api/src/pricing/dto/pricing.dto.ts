@@ -16,9 +16,19 @@ export class IndividualPricingDto {
 
   @ApiPropertyOptional() @IsOptional() @IsUUID() shippingServiceId?: string | null;
 
+  /**
+   * How the unit reaches the buyer. FBM ships from us, so the cost is outbound shipping. FBA
+   * ships from Amazon, so the cost is the allocated inbound freight to Amazon plus Amazon's
+   * per-unit fulfilment fee. Defaults to FBM.
+   */
+  @ApiPropertyOptional({ enum: ['FBM', 'FBA'] })
+  @IsOptional() @IsIn(['FBM', 'FBA']) fulfilment?: 'FBM' | 'FBA';
+
   // Overrides — each falls back to the auto-resolved value when omitted.
   @ApiPropertyOptional() @IsOptional() @Type(() => Number) @Min(0) costEur?: number;
   @ApiPropertyOptional() @IsOptional() @Type(() => Number) @Min(0) shippingCostEur?: number;
+  /** FBA only: override Amazon's per-unit fulfilment fee (EUR). */
+  @ApiPropertyOptional() @IsOptional() @Type(() => Number) @Min(0) fbaFeeEur?: number;
   @ApiPropertyOptional() @IsOptional() @Type(() => Number) @Min(0) @Max(100) vatPct?: number;
   @ApiPropertyOptional() @IsOptional() @Type(() => Number) @Min(0) @Max(100) feePct?: number;
   @ApiPropertyOptional() @IsOptional() @Type(() => Number) @Min(0) @Max(100) importPct?: number;
