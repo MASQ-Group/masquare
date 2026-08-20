@@ -142,14 +142,21 @@ export class PricingService {
       return { taxType: 'vat', vatPct: this.channelVatPct(channel, value, countryVat, valueIsNet), pointsPct: 0 };
     })();
 
-    // Where the marketplace adds the tax at checkout, the price we list is already our revenue.
-    // Every downstream calculation derives net as price / (1 + vatPct), so carrying the real rate
-    // here would divide out a tax we never received. The rate is reported separately as
-    // `collectedByChannelPct` so the UI can still say which tax the buyer pays.
-    if (channel?.pricesIncludeTax === false) {
-      return { ...base, vatPct: 0, priceIncludesTax: false, collectedByChannelPct: base.vatPct };
+    // Two independent facts decide whether the destination tax comes off our revenue, and the
+    // sales-transaction module already distinguishes them — pricing must match it or the same
+    // listing reports one profit as a forecast and another as a sale.
+    //
+    //   • Is the tax inside the price we list?  EU: yes. AU/US/CA/MX: no, added at checkout.
+    //   • Is the tax ours to keep?              Japan: yes — Amazon pays out the full
+    //     tax-inclusive amount and does not remit the JCT. Everywhere else: no.
+    //
+    // Revenue loses the tax only when the price contains it AND we have to hand it over.
+    const sellerKeepsTax = base.taxType === 'jct';
+    const priceIncludesTax = channel?.pricesIncludeTax !== false;
+    if (!priceIncludesTax || sellerKeepsTax) {
+      return { ...base, vatPct: 0, priceIncludesTax, collectedByChannelPct: base.vatPct };
     }
-    return { ...base, priceIncludesTax: true, collectedByChannelPct: 0 };
+    return { ...base, priceIncludesTax, collectedByChannelPct: 0 };
   }
 
   /**
