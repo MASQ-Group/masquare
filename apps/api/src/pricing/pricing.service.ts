@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingFxService } from './fx.service';
 import { BulkPricingDto, IndividualPricingDto } from './dto/pricing.dto';
@@ -277,31 +278,48 @@ export class PricingService {
    *
    * Mirrors how the sales-transaction module values a real FBA order, so a forecast and the
    * eventual sale agree: the "shipping" of an FBA unit is the allocated cost of getting it INTO
-   * Amazon (from confirmed and draft FBA shipments), and Amazon's fulfilment fee is a separate
-   * flat per-unit charge.
+   * Amazon, and Amazon's fulfilment fee is a separate flat per-unit charge.
    *
-   * Both are averages over what actually happened for this product on that channel. The
-   * fulfilment fee is stored in the channel's own currency, so it is converted per channel.
+   * Matched by product id AND by SKU. An FBA shipment or order line that never linked to a
+   * product carries only a SKU, so a product-only match silently finds nothing and the cost
+   * reads as if the product had never been sent to Amazon.
+   *
+   * Returns null rather than 0 for anything it cannot establish. A zero fulfilment fee is never
+   * real, and passing one off as a cost makes the listing look profitable on a fiction.
    */
   private async fbaUnitCostsByChannel(
-    productId: string,
+    product: any,
     rates: Map<string, number | null>,
     channels: any[],
-  ): Promise<Map<string, { inboundEur: number | null; feeEur: number | null }>> {
-    const out = new Map<string, { inboundEur: number | null; feeEur: number | null }>();
+  ): Promise<Map<string, { inboundEur: number | null; feeEur: number | null; feeSource: 'product' | 'channel' | null }>> {
+    const out = new Map<string, { inboundEur: number | null; feeEur: number | null; feeSource: 'product' | 'channel' | null }>();
+
+    // Every SKU this product is known by: our own, plus whatever each channel lists it as.
+    const listings = await this.prisma.channelListing.findMany({
+      where: { productId: product.id, ...ACTIVE },
+      select: { channelSku: true },
+    });
+    const skus = [...new Set(
+      [product.mainSku, ...listings.map((l) => l.channelSku)]
+        .filter((x): x is string => !!x && x.trim() !== '')
+        .map((x) => x.trim().toLowerCase()),
+    )];
+    const skuList = skus.length ? Prisma.join(skus) : Prisma.sql`NULL`;
+    const pid = product.id as string;
 
     // Allocated inbound cost per unit, already in EUR.
-    const inboundRows = await this.prisma.fbaShipmentItem.findMany({
-      where: { deletedAt: null, shipment: { deletedAt: null }, productId },
-      select: { quantity: true, allocatedCostEur: true, shipment: { select: { salesChannelId: true } } },
-    });
-    const inbound = new Map<string, { cost: number; qty: number }>();
-    for (const it of inboundRows) {
-      const ch = it.shipment?.salesChannelId ?? '';
-      const cur = inbound.get(ch) ?? { cost: 0, qty: 0 };
-      cur.cost += it.allocatedCostEur != null ? Number(it.allocatedCostEur) : 0;
-      cur.qty += it.quantity ?? 0;
-      inbound.set(ch, cur);
+    const inboundRows = await this.prisma.$queryRaw<Array<{ ch: string; cost: number; qty: number }>>`
+      SELECT COALESCE(s.sales_channel_id::text, '') AS ch,
+             SUM(i.allocated_cost_eur) AS cost, SUM(i.quantity) AS qty
+      FROM fba_shipment_item i
+      JOIN fba_shipment s ON s.id = i.shipment_id
+      WHERE i.deleted_at IS NULL AND s.deleted_at IS NULL
+        AND (i.product_id = ${pid}::uuid OR lower(trim(i.sku)) IN (${skuList}))
+      GROUP BY 1`;
+    const inbound = new Map<string, number>();
+    for (const r of inboundRows) {
+      const qty = Number(r.qty);
+      if (qty > 0 && r.cost != null) inbound.set(r.ch, round(Number(r.cost) / qty, 4));
     }
 
     // Amazon's fulfilment fee per unit, in the channel's currency. A flat size/weight-tier fee,
@@ -312,23 +330,40 @@ export class PricingService {
       FROM sales_transaction_item i
       JOIN sales_transaction t ON t.id = i.transaction_id
       WHERE i.deleted_at IS NULL AND t.deleted_at IS NULL
-        AND i.product_id = ${productId}::uuid
+        AND (i.product_id = ${pid}::uuid OR lower(trim(i.sku)) IN (${skuList}))
         AND i.fba_fulfilment_fee_amount > 0 AND i.quantity > 0
-      GROUP BY COALESCE(t.sales_channel_id::text, '')`;
-    const feeNative = new Map<string, number>();
+      GROUP BY 1`;
+    const feeByProduct = new Map<string, number>();
     for (const r of feeRows) {
       const qty = Number(r.qty);
-      if (qty > 0) feeNative.set(r.ch, Number(r.fee) / qty);
+      if (qty > 0) feeByProduct.set(r.ch, Number(r.fee) / qty);
+    }
+
+    // Channel-wide average, for a product that has never sold FBA there. A rough proxy — the fee
+    // is size/weight banded — but far closer than zero, and the caller labels it as a fallback.
+    const chFeeRows = await this.prisma.$queryRaw<Array<{ ch: string; fee: number; qty: number }>>`
+      SELECT COALESCE(t.sales_channel_id::text, '') AS ch,
+             SUM(i.fba_fulfilment_fee_amount) AS fee, SUM(i.quantity) AS qty
+      FROM sales_transaction_item i
+      JOIN sales_transaction t ON t.id = i.transaction_id
+      WHERE i.deleted_at IS NULL AND t.deleted_at IS NULL
+        AND i.fba_fulfilment_fee_amount > 0 AND i.quantity > 0
+      GROUP BY 1`;
+    const feeByChannel = new Map<string, number>();
+    for (const r of chFeeRows) {
+      const qty = Number(r.qty);
+      if (qty > 0) feeByChannel.set(r.ch, Number(r.fee) / qty);
     }
 
     for (const c of channels) {
-      const inb = inbound.get(c.id);
       const ccy = (c.nativeCurrency ?? 'EUR').toUpperCase();
       const rate = ccy === 'EUR' ? 1 : rates.get(ccy) ?? null;
-      const nativeFee = feeNative.get(c.id) ?? null;
+      const nativeFee = feeByProduct.get(c.id) ?? feeByChannel.get(c.id) ?? null;
+      const feeSource = feeByProduct.has(c.id) ? 'product' : feeByChannel.has(c.id) ? 'channel' : null;
       out.set(c.id, {
-        inboundEur: inb && inb.qty > 0 ? round(inb.cost / inb.qty, 4) : null,
+        inboundEur: inbound.get(c.id) ?? null,
         feeEur: nativeFee != null && rate != null ? round(nativeFee * rate, 4) : null,
+        feeSource,
       });
     }
     return out;
@@ -356,8 +391,8 @@ export class PricingService {
     // cross-channel comparison stays on the same fulfilment basis as the channel being priced.
     const isFba = dto.fulfilment === 'FBA';
     const fbaCosts = isFba
-      ? await this.fbaUnitCostsByChannel(product.id, rates, channels)
-      : new Map<string, { inboundEur: number | null; feeEur: number | null }>();
+      ? await this.fbaUnitCostsByChannel(product, rates, channels)
+      : new Map<string, { inboundEur: number | null; feeEur: number | null; feeSource: 'product' | 'channel' | null }>();
 
     // `value` is in the channel's currency: the buyer-paid price for the channel being
     // priced, or a net figure (valueIsNet) for the cross-channel rows, where net revenue
@@ -383,6 +418,9 @@ export class PricingService {
         costEur: dto.costEur ?? autoCost,
         shippingEur: dto.shippingCostEur ?? autoShipEur,
         fbaFeeEur: isFba ? dto.fbaFeeEur ?? fba?.feeEur ?? 0 : 0,
+        // Tracked separately from the applied value: a fee of 0 that we could not establish must
+        // not read the same as a fee that genuinely is 0 (which never happens on FBA).
+
         importPct: dto.importPct ?? 0,
         feePct: dto.feePct ?? autoFee,
         // "No tax" is an explicit choice on the form, so it wins over the resolved rate.
@@ -396,7 +434,7 @@ export class PricingService {
         // Where each FBA number came from, so the form can say whether it used a real allocated
         // cost or fell back to an estimate rather than presenting both as equally solid.
         fbaInboundSource: isFba ? (fbaInboundEur != null ? 'allocated' : 'estimated') : null,
-        fbaFeeSource: isFba ? (fba?.feeEur != null ? 'historical' : 'unknown') : null,
+        fbaFeeSource: isFba ? (dto.fbaFeeEur != null ? 'override' : fba?.feeSource === 'product' ? 'product' : fba?.feeSource === 'channel' ? 'channel' : 'unknown') : null,
       };
     };
 
@@ -444,6 +482,13 @@ export class PricingService {
     // Say plainly what could not be resolved. Shipping quietly defaulting to zero would
     // overstate profit, and the user has no way to tell from the number alone.
     const warnings: string[] = [];
+    // An FBA fulfilment fee is never zero, so silence here is a missing input, not a free unit.
+    if (isFba && p.fbaFeeSource === 'unknown') {
+      warnings.push('No FBA fulfilment fee could be established for this product or channel — it is NOT included in the profit below. Enter it from Seller Central.');
+    }
+    if (isFba && p.fbaInboundSource === 'estimated') {
+      warnings.push('This product has no FBA shipment on this channel — the inbound cost is a weight-based estimate, not an allocated cost.');
+    }
     if (!service) warnings.push('No shipping service for this destination — shipping is not included.');
     else if (p.weight == null) warnings.push('This product has no weight or dimensions, so shipping could not be priced.');
     else if (p.ship.zoneName == null) warnings.push(`${service.name} has no zone covering this destination — shipping is not included.`);
