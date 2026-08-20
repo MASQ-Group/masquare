@@ -907,7 +907,11 @@ export class IntegrationsService implements OnModuleInit {
         }
       }
 
-      const r = await this.amzWrite(`${meta.endpoint}/notifications/v1/subscriptions/${type}`, token, 'POST', { payloadVersion: '1.0', destinationId: dest.destinationId });
+      // ORDER_CHANGE is documented as accepting a bare body, but Amazon rejects that with a 400
+      // ("missing or invalid parameters"); it wants an eventFilter naming the type. An empty
+      // orderChangeTypes list means every change type, which is what a delivery probe needs.
+      const extra = type === 'ORDER_CHANGE' ? { processingDirective: { eventFilter: { eventFilterType: 'ORDER_CHANGE' } } } : {};
+      const r = await this.amzWrite(`${meta.endpoint}/notifications/v1/subscriptions/${type}`, token, 'POST', { payloadVersion: '1.0', destinationId: dest.destinationId, ...extra });
       const j: any = await r.json().catch(() => null);
       results.push(
         r.ok
