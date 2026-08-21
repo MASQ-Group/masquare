@@ -8,7 +8,11 @@ import { buildSignatureBase, signBase, signedHeaders, toPem } from './ebay-signa
 describe('signature base', () => {
   const parts = { jwe: 'eyJraWQiOiJ0ZXN0In0', method: 'get', path: '/sell/finances/v1/transaction?filter=x', authority: 'api.ebay.com', created: 1_700_000_000 };
 
-  it('lists components in the declared order, newline joined', () => {
+  const DECLARED = '("content-digest" "x-ebay-signature-key" "@method" "@path" "@authority")';
+
+  it('omits the content-digest LINE on a GET but still DECLARES it', () => {
+    // eBay's own SDK does exactly this and its verifier rebuilds the base the same way.
+    // Declaring only the four components actually signed is what eBay rejected.
     const { base, signatureInput } = buildSignatureBase(parts);
     expect(base).toBe(
       [
@@ -16,10 +20,16 @@ describe('signature base', () => {
         '"@method": GET',
         '"@path": /sell/finances/v1/transaction?filter=x',
         '"@authority": api.ebay.com',
-        '"@signature-params": ("x-ebay-signature-key" "@method" "@path" "@authority");created=1700000000',
+        `"@signature-params": ${DECLARED};created=1700000000`,
       ].join('\n'),
     );
-    expect(signatureInput).toBe('sig1=("x-ebay-signature-key" "@method" "@path" "@authority");created=1700000000');
+    expect(signatureInput).toBe(`sig1=${DECLARED};created=1700000000`);
+    expect(base).not.toContain('"content-digest":');
+  });
+
+  it('includes the content-digest line when there is a body', () => {
+    const { base } = buildSignatureBase({ ...parts, contentDigest: 'sha-256=:abc:' });
+    expect(base.startsWith('"content-digest": sha-256=:abc:\n')).toBe(true);
   });
 
   it('signs the target, so a signature cannot be replayed against another path', () => {
@@ -68,6 +78,7 @@ describe('signing', () => {
     );
     expect(h['x-ebay-signature-key']).toBe('JWEVALUE');
     expect(h['Signature-Input']).toContain('created=1700000000');
+    expect(h['Signature-Input']).toContain('"content-digest"');
     expect(h.Signature).toMatch(/^sig1=:[A-Za-z0-9+/=]+:$/);
   });
 
