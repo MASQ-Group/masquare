@@ -622,6 +622,13 @@ export class IntegrationsService implements OnModuleInit {
         signal: AbortSignal.timeout(20000),
       });
       const fJson: any = await fRes.json().catch(() => null);
+      // eBay stamps every response with a request log id. It is the only handle their support has
+      // for finding this exact call in their logs, so it is captured whether the call worked or not.
+      if (sent) {
+        sent.rlogId = fRes.headers.get('rlogid') ?? null;
+        sent.status = fRes.status;
+        sent.errorCode = fJson?.errors?.[0]?.errorId ?? null;
+      }
       finances = fRes.ok
         ? readFinances(fJson)
         : { ok: false, message: (fJson?.errors?.[0]?.message || `HTTP ${fRes.status}`).toString().slice(0, 200), payoutCurrency: null, transactions: [], feeInPayoutCurrency: null };
