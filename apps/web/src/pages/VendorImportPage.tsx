@@ -6,6 +6,7 @@ import { PageHeader } from '../components/common/PageHeader';
 import { CurrencySelect } from '../components/common/CurrencySelect';
 import { toast } from 'sonner';
 import { ProductSkuField } from '../components/sales/ProductSkuField';
+import { ApplySection } from '../components/vendor-import/ApplySection';
 import {
   vendorsApi, vendorImportApi, vendorMatchApi,
   type VendorImportAnalysis, type VendorImportColumn, type VendorImportField, type VendorMatchResult,
@@ -430,6 +431,19 @@ export function VendorImportPage() {
               </div>
             )}
           </div>
+
+          {file && vendorId && (
+            <ApplySection
+              file={file}
+              vendorId={vendorId}
+              sheet={analysis.sheet}
+              currency={currency}
+              profileId={analysis.profile?.id}
+              mapping={Object.fromEntries(Object.entries(chosen).filter(([, v]) => v != null) as [string, number][])}
+              ready={skuMapped && (!needsCurrency || currencyConfirmed)}
+              readyHint={!skuMapped ? 'Map the SKU column first.' : 'Confirm the currency first.'}
+            />
+          )}
         </>
       )}
     </div>

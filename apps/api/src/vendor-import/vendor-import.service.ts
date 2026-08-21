@@ -4,6 +4,7 @@ import { DetectedColumn } from './sheet-extract';
 import { extractSheet, listSheets } from './workbook';
 import { FieldSuggestion, VendorField, VENDOR_FIELDS, capabilitiesOf, suggestMapping } from './field-suggest';
 import { MatchedBy, RowMatch, buildIndex, matchRows, norm } from './matcher';
+import { PlanProduct, PlanRowInput, buildPlan, summarisePlan } from './plan';
 
 /** Where a mapped column was found, saved so the next file of the same layout resolves itself. */
 export interface MappingRef {
@@ -260,6 +261,261 @@ export class VendorImportService {
   async removeAlias(id: string) {
     await this.prisma.vendorSkuAlias.update({ where: { id }, data: { deletedAt: new Date() } });
     return { ok: true };
+  }
+
+  /** Everything preview and apply both need: the matched rows plus the products behind them. */
+  private async resolvePlan(
+    file: { originalname?: string; buffer?: Buffer } | undefined,
+    vendorId: string,
+    mapping: Partial<Record<VendorField, number>>,
+    currency: string,
+    sheet?: string,
+    anomalyPct = 0.3,
+  ) {
+    const matched = await this.match(file as any, vendorId, mapping, sheet);
+    const vendor = await this.prisma.vendor.findFirst({
+      where: { id: vendorId, ...ACTIVE },
+      select: { id: true, name: true, mapIncludesVat: true },
+    });
+    if (!vendor) throw new NotFoundException('Vendor not found');
+
+    const table = extractSheet(file!.buffer!, sheet);
+    const col = (f: VendorField) => (mapping[f] != null ? mapping[f]! : -1);
+    const cellOf = (rowIndex: number, f: VendorField) => (col(f) >= 0 ? table.rows[rowIndex]?.[col(f)] ?? '' : '');
+
+    const ids = [...new Set(matched.rows.map((r) => r.productId).filter((x): x is string => !!x))];
+    const products = ids.length
+      ? await this.prisma.product.findMany({
+          where: { id: { in: ids } },
+          select: {
+            id: true, mainSku: true, title: true,
+            purchaseCostAmount: true, purchaseCostCurrency: true,
+            mapAmount: true, mapCurrency: true, ean: true, upc: true,
+            vatClass: { select: { ratePct: true } },
+            availability: { select: { quantity: true } },
+          },
+        })
+      : [];
+
+    const planProducts = new Map<string, PlanProduct>(
+      products.map((p) => [
+        p.id,
+        {
+          id: p.id, mainSku: p.mainSku, title: p.title,
+          purchaseCostAmount: p.purchaseCostAmount != null ? Number(p.purchaseCostAmount) : null,
+          purchaseCostCurrency: p.purchaseCostCurrency ?? 'EUR',
+          mapAmount: p.mapAmount != null ? Number(p.mapAmount) : null,
+          mapCurrency: p.mapCurrency ?? 'EUR',
+          ean: p.ean ?? null, upc: p.upc ?? null,
+          availability: p.availability?.quantity ?? null,
+          vatRatePct: p.vatClass?.ratePct != null ? Number(p.vatClass.ratePct) : null,
+        },
+      ]),
+    );
+
+    const planRows: PlanRowInput[] = matched.rows
+      .filter((r) => r.productId)
+      .map((r) => ({
+        productId: r.productId!,
+        purchaseCost: cellOf(r.index, 'purchaseCost'),
+        map: cellOf(r.index, 'map'),
+        availability: cellOf(r.index, 'availability'),
+        ean: cellOf(r.index, 'ean'),
+      }));
+
+    const plan = buildPlan(planRows, planProducts, {
+      currency: (currency || 'EUR').toUpperCase(),
+      mapIncludesVat: vendor.mapIncludesVat,
+      anomalyPct,
+    });
+    return { matched, plan, vendor, sheet: table.sheet };
+  }
+
+  /** What applying this file WOULD change. Writes nothing. */
+  async preview(
+    file: { originalname?: string; buffer?: Buffer } | undefined,
+    vendorId: string,
+    mapping: Partial<Record<VendorField, number>>,
+    currency: string,
+    sheet?: string,
+  ) {
+    const { matched, plan, vendor } = await this.resolvePlan(file, vendorId, mapping, currency, sheet);
+    return {
+      vendor: { id: vendor.id, name: vendor.name, mapIncludesVat: vendor.mapIncludesVat },
+      currency: (currency || 'EUR').toUpperCase(),
+      match: matched.summary,
+      summary: summarisePlan(plan),
+      changes: plan.changes,
+      skipped: plan.skipped,
+    };
+  }
+
+  /**
+   * Apply the file.
+   *
+   * Every previous value is captured in the run, so it can be undone in one action. One
+   * transaction: a half-applied price list is worse than none, because nobody can tell which
+   * half landed.
+   */
+  async apply(
+    file: { originalname?: string; buffer?: Buffer } | undefined,
+    vendorId: string,
+    mapping: Partial<Record<VendorField, number>>,
+    currency: string,
+    sheet?: string,
+    profileId?: string,
+    actorId?: string,
+  ) {
+    const { matched, plan, sheet: sheetName } = await this.resolvePlan(file, vendorId, mapping, currency, sheet);
+    if (!plan.changes.length) {
+      throw new BadRequestException('This file proposes no changes — nothing to apply.');
+    }
+    const ccy = (currency || 'EUR').toUpperCase();
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        const run = await tx.vendorImportRun.create({
+          data: {
+            vendorId,
+            profileId: profileId ?? null,
+            fileName: file?.originalname ?? 'upload',
+            sheetName,
+            currency: ccy,
+            rowsTotal: matched.summary.total,
+            rowsMatched: matched.summary.matched,
+            changed: plan.changes.length,
+            createdById: actorId ?? null,
+          },
+        });
+
+        for (const c of plan.changes) {
+          await tx.vendorImportChange.create({
+            data: { runId: run.id, productId: c.productId, field: c.field, oldValue: c.oldValue, newValue: c.newValue },
+          });
+
+          if (c.field === 'purchaseCost') {
+            await tx.product.update({
+              where: { id: c.productId },
+              data: { purchaseCostAmount: Number(c.newValue.split(' ')[0]), purchaseCostCurrency: ccy },
+            });
+          } else if (c.field === 'map') {
+            await tx.product.update({
+              where: { id: c.productId },
+              data: { mapAmount: Number(c.newValue.split(' ')[0]), mapCurrency: ccy },
+            });
+          } else if (c.field === 'ean' || c.field === 'upc') {
+            await tx.product.update({ where: { id: c.productId }, data: { [c.field]: c.newValue } });
+          } else if (c.field === 'availability') {
+            const qty = Number(c.newValue);
+            const prev = Number(c.oldValue ?? 0);
+            await tx.productAvailability.upsert({
+              where: { productId: c.productId },
+              create: { productId: c.productId, quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null },
+              update: { quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null },
+            });
+            await tx.availabilityLedger.create({
+              data: {
+                productId: c.productId,
+                delta: qty - prev,
+                newQuantity: qty,
+                reason: 'vendor_import',
+                refType: 'vendor_import_run',
+                refId: run.id,
+                createdById: actorId ?? null,
+              },
+            });
+          }
+        }
+        return { runId: run.id, applied: plan.changes.length };
+      },
+      { timeout: 120000 },
+    );
+  }
+
+  listRuns(vendorId?: string) {
+    return this.prisma.vendorImportRun.findMany({
+      where: vendorId ? { vendorId } : {},
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: { vendor: { select: { id: true, name: true } }, _count: { select: { changes: true } } },
+    });
+  }
+
+  getRun(id: string) {
+    return this.prisma.vendorImportRun.findUnique({
+      where: { id },
+      include: {
+        vendor: { select: { id: true, name: true } },
+        changes: { include: { product: { select: { id: true, mainSku: true, title: true } } }, take: 1000 },
+      },
+    });
+  }
+
+  /**
+   * Undo a run, putting every field back to the value it held before.
+   *
+   * Restores from what was recorded at apply time rather than recomputing, so a rollback is not
+   * itself an inference. Changes made after the run are overwritten — that is what undo means,
+   * and the run stays on record either way.
+   */
+  async rollback(runId: string, actorId?: string) {
+    const run = await this.prisma.vendorImportRun.findUnique({ where: { id: runId }, include: { changes: true } });
+    if (!run) throw new NotFoundException('Import run not found');
+    if (run.rolledBackAt) throw new BadRequestException('That run has already been rolled back.');
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        for (const c of run.changes) {
+          if (c.revertedAt) continue;
+          const parts = (c.oldValue ?? '').split(' ');
+          const amount = parts[0];
+          const ccy = parts[1];
+          if (c.field === 'purchaseCost') {
+            await tx.product.update({
+              where: { id: c.productId },
+              data: { purchaseCostAmount: c.oldValue ? Number(amount) : null, purchaseCostCurrency: ccy || 'EUR' },
+            });
+          } else if (c.field === 'map') {
+            await tx.product.update({
+              where: { id: c.productId },
+              data: { mapAmount: c.oldValue ? Number(amount) : null, mapCurrency: ccy || 'EUR' },
+            });
+          } else if (c.field === 'ean' || c.field === 'upc') {
+            await tx.product.update({ where: { id: c.productId }, data: { [c.field]: c.oldValue } });
+          } else if (c.field === 'availability') {
+            const qty = Number(c.oldValue ?? 0);
+            const current = await tx.productAvailability.findUnique({
+              where: { productId: c.productId },
+              select: { quantity: true },
+            });
+            await tx.productAvailability.upsert({
+              where: { productId: c.productId },
+              create: { productId: c.productId, quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null },
+              update: { quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null },
+            });
+            await tx.availabilityLedger.create({
+              data: {
+                productId: c.productId,
+                delta: qty - (current?.quantity ?? 0),
+                newQuantity: qty,
+                reason: 'vendor_import',
+                refType: 'vendor_import_run_rollback',
+                refId: run.id,
+                note: 'Rolled back',
+                createdById: actorId ?? null,
+              },
+            });
+          }
+          await tx.vendorImportChange.update({ where: { id: c.id }, data: { revertedAt: new Date() } });
+        }
+        await tx.vendorImportRun.update({
+          where: { id: run.id },
+          data: { rolledBackAt: new Date(), rolledBackById: actorId ?? null },
+        });
+        return { ok: true, reverted: run.changes.length };
+      },
+      { timeout: 120000 },
+    );
   }
 
   listProfiles(vendorId?: string) {

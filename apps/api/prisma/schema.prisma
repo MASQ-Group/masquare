@@ -284,6 +284,54 @@ model VendorSkuAlias {
   @@map("vendor_sku_alias")
 }
 
+/// One application of a vendor price file. Holds enough to undo itself: a bulk cost change is
+/// invisible in a P&L until someone notices the margin, so every run is reversible by design.
+model VendorImportRun {
+  id        String  @id @default(uuid()) @db.Uuid
+  vendorId  String  @map("vendor_id") @db.Uuid
+  profileId String? @map("profile_id") @db.Uuid
+  fileName  String  @map("file_name")
+  sheetName String? @map("sheet_name")
+  /// Currency the file's prices were read in — confirmed by a human at upload.
+  currency  String  @default("EUR")
+
+  rowsTotal   Int @default(0) @map("rows_total")
+  rowsMatched Int @default(0) @map("rows_matched")
+  changed     Int @default(0)
+
+  createdAt    DateTime  @default(now()) @map("created_at")
+  createdById  String?   @map("created_by") @db.Uuid
+  rolledBackAt DateTime? @map("rolled_back_at")
+  rolledBackById String? @map("rolled_back_by") @db.Uuid
+
+  vendor  Vendor                @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  changes VendorImportChange[]
+
+  @@index([vendorId])
+  @@map("vendor_import_run")
+}
+
+/// One field on one product, with the value it had before. The "before" is what makes a run
+/// reversible; it is captured at apply time, not read back later.
+model VendorImportChange {
+  id        String @id @default(uuid()) @db.Uuid
+  runId     String @map("run_id") @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  /// purchaseCost | map | availability | ean | upc
+  field     String
+  oldValue  String? @map("old_value")
+  newValue  String? @map("new_value")
+  /// Set when the change was reverted, so a partial rollback is still auditable.
+  revertedAt DateTime? @map("reverted_at")
+
+  run     VendorImportRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([productId])
+  @@map("vendor_import_change")
+}
+
 model Vendor {
   id                String  @id @default(uuid()) @db.Uuid
   name              String
@@ -326,6 +374,7 @@ model Vendor {
   products Product[]
   importProfiles VendorImportProfile[]
   skuAliases     VendorSkuAlias[]
+  importRuns     VendorImportRun[]
   purchaseOrders PurchaseOrder[]
   vendorReturns  VendorReturn[]
 
@@ -632,6 +681,7 @@ model Product {
   stockOwed            StockOwed[]
   availability         ProductAvailability?
   vendorSkuAliases     VendorSkuAlias[]
+  vendorImportChanges  VendorImportChange[]
   availabilityLedger   AvailabilityLedger[]
   channelListings      ChannelListing[]
 

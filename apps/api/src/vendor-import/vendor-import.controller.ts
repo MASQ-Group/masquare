@@ -34,14 +34,49 @@ export class VendorImportController {
     @UploadedFile() file: any,
     @Body() body: { vendorId: string; sheet?: string; mapping?: string },
   ) {
-    // Multipart carries the mapping as text, so it arrives JSON-encoded.
-    let mapping: Record<string, number> = {};
+    return this.svc.match(file, body?.vendorId, this.parseMapping(body?.mapping), body?.sheet || undefined);
+  }
+
+  /** Multipart carries the mapping as text, so it arrives JSON-encoded. */
+  private parseMapping(raw?: string): Record<string, number> {
     try {
-      mapping = body?.mapping ? JSON.parse(body.mapping) : {};
+      return raw ? JSON.parse(raw) : {};
     } catch {
       throw new BadRequestException('The column mapping could not be read.');
     }
-    return this.svc.match(file, body?.vendorId, mapping, body?.sheet || undefined);
+  }
+
+  /** What applying this file WOULD change. Writes nothing. */
+  @Post('preview')
+  @UseInterceptors(FileInterceptor('file'))
+  preview(@UploadedFile() file: any, @Body() body: { vendorId: string; sheet?: string; mapping?: string; currency?: string }) {
+    return this.svc.preview(file, body?.vendorId, this.parseMapping(body?.mapping), body?.currency ?? 'EUR', body?.sheet || undefined);
+  }
+
+  /** Apply the file. Reversible: every previous value is recorded against the run. */
+  @Post('apply')
+  @UseInterceptors(FileInterceptor('file'))
+  apply(
+    @UploadedFile() file: any,
+    @Body() body: { vendorId: string; sheet?: string; mapping?: string; currency?: string; profileId?: string },
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.svc.apply(file, body?.vendorId, this.parseMapping(body?.mapping), body?.currency ?? 'EUR', body?.sheet || undefined, body?.profileId || undefined, user.sub);
+  }
+
+  @Get('runs')
+  listRuns(@Query('vendorId') vendorId?: string) {
+    return this.svc.listRuns(vendorId || undefined);
+  }
+
+  @Get('runs/:id')
+  getRun(@Param('id') id: string) {
+    return this.svc.getRun(id);
+  }
+
+  @Post('runs/:id/rollback')
+  rollback(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.svc.rollback(id, user.sub);
   }
 
   @Get('aliases')

@@ -2172,3 +2172,52 @@ export const vendorMatchApi = {
     api.post<VendorSkuAlias>('/vendor-import/aliases', body).then((r) => r.data),
   removeAlias: (id: string) => api.delete(`/vendor-import/aliases/${id}`).then((r) => r.data),
 };
+
+export type VendorChangeField = 'purchaseCost' | 'map' | 'availability' | 'ean' | 'upc';
+
+export interface VendorPlannedChange {
+  productId: string; mainSku: string; title: string;
+  field: VendorChangeField;
+  oldValue: string | null; newValue: string;
+  /** Present when the change is large enough to be worth a second look. */
+  warning?: string;
+}
+
+export interface VendorImportPreview {
+  vendor: { id: string; name: string; mapIncludesVat: boolean };
+  currency: string;
+  match: VendorMatchResult['summary'];
+  summary: {
+    total: number;
+    byField: Record<VendorChangeField, number>;
+    warnings: number; unchanged: number; skipped: number;
+  };
+  changes: VendorPlannedChange[];
+  skipped: { productId: string; field: VendorChangeField; raw: string; why: string }[];
+}
+
+export interface VendorImportRun {
+  id: string; vendorId: string; fileName: string; sheetName: string | null; currency: string;
+  rowsTotal: number; rowsMatched: number; changed: number;
+  createdAt: string; rolledBackAt: string | null;
+  vendor?: { id: string; name: string };
+  _count?: { changes: number };
+}
+
+const importForm = (file: File, body: Record<string, string | undefined>, mapping: Record<string, number>) => {
+  const fd = new FormData();
+  fd.append('file', file);
+  for (const [k, v] of Object.entries(body)) if (v) fd.append(k, v);
+  fd.append('mapping', JSON.stringify(mapping));
+  return fd;
+};
+
+export const vendorApplyApi = {
+  preview: (file: File, body: { vendorId: string; sheet?: string; currency: string; mapping: Record<string, number> }) =>
+    api.post<VendorImportPreview>('/vendor-import/preview', importForm(file, { vendorId: body.vendorId, sheet: body.sheet, currency: body.currency }, body.mapping)).then((r) => r.data),
+  apply: (file: File, body: { vendorId: string; sheet?: string; currency: string; profileId?: string; mapping: Record<string, number> }) =>
+    api.post<{ runId: string; applied: number }>('/vendor-import/apply', importForm(file, { vendorId: body.vendorId, sheet: body.sheet, currency: body.currency, profileId: body.profileId }, body.mapping)).then((r) => r.data),
+  listRuns: (vendorId?: string) =>
+    api.get<VendorImportRun[]>('/vendor-import/runs', { params: { vendorId } }).then((r) => r.data),
+  rollback: (id: string) => api.post<{ ok: boolean; reverted: number }>(`/vendor-import/runs/${id}/rollback`).then((r) => r.data),
+};
