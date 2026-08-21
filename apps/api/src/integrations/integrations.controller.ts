@@ -81,6 +81,12 @@ export class IntegrationsController {
     return this.svc.setupSpApiNotifications(id, body.sqsArn, types);
   }
 
+  /** Create the keypair eBay requires to sign Finances requests. One-off per connection. */
+  @Post(':id/ebay/signing-key')
+  createEbaySigningKey(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.svc.createEbaySigningKey(id, user.sub);
+  }
+
   /** Read-only: what eBay reports for one order, using the only eBay connection. */
   @Get('ebay/order-money')
   ebayOrderMoneyDefault(@Query('orderId') orderId: string) {

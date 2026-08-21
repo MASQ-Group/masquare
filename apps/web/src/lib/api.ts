@@ -617,6 +617,9 @@ export interface SpApiNotificationSetup {
 }
 
 export const integrationsApi = {
+  /** Create the keypair eBay requires to sign Finances requests. */
+  createEbaySigningKey: (integrationId: string) =>
+    api.post<{ ok: boolean; created: boolean; signingKeyId: string | null; message?: string }>(`/integrations/${integrationId}/ebay/signing-key`).then((r) => r.data),
   /** Read-only: what eBay reports for one order's money fields. */
   ebayOrderMoney: (integrationId: string, orderId: string) =>
     api.get<EbayOrderMoney>(`/integrations/${integrationId}/ebay/order-money`, { params: { orderId } }).then((r) => r.data),
