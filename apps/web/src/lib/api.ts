@@ -617,6 +617,9 @@ export interface SpApiNotificationSetup {
 }
 
 export const integrationsApi = {
+  /** Read-only: what eBay reports for one order's money fields. */
+  ebayOrderMoney: (integrationId: string, orderId: string) =>
+    api.get<EbayOrderMoney>(`/integrations/${integrationId}/ebay/order-money`, { params: { orderId } }).then((r) => r.data),
   connectors: () => api.get<ConnectorDef[]>('/integrations/connectors').then((r) => r.data),
   list: () => api.get<ChannelIntegration[]>('/integrations').then((r) => r.data),
   get: (id: string) => api.get<ChannelIntegration>(`/integrations/${id}`).then((r) => r.data),
@@ -2223,3 +2226,32 @@ export const vendorApplyApi = {
     api.get<VendorImportRun[]>('/vendor-import/runs', { params: { vendorId } }).then((r) => r.data),
   rollback: (id: string) => api.post<{ ok: boolean; reverted: number }>(`/vendor-import/runs/${id}/rollback`).then((r) => r.data),
 };
+
+export interface EbayAmountRead {
+  value: number | null;
+  currency: string | null;
+  convertedFromValue: number | null;
+  convertedFromCurrency: string | null;
+  /** True when eBay states it performed a conversion for this amount. */
+  converted: boolean;
+}
+
+export interface EbayOrderMoney {
+  orderId: string;
+  marketplaceId: string | null;
+  orderCurrency: string | null;
+  amounts: {
+    pricingTotal: EbayAmountRead;
+    priceSubtotal: EbayAmountRead;
+    deliveryCost: EbayAmountRead;
+    totalMarketplaceFee: EbayAmountRead;
+    lineItemTotals: EbayAmountRead[];
+  };
+  interpretation: {
+    feeValueWeStore: number | null;
+    feeCurrencyEbayStates: string | null;
+    feeAlreadyConverted: boolean;
+    mismatch: string | null;
+    ebayImpliedRate: number | null;
+  };
+}

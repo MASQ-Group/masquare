@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { EbayOrderMoneyPanel } from '../components/integrations/EbayOrderMoneyPanel';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle, CalendarRange, CheckCircle2, ChevronRight, Clock, Download, ExternalLink, Eye, EyeOff, Globe,
@@ -706,6 +707,7 @@ function IntegrationRow({
               {i.mappingVerifiedAt ? <CheckCircle2 size={16} className="shrink-0 text-teal-600" /> : <ListChecks size={16} className="shrink-0 text-warning" />}
               <span className="text-[12.5px] text-n-700">{i.mappingVerifiedAt ? 'All order fields mapped and verified.' : 'Verify the field mapping before the next sync.'}</span>
             </div>
+            {i.channelType === 'ebay' && <EbayOrderMoneyPanel integrationId={i.id} />}
             <div className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-n-500">Last sync result</div>
             <div className="mt-1.5 text-[12.5px] leading-relaxed text-n-600">{i.lastSyncRunAt ? (i.lastSyncMessage ?? '—') : 'No sync has run yet for this connection.'}</div>
             {i.lastSyncRunAt && <div className="mt-1 text-[12px] text-n-400">Synced {fmtDateTime(i.lastSyncRunAt)}{i.autoSyncEnabled ? ' · auto-sync daily' : ''}</div>}
