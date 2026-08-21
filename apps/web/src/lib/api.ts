@@ -2181,6 +2181,8 @@ export interface VendorPlannedChange {
   oldValue: string | null; newValue: string;
   /** Present when the change is large enough to be worth a second look. */
   warning?: string;
+  /** How the value was derived, when it is not simply the file's figure. */
+  note?: string;
 }
 
 export interface VendorImportPreview {
@@ -2213,10 +2215,10 @@ const importForm = (file: File, body: Record<string, string | undefined>, mappin
 };
 
 export const vendorApplyApi = {
-  preview: (file: File, body: { vendorId: string; sheet?: string; currency: string; mapping: Record<string, number> }) =>
-    api.post<VendorImportPreview>('/vendor-import/preview', importForm(file, { vendorId: body.vendorId, sheet: body.sheet, currency: body.currency }, body.mapping)).then((r) => r.data),
-  apply: (file: File, body: { vendorId: string; sheet?: string; currency: string; profileId?: string; mapping: Record<string, number> }) =>
-    api.post<{ runId: string; applied: number }>('/vendor-import/apply', importForm(file, { vendorId: body.vendorId, sheet: body.sheet, currency: body.currency, profileId: body.profileId }, body.mapping)).then((r) => r.data),
+  preview: (file: File, body: { vendorId: string; sheet?: string; currency: string; mapping: Record<string, number>; brandDiscounts?: Record<string, number> }) =>
+    api.post<VendorImportPreview>('/vendor-import/preview', importForm(file, { vendorId: body.vendorId, sheet: body.sheet, currency: body.currency, brandDiscounts: JSON.stringify(body.brandDiscounts ?? {}) }, body.mapping)).then((r) => r.data),
+  apply: (file: File, body: { vendorId: string; sheet?: string; currency: string; profileId?: string; mapping: Record<string, number>; brandDiscounts?: Record<string, number> }) =>
+    api.post<{ runId: string; applied: number }>('/vendor-import/apply', importForm(file, { vendorId: body.vendorId, sheet: body.sheet, currency: body.currency, profileId: body.profileId, brandDiscounts: JSON.stringify(body.brandDiscounts ?? {}) }, body.mapping)).then((r) => r.data),
   listRuns: (vendorId?: string) =>
     api.get<VendorImportRun[]>('/vendor-import/runs', { params: { vendorId } }).then((r) => r.data),
   rollback: (id: string) => api.post<{ ok: boolean; reverted: number }>(`/vendor-import/runs/${id}/rollback`).then((r) => r.data),

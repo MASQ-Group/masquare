@@ -270,6 +270,7 @@ export class VendorImportService {
     mapping: Partial<Record<VendorField, number>>,
     currency: string,
     sheet?: string,
+    brandDiscounts?: Record<string, number>,
     anomalyPct = 0.3,
   ) {
     const matched = await this.match(file as any, vendorId, mapping, sheet);
@@ -293,6 +294,7 @@ export class VendorImportService {
             mapAmount: true, mapCurrency: true, ean: true, upc: true,
             vatClass: { select: { ratePct: true } },
             availability: { select: { quantity: true } },
+            brand: { select: { id: true, name: true } },
           },
         })
       : [];
@@ -309,6 +311,8 @@ export class VendorImportService {
           ean: p.ean ?? null, upc: p.upc ?? null,
           availability: p.availability?.quantity ?? null,
           vatRatePct: p.vatClass?.ratePct != null ? Number(p.vatClass.ratePct) : null,
+          brandId: p.brand?.id ?? null,
+          brandName: p.brand?.name ?? null,
         },
       ]),
     );
@@ -327,6 +331,7 @@ export class VendorImportService {
       currency: (currency || 'EUR').toUpperCase(),
       mapIncludesVat: vendor.mapIncludesVat,
       anomalyPct,
+      brandDiscounts,
     });
     return { matched, plan, vendor, sheet: table.sheet };
   }
@@ -338,8 +343,9 @@ export class VendorImportService {
     mapping: Partial<Record<VendorField, number>>,
     currency: string,
     sheet?: string,
+    brandDiscounts?: Record<string, number>,
   ) {
-    const { matched, plan, vendor } = await this.resolvePlan(file, vendorId, mapping, currency, sheet);
+    const { matched, plan, vendor } = await this.resolvePlan(file, vendorId, mapping, currency, sheet, brandDiscounts);
     return {
       vendor: { id: vendor.id, name: vendor.name, mapIncludesVat: vendor.mapIncludesVat },
       currency: (currency || 'EUR').toUpperCase(),
@@ -365,8 +371,9 @@ export class VendorImportService {
     sheet?: string,
     profileId?: string,
     actorId?: string,
+    brandDiscounts?: Record<string, number>,
   ) {
-    const { matched, plan, sheet: sheetName } = await this.resolvePlan(file, vendorId, mapping, currency, sheet);
+    const { matched, plan, sheet: sheetName } = await this.resolvePlan(file, vendorId, mapping, currency, sheet, brandDiscounts);
     if (!plan.changes.length) {
       throw new BadRequestException('This file proposes no changes — nothing to apply.');
     }
@@ -384,6 +391,7 @@ export class VendorImportService {
             rowsTotal: matched.summary.total,
             rowsMatched: matched.summary.matched,
             changed: plan.changes.length,
+            brandDiscounts: (brandDiscounts && Object.keys(brandDiscounts).length ? brandDiscounts : undefined) as object | undefined,
             createdById: actorId ?? null,
           },
         });

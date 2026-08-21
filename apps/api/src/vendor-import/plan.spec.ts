@@ -6,6 +6,7 @@ const product = (over: Partial<PlanProduct> = {}): PlanProduct => ({
   purchaseCostAmount: 95, purchaseCostCurrency: 'EUR',
   mapAmount: 165, mapCurrency: 'EUR',
   ean: '5290000202404', upc: null, availability: 29, vatRatePct: 19,
+  brandId: null, brandName: null,
   ...over,
 });
 
@@ -114,5 +115,49 @@ describe('summary', () => {
     expect(s.byField.availability).toBe(1);
     expect(s.warnings).toBe(1); // only the +111% one
     expect(s.total).toBe(3);
+  });
+});
+
+describe('brand discounts', () => {
+  const FISSLER = 'brand-fissler';
+  const branded = (over = {}) => product({ brandId: FISSLER, brandName: 'Fissler', purchaseCostAmount: 100, ...over });
+
+  it('deducts the brand percentage from the file cost', () => {
+    const plan = planFor({ purchaseCost: '100' }, branded(), { ...OPTS, brandDiscounts: { [FISSLER]: 12 } });
+    expect(plan.changes[0].newValue).toBe('88 EUR');
+    expect(plan.changes[0].note).toBe('100 less 12% Fissler discount');
+  });
+
+  it('leaves other brands alone', () => {
+    const other = product({ brandId: 'brand-other', brandName: 'Other', purchaseCostAmount: 100 });
+    const plan = planFor({ purchaseCost: '90' }, other, { ...OPTS, brandDiscounts: { [FISSLER]: 12 } });
+    expect(plan.changes[0].newValue).toBe('90 EUR');
+    expect(plan.changes[0].note).toBeUndefined();
+  });
+
+  it('applies to purchase cost only, never to MAP', () => {
+    const plan = planFor({ purchaseCost: '100', map: '200' }, branded({ mapAmount: 150 }), { ...OPTS, brandDiscounts: { [FISSLER]: 12 } });
+    const cost = plan.changes.find((c) => c.field === 'purchaseCost')!;
+    const map = plan.changes.find((c) => c.field === 'map')!;
+    expect(cost.newValue).toBe('88 EUR');
+    expect(map.newValue).toBe('200 EUR'); // the vendor's retail price is not ours to discount
+  });
+
+  it('compares the DISCOUNTED cost against what we hold', () => {
+    // The file says 100 and we hold 88; with a 12% discount there is no change to make.
+    const plan = planFor({ purchaseCost: '100' }, branded({ purchaseCostAmount: 88 }), { ...OPTS, brandDiscounts: { [FISSLER]: 12 } });
+    expect(plan.changes).toEqual([]);
+  });
+
+  it('measures the anomaly warning against the discounted figure too', () => {
+    // 200 in the file less 60% is 80, a 20% fall from 100 — under the threshold, so no warning.
+    const plan = planFor({ purchaseCost: '200' }, branded(), { ...OPTS, brandDiscounts: { [FISSLER]: 60 } });
+    expect(plan.changes[0].newValue).toBe('80 EUR');
+    expect(plan.changes[0].warning).toBeUndefined();
+  });
+
+  it('ignores a discount for a product with no brand', () => {
+    const plan = planFor({ purchaseCost: '100' }, product({ brandId: null, purchaseCostAmount: 50 }), { ...OPTS, brandDiscounts: { [FISSLER]: 12 } });
+    expect(plan.changes[0].newValue).toBe('100 EUR');
   });
 });

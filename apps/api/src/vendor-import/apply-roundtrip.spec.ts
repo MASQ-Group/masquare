@@ -75,6 +75,29 @@ describe('apply and roll back', () => {
 
       // Rolling back twice is refused rather than silently repeated.
       await expect(svc.rollback(applied.runId)).rejects.toThrow();
+
+      // --- brand discount: the discounted figure is what reaches the product ---
+      const brand = await prisma.brand.create({ data: { name: `ZZ Brand ${stamp}` } });
+      await prisma.product.update({ where: { id: productId }, data: { brandId: brand.id } });
+      try {
+        const disc = { [brand.id]: 25 };
+        const dp = await svc.preview(file as any, vendorId, mapping as any, 'EUR', undefined, disc);
+        const costChange = dp.changes.find((c) => c.field === 'purchaseCost')!;
+        expect(costChange.newValue).toBe('9.375 EUR'); // 12.50 less 25%
+        expect(costChange.note).toContain('25%');
+
+        const run2 = await svc.apply(file as any, vendorId, mapping as any, 'EUR', undefined, undefined, undefined, disc);
+        const discounted = await prisma.product.findUnique({ where: { id: productId }, select: { purchaseCostAmount: true } });
+        expect(Number(discounted!.purchaseCostAmount)).toBe(9.375);
+
+        const stored = await prisma.vendorImportRun.findUnique({ where: { id: run2.runId }, select: { brandDiscounts: true } });
+        expect(stored!.brandDiscounts).toEqual(disc); // recorded, so the run can be explained later
+
+        await svc.rollback(run2.runId);
+      } finally {
+        await prisma.product.update({ where: { id: productId }, data: { brandId: null } }).catch(() => {});
+        await prisma.brand.delete({ where: { id: brand.id } }).catch(() => {});
+      }
     } finally {
       if (productId) {
         await prisma.availabilityLedger.deleteMany({ where: { productId } });

@@ -6,6 +6,7 @@ import {
   vendorApplyApi,
   type VendorChangeField, type VendorImportPreview, type VendorPlannedChange,
 } from '../../lib/api';
+import { BrandDiscounts, incompleteDiscountRows, toDiscountPayload, type BrandDiscountRow } from './BrandDiscounts';
 
 const FIELD_LABEL: Record<VendorChangeField, string> = {
   purchaseCost: 'Purchase cost',
@@ -25,6 +26,8 @@ interface Props {
   /** Blocks preview until the mapping is usable and the currency confirmed. */
   ready: boolean;
   readyHint: string;
+  /** Whether the file supplies a purchase cost — brand discounts are meaningless without one. */
+  hasCost: boolean;
 }
 
 /**
@@ -34,11 +37,14 @@ interface Props {
  * floors at once and nothing in a P&L afterwards says "a file did this", so the change list is
  * shown in full and applying it is a separate, explicit decision.
  */
-export function ApplySection({ file, vendorId, sheet, currency, profileId, mapping, ready, readyHint }: Props) {
+export function ApplySection({ file, vendorId, sheet, currency, profileId, mapping, ready, readyHint, hasCost }: Props) {
   const qc = useQueryClient();
   const [preview, setPreview] = useState<VendorImportPreview | null>(null);
   const [onlyWarnings, setOnlyWarnings] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [discountRows, setDiscountRows] = useState<BrandDiscountRow[]>([]);
+  const discounts = toDiscountPayload(discountRows);
+  const incomplete = incompleteDiscountRows(discountRows);
 
   const { data: runs = [] } = useQuery({
     queryKey: ['vendor-import-runs', vendorId],
@@ -47,17 +53,18 @@ export function ApplySection({ file, vendorId, sheet, currency, profileId, mappi
   });
 
   const doPreview = useMutation({
-    mutationFn: () => vendorApplyApi.preview(file, { vendorId, sheet, currency, mapping }),
+    mutationFn: () => vendorApplyApi.preview(file, { vendorId, sheet, currency, mapping, brandDiscounts: discounts }),
     onSuccess: (p) => { setPreview(p); setConfirmed(false); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not build the preview'),
   });
 
   const doApply = useMutation({
-    mutationFn: () => vendorApplyApi.apply(file, { vendorId, sheet, currency, profileId, mapping }),
+    mutationFn: () => vendorApplyApi.apply(file, { vendorId, sheet, currency, profileId, mapping, brandDiscounts: discounts }),
     onSuccess: (r) => {
       toast.success(`Applied ${r.applied} change${r.applied === 1 ? '' : 's'}`);
       setPreview(null);
       setConfirmed(false);
+      setDiscountRows([]);
       qc.invalidateQueries({ queryKey: ['vendor-import-runs', vendorId] });
       qc.invalidateQueries({ queryKey: ['products'] });
     },
@@ -85,13 +92,39 @@ export function ApplySection({ file, vendorId, sheet, currency, profileId, mappi
           <span className="text-[13px] font-semibold text-n-800">Apply to products</span>
           <button
             onClick={() => doPreview.mutate()}
-            disabled={!ready || doPreview.isPending}
+            disabled={!ready || !!incomplete || doPreview.isPending}
             className="inline-flex h-7 items-center gap-1 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12px] font-semibold text-n-700 hover:bg-n-50 disabled:opacity-50"
           >
             <Eye size={13} /> {doPreview.isPending ? 'Checking…' : preview ? 'Refresh preview' : 'Preview changes'}
           </button>
           {!ready && <span className="text-[11.5px] text-n-400">{readyHint}</span>}
+          {ready && incomplete > 0 && (
+            <span className="text-[11.5px] text-amber-700">
+              Finish {incomplete === 1 ? 'the brand discount' : `the ${incomplete} brand discounts`} below, or remove {incomplete === 1 ? 'it' : 'them'}.
+            </span>
+          )}
         </div>
+
+        {hasCost && (
+          <div className="border-b border-n-100 bg-n-25 px-4 py-3">
+            <BrandDiscounts
+              rows={discountRows}
+              disabled={doApply.isPending}
+              onChange={(r) => {
+                setDiscountRows(r);
+                // A preview built on different discounts is worse than none: it would be reviewed
+                // and ticked while showing costs that will not be the ones applied.
+                setPreview(null);
+                setConfirmed(false);
+              }}
+            />
+            {Object.keys(discounts).length > 0 && (
+              <div className="mt-2 text-[11.5px] text-teal-700">
+                Applied to products whose brand matches, using the brand on the product card — not the vendor&rsquo;s spelling.
+              </div>
+            )}
+          </div>
+        )}
 
         {preview && (
           <>
@@ -144,6 +177,7 @@ export function ApplySection({ file, vendorId, sheet, currency, profileId, mappi
                           <td className="mono px-2 py-1.5 text-right text-n-500">{c.oldValue ?? '—'}</td>
                           <td className="mono px-2 py-1.5 text-right font-semibold text-n-800">{c.newValue}</td>
                           <td className="px-2 py-1.5">
+                            {c.note && <div className="text-[11.5px] text-n-500">{c.note}</div>}
                             {c.warning && (
                               <span className="inline-flex items-center gap-1 text-[11.5px] text-amber-700">
                                 <AlertTriangle size={12} /> {c.warning}

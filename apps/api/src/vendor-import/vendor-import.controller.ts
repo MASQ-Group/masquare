@@ -37,6 +37,30 @@ export class VendorImportController {
     return this.svc.match(file, body?.vendorId, this.parseMapping(body?.mapping), body?.sheet || undefined);
   }
 
+  /**
+   * Brand discounts, keyed by our brand id. Validated here rather than trusted: a percentage
+   * outside 0-100 would invert or wipe out a cost, and every affected product would be wrong
+   * with nothing to show for it.
+   */
+  private parseDiscounts(raw?: string): Record<string, number> | undefined {
+    if (!raw) return undefined;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new BadRequestException('The brand discounts could not be read.');
+    }
+    const out: Record<string, number> = {};
+    for (const [brandId, value] of Object.entries(parsed ?? {})) {
+      const pct = Number(value);
+      if (!Number.isFinite(pct) || pct < 0 || pct >= 100) {
+        throw new BadRequestException('A brand discount must be a percentage between 0 and under 100.');
+      }
+      if (pct > 0) out[brandId] = pct;
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
   /** Multipart carries the mapping as text, so it arrives JSON-encoded. */
   private parseMapping(raw?: string): Record<string, number> {
     try {
@@ -49,8 +73,8 @@ export class VendorImportController {
   /** What applying this file WOULD change. Writes nothing. */
   @Post('preview')
   @UseInterceptors(FileInterceptor('file'))
-  preview(@UploadedFile() file: any, @Body() body: { vendorId: string; sheet?: string; mapping?: string; currency?: string }) {
-    return this.svc.preview(file, body?.vendorId, this.parseMapping(body?.mapping), body?.currency ?? 'EUR', body?.sheet || undefined);
+  preview(@UploadedFile() file: any, @Body() body: { vendorId: string; sheet?: string; mapping?: string; currency?: string; brandDiscounts?: string }) {
+    return this.svc.preview(file, body?.vendorId, this.parseMapping(body?.mapping), body?.currency ?? 'EUR', body?.sheet || undefined, this.parseDiscounts(body?.brandDiscounts));
   }
 
   /** Apply the file. Reversible: every previous value is recorded against the run. */
@@ -58,10 +82,10 @@ export class VendorImportController {
   @UseInterceptors(FileInterceptor('file'))
   apply(
     @UploadedFile() file: any,
-    @Body() body: { vendorId: string; sheet?: string; mapping?: string; currency?: string; profileId?: string },
+    @Body() body: { vendorId: string; sheet?: string; mapping?: string; currency?: string; profileId?: string; brandDiscounts?: string },
     @CurrentUser() user: AuthUser,
   ) {
-    return this.svc.apply(file, body?.vendorId, this.parseMapping(body?.mapping), body?.currency ?? 'EUR', body?.sheet || undefined, body?.profileId || undefined, user.sub);
+    return this.svc.apply(file, body?.vendorId, this.parseMapping(body?.mapping), body?.currency ?? 'EUR', body?.sheet || undefined, body?.profileId || undefined, user.sub, this.parseDiscounts(body?.brandDiscounts));
   }
 
   @Get('runs')

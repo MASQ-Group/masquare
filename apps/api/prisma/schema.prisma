@@ -295,6 +295,10 @@ model VendorImportRun {
   /// Currency the file's prices were read in — confirmed by a human at upload.
   currency  String  @default("EUR")
 
+  /// Extra off-invoice discounts applied at upload, keyed by OUR brand id. Recorded so a run's
+  /// costs can be explained later without the original file.
+  brandDiscounts Json? @map("brand_discounts")
+
   rowsTotal   Int @default(0) @map("rows_total")
   rowsMatched Int @default(0) @map("rows_matched")
   changed     Int @default(0)
