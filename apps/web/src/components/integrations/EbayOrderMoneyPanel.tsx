@@ -136,6 +136,18 @@ export function EbayOrderMoneyPanel({ integrationId }: { integrationId: string }
                 What we signed and sent (for diagnosing a rejection)
               </summary>
               <div className="mt-1.5 flex flex-col gap-1 text-[11px]">
+                {/* The two things eBay support asks for first. */}
+                <div className="rounded bg-n-100 px-2 py-1.5">
+                  <div className="text-n-500">
+                    Give these to eBay support — they identify this exact call in their logs:
+                  </div>
+                  <div className="mono mt-0.5 break-all text-n-800">
+                    rlogid: {data.signatureSent.rlogId ?? 'not returned'}
+                  </div>
+                  <div className="mono break-all text-n-800">
+                    error: {data.signatureSent.errorCode ?? '—'} (HTTP {data.signatureSent.status ?? '—'})
+                  </div>
+                </div>
                 <div className="text-n-500">
                   key <span className="mono">{data.signatureSent.keyId ?? '—'}</span> · {data.signatureSent.cipher} ·
                   jwe <span className="mono">{data.signatureSent.jwePrefix}…</span> ({data.signatureSent.jweLength} chars) ·

@@ -2285,5 +2285,9 @@ export interface EbayOrderMoney {
     url: string; base: string; signatureInput: string; signature: string;
     created: number; serverTime: string;
     keyId: string | null; cipher: string; jwePrefix: string; jweLength: number;
+    /** eBay's request log id — how their support finds this exact call in their logs. */
+    rlogId?: string | null;
+    status?: number;
+    errorCode?: string | number | null;
   } | null;
 }
