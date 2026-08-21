@@ -81,6 +81,12 @@ export class IntegrationsController {
     return this.svc.setupSpApiNotifications(id, body.sqsArn, types);
   }
 
+  /** Read-only: what eBay reports for one order, using the only eBay connection. */
+  @Get('ebay/order-money')
+  ebayOrderMoneyDefault(@Query('orderId') orderId: string) {
+    return this.svc.ebayOrderMoney(undefined, orderId);
+  }
+
   /** Read-only: what eBay actually reports for one order's money fields. */
   @Get(':id/ebay/order-money')
   ebayOrderMoney(@Param('id') id: string, @Query('orderId') orderId: string) {

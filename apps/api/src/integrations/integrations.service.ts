@@ -468,9 +468,12 @@ export class IntegrationsService implements OnModuleInit {
    * transaction — by then our FX and theirs have collapsed into one number. This shows the raw
    * fields so the answer comes from data.
    */
-  async ebayOrderMoney(integrationId: string, orderId: string) {
-    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
-    if (!row) throw new NotFoundException('Integration not found');
+  async ebayOrderMoney(integrationId: string | undefined, orderId: string) {
+    // An order id is enough when there is one eBay connection — no need to look up its id first.
+    const row = integrationId
+      ? await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } })
+      : await this.prisma.channelIntegration.findFirst({ where: { channelType: 'ebay', deletedAt: null }, orderBy: { name: 'asc' } });
+    if (!row) throw new NotFoundException(integrationId ? 'Integration not found' : 'No eBay integration is connected.');
     if (row.channelType !== 'ebay') throw new BadRequestException('That integration is not an eBay connection.');
     const ref = String(orderId ?? '').trim();
     if (!ref) throw new BadRequestException('Provide an eBay order id.');
