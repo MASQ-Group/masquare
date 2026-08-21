@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -79,6 +79,12 @@ export class IntegrationsController {
     const requested = body.types?.filter((t) => allowed.has(t)) ?? [];
     const types = requested.length ? requested : ['ANY_OFFER_CHANGED', 'PRICING_HEALTH', 'FEE_PROMOTION'];
     return this.svc.setupSpApiNotifications(id, body.sqsArn, types);
+  }
+
+  /** Read-only: what eBay actually reports for one order's money fields. */
+  @Get(':id/ebay/order-money')
+  ebayOrderMoney(@Param('id') id: string, @Query('orderId') orderId: string) {
+    return this.svc.ebayOrderMoney(id, orderId);
   }
 
   @Patch(':id')
