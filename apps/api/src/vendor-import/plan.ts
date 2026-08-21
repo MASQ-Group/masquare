@@ -21,6 +21,9 @@ export interface PlanProduct {
   availability: number | null;
   /** Product's VAT rate as a percentage, for grossing up a MAP the vendor quotes net. */
   vatRatePct: number | null;
+  /** Our brand for this product — the discount is keyed off ours, never the vendor's spelling. */
+  brandId: string | null;
+  brandName: string | null;
 }
 
 export interface PlanRowInput {
@@ -39,6 +42,14 @@ export interface PlanOptions {
   mapIncludesVat: boolean;
   /** A cost moving by more than this fraction is flagged for a human. */
   anomalyPct: number;
+  /**
+   * Extra off-invoice discount per brand, as a percentage of the file's purchase cost.
+   *
+   * Keyed by OUR brand id, resolved from the product card, because a vendor's own brand column
+   * spells names their way (or is missing) and matching on it would silently miss rows. Applies
+   * to purchase cost only — MAP is a retail price the vendor sets, not something we discount.
+   */
+  brandDiscounts?: Record<string, number>;
 }
 
 export interface PlannedChange {
@@ -50,6 +61,8 @@ export interface PlannedChange {
   newValue: string;
   /** Set when the change is large enough to be worth a second look before applying. */
   warning?: string;
+  /** How the value was derived, when it is not simply the file's figure. */
+  note?: string;
 }
 
 export interface Plan {
@@ -85,17 +98,22 @@ export function buildPlan(rows: PlanRowInput[], products: Map<string, PlanProduc
       if (n == null || n <= 0) {
         skipped.push({ productId: p.id, field: 'purchaseCost', raw: String(row.purchaseCost), why: 'not a price' });
       } else {
+        const pct = p.brandId ? opts.brandDiscounts?.[p.brandId] ?? 0 : 0;
+        const discounted = pct > 0 ? n * (1 - pct / 100) : n;
         const sameCurrency = (p.purchaseCostCurrency || 'EUR').toUpperCase() === opts.currency.toUpperCase();
         const old = p.purchaseCostAmount;
-        if (!sameCurrency || old == null || Math.abs(old - n) > 0.00005) {
+        if (!sameCurrency || old == null || Math.abs(old - discounted) > 0.00005) {
           const change: PlannedChange = {
             productId: p.id, mainSku: p.mainSku, title: p.title, field: 'purchaseCost',
             oldValue: old != null ? `${money(old)} ${p.purchaseCostCurrency}` : null,
-            newValue: `${money(n)} ${opts.currency.toUpperCase()}`,
+            newValue: `${money(Number(discounted.toFixed(4)))} ${opts.currency.toUpperCase()}`,
+            ...(pct > 0
+              ? { note: `${money(n)} less ${pct}% ${p.brandName ?? 'brand'} discount` }
+              : {}),
           };
           // A cost that moves a long way is usually a mapping or currency mistake, not a price rise.
           if (old != null && old > 0 && sameCurrency) {
-            const delta = (n - old) / old;
+            const delta = (discounted - old) / old;
             if (Math.abs(delta) >= opts.anomalyPct) {
               change.warning = `${delta > 0 ? '+' : ''}${(delta * 100).toFixed(0)}% vs current cost`;
             }

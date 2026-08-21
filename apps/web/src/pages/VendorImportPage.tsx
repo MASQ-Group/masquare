@@ -440,6 +440,7 @@ export function VendorImportPage() {
               currency={currency}
               profileId={analysis.profile?.id}
               mapping={Object.fromEntries(Object.entries(chosen).filter(([, v]) => v != null) as [string, number][])}
+              hasCost={willUpdate.cost}
               ready={skuMapped && (!needsCurrency || currencyConfirmed)}
               readyHint={!skuMapped ? 'Map the SKU column first.' : 'Confirm the currency first.'}
             />
