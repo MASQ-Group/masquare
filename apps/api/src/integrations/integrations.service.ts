@@ -10,7 +10,7 @@ import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dt
 import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 import { mapAmazonOrder } from './mappings/amazon-mapping';
 import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
-import { readOrderMoney } from './ebay-money-diagnostic';
+import { readOrderMoney, readFinances, impliedEbayRate, type EbayFinancesRead } from './ebay-money-diagnostic';
 
 /**
  * Outcome of a read-only SP-API role probe.
@@ -492,7 +492,31 @@ export class IntegrationsService implements OnModuleInit {
       const msg = (json?.errors?.[0]?.message || `HTTP ${res.status}`).toString().slice(0, 200);
       throw new BadRequestException(`eBay could not return that order (${msg}).`);
     }
-    return readOrderMoney(json);
+    const money = readOrderMoney(json);
+
+    // The Fulfillment API reports the fee in the ORDER currency, so there is no conversion to read
+    // there. Finances reports in the PAYOUT currency, which is the only place eBay's own EUR figure
+    // exists. Best-effort: a finances failure must not hide the order data we already have.
+    let finances: EbayFinancesRead = { ok: false, message: null, payoutCurrency: null, transactions: [], feeInPayoutCurrency: null };
+    try {
+      const q = new URLSearchParams({ filter: `orderId:{${ref}}` });
+      const fRes = await fetch(`${base}/sell/finances/v1/transaction?${q.toString()}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(20000),
+      });
+      const fJson: any = await fRes.json().catch(() => null);
+      finances = fRes.ok
+        ? readFinances(fJson)
+        : { ok: false, message: (fJson?.errors?.[0]?.message || `HTTP ${fRes.status}`).toString().slice(0, 200), payoutCurrency: null, transactions: [], feeInPayoutCurrency: null };
+    } catch (e) {
+      finances = { ok: false, message: (e as Error).message.slice(0, 200), payoutCurrency: null, transactions: [], feeInPayoutCurrency: null };
+    }
+
+    return {
+      ...money,
+      finances,
+      ebayRate: impliedEbayRate(money.amounts.totalMarketplaceFee.value, finances.feeInPayoutCurrency),
+    };
   }
 
   /** Read-only: fetch + map recent eBay orders for connection + mapping validation. */
