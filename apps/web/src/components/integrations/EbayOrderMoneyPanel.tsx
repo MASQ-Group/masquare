@@ -100,7 +100,15 @@ export function EbayOrderMoneyPanel({ integrationId }: { integrationId: string }
               </div>
             ) : (
               <div className="mt-1 text-[11.5px] text-n-500">
-                {data.finances.message ?? 'No finance transactions returned for this order yet — eBay posts them once the order settles.'}
+                {/^Missing x-ebay-signature/i.test(data.finances.message ?? '') ? (
+                  <>
+                    eBay requires digitally signed requests on the Finances API for EU/UK sellers, and this
+                    connection has no signing key yet. Until it does, their payout figures cannot be read and
+                    the platform falls back to its own exchange rate.
+                  </>
+                ) : (
+                  data.finances.message ?? 'No finance transactions returned for this order yet — eBay posts them once the order settles.'
+                )}
               </div>
             )}
           </div>
@@ -113,8 +121,9 @@ export function EbayOrderMoneyPanel({ integrationId }: { integrationId: string }
               </div>
             ) : (
               <div className="text-[11.5px] text-n-600">
-                eBay reports the fee in the order&rsquo;s own currency, so our exchange rate is the right one to
-                apply. A gap against eBay&rsquo;s statement would then be the fee amount, not the conversion.
+                eBay reports the fee in the order&rsquo;s own currency, so there is no conversion here to read.
+                eBay converts the whole order at <em>their</em> rate when they pay out, which is not the rate
+                we apply — the Finances figures above are the only place their rate can be obtained.
               </div>
             )}
             {data.interpretation.ebayImpliedRate != null && (
