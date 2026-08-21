@@ -111,6 +111,8 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
     chipTextColor: channel?.chipTextColor ?? '#495057',
     vatThresholdEnabled: channel?.vatThresholdEnabled ?? false,
     pricesIncludeTax: channel?.pricesIncludeTax ?? true,
+    fxRateOverride: channel?.fxRateOverride != null ? String(channel.fxRateOverride) : '',
+    fxRateOverrideNote: channel?.fxRateOverrideNote ?? '',
     vatThresholdAmount: channel?.vatThresholdAmount?.toString() ?? '',
     vatThresholdCurrency: channel?.vatThresholdCurrency ?? null as string | null,
     vatBelowThresholdPct: channel?.vatBelowThresholdPct?.toString() ?? '',
@@ -164,6 +166,8 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
         feeChargedInNativeCurrency: form.feeChargedInNativeCurrency,
         feeCurrency: form.feeChargedInNativeCurrency ? null : form.feeCurrency,
         pricesIncludeTax: form.pricesIncludeTax,
+        fxRateOverride: form.fxRateOverride.trim() === '' ? null : Number(form.fxRateOverride),
+        fxRateOverrideNote: form.fxRateOverrideNote.trim() || null,
         vatThresholdEnabled: form.vatThresholdEnabled,
         vatThresholdAmount: form.vatThresholdEnabled && form.vatThresholdAmount.trim() !== '' ? Number(form.vatThresholdAmount) : null,
         vatThresholdCurrency: form.vatThresholdEnabled ? form.vatThresholdCurrency : null,
@@ -191,6 +195,41 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
         <div><label className="label">Description</label><input className="input" value={form.description} onChange={(e) => set({ description: e.target.value })} placeholder="Amazon United Kingdom" /></div>
         <div><label className="label">Native country</label><CountrySelect value={form.nativeCountryId} onChange={onNativeCountry} /></div>
         <div><label className="label">Native currency</label><CurrencySelect value={form.nativeCurrency} onChange={(v) => set({ nativeCurrency: v })} /></div>
+        <div className="col-span-2 rounded-md border border-n-200 bg-n-25 p-3 max-[560px]:col-span-1">
+          <label className="label">Exchange rate for this channel</label>
+          <p className="mb-2 text-[11.5px] text-n-500">
+            Some marketplaces convert at their own rate and pay out in EUR — eBay does, and theirs has run about
+            3% below the market rate, which overstates profit. Enter the rate from a payout statement to value this
+            channel&rsquo;s sales at what actually reaches the bank. Leave empty to use the market rate.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="w-[150px]">
+              <label className="label">{form.nativeCurrency || 'EUR'} &rarr; EUR</label>
+              <input
+                className="input mono text-right"
+                inputMode="decimal"
+                placeholder="market rate"
+                value={form.fxRateOverride}
+                onChange={(e) => set({ fxRateOverride: e.target.value })}
+              />
+            </div>
+            <div className="min-w-[200px] flex-1">
+              <label className="label">Where it came from</label>
+              <input
+                className="input"
+                placeholder="e.g. eBay payout statement, Aug 2026"
+                value={form.fxRateOverrideNote}
+                onChange={(e) => set({ fxRateOverrideNote: e.target.value })}
+              />
+            </div>
+          </div>
+          {channel?.fxRateOverrideSetAt && form.fxRateOverride.trim() !== '' && (
+            <div className="mt-1.5 text-[11.5px] text-n-400">
+              Last set {new Date(channel.fxRateOverrideSetAt).toLocaleDateString('en-GB')} — worth refreshing when a new
+              statement arrives.
+            </div>
+          )}
+        </div>
         <div><label className="label">General Sales Fee (%)</label><input className="input mono" inputMode="decimal" value={form.generalSalesFeePct} onChange={(e) => set({ generalSalesFeePct: e.target.value })} placeholder="15" /></div>
         <div className="col-span-2 flex flex-col gap-2 rounded-md border border-n-200 bg-n-25 p-3">
           <label className="flex cursor-pointer items-center gap-2.5">
