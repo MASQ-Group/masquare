@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Search, AlertTriangle } from 'lucide-react';
+import { Search, AlertTriangle, KeyRound } from 'lucide-react';
 import { integrationsApi, type EbayOrderMoney } from '../../lib/api';
 
 /**
@@ -15,6 +15,13 @@ import { integrationsApi, type EbayOrderMoney } from '../../lib/api';
 export function EbayOrderMoneyPanel({ integrationId }: { integrationId: string }) {
   const [orderId, setOrderId] = useState('');
   const [data, setData] = useState<EbayOrderMoney | null>(null);
+  const [keyNote, setKeyNote] = useState<string | null>(null);
+
+  const makeKey = useMutation({
+    mutationFn: () => integrationsApi.createEbaySigningKey(integrationId),
+    onSuccess: (r) => { setKeyNote(r.created ? 'Signing key created — check the order again.' : (r.message ?? 'A signing key already exists.')); },
+    onError: (e: any) => setKeyNote(e?.response?.data?.message ?? 'Could not create a signing key.'),
+  });
 
   const run = useMutation({
     mutationFn: () => integrationsApi.ebayOrderMoney(integrationId, orderId.trim()),
@@ -105,6 +112,16 @@ export function EbayOrderMoneyPanel({ integrationId }: { integrationId: string }
                     eBay requires digitally signed requests on the Finances API for EU/UK sellers, and this
                     connection has no signing key yet. Until it does, their payout figures cannot be read and
                     the platform falls back to its own exchange rate.
+                    <div className="mt-1.5">
+                      <button
+                        onClick={() => makeKey.mutate()}
+                        disabled={makeKey.isPending}
+                        className="inline-flex h-7 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50"
+                      >
+                        <KeyRound size={13} /> {makeKey.isPending ? 'Creating…' : 'Create signing key'}
+                      </button>
+                      {keyNote && <span className="ml-2 text-[11.5px] text-n-600">{keyNote}</span>}
+                    </div>
                   </>
                 ) : (
                   data.finances.message ?? 'No finance transactions returned for this order yet — eBay posts them once the order settles.'

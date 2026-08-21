@@ -11,6 +11,7 @@ import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 import { mapAmazonOrder } from './mappings/amazon-mapping';
 import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
 import { readOrderMoney, readFinances, impliedEbayRate, type EbayFinancesRead } from './ebay-money-diagnostic';
+import { signedHeaders, type SigningCipher, type SigningKey } from './ebay-signature';
 
 /**
  * Outcome of a read-only SP-API role probe.
@@ -461,6 +462,93 @@ export class IntegrationsService implements OnModuleInit {
     return { ok: true, orders: json?.orders ?? [], total: Number(json?.total ?? (json?.orders?.length ?? 0)) };
   }
 
+  /** eBay application token (client credentials) — what the Key Management API authenticates with. */
+  private async ebayAppToken(config: Record<string, string>, secrets: Record<string, string>): Promise<string> {
+    const appId = config.appId;
+    const certId = secrets.certId;
+    if (!appId || !certId) throw new BadRequestException('This eBay connection is missing its App ID or Cert ID.');
+    const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+    const res = await fetch(`${base}/identity/v1/oauth2/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${Buffer.from(`${appId}:${certId}`).toString('base64')}`,
+      },
+      body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'https://api.ebay.com/oauth/api_scope' }).toString(),
+      signal: AbortSignal.timeout(15000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok || !json?.access_token) {
+      const detail = (json?.error_description || json?.error || `HTTP ${res.status}`).toString().slice(0, 160);
+      throw new BadRequestException(`eBay rejected the application credentials (${detail}).`);
+    }
+    return json.access_token as string;
+  }
+
+  /**
+   * Create the keypair eBay requires to sign Finances requests, and store it.
+   *
+   * eBay returns the private key EXACTLY ONCE and keeps no copy — lose it and the only remedy is a
+   * new keypair — so it is written straight into the same encrypted store as the API credentials.
+   * Nothing here needs the seller: the call uses the app credentials the connection already holds.
+   */
+  async createEbaySigningKey(integrationId: string, actorId?: string) {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) throw new NotFoundException('Integration not found');
+    if (row.channelType !== 'ebay') throw new BadRequestException('That integration is not an eBay connection.');
+
+    const config = (row.config ?? {}) as Record<string, string>;
+    const secrets = await this.decryptedSecrets(row.id);
+    if (secrets.ebaySigningPrivateKey && secrets.ebaySigningJwe) {
+      return { ok: true, created: false, signingKeyId: secrets.ebaySigningKeyId ?? null, message: 'This connection already has a signing key.' };
+    }
+
+    const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+    const appToken = await this.ebayAppToken(config, secrets);
+    const res = await fetch(`${base}/developer/key_management/v1/signing_key`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${appToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ signingKeyCipher: 'ED25519' }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) {
+      const msg = (json?.errors?.[0]?.message || `HTTP ${res.status}`).toString().slice(0, 200);
+      throw new BadRequestException(`eBay would not create a signing key (${msg}).`);
+    }
+    const privateKey = json?.privateKey;
+    const jwe = json?.jwe;
+    if (!privateKey || !jwe) throw new BadRequestException('eBay returned a signing key without a private key or JWE.');
+
+    for (const [fieldKey, value] of Object.entries({
+      ebaySigningKeyId: String(json?.signingKeyId ?? ''),
+      ebaySigningPrivateKey: String(privateKey),
+      ebaySigningJwe: String(jwe),
+      ebaySigningCipher: String(json?.signingKeyCipher ?? 'ED25519'),
+    })) {
+      if (!value) continue;
+      const enc = this.crypto.encrypt(value);
+      await this.prisma.integrationSecret.upsert({
+        where: { integrationId_fieldKey: { integrationId: row.id, fieldKey } },
+        create: { integrationId: row.id, fieldKey, ...enc, last4: CryptoService.last4(value) },
+        update: { ...enc, last4: CryptoService.last4(value) },
+      });
+    }
+    await this.audit(row.id, actorId, 'secret.set', 'ebaySigningKey');
+    return { ok: true, created: true, signingKeyId: json?.signingKeyId ?? null, expirationTime: json?.expirationTime ?? null };
+  }
+
+  /** The stored signing key, or null when this connection has none yet. */
+  private signingKeyFrom(secrets: Record<string, string>): SigningKey | null {
+    if (!secrets.ebaySigningPrivateKey || !secrets.ebaySigningJwe) return null;
+    return {
+      signingKeyId: secrets.ebaySigningKeyId ?? '',
+      privateKey: secrets.ebaySigningPrivateKey,
+      jwe: secrets.ebaySigningJwe,
+      cipher: (secrets.ebaySigningCipher === 'RSA' ? 'RSA' : 'ED25519') as SigningCipher,
+    };
+  }
+
   /**
    * Read-only: one eBay order's money fields exactly as the API returns them.
    *
@@ -500,8 +588,13 @@ export class IntegrationsService implements OnModuleInit {
     let finances: EbayFinancesRead = { ok: false, message: null, payoutCurrency: null, transactions: [], feeInPayoutCurrency: null };
     try {
       const q = new URLSearchParams({ filter: `orderId:{${ref}}` });
-      const fRes = await fetch(`${base}/sell/finances/v1/transaction?${q.toString()}`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      const financesUrl = `${base}/sell/finances/v1/transaction?${q.toString()}`;
+      // EU/UK sellers must sign financial calls; without the key eBay answers with a header error
+      // rather than data, which the caller surfaces as the reason rather than as a fault.
+      const key = this.signingKeyFrom(secrets);
+      const sig = key ? signedHeaders(key, financesUrl, Math.floor(Date.now() / 1000)) : {};
+      const fRes = await fetch(financesUrl, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...sig },
         signal: AbortSignal.timeout(20000),
       });
       const fJson: any = await fRes.json().catch(() => null);
