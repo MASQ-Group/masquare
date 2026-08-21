@@ -45,15 +45,21 @@ export function buildSignatureBase(params: {
   /** Present only on a request that carries a body. */
   contentDigest?: string | null;
 }): { base: string; signatureInput: string } {
-  // Declared exactly as eBay's own SDK declares them: content-digest is always LISTED, including
-  // on a GET that has no body, while the base omits its line. Listing only the components we
-  // actually sign is the more literal reading of RFC 9421 and is what eBay rejected — their
-  // verifier rebuilds the base from this list and applies the same skip.
-  const declared = ['"content-digest"', '"x-ebay-signature-key"', '"@method"', '"@path"', '"@authority"'];
+  // Signature-Input must list EXACTLY the components the base contains. eBay's SDK carries
+  // content-digest in its defaults and drops only the LINE when there is no body, leaving it
+  // declared but absent; eBay's verifier then looks for a Content-Digest header, finds none, and
+  // rejects the signature. So a GET declares four components and a request with a body declares
+  // five — the list is derived from what is actually signed rather than fixed.
+  const lines: string[] = [];
+  const declared: string[] = [];
+
+  if (params.contentDigest) {
+    declared.push('"content-digest"');
+    lines.push(`"content-digest": ${params.contentDigest}`);
+  }
+  declared.push('"x-ebay-signature-key"', '"@method"', '"@path"', '"@authority"');
   const sigParams = `(${declared.join(' ')});created=${params.created}`;
 
-  const lines: string[] = [];
-  if (params.contentDigest) lines.push(`"content-digest": ${params.contentDigest}`);
   lines.push(`"x-ebay-signature-key": ${params.jwe}`);
   lines.push(`"@method": ${params.method.toUpperCase()}`);
   // eBay's @path carries the query string, unlike the bare path RFC 9421 describes.
