@@ -15,6 +15,8 @@ export type { DateRangePickerProps, DateRangeValue } from './DateRangePicker';
 export { RANGE_PRESETS } from './date-utils';
 export type { DisplayFormat } from './date-utils';
 export { Select } from './Select';
+export { FileDrop } from './FileDrop';
+export type { FileDropProps } from './FileDrop';
 export type { SelectProps, SelectOption } from './Select';
 export { Pagination, DEFAULT_PAGE_SIZES } from './Pagination';
 export type { PaginationProps } from './Pagination';

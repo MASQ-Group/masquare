@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { CostHistory } from './CostHistory';
 import { ProductStockSection } from './ProductStockSection';
 import { ProductChannelIdentifiers } from './ProductChannelIdentifiers';
-import { ModalShell, Select } from '@masquare/ui';
+import { FileDrop, ModalShell, Select } from '@masquare/ui';
 import {
   attributesApi, brandsApi, categoriesApi, fulfilmentTypesApi, productClassesApi, productsApi,
   productTypesApi, vatClassesApi, vendorsApi,
@@ -170,10 +170,23 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
                   </div>
                 ))}
                 {media.length < 8 && (
-                  <label className="grid h-20 w-20 cursor-pointer place-items-center rounded-md border border-dashed border-n-300 text-n-400 hover:border-teal-400 hover:text-teal-600">
-                    <ImagePlus size={20} />
-                    <input type="file" accept=".jpg,.jpeg,.png,.webp" multiple className="hidden" onChange={(e) => onUpload(e.target.files)} />
-                  </label>
+                  <FileDrop
+                    accept=".jpg,.jpeg,.png,.webp"
+                    multiple
+                    onFiles={(files) => {
+                      // onUpload takes a FileList; rebuild one so dropped and browsed files
+                      // travel the same path.
+                      const dt = new DataTransfer();
+                      for (const f of files) dt.items.add(f);
+                      onUpload(dt.files);
+                    }}
+                  >
+                    {({ dragging }) => (
+                      <div className={`grid h-20 w-20 place-items-center rounded-md border border-dashed transition-colors ${dragging ? 'border-teal-400 bg-teal-50 text-teal-600' : 'border-n-300 text-n-400 hover:border-teal-400 hover:text-teal-600'}`}>
+                        <ImagePlus size={20} />
+                      </div>
+                    )}
+                  </FileDrop>
                 )}
               </div>
             ) : (

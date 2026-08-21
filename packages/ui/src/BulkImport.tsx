@@ -1,3 +1,4 @@
+import { FileDrop } from './FileDrop';
 import { useMemo, useState } from 'react';
 import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2 } from 'lucide-react';
 // xlsx is loaded on demand inside handleFile (below) so it stays out of the main bundle.
@@ -126,19 +127,20 @@ export function BulkImport({ fields, onCommit, onClose }: BulkImportProps) {
       </div>
 
       {step === 'upload' && (
-        <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-n-300 bg-n-25 px-6 py-12 text-center hover:border-teal-400 hover:bg-teal-50">
-          <Upload className="text-n-400" size={28} />
-          <span className="text-[14px] font-medium text-n-700">
-            Drop a .csv / .xls / .xlsx, or click to browse
-          </span>
-          <span className="text-[12px] text-n-500">The first row is read as column headers.</span>
-          <input
-            type="file"
-            accept=".csv,.xls,.xlsx"
-            className="hidden"
-            onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-          />
-        </label>
+        <FileDrop accept=".csv,.xls,.xlsx" onFiles={(f) => handleFile(f[0])}>
+          {({ dragging }) => (
+            <div className={cn(
+              'flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-6 py-12 text-center transition-colors',
+              dragging ? 'border-teal-400 bg-teal-50' : 'border-n-300 bg-n-25 hover:border-teal-400 hover:bg-teal-50',
+            )}>
+              <Upload className="text-n-400" size={28} />
+              <span className="text-[14px] font-medium text-n-700">
+                Drop a .csv / .xls / .xlsx, or click to browse
+              </span>
+              <span className="text-[12px] text-n-500">The first row is read as column headers.</span>
+            </div>
+          )}
+        </FileDrop>
       )}
 
       {step === 'map' && (

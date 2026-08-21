@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell, downloadSheet, parseSheetFile } from '@masquare/ui';
+import { FileDrop, ModalShell, downloadSheet, parseSheetFile } from '@masquare/ui';
 import { expensesApi, type ExpenseImportRowResult } from '../../lib/api';
 import { EXPENSE_IMPORT_COLUMNS, EXPENSE_IMPORT_SAMPLE_ROWS, mapExpenseHeaders } from './expenseImportColumns';
 
@@ -82,12 +82,16 @@ export function ExpenseImportModal({ companyId, onClose, onDone }: Props) {
           <div className="flex flex-wrap items-center gap-2">
             <button className="btn btn-ghost" onClick={downloadTemplate}><Upload size={16} className="rotate-180" /> Download template</button>
           </div>
-          <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-n-300 bg-n-25 px-6 py-10 text-center hover:border-teal-400 hover:bg-teal-50">
-            <Upload className="text-n-400" size={26} />
-            <span className="text-[14px] font-medium text-n-700">{fileName ? `${fileName} — ${rows.length} rows` : 'Drop a .csv / .xls / .xlsx, or click to browse'}</span>
-            <span className="text-[12px] text-n-500">Columns: Expense name · Category · Type · Amount · Currency · Date · Note · Tag</span>
-            <input type="file" accept=".csv,.xls,.xlsx" className="hidden" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
-          </label>
+          <FileDrop accept=".csv,.xls,.xlsx" onFiles={(f) => onFile(f[0])}>
+            {({ dragging }) => (
+              <div className={`flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-6 py-10 text-center transition-colors ${dragging ? 'border-teal-400 bg-teal-50' : 'border-n-300 bg-n-25 hover:border-teal-400 hover:bg-teal-50'}`}>
+
+                <Upload className="text-n-400" size={26} />
+                <span className="text-[14px] font-medium text-n-700">{fileName ? `${fileName} — ${rows.length} rows` : 'Drop a .csv / .xls / .xlsx, or click to browse'}</span>
+                <span className="text-[12px] text-n-500">Columns: Expense name · Category · Type · Amount · Currency · Date · Note · Tag</span>
+              </div>
+            )}
+          </FileDrop>
         </div>
       )}
 
