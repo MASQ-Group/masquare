@@ -8,11 +8,13 @@ import { buildSignatureBase, signBase, signedHeaders, signedRequest, toPem } fro
 describe('signature base', () => {
   const parts = { jwe: 'eyJraWQiOiJ0ZXN0In0', method: 'get', path: '/sell/finances/v1/transaction?filter=x', authority: 'api.ebay.com', created: 1_700_000_000 };
 
-  const GET_DECLARED = '("x-ebay-signature-key" "@method" "@path" "@authority")';
+  const ALL = '("content-digest" "x-ebay-signature-key" "@method" "@path" "@authority")';
+  const GET_HEADER = '("x-ebay-signature-key" "@method" "@path" "@authority")';
 
-  it('declares exactly the components the base contains', () => {
-    // Declaring content-digest on a body-less GET leaves it declared but absent; eBay's verifier
-    // then looks for a Content-Digest header, finds none, and rejects the signature.
+  it('signs the full param list but sends only what the request carries', () => {
+    // eBay's own SDK builds these two from the same list by different code paths:
+    // generateSignatureInput() skips content-digest when absent, generateBase() does not.
+    // A consistent four or a consistent five is rejected; this asymmetry is what they verify.
     const { base, signatureInput } = buildSignatureBase(parts);
     expect(base).toBe(
       [
@@ -20,24 +22,25 @@ describe('signature base', () => {
         '"@method": GET',
         '"@path": /sell/finances/v1/transaction?filter=x',
         '"@authority": api.ebay.com',
-        `"@signature-params": ${GET_DECLARED};created=1700000000`,
+        `"@signature-params": ${ALL};created=1700000000`,
       ].join('\n'),
     );
-    expect(signatureInput).toBe(`sig1=${GET_DECLARED};created=1700000000`);
-    expect(signatureInput).not.toContain('content-digest');
+    expect(signatureInput).toBe(`sig1=${GET_HEADER};created=1700000000`);
   });
 
-  it('declares AND includes content-digest when there is a body', () => {
+  it('sends and signs the same list once a body gives it a digest', () => {
     const { base, signatureInput } = buildSignatureBase({ ...parts, contentDigest: 'sha-256=:abc:' });
     expect(base.startsWith('"content-digest": sha-256=:abc:\n')).toBe(true);
-    expect(signatureInput).toContain('"content-digest"');
+    expect(base).toContain(`"@signature-params": ${ALL};`);
+    expect(signatureInput).toBe(`sig1=${ALL};created=1700000000`);
   });
 
-  it('never declares a component the base does not carry', () => {
+  it('keeps the created timestamp identical in both', () => {
+    // eBay's SDK reads the clock separately for each, which can straddle a second boundary.
     for (const p of [parts, { ...parts, contentDigest: 'sha-256=:abc:' }]) {
       const { base, signatureInput } = buildSignatureBase(p);
-      const declared = signatureInput.slice(signatureInput.indexOf('(') + 1, signatureInput.indexOf(')')).split(' ');
-      for (const d of declared) expect(base).toContain(`${d}: `);
+      expect(base).toContain('created=1700000000');
+      expect(signatureInput).toContain('created=1700000000');
     }
   });
 
