@@ -42,6 +42,7 @@ import {
   Store,
   Users,
   Warehouse,
+  UploadCloud,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
@@ -88,6 +89,7 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
     items: [
       { to: '/pricing/individual', label: 'Individual Pricing', icon: CircleDollarSign },
       { to: '/pricing/bulk', label: 'Bulk Pricing', icon: SlidersHorizontal },
+      { to: '/pricing/vendor-files', label: 'Vendor Price Files', icon: UploadCloud },
     ],
   },
   {

@@ -231,6 +231,36 @@ enum DateFormat {
   yyyymmdd // yyyy-mm-dd
 }
 
+/// A saved column mapping for one vendor's price file, so the same layout is not re-mapped
+/// every month. Matched on the vendor, then re-resolved against the uploaded file by HEADER
+/// NAME first: vendors add and reorder columns between editions, and a position saved last
+/// month can quietly point at a different column this month.
+model VendorImportProfile {
+  id       String @id @default(uuid()) @db.Uuid
+  vendorId String @map("vendor_id") @db.Uuid
+  /// What the user calls this layout, e.g. "Monthly stock & price list".
+  name     String
+  /// Sheet this mapping applies to, when the workbook has more than one.
+  sheetName String? @map("sheet_name")
+  /// field -> { header, letter, ordinal }. Header is the primary key on re-resolve; letter and
+  /// ordinal are kept so a headerless column can still be found, and so the UI can explain
+  /// where a mapping came from.
+  mapping  Json
+  /// Currency the file's prices are in. Defaults from the vendor but is confirmed per upload —
+  /// a price list read in the wrong currency changes every cost silently.
+  currency String @default("EUR")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("vendor_import_profile")
+}
+
 model Vendor {
   id                String  @id @default(uuid()) @db.Uuid
   name              String
@@ -271,6 +301,7 @@ model Vendor {
 
   contacts VendorContact[]
   products Product[]
+  importProfiles VendorImportProfile[]
   purchaseOrders PurchaseOrder[]
   vendorReturns  VendorReturn[]
 

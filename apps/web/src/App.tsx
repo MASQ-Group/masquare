@@ -30,6 +30,7 @@ const PurchaseOrderDetailPage = lazyPage(() => import('./pages/PurchaseOrderDeta
 const GoodsReceiptsPage = lazyPage(() => import('./pages/GoodsReceiptsPage'), 'GoodsReceiptsPage');
 const ProcurementPage = lazyPage(() => import('./pages/ProcurementPage'), 'ProcurementPage');
 const IndividualPricingPage = lazyPage(() => import('./pages/IndividualPricingPage'), 'IndividualPricingPage');
+const VendorImportPage = lazyPage(() => import('./pages/VendorImportPage'), 'VendorImportPage');
 const BulkPricingPage = lazyPage(() => import('./pages/BulkPricingPage'), 'BulkPricingPage');
 const VendorReturnsPage = lazyPage(() => import('./pages/VendorReturnsPage'), 'VendorReturnsPage');
 const SerialsPage = lazyPage(() => import('./pages/SerialsPage'), 'SerialsPage');
@@ -104,6 +105,7 @@ export function App() {
         <Route path="/procurement" element={<ProcurementPage />} />
         <Route path="/pricing/individual" element={<IndividualPricingPage />} />
         <Route path="/pricing/bulk" element={<BulkPricingPage />} />
+        <Route path="/pricing/vendor-files" element={<VendorImportPage />} />
         <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
         <Route path="/purchase-orders/new" element={<PurchaseOrderFormPage />} />
         <Route path="/purchase-orders/:id" element={<PurchaseOrderDetailPage />} />

@@ -1,0 +1,173 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { DetectedColumn } from './sheet-extract';
+import { extractSheet, listSheets } from './workbook';
+import { FieldSuggestion, VendorField, VENDOR_FIELDS, capabilitiesOf, suggestMapping } from './field-suggest';
+
+/** Where a mapped column was found, saved so the next file of the same layout resolves itself. */
+export interface MappingRef {
+  header: string;
+  letter: string;
+  ordinal: number;
+}
+
+export type SavedMapping = Partial<Record<VendorField, MappingRef>>;
+
+const ACTIVE = { deletedAt: null };
+/** Vendor price lists are catalogues, not data dumps — anything larger is a mistaken upload. */
+const MAX_BYTES = 15 * 1024 * 1024;
+const ACCEPTED = /\.(csv|xls|xlsx|xlsm)$/i;
+
+@Injectable()
+export class VendorImportService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Re-resolve a saved mapping against the columns of a freshly uploaded file.
+   *
+   * Header name first, because vendors add and reorder columns between editions and a saved
+   * POSITION can silently point at a different column next month — the failure mode this whole
+   * feature exists to avoid. Position is the fallback for genuinely headerless columns, and the
+   * caller is told which was used so the UI can flag a mapping that moved.
+   */
+  resolveSaved(
+    saved: SavedMapping,
+    columns: DetectedColumn[],
+  ): Array<{ field: VendorField; columnIndex: number | null; matchedBy: 'header' | 'position' | null; movedFrom?: string }> {
+    const used = new Set<number>();
+    return VENDOR_FIELDS.map((field) => {
+      const ref = saved[field];
+      if (!ref) return { field, columnIndex: null, matchedBy: null };
+
+      const wanted = ref.header.trim().toLowerCase();
+      if (wanted) {
+        const idx = columns.findIndex((c, i) => !used.has(i) && c.header.trim().toLowerCase() === wanted);
+        if (idx >= 0) {
+          used.add(idx);
+          const moved = columns[idx].letter !== ref.letter;
+          return { field, columnIndex: idx, matchedBy: 'header' as const, ...(moved ? { movedFrom: ref.letter } : {}) };
+        }
+      }
+      // No header match: fall back to the letter the mapping was saved against.
+      const byLetter = columns.findIndex((c, i) => !used.has(i) && c.letter === ref.letter);
+      if (byLetter >= 0) {
+        used.add(byLetter);
+        return { field, columnIndex: byLetter, matchedBy: 'position' as const };
+      }
+      return { field, columnIndex: null, matchedBy: null };
+    });
+  }
+
+  /**
+   * Read an uploaded price file and propose a mapping.
+   *
+   * A saved profile wins over auto-detection where it resolves; detection fills the rest. Nothing
+   * is written here — this is the step the user confirms against real sample values.
+   */
+  async analyse(file: { originalname?: string; size?: number; buffer?: Buffer } | undefined, vendorId?: string, sheet?: string, profileId?: string) {
+    if (!file?.buffer?.length) throw new BadRequestException('No file was uploaded.');
+    if (file.size != null && file.size > MAX_BYTES) {
+      throw new BadRequestException(`That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. Price lists are normally well under ${MAX_BYTES / 1024 / 1024} MB — check it is the right file.`);
+    }
+    if (file.originalname && !ACCEPTED.test(file.originalname)) {
+      throw new BadRequestException('Upload a .csv, .xls or .xlsx file. PDF price lists are not supported yet.');
+    }
+
+    let sheets: ReturnType<typeof listSheets>;
+    let table: ReturnType<typeof extractSheet>;
+    try {
+      sheets = listSheets(file.buffer);
+      table = extractSheet(file.buffer, sheet);
+    } catch {
+      throw new BadRequestException('Could not read this file. Make sure it is a valid spreadsheet and not password-protected.');
+    }
+    if (!table.columns.length || !table.rows.length) {
+      throw new BadRequestException('No data rows were found in this sheet. Pick a different sheet, or check the file is not empty.');
+    }
+
+    const vendor = vendorId
+      ? await this.prisma.vendor.findFirst({ where: { id: vendorId, ...ACTIVE }, select: { id: true, name: true, currency: true, mapIncludesVat: true } })
+      : null;
+    if (vendorId && !vendor) throw new NotFoundException('Vendor not found');
+
+    const profile = profileId
+      ? await this.prisma.vendorImportProfile.findFirst({ where: { id: profileId, ...ACTIVE } })
+      : vendorId
+        ? await this.prisma.vendorImportProfile.findFirst({ where: { vendorId, ...ACTIVE }, orderBy: { updatedAt: 'desc' } })
+        : null;
+
+    const detected = suggestMapping(table.columns);
+    const fromProfile = profile ? this.resolveSaved((profile.mapping ?? {}) as SavedMapping, table.columns) : null;
+
+    // Profile where it resolved, detection elsewhere. Both are proposals the user confirms.
+    const mapping: Array<FieldSuggestion & { source: 'profile' | 'detected' | 'none'; matchedBy?: string; movedFrom?: string }> = VENDOR_FIELDS.map((field) => {
+      const saved = fromProfile?.find((f) => f.field === field);
+      if (saved?.columnIndex != null) {
+        return {
+          field,
+          columnIndex: saved.columnIndex,
+          confidence: 1,
+          reason: saved.matchedBy === 'header'
+            ? `saved mapping for ${profile!.name}${saved.movedFrom ? ` — column moved from ${saved.movedFrom}` : ''}`
+            : `saved mapping for ${profile!.name}, matched by position`,
+          source: 'profile',
+          matchedBy: saved.matchedBy ?? undefined,
+          movedFrom: saved.movedFrom,
+        };
+      }
+      const auto = detected.find((d) => d.field === field)!;
+      return { ...auto, source: auto.columnIndex != null ? ('detected' as const) : ('none' as const) };
+    });
+
+    return {
+      file: { name: file.originalname ?? 'upload', rows: table.rows.length },
+      sheets: sheets.map((s) => ({ name: s.name, rowCount: s.rowCount })),
+      sheet: table.sheet,
+      headerRowIndex: table.headerRowIndex,
+      discarded: table.discarded,
+      sectionLabels: table.sectionLabels.slice(0, 10),
+      columns: table.columns,
+      mapping,
+      capabilities: capabilitiesOf(mapping),
+      vendor: vendor ? { id: vendor.id, name: vendor.name, currency: vendor.currency, mapIncludesVat: vendor.mapIncludesVat } : null,
+      profile: profile ? { id: profile.id, name: profile.name, currency: profile.currency } : null,
+      // Never assumed — the user confirms it before any cost is written.
+      suggestedCurrency: profile?.currency ?? vendor?.currency ?? 'EUR',
+    };
+  }
+
+  listProfiles(vendorId?: string) {
+    return this.prisma.vendorImportProfile.findMany({
+      where: { ...ACTIVE, ...(vendorId ? { vendorId } : {}) },
+      orderBy: { updatedAt: 'desc' },
+      include: { vendor: { select: { id: true, name: true } } },
+    });
+  }
+
+  async saveProfile(
+    dto: { id?: string; vendorId: string; name: string; sheetName?: string | null; currency: string; mapping: SavedMapping },
+    actorId?: string,
+  ) {
+    const vendor = await this.prisma.vendor.findFirst({ where: { id: dto.vendorId, ...ACTIVE }, select: { id: true } });
+    if (!vendor) throw new NotFoundException('Vendor not found');
+    if (!dto.mapping?.sku) {
+      throw new BadRequestException('A profile needs at least the SKU column mapped — without it no row can be matched to a product.');
+    }
+    const data = {
+      vendorId: dto.vendorId,
+      name: dto.name.trim() || 'Price list',
+      sheetName: dto.sheetName ?? null,
+      currency: (dto.currency || 'EUR').toUpperCase(),
+      mapping: dto.mapping as object,
+    };
+    if (dto.id) {
+      return this.prisma.vendorImportProfile.update({ where: { id: dto.id }, data });
+    }
+    return this.prisma.vendorImportProfile.create({ data: { ...data, createdById: actorId } });
+  }
+
+  async removeProfile(id: string) {
+    await this.prisma.vendorImportProfile.update({ where: { id }, data: { deletedAt: new Date() } });
+    return { ok: true };
+  }
+}

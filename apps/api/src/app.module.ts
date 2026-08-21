@@ -22,6 +22,7 @@ import { FbaShipmentsModule } from './fba-shipments/fba-shipments.module';
 import { WarehousesModule } from './warehouses/warehouses.module';
 import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
 import { PricingModule } from './pricing/pricing.module';
+import { VendorImportModule } from './vendor-import/vendor-import.module';
 import { ProcurementModule } from './procurement/procurement.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { SearchModule } from './search/search.module';
@@ -76,6 +77,7 @@ import { HealthController } from './health.controller';
     ProcurementModule,
     InventoryModule,
     PricingModule,
+    VendorImportModule,
     SearchModule,
     AnalyticsModule,
     CustomsFxModule,

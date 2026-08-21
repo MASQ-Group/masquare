@@ -2060,3 +2060,69 @@ export interface ExpenseImportRowResult {
   willCreateDefinition: boolean; willCreateCategory: boolean; willCreateTag: boolean;
   issues: { field: string; message: string; severity: 'error' | 'warning' }[];
 }
+
+// ---------------------------------------------------------------- vendor price-file import
+export type VendorImportField = 'sku' | 'ean' | 'manufacturerSku' | 'purchaseCost' | 'map' | 'availability';
+
+export interface VendorImportColumn {
+  index: number;
+  /** True spreadsheet letter, offset by the sheet's origin — what the user sees in Excel. */
+  letter: string;
+  /** Position among columns carrying data, 1-based — how a person counts columns by eye. */
+  ordinal: number;
+  header: string;
+  samples: string[];
+  filled: number;
+  kind: 'empty' | 'ean' | 'money' | 'integer' | 'sku' | 'text';
+}
+
+export interface VendorImportMappingRow {
+  field: VendorImportField;
+  columnIndex: number | null;
+  confidence: number;
+  reason: string;
+  source: 'profile' | 'detected' | 'none';
+  matchedBy?: string;
+  /** Set when a saved mapping followed its header to a different column this time. */
+  movedFrom?: string;
+}
+
+export interface VendorImportAnalysis {
+  file: { name: string; rows: number };
+  sheets: { name: string; rowCount: number }[];
+  sheet: string;
+  headerRowIndex: number;
+  discarded: { preamble: number; blank: number; sectionHeaders: number };
+  sectionLabels: string[];
+  columns: VendorImportColumn[];
+  mapping: VendorImportMappingRow[];
+  capabilities: { cost: boolean; map: boolean; availability: boolean };
+  vendor: { id: string; name: string; currency: string; mapIncludesVat: boolean } | null;
+  profile: { id: string; name: string; currency: string } | null;
+  suggestedCurrency: string;
+}
+
+export interface VendorImportProfile {
+  id: string;
+  vendorId: string;
+  name: string;
+  sheetName: string | null;
+  currency: string;
+  mapping: Partial<Record<VendorImportField, { header: string; letter: string; ordinal: number }>>;
+  updatedAt: string;
+  vendor?: { id: string; name: string };
+}
+
+export const vendorImportApi = {
+  analyse: (file: File, body: { vendorId?: string; sheet?: string; profileId?: string }) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    for (const [k, v] of Object.entries(body)) if (v) fd.append(k, v);
+    return api.post<VendorImportAnalysis>('/vendor-import/analyse', fd).then((r) => r.data);
+  },
+  listProfiles: (vendorId?: string) =>
+    api.get<VendorImportProfile[]>('/vendor-import/profiles', { params: { vendorId } }).then((r) => r.data),
+  saveProfile: (body: { id?: string; vendorId: string; name: string; sheetName?: string | null; currency: string; mapping: VendorImportProfile['mapping'] }) =>
+    api.post<VendorImportProfile>('/vendor-import/profiles', body).then((r) => r.data),
+  removeProfile: (id: string) => api.delete(`/vendor-import/profiles/${id}`).then((r) => r.data),
+};
