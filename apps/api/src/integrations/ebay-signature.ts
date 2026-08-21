@@ -45,29 +45,38 @@ export function buildSignatureBase(params: {
   /** Present only on a request that carries a body. */
   contentDigest?: string | null;
 }): { base: string; signatureInput: string } {
-  // Signature-Input must list EXACTLY the components the base contains. eBay's SDK carries
-  // content-digest in its defaults and drops only the LINE when there is no body, leaving it
-  // declared but absent; eBay's verifier then looks for a Content-Digest header, finds none, and
-  // rejects the signature. So a GET declares four components and a request with a body declares
-  // five — the list is derived from what is actually signed rather than fixed.
+  // The Signature-Input HEADER and the @signature-params line INSIDE the base deliberately
+  // DISAGREE on a body-less request, because eBay's own SDK builds them differently:
+  //
+  //   generateSignatureInput() skips content-digest when there is no digest header
+  //   generateBase()           iterates the full param list with no such skip
+  //
+  // So a GET sends four components in the header and signs five in the base. No reading of
+  // RFC 9421 suggests that — it looks like a defect in their SDK — but eBay's verifier is built
+  // to match it, and sending a consistent four or a consistent five is rejected either way.
+  const ALL = ['"content-digest"', '"x-ebay-signature-key"', '"@method"', '"@path"', '"@authority"'];
+
   const lines: string[] = [];
-  const declared: string[] = [];
+  const headerDeclared: string[] = [];
 
   if (params.contentDigest) {
-    declared.push('"content-digest"');
+    headerDeclared.push('"content-digest"');
     lines.push(`"content-digest": ${params.contentDigest}`);
   }
-  declared.push('"x-ebay-signature-key"', '"@method"', '"@path"', '"@authority"');
-  const sigParams = `(${declared.join(' ')});created=${params.created}`;
+  headerDeclared.push('"x-ebay-signature-key"', '"@method"', '"@path"', '"@authority"');
+
+  // Signed: always the full list. Sent in the header: only what the request actually carries.
+  const signedParams = `(${ALL.join(' ')});created=${params.created}`;
+  const headerParams = `(${headerDeclared.join(' ')});created=${params.created}`;
 
   lines.push(`"x-ebay-signature-key": ${params.jwe}`);
   lines.push(`"@method": ${params.method.toUpperCase()}`);
   // eBay's @path carries the query string, unlike the bare path RFC 9421 describes.
   lines.push(`"@path": ${params.path}`);
   lines.push(`"@authority": ${params.authority}`);
-  lines.push(`"@signature-params": ${sigParams}`);
+  lines.push(`"@signature-params": ${signedParams}`);
 
-  return { base: lines.join('\n'), signatureInput: `sig1=${sigParams}` };
+  return { base: lines.join('\n'), signatureInput: `sig1=${headerParams}` };
 }
 
 /** Sign the base. Ed25519 signs the message directly; RSA needs an explicit digest. */
