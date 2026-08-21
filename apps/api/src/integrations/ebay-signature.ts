@@ -76,6 +76,35 @@ export function signBase(base: string, privateKeyPem: string, cipher: SigningCip
   return signer.sign(key).toString('base64');
 }
 
+/**
+ * The headers eBay requires on a signed GET, plus the base they were computed over.
+ *
+ * The base is returned so a rejection can be inspected rather than guessed at: it is built here,
+ * sent, and otherwise never seen. It contains only the JWE (a PUBLIC key) and request metadata —
+ * the private key is used to sign and never appears in it.
+ */
+export function signedRequest(key: SigningKey, url: string, nowSeconds: number): { headers: Record<string, string>; base: string; signatureInput: string } {
+  const u = new URL(url);
+  const path = `${u.pathname}${u.search}`;
+  const { base, signatureInput } = buildSignatureBase({
+    jwe: key.jwe,
+    method: 'GET',
+    path,
+    authority: u.host,
+    created: nowSeconds,
+  });
+  const signature = signBase(base, toPem(key.privateKey, 'PRIVATE KEY'), key.cipher);
+  return {
+    headers: {
+      'x-ebay-signature-key': key.jwe,
+      'Signature-Input': signatureInput,
+      Signature: `sig1=:${signature}:`,
+    },
+    base,
+    signatureInput,
+  };
+}
+
 /** The headers eBay requires on a signed GET. */
 export function signedHeaders(key: SigningKey, url: string, nowSeconds: number): Record<string, string> {
   const u = new URL(url);

@@ -130,6 +130,27 @@ export function EbayOrderMoneyPanel({ integrationId }: { integrationId: string }
             )}
           </div>
 
+          {data.signatureSent && (
+            <details className="mt-2 border-t border-n-200 pt-2">
+              <summary className="cursor-pointer text-[11.5px] font-semibold text-n-600">
+                What we signed and sent (for diagnosing a rejection)
+              </summary>
+              <div className="mt-1.5 flex flex-col gap-1 text-[11px]">
+                <div className="text-n-500">
+                  key <span className="mono">{data.signatureSent.keyId ?? '—'}</span> · {data.signatureSent.cipher} ·
+                  jwe <span className="mono">{data.signatureSent.jwePrefix}…</span> ({data.signatureSent.jweLength} chars) ·
+                  created <span className="mono">{data.signatureSent.created}</span> ({data.signatureSent.serverTime})
+                </div>
+                <div className="mono break-all text-n-700">{data.signatureSent.url}</div>
+                <div className="text-n-500">signature base, exactly as signed:</div>
+                <pre className="mono overflow-x-auto whitespace-pre rounded bg-n-100 px-2 py-1.5 text-[10.5px] text-n-800">{data.signatureSent.base}</pre>
+                <div className="mono break-all text-n-700">Signature-Input: {data.signatureSent.signatureInput}</div>
+                <div className="mono break-all text-n-700">Signature: {data.signatureSent.signature}</div>
+                <div className="text-n-400">No private key appears here — the JWE is a public key.</div>
+              </div>
+            </details>
+          )}
+
           <div className="mt-2 border-t border-n-200 pt-2">
             {data.interpretation.mismatch ? (
               <div className="flex items-start gap-1.5 text-[11.5px] text-danger">
