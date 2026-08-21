@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell, parseSheetFile, Select } from '@masquare/ui';
+import { FileDrop, ModalShell, Select, parseSheetFile } from '@masquare/ui';
 import { productsApi, type ImportRowResult } from '../../lib/api';
 import { mapHeadersToKeys } from './columns';
 
@@ -117,12 +117,16 @@ export function ProductImportModal({ onClose, onDone }: Props) {
                 : 'Every row must match an existing SKU. Rows with unknown SKUs are dropped and reported.'}
             </p>
           </div>
-          <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-n-300 bg-n-25 px-6 py-10 text-center hover:border-teal-400 hover:bg-teal-50">
-            <Upload className="text-n-400" size={26} />
-            <span className="text-[14px] font-medium text-n-700">{fileName ? `${fileName} — ${rows.length} rows` : 'Drop a .csv / .xls / .xlsx, or click to browse'}</span>
-            <span className="text-[12px] text-n-500">Use the Export button to download a template first.</span>
-            <input type="file" accept=".csv,.xls,.xlsx" className="hidden" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
-          </label>
+          <FileDrop accept=".csv,.xls,.xlsx" onFiles={(f) => onFile(f[0])}>
+            {({ dragging }) => (
+              <div className={`flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-6 py-10 text-center transition-colors ${dragging ? 'border-teal-400 bg-teal-50' : 'border-n-300 bg-n-25 hover:border-teal-400 hover:bg-teal-50'}`}>
+
+                <Upload className="text-n-400" size={26} />
+                <span className="text-[14px] font-medium text-n-700">{fileName ? `${fileName} — ${rows.length} rows` : 'Drop a .csv / .xls / .xlsx, or click to browse'}</span>
+                <span className="text-[12px] text-n-500">Use the Export button to download a template first.</span>
+              </div>
+            )}
+          </FileDrop>
         </div>
       )}
 

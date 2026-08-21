@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { UploadCloud, Save, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import { Select } from '@masquare/ui';
+import { FileDrop, Select } from '@masquare/ui';
 import { PageHeader } from '../components/common/PageHeader';
 import { CurrencySelect } from '../components/common/CurrencySelect';
 import { toast } from 'sonner';
@@ -34,7 +34,6 @@ export function VendorImportPage() {
   const [currency, setCurrency] = useState('EUR');
   const [currencyConfirmed, setCurrencyConfirmed] = useState(false);
   const [profileName, setProfileName] = useState('');
-  const fileInput = useRef<HTMLInputElement>(null);
 
   const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
 
@@ -106,6 +105,8 @@ export function VendorImportPage() {
               value={vendorId}
               onChange={(v) => { setVendorId(v); if (file) analyse.mutate({ file }); }}
               placeholder="Select a vendor…"
+              searchable
+              searchPlaceholder="Type a vendor name…"
               options={vendors.map((v: any) => ({ value: v.id, label: v.name }))}
             />
             <div className="mt-1.5 text-[11.5px] text-n-400">
@@ -114,16 +115,18 @@ export function VendorImportPage() {
           </div>
           <div className="col-span-2 max-[820px]:col-span-1">
             <label className="label">Price file</label>
-            <label className="flex h-[38px] cursor-pointer items-center gap-2 rounded-md border border-dashed border-n-300 px-3 hover:bg-n-25">
-              <UploadCloud size={16} className="text-n-500" />
-              <span className="text-[13px] text-n-700">
-                {file ? `${file.name}${analysis ? ` — ${analysis.file.rows} rows` : ''}` : 'Choose a .csv, .xls or .xlsx'}
-              </span>
-              <input
-                ref={fileInput} type="file" accept=".csv,.xls,.xlsx,.xlsm" className="hidden"
-                onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
-              />
-            </label>
+            <FileDrop accept=".csv,.xls,.xlsx,.xlsm" onFiles={(f) => onFile(f[0])}>
+              {({ dragging }) => (
+                <div className={`flex h-[38px] items-center gap-2 rounded-md border border-dashed px-3 transition-colors ${dragging ? 'border-teal-400 bg-teal-50' : 'border-n-300 hover:bg-n-25'}`}>
+                  <UploadCloud size={16} className={dragging ? 'text-teal-600' : 'text-n-500'} />
+                  <span className="truncate text-[13px] text-n-700">
+                    {dragging ? 'Drop the file here'
+                      : file ? `${file.name}${analysis ? ` — ${analysis.file.rows} rows` : ''}`
+                      : 'Drop a .csv / .xls / .xlsx here, or click to browse'}
+                  </span>
+                </div>
+              )}
+            </FileDrop>
             <div className="mt-1.5 text-[11.5px] text-n-400">PDF price lists are not supported yet.</div>
           </div>
         </div>
