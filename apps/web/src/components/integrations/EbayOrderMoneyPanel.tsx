@@ -80,6 +80,31 @@ export function EbayOrderMoneyPanel({ integrationId }: { integrationId: string }
             ))}
           </div>
 
+          {/* What eBay actually charged, in the currency they pay us in. */}
+          <div className="mt-2 border-t border-n-200 pt-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-n-500">What eBay charged (Finances)</div>
+            {data.finances.ok && data.finances.feeInPayoutCurrency != null ? (
+              <div className="mt-1 flex flex-col gap-0.5">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="w-[110px] shrink-0 text-n-500">Fee charged</span>
+                  <span className="mono text-[11.5px] text-n-800">
+                    {data.finances.feeInPayoutCurrency} {data.finances.payoutCurrency ?? ''}
+                  </span>
+                </div>
+                {data.ebayRate != null && (
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="w-[110px] shrink-0 text-n-500">eBay&rsquo;s rate</span>
+                    <span className="mono text-[11.5px] font-semibold text-n-800">{data.ebayRate}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mt-1 text-[11.5px] text-n-500">
+                {data.finances.message ?? 'No finance transactions returned for this order yet — eBay posts them once the order settles.'}
+              </div>
+            )}
+          </div>
+
           <div className="mt-2 border-t border-n-200 pt-2">
             {data.interpretation.mismatch ? (
               <div className="flex items-start gap-1.5 text-[11.5px] text-danger">

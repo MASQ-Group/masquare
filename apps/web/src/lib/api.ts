@@ -2234,6 +2234,7 @@ export interface EbayAmountRead {
   convertedFromCurrency: string | null;
   /** True when eBay states it performed a conversion for this amount. */
   converted: boolean;
+  exchangeRate: number | null;
 }
 
 export interface EbayOrderMoney {
@@ -2254,4 +2255,21 @@ export interface EbayOrderMoney {
     mismatch: string | null;
     ebayImpliedRate: number | null;
   };
+  /** What eBay actually charged and paid, in the seller's payout currency. */
+  finances: {
+    ok: boolean;
+    message: string | null;
+    payoutCurrency: string | null;
+    transactions: Array<{
+      transactionType: string | null;
+      bookingEntry: string | null;
+      transactionDate: string | null;
+      amount: EbayAmountRead;
+      totalFeeAmount: EbayAmountRead | null;
+      feeTypes: Array<{ feeType: string | null; amount: EbayAmountRead }>;
+    }>;
+    feeInPayoutCurrency: number | null;
+  };
+  /** eBay's own rate for this order — payout-currency fee over order-currency fee. */
+  ebayRate: number | null;
 }

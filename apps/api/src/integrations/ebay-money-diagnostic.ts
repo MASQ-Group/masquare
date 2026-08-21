@@ -17,6 +17,8 @@ export interface AmountRead {
   convertedFromCurrency: string | null;
   /** True when eBay states it performed a conversion for this amount. */
   converted: boolean;
+  /** eBay's own rate, when the Amount carries one. */
+  exchangeRate: number | null;
 }
 
 const num = (v: unknown): number | null => {
@@ -35,6 +37,7 @@ export function readAmount(m: any): AmountRead {
     convertedFromValue,
     convertedFromCurrency,
     converted: convertedFromValue != null && !!convertedFromCurrency && convertedFromCurrency !== currency,
+    exchangeRate: num(m?.exchangeRate),
   };
 }
 
@@ -97,4 +100,67 @@ export function readOrderMoney(order: any): EbayOrderMoney {
       ebayImpliedRate,
     },
   };
+}
+
+
+/**
+ * What the Finances API says eBay actually charged and paid for an order.
+ *
+ * The Fulfillment API reports the fee in the ORDER's currency, so there is no conversion to read
+ * and no rate to extract — which is why our own FX rate ends up applied where eBay applied theirs.
+ * Finances reports in the seller's PAYOUT currency, making it the only place the EUR figure eBay
+ * actually used can be obtained.
+ */
+export interface EbayFinancesRead {
+  ok: boolean;
+  message: string | null;
+  payoutCurrency: string | null;
+  transactions: Array<{
+    transactionType: string | null;
+    bookingEntry: string | null;
+    transactionDate: string | null;
+    amount: AmountRead;
+    totalFeeAmount: AmountRead | null;
+    feeTypes: Array<{ feeType: string | null; amount: AmountRead }>;
+  }>;
+  /** Total fee in the payout currency, summed across the order's transactions. */
+  feeInPayoutCurrency: number | null;
+}
+
+export function readFinances(json: any): EbayFinancesRead {
+  const rows = (json?.transactions ?? []) as any[];
+  const transactions = rows.map((t) => ({
+    transactionType: t?.transactionType ?? null,
+    bookingEntry: t?.bookingEntry ?? null,
+    transactionDate: t?.transactionDate ?? null,
+    amount: readAmount(t?.amount),
+    totalFeeAmount: t?.totalFeeAmount ? readAmount(t.totalFeeAmount) : null,
+    feeTypes: ((t?.orderLineItems ?? []) as any[])
+      .flatMap((li) => (li?.marketplaceFees ?? []) as any[])
+      .map((f) => ({ feeType: f?.feeType ?? null, amount: readAmount(f?.amount) })),
+  }));
+
+  // Fees appear either as a total on the transaction or itemised per line; prefer the total.
+  let fee: number | null = null;
+  for (const t of transactions) {
+    const v = t.totalFeeAmount?.value ?? (t.feeTypes.length ? t.feeTypes.reduce((s, f) => s + (f.amount.value ?? 0), 0) : null);
+    if (v != null) fee = Number(((fee ?? 0) + v).toFixed(4));
+  }
+
+  const payoutCurrency =
+    transactions.find((t) => t.totalFeeAmount?.currency)?.totalFeeAmount?.currency ??
+    transactions.find((t) => t.amount.currency)?.amount.currency ??
+    null;
+
+  return { ok: true, message: null, payoutCurrency, transactions, feeInPayoutCurrency: fee };
+}
+
+/**
+ * eBay's own rate for this order: the fee they charged in the payout currency over the same fee
+ * in the order's currency. This is the number our FX rate should be replaced by, not adjusted
+ * towards — eBay's conversion is what actually reaches the bank.
+ */
+export function impliedEbayRate(orderCurrencyFee: number | null, payoutCurrencyFee: number | null): number | null {
+  if (!orderCurrencyFee || !payoutCurrencyFee) return null;
+  return Number((payoutCurrencyFee / orderCurrencyFee).toFixed(6));
 }
