@@ -503,9 +503,11 @@ export class IntegrationsService implements OnModuleInit {
       return { ok: true, created: false, signingKeyId: secrets.ebaySigningKeyId ?? null, message: 'This connection already has a signing key.' };
     }
 
-    const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+    // Key Management is served from apiz.ebay.com, not the api.ebay.com host the selling APIs
+    // use. Calling the wrong one answers 404 with no hint that the host is the problem.
+    const keyBase = config.env === 'sandbox' ? 'https://apiz.sandbox.ebay.com' : 'https://apiz.ebay.com';
     const appToken = await this.ebayAppToken(config, secrets);
-    const res = await fetch(`${base}/developer/key_management/v1/signing_key`, {
+    const res = await fetch(`${keyBase}/developer/key_management/v1/signing_key`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${appToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ signingKeyCipher: 'ED25519' }),
