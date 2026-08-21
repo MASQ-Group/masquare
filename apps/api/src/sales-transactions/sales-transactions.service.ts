@@ -1196,6 +1196,21 @@ export class SalesTransactionsService {
 
   /** channel currency -> EUR at the transaction date. ECB currencies come from
    *  Frankfurter directly; USD-pegged ones (AED, SAR) are derived from USD. */
+  /**
+   * The rate to value a sale at.
+   *
+   * A channel that converts at its own rate and pays out in EUR is not described by any market
+   * rate: eBay's rate on a US order was 3.2% below ours, which overstated that order's profit by
+   * 7.4%. Where the channel's true rate has been entered, it is what the money actually converted
+   * at, so it wins over the market rate rather than being averaged with it.
+   */
+  private async rateForChannel(channel: any, currency: string | null, date: string): Promise<number | null> {
+    if (!currency || currency.toUpperCase() === 'EUR') return this.fetchExchangeRate(currency, date);
+    const override = channel?.fxRateOverride != null ? Number(channel.fxRateOverride) : null;
+    if (override != null && override > 0) return override;
+    return this.fetchExchangeRate(currency, date);
+  }
+
   private async fetchExchangeRate(currency: string | null, date: string): Promise<number | null> {
     if (!currency) return null;
     const cur = currency.toUpperCase();
@@ -1427,10 +1442,10 @@ export class SalesTransactionsService {
     const shippingServiceId = isLocal
       ? null
       : await this.resolveShippingService(dto.shippingServiceId, dto.destinationCountryId ?? null);
-    const exchangeRate = isLocal ? 1 : await this.fetchExchangeRate(currency, dto.date);
+    const exchangeRate = isLocal ? 1 : await this.rateForChannel(channel, currency, dto.date);
     const feeExchangeRate = isLocal
       ? 1
-      : feeCurrency && feeCurrency !== currency ? await this.fetchExchangeRate(feeCurrency, dto.date) : exchangeRate;
+      : feeCurrency && feeCurrency !== currency ? await this.rateForChannel(channel, feeCurrency, dto.date) : exchangeRate;
     // Intrinsic (ex-VAT, goods-only) value for the marketplace VAT threshold — net sales, no VAT, no shipping.
     const overall = (dto.items ?? []).reduce((s, i) => s + n(i.netSalesAmount), 0);
     // Local VAT lives per line, so the transaction-level destination rate stays null.
@@ -1777,10 +1792,10 @@ export class SalesTransactionsService {
     // Submitting re-locks it (unless the actor is an admin, who always retains access).
     const unlockedForEdit = nextStatus === 'submitted' ? false : existing.unlockedForEdit;
     const txDate = dto.date ?? existing.date.toISOString();
-    const exchangeRate = isLocal ? 1 : await this.fetchExchangeRate(currency, txDate);
+    const exchangeRate = isLocal ? 1 : await this.rateForChannel(channel, currency, txDate);
     const feeExchangeRate = isLocal
       ? 1
-      : feeCurrency && feeCurrency !== currency ? await this.fetchExchangeRate(feeCurrency, txDate) : exchangeRate;
+      : feeCurrency && feeCurrency !== currency ? await this.rateForChannel(channel, feeCurrency, txDate) : exchangeRate;
     const destCountryId = dto.destinationCountryId === undefined ? existing.destinationCountryId : dto.destinationCountryId;
     const resolvedServiceId = isLocal ? null : await this.resolveShippingService(dto.shippingServiceId, destCountryId);
     // Intrinsic (ex-VAT, goods-only) value for the marketplace VAT threshold — net sales, no VAT, no shipping.
@@ -1953,11 +1968,13 @@ export class SalesTransactionsService {
     }
 
     // FX cache — one lookup per (currency, date) across the whole run.
+    // Keyed by channel as well as currency and date: a channel carrying its own rate must not be
+    // handed another channel's cached market rate for the same currency.
     const fxCache = new Map<string, number | null>();
-    const fx = async (currency: string | null, date: string): Promise<number | null> => {
+    const fx = async (currency: string | null, date: string, channel?: any): Promise<number | null> => {
       if (!currency) return null;
-      const key = `${currency.toUpperCase()}:${date.slice(0, 10)}`;
-      if (!fxCache.has(key)) fxCache.set(key, await this.fetchExchangeRate(currency, date));
+      const key = `${channel?.id ?? '-'}:${currency.toUpperCase()}:${date.slice(0, 10)}`;
+      if (!fxCache.has(key)) fxCache.set(key, await this.rateForChannel(channel, currency, date));
       return fxCache.get(key) ?? null;
     };
     const same = (a: number | null | undefined, b: number | null | undefined) =>
@@ -1973,10 +1990,10 @@ export class SalesTransactionsService {
       const { channel, currency, feeCurrency } = await this.channelInfo(t.salesChannelId);
       // Historical FX is immutable — only re-fetch when the currency changed or was never set.
       let exchangeRate = t.exchangeRate;
-      if (currency !== t.currency || exchangeRate == null) exchangeRate = await fx(currency, dateIso);
+      if (currency !== t.currency || exchangeRate == null) exchangeRate = await fx(currency, dateIso, channel);
       let feeExchangeRate = t.feeExchangeRate;
       if (feeCurrency !== t.feeCurrency || feeExchangeRate == null) {
-        feeExchangeRate = feeCurrency && feeCurrency !== currency ? await fx(feeCurrency, dateIso) : exchangeRate;
+        feeExchangeRate = feeCurrency && feeCurrency !== currency ? await fx(feeCurrency, dateIso, channel) : exchangeRate;
       }
       // Imported orders never carry a manual service pick, so always re-derive theirs from the
       // destination country's CURRENT default (a default change then propagates). Manual orders

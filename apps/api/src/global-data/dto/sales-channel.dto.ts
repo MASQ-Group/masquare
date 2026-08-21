@@ -15,6 +15,9 @@ export class CreateSalesChannelDto {
   @IsOptional() @IsBoolean() vatThresholdEnabled?: boolean;
   @IsOptional() @IsBoolean() pricesIncludeTax?: boolean;
   @IsOptional() @IsNumber() vatThresholdAmount?: number | null;
+  /** Exchange rate to use for this channel instead of the platform market rate. Null clears it. */
+  @IsOptional() @IsNumber() fxRateOverride?: number | null;
+  @IsOptional() @IsString() fxRateOverrideNote?: string | null;
   @IsOptional() @IsString() vatThresholdCurrency?: string | null;
   @IsOptional() @IsNumber() vatBelowThresholdPct?: number | null;
   @IsOptional() @IsNumber() vatAboveThresholdPct?: number | null;

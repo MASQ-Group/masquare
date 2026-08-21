@@ -521,6 +521,10 @@ export interface SalesChannel {
   feeCurrency: string | null;
   vatThresholdEnabled: boolean;
   pricesIncludeTax: boolean;
+  /** Exchange rate used for this channel instead of the platform market rate. */
+  fxRateOverride?: number | null;
+  fxRateOverrideNote?: string | null;
+  fxRateOverrideSetAt?: string | null;
   vatThresholdAmount: number | null;
   vatThresholdCurrency: string | null;
   vatBelowThresholdPct: number | null;
