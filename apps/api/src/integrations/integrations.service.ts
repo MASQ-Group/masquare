@@ -590,7 +590,11 @@ export class IntegrationsService implements OnModuleInit {
     let finances: EbayFinancesRead = { ok: false, message: null, payoutCurrency: null, transactions: [], feeInPayoutCurrency: null };
     try {
       const q = new URLSearchParams({ filter: `orderId:{${ref}}` });
-      const financesUrl = `${base}/sell/finances/v1/transaction?${q.toString()}`;
+      // Finances is documented on apiz.ebay.com. api.ebay.com routes to it — it answered with a
+      // Finances-specific error rather than a 404 — but the signature covers @authority, so signing
+      // one host and being validated against the canonical one cannot match.
+      const financesBase = config.env === 'sandbox' ? 'https://apiz.sandbox.ebay.com' : 'https://apiz.ebay.com';
+      const financesUrl = `${financesBase}/sell/finances/v1/transaction?${q.toString()}`;
       // EU/UK sellers must sign financial calls; without the key eBay answers with a header error
       // rather than data, which the caller surfaces as the reason rather than as a fault.
       const key = this.signingKeyFrom(secrets);
