@@ -5,11 +5,14 @@ import { extractSheet } from './workbook';
 import { suggestMapping } from './field-suggest';
 import { buildIndex, matchRows, norm } from './matcher';
 
-// End-to-end against a real price list and the real catalogue, when both are on this machine.
+// End-to-end against a real price list AND the real catalogue — a local diagnostic, not a test
+// of the code. It needs both the vendor file and a reachable database, neither of which exists
+// on a clean checkout, so it skips unless both are present rather than failing the suite.
 const FILE = 'C:/Users/m.stylianou/Downloads/UPDATED STOCK 23.06.2026.xlsx';
+const RUNNABLE = existsSync(FILE) && !!process.env.DATABASE_URL;
 
 describe('matching a real file against the catalogue', () => {
-  it.skipIf(!existsSync(FILE))('reports how much is recognised', async () => {
+  it.skipIf(!RUNNABLE)('reports how much is recognised', async () => {
     const prisma = new PrismaClient();
     try {
       const t = extractSheet(readFileSync(FILE));
