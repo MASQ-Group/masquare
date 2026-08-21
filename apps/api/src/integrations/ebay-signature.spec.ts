@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateKeyPairSync, verify as edVerify } from 'node:crypto';
-import { buildSignatureBase, signBase, signedHeaders, toPem } from './ebay-signature';
+import { buildSignatureBase, signBase, signedHeaders, signedRequest, toPem } from './ebay-signature';
 
 // The signature base must be byte-identical to what eBay reconstructs, so these pin its exact
 // shape rather than just checking a signature verifies.
@@ -86,5 +86,30 @@ describe('signing', () => {
     const url = 'https://api.ebay.com/sell/finances/v1/transaction?filter=orderId%3A%7B1-2%7D';
     const { base } = buildSignatureBase({ jwe: 'J', method: 'GET', path: new URL(url).pathname + new URL(url).search, authority: 'api.ebay.com', created: 1 });
     expect(base).toContain('%3A%7B1-2%7D'); // not decoded on the way into the signature
+  });
+});
+
+
+describe('exposing what was sent', () => {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  const privPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const key = { signingKeyId: 'k1', privateKey: privPem, jwe: 'JWEVALUE', cipher: 'ED25519' as const };
+  const url = 'https://apiz.ebay.com/sell/finances/v1/transaction?filter=orderId%3A%7B1-2%7D';
+
+  it('returns the base the headers were computed over', () => {
+    const r = signedRequest(key, url, 1_700_000_000);
+    expect(r.headers['Signature-Input']).toBe(r.signatureInput);
+    expect(r.base).toContain('"@authority": apiz.ebay.com');
+    expect(r.base.split(String.fromCharCode(10)).at(-1)).toContain('"@signature-params":');
+  });
+
+  it('never puts the private key in the base', () => {
+    const r = signedRequest(key, url, 1_700_000_000);
+    expect(r.base).not.toContain('PRIVATE KEY');
+    expect(r.base).not.toContain(privPem.split(String.fromCharCode(10))[1]);
+  });
+
+  it('matches the headers the plain helper produces', () => {
+    expect(signedRequest(key, url, 42).headers).toEqual(signedHeaders(key, url, 42));
   });
 });

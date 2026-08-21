@@ -2275,4 +2275,11 @@ export interface EbayOrderMoney {
   };
   /** eBay's own rate for this order — payout-currency fee over order-currency fee. */
   ebayRate: number | null;
+  /** Present only when the Finances call was rejected: exactly what we signed and sent.
+   *  Contains the JWE (a public key) and request metadata — never the private key. */
+  signatureSent: {
+    url: string; base: string; signatureInput: string; signature: string;
+    created: number; serverTime: string;
+    keyId: string | null; cipher: string; jwePrefix: string; jweLength: number;
+  } | null;
 }

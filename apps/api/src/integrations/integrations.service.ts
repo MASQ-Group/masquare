@@ -11,7 +11,7 @@ import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 import { mapAmazonOrder } from './mappings/amazon-mapping';
 import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
 import { readOrderMoney, readFinances, impliedEbayRate, type EbayFinancesRead } from './ebay-money-diagnostic';
-import { signedHeaders, type SigningCipher, type SigningKey } from './ebay-signature';
+import { signedRequest, type SigningCipher, type SigningKey } from './ebay-signature';
 
 /**
  * Outcome of a read-only SP-API role probe.
@@ -588,6 +588,7 @@ export class IntegrationsService implements OnModuleInit {
     // there. Finances reports in the PAYOUT currency, which is the only place eBay's own EUR figure
     // exists. Best-effort: a finances failure must not hide the order data we already have.
     let finances: EbayFinancesRead = { ok: false, message: null, payoutCurrency: null, transactions: [], feeInPayoutCurrency: null };
+    let sent: Record<string, unknown> | null = null;
     try {
       const q = new URLSearchParams({ filter: `orderId:{${ref}}` });
       // Finances is documented on apiz.ebay.com. api.ebay.com routes to it — it answered with a
@@ -598,9 +599,26 @@ export class IntegrationsService implements OnModuleInit {
       // EU/UK sellers must sign financial calls; without the key eBay answers with a header error
       // rather than data, which the caller surfaces as the reason rather than as a fault.
       const key = this.signingKeyFrom(secrets);
-      const sig = key ? signedHeaders(key, financesUrl, Math.floor(Date.now() / 1000)) : {};
+      const created = Math.floor(Date.now() / 1000);
+      const signed = key ? signedRequest(key, financesUrl, created) : null;
+      // Kept so a rejection can be read rather than inferred. Contains the JWE (a PUBLIC key) and
+      // request metadata only — the private key signs and never appears here.
+      sent = signed
+        ? {
+            url: financesUrl,
+            base: signed.base,
+            signatureInput: signed.signatureInput,
+            signature: signed.headers.Signature,
+            created,
+            serverTime: new Date(created * 1000).toISOString(),
+            keyId: key!.signingKeyId || null,
+            cipher: key!.cipher,
+            jwePrefix: key!.jwe.slice(0, 24),
+            jweLength: key!.jwe.length,
+          }
+        : null;
       const fRes = await fetch(financesUrl, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...sig },
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(signed?.headers ?? {}) },
         signal: AbortSignal.timeout(20000),
       });
       const fJson: any = await fRes.json().catch(() => null);
@@ -615,6 +633,8 @@ export class IntegrationsService implements OnModuleInit {
       ...money,
       finances,
       ebayRate: impliedEbayRate(money.amounts.totalMarketplaceFee.value, finances.feeInPayoutCurrency),
+      // Only when the call failed — there is nothing to debug about a request eBay accepted.
+      signatureSent: finances.ok ? null : sent,
     };
   }
 
