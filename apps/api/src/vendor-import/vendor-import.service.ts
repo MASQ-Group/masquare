@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { DetectedColumn } from './sheet-extract';
 import { extractSheet, listSheets } from './workbook';
 import { FieldSuggestion, VendorField, VENDOR_FIELDS, capabilitiesOf, suggestMapping } from './field-suggest';
+import { MatchedBy, RowMatch, buildIndex, matchRows, norm } from './matcher';
 
 /** Where a mapped column was found, saved so the next file of the same layout resolves itself. */
 export interface MappingRef {
@@ -134,6 +135,131 @@ export class VendorImportService {
       // Never assumed — the user confirms it before any cost is written.
       suggestedCurrency: profile?.currency ?? vendor?.currency ?? 'EUR',
     };
+  }
+
+  /**
+   * Match an uploaded file's rows to our products, using the mapping the user confirmed.
+   *
+   * Read-only. Nothing is written: this is the step that answers "how much of this file do we
+   * even recognise" before any change is proposed.
+   */
+  async match(
+    file: { originalname?: string; size?: number; buffer?: Buffer } | undefined,
+    vendorId: string,
+    mapping: Partial<Record<VendorField, number>>,
+    sheet?: string,
+  ) {
+    if (!file?.buffer?.length) throw new BadRequestException('No file was uploaded.');
+    if (!vendorId) throw new BadRequestException('Choose a vendor before matching.');
+    if (mapping?.sku == null) {
+      throw new BadRequestException('Map the SKU column first — without it no row can be matched to a product.');
+    }
+    const vendor = await this.prisma.vendor.findFirst({ where: { id: vendorId, ...ACTIVE }, select: { id: true, name: true } });
+    if (!vendor) throw new NotFoundException('Vendor not found');
+
+    const table = extractSheet(file.buffer, sheet);
+    const col = (f: VendorField) => (mapping[f] != null ? mapping[f]! : -1);
+    const cell = (row: string[], f: VendorField) => (col(f) >= 0 ? row[col(f)] ?? '' : '');
+
+    const rows = table.rows.map((r) => ({
+      sku: cell(r, 'sku'),
+      ean: cell(r, 'ean'),
+      manufacturerSku: cell(r, 'manufacturerSku'),
+    }));
+
+    // Only fetch products that could plausibly match, rather than the whole catalogue.
+    const skus = [...new Set(rows.map((r) => norm(r.sku)).filter(Boolean))];
+    const eans = [...new Set(rows.map((r) => String(r.ean ?? '').replace(/\D/g, '')).filter(Boolean))];
+    const mfrs = [...new Set(rows.map((r) => norm(r.manufacturerSku)).filter(Boolean))];
+
+    const [products, aliases] = await Promise.all([
+      this.prisma.product.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            ...(skus.length ? [{ mainSku: { in: skus, mode: 'insensitive' as const } }] : []),
+            ...(skus.length ? [{ vendorSku: { in: skus, mode: 'insensitive' as const } }] : []),
+            ...(eans.length ? [{ ean: { in: eans } }, { upc: { in: eans } }] : []),
+            ...(mfrs.length ? [{ manufacturerSku: { in: mfrs, mode: 'insensitive' as const } }] : []),
+          ],
+        },
+        select: { id: true, mainSku: true, title: true, ean: true, upc: true, vendorSku: true, manufacturerSku: true },
+      }),
+      this.prisma.vendorSkuAlias.findMany({ where: { vendorId, ...ACTIVE }, select: { vendorSku: true, productId: true } }),
+    ]);
+
+    const idx = buildIndex(products, aliases);
+    const { matches, summary } = matchRows(rows, idx);
+    const byId = new Map(products.map((p) => [p.id, p]));
+
+    return {
+      vendor: { id: vendor.id, name: vendor.name },
+      sheet: table.sheet,
+      summary,
+      /** Every row, so the UI can show matched and unmatched together in file order. */
+      rows: matches.map((m: RowMatch) => {
+        const p = m.productId ? byId.get(m.productId) : null;
+        return {
+          index: m.index,
+          vendorSku: rows[m.index].sku,
+          ean: rows[m.index].ean,
+          manufacturerSku: rows[m.index].manufacturerSku,
+          productId: m.productId,
+          product: p ? { id: p.id, mainSku: p.mainSku, title: p.title } : null,
+          matchedBy: m.matchedBy as MatchedBy | null,
+          reason: m.reason ?? null,
+          ambiguous: m.ambiguous
+            ? {
+                by: m.ambiguous.by,
+                products: m.ambiguous.productIds
+                  .map((id) => byId.get(id))
+                  .filter(Boolean)
+                  .map((x) => ({ id: x!.id, mainSku: x!.mainSku, title: x!.title })),
+              }
+            : null,
+        };
+      }),
+    };
+  }
+
+  listAliases(vendorId: string) {
+    return this.prisma.vendorSkuAlias.findMany({
+      where: { vendorId, ...ACTIVE },
+      orderBy: { vendorSku: 'asc' },
+      include: { product: { select: { id: true, mainSku: true, title: true } } },
+    });
+  }
+
+  /** Record "this vendor's code means this product". Re-recording a code replaces the decision. */
+  async saveAlias(dto: { vendorId: string; vendorSku: string; productId: string }, actorId?: string) {
+    const key = norm(dto.vendorSku);
+    if (!key) throw new BadRequestException('The vendor code cannot be empty.');
+    const [vendor, product] = await Promise.all([
+      this.prisma.vendor.findFirst({ where: { id: dto.vendorId, ...ACTIVE }, select: { id: true } }),
+      this.prisma.product.findFirst({ where: { id: dto.productId, deletedAt: null }, select: { id: true } }),
+    ]);
+    if (!vendor) throw new NotFoundException('Vendor not found');
+    if (!product) throw new NotFoundException('Product not found');
+
+    const existing = await this.prisma.vendorSkuAlias.findUnique({
+      where: { vendorId_vendorSku: { vendorId: dto.vendorId, vendorSku: key } },
+    });
+    if (existing) {
+      return this.prisma.vendorSkuAlias.update({
+        where: { id: existing.id },
+        data: { productId: dto.productId, deletedAt: null },
+        include: { product: { select: { id: true, mainSku: true, title: true } } },
+      });
+    }
+    return this.prisma.vendorSkuAlias.create({
+      data: { vendorId: dto.vendorId, vendorSku: key, productId: dto.productId, createdById: actorId },
+      include: { product: { select: { id: true, mainSku: true, title: true } } },
+    });
+  }
+
+  async removeAlias(id: string) {
+    await this.prisma.vendorSkuAlias.update({ where: { id }, data: { deletedAt: new Date() } });
+    return { ok: true };
   }
 
   listProfiles(vendorId?: string) {

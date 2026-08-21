@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -22,6 +22,41 @@ export class VendorImportController {
     @Body() body: { vendorId?: string; sheet?: string; profileId?: string },
   ) {
     return this.svc.analyse(file, body?.vendorId || undefined, body?.sheet || undefined, body?.profileId || undefined);
+  }
+
+  /**
+   * Match the file's rows to our products using the confirmed mapping. Read-only — this answers
+   * "how much of this file do we recognise" before any change is proposed.
+   */
+  @Post('match')
+  @UseInterceptors(FileInterceptor('file'))
+  match(
+    @UploadedFile() file: any,
+    @Body() body: { vendorId: string; sheet?: string; mapping?: string },
+  ) {
+    // Multipart carries the mapping as text, so it arrives JSON-encoded.
+    let mapping: Record<string, number> = {};
+    try {
+      mapping = body?.mapping ? JSON.parse(body.mapping) : {};
+    } catch {
+      throw new BadRequestException('The column mapping could not be read.');
+    }
+    return this.svc.match(file, body?.vendorId, mapping, body?.sheet || undefined);
+  }
+
+  @Get('aliases')
+  listAliases(@Query('vendorId') vendorId: string) {
+    return this.svc.listAliases(vendorId);
+  }
+
+  @Post('aliases')
+  saveAlias(@Body() body: { vendorId: string; vendorSku: string; productId: string }, @CurrentUser() user: AuthUser) {
+    return this.svc.saveAlias(body, user.sub);
+  }
+
+  @Delete('aliases/:id')
+  removeAlias(@Param('id') id: string) {
+    return this.svc.removeAlias(id);
   }
 
   @Get('profiles')
