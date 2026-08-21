@@ -2126,3 +2126,49 @@ export const vendorImportApi = {
     api.post<VendorImportProfile>('/vendor-import/profiles', body).then((r) => r.data),
   removeProfile: (id: string) => api.delete(`/vendor-import/profiles/${id}`).then((r) => r.data),
 };
+
+export type VendorMatchedBy = 'alias' | 'mainSku' | 'ean' | 'vendorSku' | 'manufacturerSku';
+
+export interface VendorMatchRow {
+  index: number;
+  vendorSku: string;
+  ean: string;
+  manufacturerSku: string;
+  productId: string | null;
+  product: { id: string; mainSku: string; title: string } | null;
+  matchedBy: VendorMatchedBy | null;
+  reason: 'no-identifiers' | 'not-found' | null;
+  ambiguous: { by: VendorMatchedBy; products: { id: string; mainSku: string; title: string }[] } | null;
+}
+
+export interface VendorMatchResult {
+  vendor: { id: string; name: string };
+  sheet: string;
+  summary: {
+    total: number; matched: number; unmatched: number; ambiguous: number;
+    byMethod: Record<VendorMatchedBy, number>;
+    duplicateSkus: string[];
+  };
+  rows: VendorMatchRow[];
+}
+
+export interface VendorSkuAlias {
+  id: string; vendorId: string; vendorSku: string; productId: string;
+  product?: { id: string; mainSku: string; title: string };
+}
+
+export const vendorMatchApi = {
+  match: (file: File, body: { vendorId: string; sheet?: string; mapping: Record<string, number> }) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('vendorId', body.vendorId);
+    if (body.sheet) fd.append('sheet', body.sheet);
+    fd.append('mapping', JSON.stringify(body.mapping));
+    return api.post<VendorMatchResult>('/vendor-import/match', fd).then((r) => r.data);
+  },
+  listAliases: (vendorId: string) =>
+    api.get<VendorSkuAlias[]>('/vendor-import/aliases', { params: { vendorId } }).then((r) => r.data),
+  saveAlias: (body: { vendorId: string; vendorSku: string; productId: string }) =>
+    api.post<VendorSkuAlias>('/vendor-import/aliases', body).then((r) => r.data),
+  removeAlias: (id: string) => api.delete(`/vendor-import/aliases/${id}`).then((r) => r.data),
+};

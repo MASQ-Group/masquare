@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { UploadCloud, Save, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { UploadCloud, Save, AlertTriangle, CheckCircle2, Link2, Search } from 'lucide-react';
 import { FileDrop, Select } from '@masquare/ui';
 import { PageHeader } from '../components/common/PageHeader';
 import { CurrencySelect } from '../components/common/CurrencySelect';
 import { toast } from 'sonner';
+import { ProductSkuField } from '../components/sales/ProductSkuField';
 import {
-  vendorsApi, vendorImportApi,
-  type VendorImportAnalysis, type VendorImportColumn, type VendorImportField,
+  vendorsApi, vendorImportApi, vendorMatchApi,
+  type VendorImportAnalysis, type VendorImportColumn, type VendorImportField, type VendorMatchResult,
 } from '../lib/api';
 
 /** The fields a vendor file can supply, in the order they are presented for confirmation. */
@@ -34,6 +35,8 @@ export function VendorImportPage() {
   const [currency, setCurrency] = useState('EUR');
   const [currencyConfirmed, setCurrencyConfirmed] = useState(false);
   const [profileName, setProfileName] = useState('');
+  const [match, setMatch] = useState<VendorMatchResult | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
 
@@ -48,6 +51,7 @@ export function VendorImportPage() {
       // cost silently, so this is never carried over from last time.
       setCurrencyConfirmed(false);
       setChosen(Object.fromEntries(a.mapping.map((m) => [m.field, m.columnIndex])));
+      setMatch(null);
       setProfileName((p) => p || a.profile?.name || `${a.file.name.replace(/\.[^.]+$/, '')}`);
     },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not read that file'),
@@ -70,7 +74,25 @@ export function VendorImportPage() {
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save the mapping'),
   });
 
-  const onFile = (f: File) => { setFile(f); setSheet(''); analyse.mutate({ file: f }); };
+  const onFile = (f: File) => { setFile(f); setSheet(''); setMatch(null); analyse.mutate({ file: f }); };
+
+  const runMatch = useMutation({
+    mutationFn: () => {
+      const mapping: Record<string, number> = {};
+      for (const [k, v] of Object.entries(chosen)) if (v != null) mapping[k] = v;
+      return vendorMatchApi.match(file!, { vendorId, sheet: analysis?.sheet, mapping });
+    },
+    onSuccess: setMatch,
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not match the rows'),
+  });
+
+  const saveAlias = useMutation({
+    mutationFn: (v: { vendorSku: string; productId: string }) =>
+      vendorMatchApi.saveAlias({ vendorId, vendorSku: v.vendorSku, productId: v.productId }),
+    // Re-match rather than patching the row locally, so what is shown is what the server resolves.
+    onSuccess: () => { toast.success('Linked — re-matching'); runMatch.mutate(); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not link that code'),
+  });
 
   // A column can only serve one field — offering a taken column invites a mapping that silently
   // reads the retail price as cost.
@@ -196,7 +218,7 @@ export function VendorImportPage() {
                     <div>
                       <Select
                         value={idx == null ? '' : String(idx)}
-                        onChange={(v) => setChosen((c) => ({ ...c, [f.key]: v === '' ? null : Number(v) }))}
+                        onChange={(v) => { setChosen((c) => ({ ...c, [f.key]: v === '' ? null : Number(v) })); setMatch(null); }}
                         placeholder="— not in this file —"
                         options={[
                           { value: '', label: '— not in this file —' },
@@ -302,6 +324,111 @@ export function VendorImportPage() {
               Nothing is written to any product yet. Applying a file — with a preview of every change
               before it lands — is the next step.
             </div>
+          </div>
+
+          {/* Matching is its own step: knowing how much of a file we even recognise is worth
+              seeing before any change is proposed against it. */}
+          <div className="card overflow-hidden">
+            <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-2.5">
+              <span className="text-[13px] font-semibold text-n-800">Match rows to products</span>
+              <button
+                onClick={() => runMatch.mutate()}
+                disabled={!vendorId || !skuMapped || runMatch.isPending}
+                className="inline-flex h-7 items-center rounded-md border border-n-200 bg-n-0 px-2.5 text-[12px] font-semibold text-n-700 hover:bg-n-50 disabled:opacity-50"
+              >
+                <Search size={13} className="mr-1" /> {runMatch.isPending ? 'Matching…' : match ? 'Re-match' : 'Match rows'}
+              </button>
+              {!skuMapped && <span className="text-[11.5px] text-n-400">Map the SKU column first.</span>}
+            </div>
+
+            {match && (
+              <div className="flex flex-col">
+                <div className="flex flex-wrap gap-x-6 gap-y-1 border-b border-n-100 px-4 py-3 text-[12.5px]">
+                  <span className="text-teal-700"><b>{match.summary.matched}</b> matched</span>
+                  <span className={match.summary.unmatched ? 'text-n-700' : 'text-n-400'}><b>{match.summary.unmatched}</b> not in our catalogue</span>
+                  <span className={match.summary.ambiguous ? 'text-danger' : 'text-n-400'}><b>{match.summary.ambiguous}</b> ambiguous</span>
+                  <span className="text-n-400">of {match.summary.total} rows</span>
+                </div>
+
+                <div className="border-b border-n-100 px-4 py-2 text-[11.5px] text-n-500">
+                  Matched by:{' '}
+                  {(['mainSku', 'alias', 'ean', 'vendorSku', 'manufacturerSku'] as const)
+                    .filter((k) => match.summary.byMethod[k] > 0)
+                    .map((k) => `${k} ${match.summary.byMethod[k]}`)
+                    .join(' · ') || '—'}
+                  {match.summary.duplicateSkus.length > 0 && (
+                    <span className="ml-2 font-semibold text-amber-700">
+                      {match.summary.duplicateSkus.length} SKU{match.summary.duplicateSkus.length > 1 ? 's' : ''} appear more than once in this file
+                    </span>
+                  )}
+                </div>
+
+                {match.summary.unmatched + match.summary.ambiguous > 0 && (
+                  <div className="px-4 py-2 text-[11.5px] text-n-500">
+                    Rows below are not applied. A vendor&rsquo;s list usually covers more than we stock, so most of
+                    these are simply products we do not carry — link only the ones that are ours.
+                  </div>
+                )}
+
+                <div className="max-h-[420px] overflow-auto">
+                  <table className="w-full text-[12.5px]">
+                    <thead className="sticky top-0 bg-n-25 text-[11px] uppercase tracking-wide text-n-500">
+                      <tr>
+                        <th className="px-4 py-1.5 text-left font-semibold">Vendor code</th>
+                        <th className="px-2 py-1.5 text-left font-semibold">Barcode</th>
+                        <th className="px-2 py-1.5 text-left font-semibold">Status</th>
+                        <th className="px-2 py-1.5 text-left font-semibold">Product</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-n-100">
+                      {match.rows
+                        .filter((r) => showAll || !r.productId)
+                        .slice(0, 300)
+                        .map((r) => (
+                          <tr key={r.index} className="align-top">
+                            <td className="px-4 py-1.5"><span className="mono">{r.vendorSku || '—'}</span></td>
+                            <td className="px-2 py-1.5 text-n-500"><span className="mono">{r.ean || '—'}</span></td>
+                            <td className="px-2 py-1.5">
+                              {r.productId ? (
+                                <span className="text-teal-700">matched · {r.matchedBy}</span>
+                              ) : r.ambiguous ? (
+                                <span className="text-danger">ambiguous on {r.ambiguous.by} ({r.ambiguous.products.length})</span>
+                              ) : (
+                                <span className="text-n-500">{r.reason === 'no-identifiers' ? 'no identifiers' : 'not in catalogue'}</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5">
+                              {r.product ? (
+                                <span><span className="mono">{r.product.mainSku}</span> <span className="text-n-500">{r.product.title}</span></span>
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  <Link2 size={13} className="shrink-0 text-n-400" />
+                                  <div className="min-w-[220px] max-w-[340px]">
+                                    <ProductSkuField
+                                      value={{ productId: null, sku: '' }}
+                                      onChange={() => {}}
+                                      onPick={(p) => p && saveAlias.mutate({ vendorSku: r.vendorSku, productId: p.id })}
+                                      placeholder="Link to a product…"
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex items-center gap-2 border-t border-n-100 px-4 py-2">
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-n-600">
+                    <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+                    Show matched rows too
+                  </label>
+                  <span className="text-[11.5px] text-n-400">Linking a code records it for this vendor and re-matches.</span>
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}

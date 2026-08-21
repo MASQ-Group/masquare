@@ -261,6 +261,29 @@ model VendorImportProfile {
   @@map("vendor_import_profile")
 }
 
+/// An explicit "this vendor's code means this product" decision, for the rows their file cannot
+/// match on its own. Vendor codes mostly equal our main SKU, so this is for the exceptions —
+/// recorded once by a human and reused on every later upload rather than re-guessed.
+model VendorSkuAlias {
+  id        String @id @default(uuid()) @db.Uuid
+  vendorId  String @map("vendor_id") @db.Uuid
+  /// The code as it appears in the vendor's file, stored lowercased and trimmed for matching.
+  vendorSku String @map("vendor_sku")
+  productId String @map("product_id") @db.Uuid
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  vendor  Vendor  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([vendorId, vendorSku])
+  @@index([productId])
+  @@map("vendor_sku_alias")
+}
+
 model Vendor {
   id                String  @id @default(uuid()) @db.Uuid
   name              String
@@ -302,6 +325,7 @@ model Vendor {
   contacts VendorContact[]
   products Product[]
   importProfiles VendorImportProfile[]
+  skuAliases     VendorSkuAlias[]
   purchaseOrders PurchaseOrder[]
   vendorReturns  VendorReturn[]
 
@@ -607,6 +631,7 @@ model Product {
   vendorReturnLines    VendorReturnLine[]
   stockOwed            StockOwed[]
   availability         ProductAvailability?
+  vendorSkuAliases     VendorSkuAlias[]
   availabilityLedger   AvailabilityLedger[]
   channelListings      ChannelListing[]
 
