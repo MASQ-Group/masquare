@@ -10,6 +10,7 @@ import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dt
 import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 import { mapAmazonOrder } from './mappings/amazon-mapping';
 import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
+import { readOrderMoney } from './ebay-money-diagnostic';
 
 /**
  * Outcome of a read-only SP-API role probe.
@@ -458,6 +459,37 @@ export class IntegrationsService implements OnModuleInit {
     const json: any = await res.json().catch(() => null);
     if (!res.ok) return { ok: false, status: res.status, message: (json?.errors?.[0]?.message || `HTTP ${res.status}`).toString().slice(0, 200), orders: [], total: 0 };
     return { ok: true, orders: json?.orders ?? [], total: Number(json?.total ?? (json?.orders?.length ?? 0)) };
+  }
+
+  /**
+   * Read-only: one eBay order's money fields exactly as the API returns them.
+   *
+   * Whether eBay has already converted a fee to our payout currency cannot be told from a stored
+   * transaction — by then our FX and theirs have collapsed into one number. This shows the raw
+   * fields so the answer comes from data.
+   */
+  async ebayOrderMoney(integrationId: string, orderId: string) {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) throw new NotFoundException('Integration not found');
+    if (row.channelType !== 'ebay') throw new BadRequestException('That integration is not an eBay connection.');
+    const ref = String(orderId ?? '').trim();
+    if (!ref) throw new BadRequestException('Provide an eBay order id.');
+
+    const config = (row.config ?? {}) as Record<string, string>;
+    const secrets = await this.decryptedSecrets(row.id);
+    const token = await this.ebayAccessToken(config, secrets);
+    const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+
+    const res = await fetch(`${base}/sell/fulfillment/v1/order/${encodeURIComponent(ref)}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(20000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) {
+      const msg = (json?.errors?.[0]?.message || `HTTP ${res.status}`).toString().slice(0, 200);
+      throw new BadRequestException(`eBay could not return that order (${msg}).`);
+    }
+    return readOrderMoney(json);
   }
 
   /** Read-only: fetch + map recent eBay orders for connection + mapping validation. */
