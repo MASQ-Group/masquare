@@ -928,7 +928,11 @@ export interface BlockedSeller {
 
 export const repricingApi = {
   strategies: () => api.get<RepricingStrategyPreset[]>('/amazon-repricing/strategies').then((r) => r.data),
-  assignStrategy: (body: { presetId: string; skuPricingIds?: string[]; marketplace?: string; apply?: boolean }) =>
+  assignStrategy: (body: {
+    presetId: string; apply?: boolean;
+    skuPricingIds?: string[]; marketplace?: string;
+    brandId?: string; vendorId?: string; productTypeId?: string; q?: string;
+  }) =>
     api.post<StrategyAssignResult>('/amazon-repricing/strategies/assign', body).then((r) => r.data),
   /** Read-only: every input behind one SKU's floor, and what the floor leaves out. */
   explainFloor: (sku: string, marketplace?: string) =>

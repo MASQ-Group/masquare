@@ -213,20 +213,19 @@ export function RepricingPage() {
         </div>
       )}
 
-      <QuarantineCard />
-      <PipelineCard />
-      <div className="h-6" />
-      <RoleCheckCard />
-      <div className="h-6" />
-      <StrategiesCard />
-      <FloorExplainCard />
-      <NotificationSetupCard />
-      <div className="h-6" />
-      <SkuTable />
-      <div className="h-6" />
-      <DecisionTable />
-      <div className="h-6" />
-      <BlocklistCard />
+      {/* One gap on the stack rather than spacer divs between pairs: the spacers were easy to
+          forget when a card was added, and three cards ended up flush against each other. */}
+      <div className="flex flex-col gap-6">
+        <QuarantineCard />
+        <PipelineCard />
+        <RoleCheckCard />
+        <StrategiesCard />
+        <FloorExplainCard />
+        <NotificationSetupCard />
+        <SkuTable />
+        <DecisionTable />
+        <BlocklistCard />
+      </div>
     </div>
   );
 }
