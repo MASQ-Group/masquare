@@ -1,46 +1,72 @@
 import { describe, it, expect } from 'vitest';
 
-// A channel that converts at its own rate and pays out in EUR is not described by any market rate.
-// eBay's rate on order 26-15031-86756 was 0.82974 against our 0.85609 — a 3.2% gap that overstated
-// that order's profit by 7.4%. Where the channel's real rate is known, it is what the money
-// actually converted at.
-function rateForChannel(channel: { fxRateOverride?: number | null } | null, currency: string | null, marketRate: number | null): number | null {
-  if (!currency || currency.toUpperCase() === 'EUR') return currency ? 1 : marketRate;
-  const override = channel?.fxRateOverride != null ? Number(channel.fxRateOverride) : null;
-  if (override != null && override > 0) return override;
-  return marketRate;
+// Some marketplaces convert the whole order themselves and pay out in EUR, at a rate below the
+// market. eBay's spread is stable across currencies and weeks, so the markup — not the rate — is
+// what a channel should carry: a rate read today is wrong tomorrow, a spread is not.
+const round8 = (v: number) => Number(v.toFixed(8));
+
+function rateForChannel(channel: { fxSpreadPct?: number | null } | null, currency: string | null, market: number | null): number | null {
+  if (market == null || !currency || currency.toUpperCase() === 'EUR') return market;
+  const spread = channel?.fxSpreadPct != null ? Number(channel.fxSpreadPct) : null;
+  if (spread == null || !(spread > 0) || spread >= 100) return market;
+  return round8(market * (1 - spread / 100));
 }
 
-describe('per-channel exchange rate', () => {
-  const EBAY_US = { fxRateOverride: 0.82974 };
-  const AMAZON = { fxRateOverride: null };
+const EBAY = { fxSpreadPct: 3.01 };
 
-  it('uses the channel rate over the market rate', () => {
-    expect(rateForChannel(EBAY_US, 'USD', 0.85609)).toBe(0.82974);
+describe('per-channel FX spread', () => {
+  // Measured from eBay payout statements: the same markup on three currencies over a month.
+  const MEASURED = [
+    { pair: 'USD', ebay: 0.82976, market: 0.85561 },
+    { pair: 'GBP', ebay: 1.13208, market: 1.16731 },
+    { pair: 'GBP', ebay: 1.13443, market: 1.16985 },
+    { pair: 'AUD', ebay: 0.59260, market: 0.61103 },
+    { pair: 'USD', ebay: 0.85056, market: 0.87660 },
+  ];
+
+  it('reproduces every measured rate to within a tenth of a percent', () => {
+    // One average cannot reproduce each row exactly — the measured spreads run 2.97% to 3.03%,
+    // so a single 3.01% lands within about 0.04% of each. That residue is the cost of modelling
+    // a range with one number, and it is two orders of magnitude smaller than the 3% it removes.
+    for (const m of MEASURED) {
+      const applied = rateForChannel(EBAY, m.pair, m.market)!;
+      expect(Math.abs(applied - m.ebay) / m.ebay).toBeLessThan(0.001);
+    }
   });
 
-  it('leaves channels without one on the market rate', () => {
-    expect(rateForChannel(AMAZON, 'USD', 0.85609)).toBe(0.85609);
-    expect(rateForChannel(null, 'USD', 0.85609)).toBe(0.85609);
+  it('the measured spread is consistent enough to model as one number', () => {
+    const spreads = MEASURED.map((m) => (1 - m.ebay / m.market) * 100);
+    expect(Math.min(...spreads)).toBeGreaterThan(2.9);
+    expect(Math.max(...spreads)).toBeLessThan(3.1);
   });
 
-  it('ignores a zero or negative rate rather than wiping out revenue', () => {
-    expect(rateForChannel({ fxRateOverride: 0 }, 'USD', 0.85609)).toBe(0.85609);
-    expect(rateForChannel({ fxRateOverride: -1 }, 'USD', 0.85609)).toBe(0.85609);
+  it('tracks the market rate rather than freezing a number', () => {
+    // The whole point of a spread: a different day's market rate still lands in the right place.
+    expect(rateForChannel(EBAY, 'USD', 0.9)).toBeCloseTo(0.9 * 0.9699, 4);
   });
 
-  it('never applies to EUR, where there is nothing to convert', () => {
-    expect(rateForChannel({ fxRateOverride: 0.5 }, 'EUR', 1)).toBe(1);
+  it('leaves channels without a spread on the market rate', () => {
+    expect(rateForChannel({ fxSpreadPct: null }, 'USD', 0.85561)).toBe(0.85561);
+    expect(rateForChannel(null, 'USD', 0.85561)).toBe(0.85561);
   });
 
-  it('reproduces the measured order', () => {
-    const gross = 1398.14;
-    const fee = 238.4; // eBay reports the fee in the ORDER currency, so the rate moves both sides
-    const net = gross - fee;
-    // Working from the rounded figures on eBay's own statement gives 30.53; from the unrounded
-    // rate it is 30.56. The three cents are display rounding, not a difference in the model.
-    expect(Number((net * (0.85609 - 0.82974)).toFixed(2))).toBe(30.56);
-    // What eBay actually paid out, to within their rounding.
-    expect(net * 0.82974).toBeCloseTo(962.31, 1);
+  it('ignores a spread that would zero out or invert revenue', () => {
+    expect(rateForChannel({ fxSpreadPct: 0 }, 'USD', 0.85561)).toBe(0.85561);
+    expect(rateForChannel({ fxSpreadPct: -5 }, 'USD', 0.85561)).toBe(0.85561);
+    expect(rateForChannel({ fxSpreadPct: 100 }, 'USD', 0.85561)).toBe(0.85561);
+  });
+
+  it('never applies to EUR, where nothing is converted', () => {
+    expect(rateForChannel(EBAY, 'EUR', 1)).toBe(1);
+  });
+
+  it('recovers most of the profit that was overstated on the measured order', () => {
+    const net = 1398.14 - 238.4; // gross less the fee, both in USD
+    const actualGap = net * (0.85609 - 0.82974); // 30.56 EUR, from eBay's own statement
+    const recovered = net * (0.85609 - rateForChannel(EBAY, 'USD', 0.85609)!);
+    // The average spread recovers ~98% of it. The remainder is that this order's own spread was
+    // 3.08%, above the 3.01% average — an estimate, and reported as one, not a claim of exactness.
+    expect(recovered / actualGap).toBeGreaterThan(0.97);
+    expect(recovered).toBeLessThan(actualGap);
   });
 });

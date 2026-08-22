@@ -1555,15 +1555,18 @@ model SalesChannel {
   // Per channel rather than per country: it depends on where we are established relative to the
   // marketplace, so two channels in the same country can legitimately differ.
   pricesIncludeTax Boolean @default(true) @map("prices_include_tax")
-  // Exchange rate to use for this channel instead of the platform's market rate.
+  // How far below the market rate this channel actually converts, as a percentage.
   //
-  // Some marketplaces convert at their own rate and pay out in EUR — eBay does, and on a US order
-  // their rate was 3.2% below ours, which overstated profit by 7.4% on the order we measured.
-  // Where the channel's true rate can be read off a payout statement, entering it here is closer to
-  // the money that actually arrives than any market rate is. Null = use the platform rate.
-  fxRateOverride      Float?    @map("fx_rate_override")
-  fxRateOverrideNote  String?   @map("fx_rate_override_note")
-  fxRateOverrideSetAt DateTime? @map("fx_rate_override_set_at")
+  // Some marketplaces convert the whole order themselves and pay out in EUR. eBay does, and their
+  // spread is remarkably stable — measured at 3.02% on USD, 3.02% and 3.03% on GBP, and 3.02% on
+  // AUD across a month, averaging 3.01%. A spread rather than a fixed rate because the market rate
+  // moves daily while the markup does not: a rate entered today is wrong tomorrow, a spread is not.
+  //
+  // Null = convert at the market rate, which is right for channels that pay out in the currency
+  // they collected (Amazon settles that way, and our own bank does the conversion).
+  fxSpreadPct   Float?    @map("fx_spread_pct")
+  fxSpreadNote  String?   @map("fx_spread_note")
+  fxSpreadSetAt DateTime? @map("fx_spread_set_at")
   email              String?
   website            String?
   contactName        String? @map("contact_name")
