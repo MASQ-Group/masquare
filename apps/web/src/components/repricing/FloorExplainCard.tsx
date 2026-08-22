@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Search, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import { repricingApi, type FloorExplain } from '../../lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { integrationsApi, repricingApi, type FloorExplain } from '../../lib/api';
 
 /**
  * Every input behind one SKU's floor.
@@ -15,6 +16,11 @@ export function FloorExplainCard() {
   const [sku, setSku] = useState('');
   const [marketplace, setMarketplace] = useState('');
   const [data, setData] = useState<FloorExplain | null>(null);
+
+  // The marketplaces actually connected, not every Amazon marketplace: typing a code we do not
+  // sell on returns an empty result that reads like a broken SKU.
+  const { data: integrations = [] } = useQuery({ queryKey: ['integrations'], queryFn: integrationsApi.list });
+  const markets = [...new Set(integrations.filter((i: any) => i.channelType === 'amazon' && i.marketplace).map((i: any) => i.marketplace as string))].sort();
 
   const run = useMutation({
     mutationFn: () => repricingApi.explainFloor(sku.trim(), marketplace.trim() || undefined),
@@ -38,13 +44,14 @@ export function FloorExplainCard() {
           onChange={(e) => setSku(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && sku.trim()) run.mutate(); }}
         />
-        <input
-          className="input mono h-8 w-[90px] text-[12.5px]"
-          placeholder="UK"
+        <select
           value={marketplace}
           onChange={(e) => setMarketplace(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && sku.trim()) run.mutate(); }}
-        />
+          className="h-8 rounded-lg border border-n-200 bg-n-0 px-2 text-[12.5px] text-n-700 outline-none focus:border-teal-400"
+        >
+          <option value="">Any marketplace</option>
+          {markets.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
         <button
           onClick={() => run.mutate()}
           disabled={!sku.trim() || run.isPending}
