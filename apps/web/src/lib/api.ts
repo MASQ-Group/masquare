@@ -808,6 +808,8 @@ export interface RepricingReadiness {
   byExclusion: Record<string, number>;
 }
 export interface RepricingSkuRow {
+  /** The named strategy this SKU follows; null means the global default. */
+  preset?: { id: string; name: string } | null;
   id: string;
   sku: string;
   asin: string | null;
@@ -925,6 +927,9 @@ export interface BlockedSeller {
 }
 
 export const repricingApi = {
+  strategies: () => api.get<RepricingStrategyPreset[]>('/amazon-repricing/strategies').then((r) => r.data),
+  assignStrategy: (body: { presetId: string; skuPricingIds?: string[]; marketplace?: string; apply?: boolean }) =>
+    api.post<StrategyAssignResult>('/amazon-repricing/strategies/assign', body).then((r) => r.data),
   /** Read-only: every input behind one SKU's floor, and what the floor leaves out. */
   explainFloor: (sku: string, marketplace?: string) =>
     api.get<FloorExplain>('/amazon-repricing/diagnostics/floor', { params: { sku, marketplace } }).then((r) => r.data),
@@ -2328,4 +2333,30 @@ export interface FloorExplain {
     loaded?: boolean;
   };
   recomputedNow?: { breakevenCents: number | null; strategyFloorCents: number | null } | null;
+}
+
+export interface RepricingStrategyPreset {
+  id: string;
+  name: string;
+  description: string | null;
+  isSystem: boolean;
+  sortOrder: number;
+  strategy: string;
+  minMarginPct: string | number;
+  probeStepPct: string | number | null;
+  probeIntervalMinutes: number | null;
+  fbmPremiumPct: string | number | null;
+  epsilonCents: number | null;
+  /** Aggressive presets refuse SKUs whose floor omits storage or advertising. */
+  requiresLoadedFloor: boolean;
+}
+
+export interface StrategyAssignResult {
+  error?: string;
+  preview?: boolean;
+  strategy?: string;
+  wouldApply?: number;
+  applied?: number;
+  recomputeNeeded?: boolean;
+  refused: { sku: string; marketplaceId: string; reason: string }[];
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { FloorExplainCard } from '../components/repricing/FloorExplainCard';
+import { StrategiesCard } from '../components/repricing/StrategiesCard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle } from 'lucide-react';
 import { Pagination } from '@masquare/ui';
@@ -217,6 +218,7 @@ export function RepricingPage() {
       <div className="h-6" />
       <RoleCheckCard />
       <div className="h-6" />
+      <StrategiesCard />
       <FloorExplainCard />
       <NotificationSetupCard />
       <div className="h-6" />
@@ -303,6 +305,7 @@ function SkuTable() {
               <th className="px-3 py-2 font-semibold">Mkt</th>
               <th className="px-3 py-2 font-semibold">Fulfil</th>
               <th className="px-3 py-2 font-semibold">State</th>
+              <th className="px-3 py-2 font-semibold">Strategy</th>
               <th className="px-3 py-2 text-right font-semibold">Breakeven</th>
               <th className="px-3 py-2 text-right font-semibold">Floor</th>
               <th className="px-3 py-2 text-right font-semibold">Current</th>
@@ -323,6 +326,7 @@ function SkuTable() {
                   <td className="px-3 py-1.5 font-mono">{mkt(r.marketplaceId)}</td>
                   <td className="px-3 py-1.5">{r.fulfillment}</td>
                   <td className="px-3 py-1.5"><Badge value={r.automationState} styles={STATE_STYLES} />{r.suppressed && <span className="ml-1 text-[11px] text-orange-600">supp</span>}</td>
+                  <td className="px-3 py-1.5 text-[11.5px] text-n-600">{r.preset?.name ?? <span className="text-n-400">Balanced (default)</span>}</td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.breakevenCents, r.currency)}</td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.strategyFloorCents, r.currency)}</td>
                   {/* The listing's price now. Set when the SKU is onboarded and refreshed on each

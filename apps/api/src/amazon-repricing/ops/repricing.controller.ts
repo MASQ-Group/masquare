@@ -292,7 +292,14 @@ export class RepricingController {
     };
 
     const [items, total] = await Promise.all([
-      this.prisma.repricingSkuPricing.findMany({ where, orderBy: { updatedAt: 'desc' }, take: pageSize, skip: offset }),
+      this.prisma.repricingSkuPricing.findMany({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        take: pageSize,
+        skip: offset,
+        // Which strategy each SKU follows. Without it a bulk apply cannot be read back.
+        include: { preset: { select: { id: true, name: true } } },
+      }),
       this.prisma.repricingSkuPricing.count({ where }),
     ]);
     return { items, total, page: Math.floor(offset / pageSize) + 1, pageSize };
