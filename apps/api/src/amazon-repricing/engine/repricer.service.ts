@@ -167,6 +167,27 @@ export class RepricerService {
   ): Promise<void> {
     const cfg = this.toConfig(row);
 
+    // Refresh our stored price from the notification.
+    //
+    // The offer stream carries our own offer, and it is the only live view of what the listing is
+    // actually priced at — the stored figure is written when the SKU is onboarded and then only on
+    // the next onboarding run, so it drifts the moment a price changes on Amazon.
+    //
+    // That drift is not cosmetic: the "is this change worth making" test compares the new price
+    // against the stored one, so an evaluation could hold because the move looked small against a
+    // price that is no longer real. buildDecideInput already prefers our live offer for the offer
+    // itself, which left the two disagreeing inside one evaluation.
+    const ourLive = snapshot.offers.find((o) => o.sellerId === snapshot.ourSellerId);
+    const livePriceCents = ourLive ? ourLive.listingPriceCents : null;
+    if (livePriceCents != null && livePriceCents > 0 && livePriceCents !== row.currentPriceCents) {
+      await this.prisma.repricingSkuPricing.update({
+        where: { id: row.id },
+        data: { currentPriceCents: livePriceCents },
+      });
+      row.currentPriceCents = livePriceCents;
+      cfg.currentPriceCents = livePriceCents;
+    }
+
     // A SKU flagged suppressed by a prior PRICING_HEALTH evaluates in Branch D until a fresh event
     // shows our offer is Featured again (spec §5.3). Clear the flag on restoration; thread it into
     // the snapshot otherwise (never mutate the shared snapshot — clone per row).
