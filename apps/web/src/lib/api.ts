@@ -272,8 +272,9 @@ export const channelListingsApi = {
   channels: () => api.get<ChannelListingChannel[]>('/channel-listings/channels').then((r) => r.data),
   dashboard: (params: { q?: string; channelId?: string; brandId?: string; vendorId?: string; productTypeId?: string; page?: number; pageSize?: number } = {}) =>
     api.get<ChannelListingsDashboard>('/channel-listings', { params }).then((r) => r.data),
+  /** Starts a run and returns the job to follow — the result arrives on the job when it finishes. */
   sync: (integrationIds?: string[]) =>
-    api.post<ChannelSyncResult>('/channel-listings/sync', integrationIds?.length ? { integrationIds } : {}).then((r) => r.data),
+    api.post<JobView>('/channel-listings/sync', integrationIds?.length ? { integrationIds } : {}).then((r) => r.data),
   detail: (productId: string) => api.get<ChannelListingDetail>(`/channel-listings/product/${productId}`).then((r) => r.data),
   identifiers: (productId: string) => api.get<ChannelIdentifier[]>(`/channel-listings/product/${productId}/identifiers`).then((r) => r.data),
   push: (productIds: string[], dryRun: boolean, channels?: string[]) =>
@@ -894,9 +895,18 @@ export interface RepricingQuarantineRow {
   reason?: string | null;
 }
 export interface RepricingQuarantine {
+  /** The whole queue, not the page — this drives the escalation flag and the tab badge. */
   total: number;
   oldestHours: number;
+  page: number;
+  pageSize: number;
   items: RepricingQuarantineRow[];
+}
+export interface RepricingDecisionPage {
+  items: RepricingDecisionRow[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 /** Read-only SP-API role pre-flight per Amazon connection (Pricing + Notifications).
  *  `state` separates a real authorisation failure ('denied') from a probe that couldn't conclude. */
@@ -926,6 +936,39 @@ export interface BlockedSeller {
   createdAt: string;
 }
 
+/**
+ * A long-running action's progress. Onboarding and floor recomputation return one of these
+ * immediately and keep working server-side; the browser polls until it settles.
+ */
+export interface JobView {
+  id: string;
+  kind: string;
+  label: string;
+  state: 'running' | 'done' | 'error';
+  /** null until the run knows how many items it has. */
+  total: number | null;
+  done: number;
+  ok: number;
+  failed: number;
+  startedAt: string;
+  finishedAt: string | null;
+  message: string | null;
+  etaSeconds: number | null;
+  result: unknown | null;
+  error: string | null;
+}
+
+export const jobsApi = {
+  get: (id: string) => api.get<JobView>(`/jobs/${id}`).then((r) => r.data),
+  cancel: (id: string) => api.post<{ cancelled: boolean }>(`/jobs/${id}/cancel`, {}).then((r) => r.data),
+};
+
+export interface OnboardResult {
+  scannedListings: number; created: number; updated: number; skipped: number;
+  unmatchedListings: number; totalListings: number;
+}
+export interface RecomputeResult { processed: number; ok: number; stopped?: boolean }
+
 export const repricingApi = {
   marketplaceCosts: () => api.get<RepricingMarketplaceCosts[]>('/amazon-repricing/marketplace-costs').then((r) => r.data),
   setMarketplaceCosts: (body: { marketplace: string; storageApplies?: boolean; adsApply?: boolean; defaultStoragePerUnitCents?: number | null; defaultAdCostPerUnitCents?: number | null }) =>
@@ -949,15 +992,10 @@ export const repricingApi = {
   removeBlocked: (id: string) => api.delete<{ removed: boolean }>(`/amazon-repricing/blocklist/${id}`).then((r) => r.data),
   /** `marketplace` (ISO-2, e.g. 'UK') scopes the run — omit to cover every connected marketplace. */
   onboard: (marketplace?: string) =>
-    api
-      .post<{ scannedListings: number; created: number; updated: number; skipped: number; unmatchedListings: number; totalListings: number }>(
-        '/amazon-repricing/onboard',
-        { marketplace },
-      )
-      .then((r) => r.data),
+    api.post<JobView>('/amazon-repricing/onboard', { marketplace }).then((r) => r.data),
   /** Makes ONE live SP-API call per SKU — scope by marketplace and cap with `limit` while piloting. */
   recomputeFloors: (marketplace?: string, limit?: number) =>
-    api.post<{ processed: number; ok: number; message?: string }>('/amazon-repricing/floors/recompute', { marketplace, limit }).then((r) => r.data),
+    api.post<JobView>('/amazon-repricing/floors/recompute', { marketplace, limit }).then((r) => r.data),
   /** Paged + filterable: onboarding seeds thousands of rows, so reaching one SKU needs both. */
   skuPricing: (params: { take?: number; skip?: number; q?: string; marketplace?: string; brandId?: string; vendorId?: string; state?: string } = {}) =>
     api
@@ -973,9 +1011,16 @@ export const repricingApi = {
         },
       })
       .then((r) => r.data),
-  decisions: (params: { take?: number; sku?: string; outcome?: string } = {}) =>
-    api.get<RepricingDecisionRow[]>('/amazon-repricing/decisions', { params: { take: params.take ?? 100, sku: params.sku || undefined, outcome: params.outcome || undefined } }).then((r) => r.data),
-  quarantine: () => api.get<RepricingQuarantine>('/amazon-repricing/quarantine').then((r) => r.data),
+  decisions: (params: { take?: number; skip?: number; sku?: string; outcome?: string } = {}) =>
+    api
+      .get<RepricingDecisionPage>('/amazon-repricing/decisions', {
+        params: { take: params.take ?? 100, skip: params.skip ?? 0, sku: params.sku || undefined, outcome: params.outcome || undefined },
+      })
+      .then((r) => r.data),
+  quarantine: (params: { take?: number; skip?: number } = {}) =>
+    api
+      .get<RepricingQuarantine>('/amazon-repricing/quarantine', { params: { take: params.take ?? 50, skip: params.skip ?? 0 } })
+      .then((r) => r.data),
   resolveQuarantine: (id: string) => api.post<{ resolved: boolean }>(`/amazon-repricing/quarantine/${id}/resolve`, {}).then((r) => r.data),
   roleDiagnostics: () => api.get<RepricingRoleDiagnostics>('/amazon-repricing/diagnostics/roles').then((r) => r.data),
   pipelineStatus: () => api.get<RepricingPipelineStatus>('/amazon-repricing/diagnostics/pipeline').then((r) => r.data),

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { canApplyPreset } from '../config/resolve-preset';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
@@ -13,6 +13,7 @@ import { ISO_TO_MARKETPLACE } from '../config/repricing.config';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { SqsPollerService } from '../ingest/sqs-poller.service';
 import { queueForMarketplace } from '../config/notification-queues';
+import { JobsService } from '../../jobs/jobs.service';
 
 // Ops console API for the Amazon repricing module (admin-only). Phase-appropriate subset: onboard
 // SKUs, refresh fees + recompute floors, and inspect the SKU-pricing table + recent decisions.
@@ -30,6 +31,7 @@ export class RepricingController {
     private readonly prisma: PrismaService,
     private readonly integrations: IntegrationsService,
     private readonly sqs: SqsPollerService,
+    private readonly jobs: JobsService,
   ) {}
 
   /** Seller blocklist (§5.2): unauthorized / MAP-violating / hijacker sellers excluded from pricing. */
@@ -63,7 +65,12 @@ export class RepricingController {
    *  (ISO-2, e.g. 'UK') to pilot one marketplace rather than onboarding the whole estate. */
   @Post('onboard')
   onboard(@Body() body: { marketplace?: string } = {}) {
-    return this.onboarding.syncSkuPricingFromListings({ marketplace: body?.marketplace });
+    // Returns a job, not a result: onboarding the whole estate walks every matched listing, and
+    // held open as one request it is indistinguishable from a hung page.
+    const scope = body?.marketplace?.trim().toUpperCase() || 'all marketplaces';
+    return this.jobs.start('repricing.onboard', `Onboarding SKUs — ${scope}`, (ctx) =>
+      this.onboarding.syncSkuPricingFromListings({ marketplace: body?.marketplace, progress: ctx }),
+    );
   }
 
   /** Data-readiness summary — counts by automation state / exclusion reason. */
@@ -108,29 +115,42 @@ export class RepricingController {
    * estate — the ids come from the connector-derived map, so any connected marketplace works.
    */
   @Post('floors/recompute')
-  async recomputeFloors(@Body() body: { marketplace?: string; limit?: number } = {}) {
+  recomputeFloors(@Body() body: { marketplace?: string; limit?: number } = {}) {
     const iso = body?.marketplace?.trim().toUpperCase();
     const marketplaceId = iso ? ISO_TO_MARKETPLACE[iso] : undefined;
-    if (iso && !marketplaceId) return { processed: 0, ok: 0, message: `Unknown marketplace '${iso}'` };
+    if (iso && !marketplaceId) throw new BadRequestException(`Unknown marketplace '${iso}'`);
     // `limit` caps a run: SKUs whose floor was never computed come first, so a small trial run
     // exercises the fee pipeline on fresh rows rather than re-doing ones that already succeeded.
     const limit = Number(body?.limit) > 0 ? Math.floor(Number(body.limit)) : undefined;
-    const rows = await this.prisma.repricingSkuPricing.findMany({
-      where: { deletedAt: null, ...(marketplaceId ? { marketplaceId } : {}) },
-      select: { id: true },
-      orderBy: [{ floorsComputedAt: { sort: 'asc', nulls: 'first' } }],
-      ...(limit ? { take: limit } : {}),
-    });
-    let ok = 0;
-    for (const { id } of rows) {
-      try {
-        await this.floors.refreshFeesAndRecompute(id);
-        ok += 1;
-      } catch {
-        /* logged in the service */
+
+    const label = `Recomputing floors — ${iso ?? 'all marketplaces'}${limit ? ` (first ${limit})` : ''}`;
+    return this.jobs.start('repricing.recompute', label, async (ctx) => {
+      const rows = await this.prisma.repricingSkuPricing.findMany({
+        where: { deletedAt: null, ...(marketplaceId ? { marketplaceId } : {}) },
+        select: { id: true, sku: true },
+        orderBy: [{ floorsComputedAt: { sort: 'asc', nulls: 'first' } }],
+        ...(limit ? { take: limit } : {}),
+      });
+      ctx.setTotal(rows.length);
+
+      let ok = 0;
+      let attempted = 0;
+      for (const row of rows) {
+        // Checked between SKUs rather than mid-call: a fee request already in flight is left to
+        // finish, so stopping never leaves a half-written floor.
+        if (ctx.cancelled) break;
+        attempted += 1;
+        ctx.note(row.sku);
+        try {
+          await this.floors.refreshFeesAndRecompute(row.id);
+          ok += 1;
+          ctx.tick(true);
+        } catch {
+          ctx.tick(false); /* logged in the service */
+        }
       }
-    }
-    return { processed: rows.length, ok };
+      return { processed: attempted, ok, stopped: ctx.cancelled && attempted < rows.length };
+    });
   }
 
   /**
@@ -305,17 +325,31 @@ export class RepricingController {
     return { items, total, page: Math.floor(offset / pageSize) + 1, pageSize };
   }
 
-  /** Decision audit search (§6.6): recent records, optionally filtered by SKU and/or outcome. */
+  /**
+   * Decision audit search (§6.6), paged.
+   *
+   * The audit is append-only and grows with every offer-change event, so an unpaged slice stops
+   * being "recent decisions" and starts being "the only decisions you can reach". Returns a total
+   * so the page count is real rather than inferred from a full-looking page.
+   */
   @Get('decisions')
-  decisions(@Query('take') take = '50', @Query('sku') sku?: string, @Query('outcome') outcome?: string) {
-    return this.prisma.repricingDecision.findMany({
-      where: {
-        ...(sku?.trim() ? { sku: { contains: sku.trim(), mode: 'insensitive' as const } } : {}),
-        ...(outcome ? { outcome } : {}),
-      },
-      orderBy: { at: 'desc' },
-      take: Math.min(Number(take) || 50, 200),
-    });
+  async decisions(
+    @Query('take') take = '100',
+    @Query('skip') skip = '0',
+    @Query('sku') sku?: string,
+    @Query('outcome') outcome?: string,
+  ) {
+    const pageSize = Math.min(Math.max(Number(take) || 100, 1), 500);
+    const offset = Math.max(Number(skip) || 0, 0);
+    const where = {
+      ...(sku?.trim() ? { sku: { contains: sku.trim(), mode: 'insensitive' as const } } : {}),
+      ...(outcome ? { outcome } : {}),
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.repricingDecision.findMany({ where, orderBy: { at: 'desc' }, take: pageSize, skip: offset }),
+      this.prisma.repricingDecision.count({ where }),
+    ]);
+    return { items, total, page: Math.floor(offset / pageSize) + 1, pageSize };
   }
 
   /** Quarantine queue (§5.5, §7): SKUs taken off automation by an unresolvable conflict, oldest
@@ -450,14 +484,25 @@ export class RepricingController {
   }
 
   @Get('quarantine')
-  async quarantine() {
-    const items = await this.prisma.repricingSkuPricing.findMany({
-      where: { deletedAt: null, automationState: 'QUARANTINED' },
-      orderBy: { updatedAt: 'asc' },
-      select: { id: true, sku: true, asin: true, marketplaceId: true, currency: true, strategy: true, strategyFloorCents: true, maxPriceCents: true, fairPricingCeilingCents: true, updatedAt: true },
-      take: 200,
-    });
-    const oldestHours = items.length ? Math.floor((Date.now() - items[0].updatedAt.getTime()) / 3_600_000) : 0;
+  async quarantine(@Query('take') take = '50', @Query('skip') skip = '0') {
+    const pageSize = Math.min(Math.max(Number(take) || 50, 1), 500);
+    const offset = Math.max(Number(skip) || 0, 0);
+    const where = { deletedAt: null, automationState: 'QUARANTINED' };
+
+    // `total` counts the queue, not the page. It drives the escalation flag and the tab badge, so
+    // a page-sized count would have read "20 open" forever once the queue passed one page.
+    const [items, total, oldest] = await Promise.all([
+      this.prisma.repricingSkuPricing.findMany({
+        where,
+        orderBy: { updatedAt: 'asc' },
+        select: { id: true, sku: true, asin: true, marketplaceId: true, currency: true, strategy: true, strategyFloorCents: true, maxPriceCents: true, fairPricingCeilingCents: true, updatedAt: true },
+        take: pageSize,
+        skip: offset,
+      }),
+      this.prisma.repricingSkuPricing.count({ where }),
+      this.prisma.repricingSkuPricing.findFirst({ where, orderBy: { updatedAt: 'asc' }, select: { updatedAt: true } }),
+    ]);
+    const oldestHours = oldest ? Math.floor((Date.now() - oldest.updatedAt.getTime()) / 3_600_000) : 0;
 
     // The conflict that quarantined each SKU. Without it the queue lists SKUs and asks the user to
     // "fix the values" without saying which value is wrong — and the binding ceiling is often
@@ -478,8 +523,10 @@ export class RepricingController {
     }
 
     return {
-      total: items.length,
+      total,
       oldestHours,
+      page: Math.floor(offset / pageSize) + 1,
+      pageSize,
       items: items.map((i) => ({ ...i, reason: reasons.get(`${i.sku}:${i.marketplaceId}`) ?? null })),
     };
   }

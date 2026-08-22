@@ -6,6 +6,7 @@ import {
   KeyRound, ListChecks, MoreHorizontal, Pause, Pencil, Play, Plug, Plus, RefreshCw, Search, Trash2, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { ProgressButton } from '@masquare/ui';
 import { integrationsApi, salesChannelsApi, type ChannelIntegration } from '../lib/api';
 import { useIsMobile } from '../lib/useIsMobile';
 import { PageHeader } from '../components/common/PageHeader';
@@ -238,15 +239,20 @@ export function IntegrationsPage() {
         info="Connected marketplace accounts syncing orders, fees & refunds into the platform. API keys are encrypted and never leave it."
         summary={`${stats.total} connection${stats.total === 1 ? '' : 's'} · ${stats.healthy} healthy${stats.attention ? ` · ${stats.attention} attention` : ''}`}
         actions={
-          <button
-            className="hbtn"
-            disabled={syncableCount === 0 || bulkSync.isPending}
+          /* The bar is the count this page already kept: channels sync one at a time, so
+             done/total is exact rather than an estimate. */
+          <ProgressButton
+            running={bulkSync.isPending}
+            value={bulkProgress && bulkProgress.total ? bulkProgress.done / bulkProgress.total : null}
+            detail={bulkProgress ? `${bulkProgress.done} of ${bulkProgress.total} connections synced` : undefined}
+            disabled={syncableCount === 0}
             title={syncableCount === 0 ? 'No connections are ready to sync — verify mapping and set the target first' : `Sync all ${syncableCount} ready connection${syncableCount === 1 ? '' : 's'} now`}
             onClick={() => bulkSync.mutate(integrations)}
+            runningLabel={<><RefreshCw size={15} className="animate-spin motion-reduce:animate-none" /><span className="max-[767px]:hidden">Syncing</span></>}
           >
-            <RefreshCw size={15} className={bulkSync.isPending ? 'animate-spin' : ''} />
-            <span className="max-[767px]:hidden">{bulkProgress ? `Syncing ${bulkProgress.done}/${bulkProgress.total}…` : `Sync all${syncableCount ? ` (${syncableCount})` : ''}`}</span>
-          </button>
+            <RefreshCw size={15} />
+            <span className="max-[767px]:hidden">Sync all{syncableCount ? ` (${syncableCount})` : ''}</span>
+          </ProgressButton>
         }
         primary={<button className="hbtn-primary" onClick={() => setModal(null)}><Plus size={16} /> Add<span className="max-[767px]:hidden"> connection</span></button>}
       />

@@ -4,13 +4,17 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { VisibleCompanies } from '../common/active-company.decorator';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { ChannelListingsService, type ListingsQuery } from './channel-listings.service';
+import { JobsService } from '../jobs/jobs.service';
 
 @ApiTags('channel-listings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('channel-listings')
 export class ChannelListingsController {
-  constructor(private readonly svc: ChannelListingsService) {}
+  constructor(
+    private readonly svc: ChannelListingsService,
+    private readonly jobs: JobsService,
+  ) {}
 
   @Get()
   dashboard(
@@ -35,7 +39,12 @@ export class ChannelListingsController {
 
   @Post('sync')
   sync(@VisibleCompanies() companyIds: string[], @Body() body?: { integrationIds?: string[] }) {
-    return this.svc.sync(body?.integrationIds, companyIds);
+    // A job, not a result: a full sync pulls every listing from every channel and runs for
+    // minutes, which as one held-open request is indistinguishable from a hung page.
+    const count = body?.integrationIds?.length;
+    return this.jobs.start('channel-listings.sync', count ? `Syncing ${count} channel${count === 1 ? '' : 's'}` : 'Syncing all channels', (ctx) =>
+      this.svc.sync(body?.integrationIds, companyIds, ctx),
+    );
   }
 
   @Get('product/:productId')
