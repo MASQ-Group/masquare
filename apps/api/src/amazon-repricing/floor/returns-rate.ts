@@ -70,6 +70,10 @@ export function describeCompleteness(parts: {
   storagePerUnitCents: number;
   adCostPerUnitCents: number;
   isFba: boolean;
+  /** Whether this marketplace accounts for storage at all. */
+  storageApplies: boolean;
+  /** Whether this marketplace accounts for advertising at all. */
+  adsApply: boolean;
 }): FloorCompleteness {
   const includes: string[] = ['purchase cost', 'referral fee', 'VAT'];
   const omits: string[] = [];
@@ -81,8 +85,20 @@ export function describeCompleteness(parts: {
   } else {
     omits.push('returns');
   }
-  if (parts.storagePerUnitCents > 0) includes.push('storage'); else omits.push('storage');
-  if (parts.adCostPerUnitCents > 0) includes.push('advertising'); else omits.push('advertising');
+
+  // A cost that does not apply is not missing. Storage exists only where stock sits at Amazon, so
+  // it is meaningless on an FBM listing; advertising only where we actually advertise. Counting
+  // either as an omission blocks a low-margin strategy on a SKU whose floor is already complete —
+  // a guard that fires on cost we will never incur protects nothing and just gets worked around.
+  const storageRelevant = parts.storageApplies && parts.isFba;
+  if (storageRelevant) {
+    if (parts.storagePerUnitCents > 0) includes.push('storage');
+    else omits.push('storage');
+  }
+  if (parts.adsApply) {
+    if (parts.adCostPerUnitCents > 0) includes.push('advertising');
+    else omits.push('advertising');
+  }
 
   return { includes, omits, loaded: omits.length === 0 };
 }

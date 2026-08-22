@@ -2314,6 +2314,24 @@ model RepricingOfferSnapshot {
 /// Referenced, not copied: a SKU points at a preset and the values resolve at read time, so
 /// changing "Clear stock" moves every SKU on it. The per-SKU override columns remain for the
 /// exceptions, and win over the preset.
+/// Which loaded costs a marketplace actually incurs.
+///
+/// Storage exists only where stock sits at Amazon, and MASQ is FBA on one marketplace; advertising
+/// only where we advertise, which is nowhere today. Both default OFF, so a cost we never incur is
+/// not treated as a missing input — a guard that fires on an irrelevant cost protects nothing.
+model RepricingMarketplaceCosts {
+  marketplaceId String  @id @map("marketplace_id")
+  storageApplies Boolean @default(false) @map("storage_applies")
+  adsApply       Boolean @default(false) @map("ads_apply")
+  /// Used when a SKU carries no value of its own. Null = the SKU must supply one.
+  defaultStoragePerUnitCents Int? @map("default_storage_per_unit_cents")
+  defaultAdCostPerUnitCents  Int? @map("default_ad_cost_per_unit_cents")
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("repricing_marketplace_costs")
+}
+
 model RepricingStrategyPreset {
   id          String  @id @default(uuid()) @db.Uuid
   name        String  @unique

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { FloorExplainCard } from '../components/repricing/FloorExplainCard';
 import { StrategiesCard } from '../components/repricing/StrategiesCard';
+import { MarketplaceCostsCard } from '../components/repricing/MarketplaceCostsCard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle } from 'lucide-react';
 import { Pagination } from '@masquare/ui';
@@ -220,6 +221,7 @@ export function RepricingPage() {
         <PipelineCard />
         <RoleCheckCard />
         <StrategiesCard />
+        <MarketplaceCostsCard />
         <FloorExplainCard />
         <NotificationSetupCard />
         <SkuTable />
