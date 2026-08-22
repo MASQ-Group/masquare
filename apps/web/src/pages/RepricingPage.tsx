@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { FloorExplainCard } from '../components/repricing/FloorExplainCard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle } from 'lucide-react';
 import { Pagination } from '@masquare/ui';
@@ -216,6 +217,7 @@ export function RepricingPage() {
       <div className="h-6" />
       <RoleCheckCard />
       <div className="h-6" />
+      <FloorExplainCard />
       <NotificationSetupCard />
       <div className="h-6" />
       <SkuTable />
