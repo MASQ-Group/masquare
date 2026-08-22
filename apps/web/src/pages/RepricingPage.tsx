@@ -440,7 +440,6 @@ function QuarantineCard() {
               <th className="px-4 py-2 font-semibold">SKU</th>
               <th className="px-3 py-2 font-semibold">Mkt</th>
               <th className="px-3 py-2 text-right font-semibold">Floor</th>
-              <th className="px-3 py-2 text-right font-semibold">MAP</th>
               <th className="px-3 py-2 text-right font-semibold">Max</th>
               <th className="px-3 py-2 text-right font-semibold">Ceiling</th>
               <th className="px-3 py-2 font-semibold">Why</th>
@@ -454,7 +453,6 @@ function QuarantineCard() {
                 <td className="px-4 py-1.5 font-mono text-n-800">{r.sku}</td>
                 <td className="px-3 py-1.5 font-mono">{mkt(r.marketplaceId)}</td>
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.strategyFloorCents, r.currency)}</td>
-                <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.mapCents, r.currency)}</td>
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.maxPriceCents, r.currency)}</td>
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.fairPricingCeilingCents, r.currency)}</td>
                 <td className="px-3 py-1.5 text-[11.5px] text-n-600">{r.reason ?? '—'}</td>

@@ -2232,7 +2232,6 @@ model RepricingSkuPricing {
 
   // Ceilings (§6.2) — cents.
   maxPriceCents           Int? @map("max_price_cents")
-  mapCents                Int? @map("map_cents") // MAP hard clamp, if contractually bound
   fairPricingCeilingCents Int? @map("fair_pricing_ceiling_cents")
   amazonMinAllowedCents   Int? @map("amazon_min_allowed_cents")
   amazonMaxAllowedCents   Int? @map("amazon_max_allowed_cents")

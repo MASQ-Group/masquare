@@ -317,7 +317,7 @@ export class RepricingController {
     const items = await this.prisma.repricingSkuPricing.findMany({
       where: { deletedAt: null, automationState: 'QUARANTINED' },
       orderBy: { updatedAt: 'asc' },
-      select: { id: true, sku: true, asin: true, marketplaceId: true, currency: true, strategy: true, strategyFloorCents: true, mapCents: true, maxPriceCents: true, fairPricingCeilingCents: true, updatedAt: true },
+      select: { id: true, sku: true, asin: true, marketplaceId: true, currency: true, strategy: true, strategyFloorCents: true, maxPriceCents: true, fairPricingCeilingCents: true, updatedAt: true },
       take: 200,
     });
     const oldestHours = items.length ? Math.floor((Date.now() - items[0].updatedAt.getTime()) / 3_600_000) : 0;

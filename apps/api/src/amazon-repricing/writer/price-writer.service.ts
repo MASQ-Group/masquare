@@ -28,7 +28,6 @@ export interface SubmitInput {
   automationState: AutomationState;
   intendedPriceCents: number;
   breakevenCents: number;
-  mapCents: number | null;
   currentPriceCents: number | null;
   amazonMinAllowedCents: number | null;
   amazonMaxAllowedCents: number | null;
@@ -68,7 +67,6 @@ export class PriceWriterService {
       currency: input.currency,
       marketplaceId: input.marketplaceId,
       breakevenCents: input.breakevenCents,
-      mapCents: input.mapCents,
       currentPriceCents: input.currentPriceCents,
       maxStepPct: REPRICING_DEFAULTS.maxStepPctHard,
       automationState: input.automationState,

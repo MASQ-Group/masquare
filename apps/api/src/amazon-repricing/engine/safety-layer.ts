@@ -2,7 +2,11 @@ import { AutomationState } from './types';
 
 // The safety layer (spec §6.3) — a separate, deliberately BORING module the price-writer calls
 // LAST, after all strategy logic. It has no strategy knowledge and no exceptions: breakeven,
-// MAP, step-size, kill-switch, currency sanity, and automationState. If it vetoes, the decision
+// step-size, kill-switch, currency sanity, and automationState.
+//
+// MAP is deliberately not among them. The MAP on a product card is an informational local-market
+// retail price and says nothing about what a marketplace listing may be priced at; a channel
+// listing is bounded by its floor and its max, and nothing else. If it vetoes, the decision
 // record says exactly why. This is the third of the triple-enforced invariants (engine clamp →
 // safety layer → Amazon min/max backstop). PURE.
 
@@ -11,7 +15,6 @@ export interface SafetyContext {
   currency: string;
   marketplaceId: string;
   breakevenCents: number;
-  mapCents?: number | null;
   currentPriceCents?: number | null;
   /** Max single-step deviation as a fraction (§9-#12, default 0.15). */
   maxStepPct: number;
@@ -26,7 +29,6 @@ export type SafetyVerdict =
       ok: false;
       veto:
         | 'BELOW_BREAKEVEN'
-        | 'BELOW_MAP'
         | 'STEP_TOO_LARGE'
         | 'KILL_SWITCH'
         | 'CURRENCY_MISMATCH'
@@ -57,9 +59,6 @@ export function checkSafety(ctx: SafetyContext): SafetyVerdict {
   // Never below breakeven — even for a manually entered price flowing through the writer (§6.1).
   if (ctx.priceCents < ctx.breakevenCents) {
     return { ok: false, veto: 'BELOW_BREAKEVEN', detail: `${ctx.priceCents} < breakeven ${ctx.breakevenCents}` };
-  }
-  if (ctx.mapCents != null && ctx.priceCents < ctx.mapCents) {
-    return { ok: false, veto: 'BELOW_MAP', detail: `${ctx.priceCents} < MAP ${ctx.mapCents}` };
   }
 
   // Step-size guard — never move more than maxStepPct in one submission (suppression avoidance, §1.5).

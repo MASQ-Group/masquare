@@ -885,7 +885,6 @@ export interface RepricingQuarantineRow {
   currency: string;
   strategy: string;
   strategyFloorCents: number | null;
-  mapCents: number | null;
   maxPriceCents: number | null;
   fairPricingCeilingCents: number | null;
   updatedAt: string;

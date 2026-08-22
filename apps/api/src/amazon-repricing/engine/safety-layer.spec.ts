@@ -27,10 +27,9 @@ describe('checkSafety', () => {
     if (!v.ok) expect(v.veto).toBe('BELOW_BREAKEVEN');
   });
 
-  it('vetoes below MAP', () => {
-    const v = checkSafety(ctx({ priceCents: 1800, mapCents: 1900 }));
-    expect(v.ok).toBe(false);
-    if (!v.ok) expect(v.veto).toBe('BELOW_MAP');
+  it('does not veto on MAP — a listing is bounded by its floor and max only', () => {
+    const v = checkSafety(ctx({ priceCents: 1800, mapCents: 1900 } as any));
+    expect(v.ok).toBe(true);
   });
 
   it('vetoes a step larger than maxStepPct', () => {
