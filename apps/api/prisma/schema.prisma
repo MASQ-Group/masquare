@@ -2244,6 +2244,20 @@ model RepricingSkuPricing {
   probeIntervalMinutes Int?     @map("probe_interval_minutes")
   fbmPremiumPct        Decimal? @map("fbm_premium_pct") @db.Decimal(6, 4)
   minMarginPct         Decimal? @map("min_margin_pct") @db.Decimal(6, 4)
+  // Loaded-cost inputs the solver has always accepted and nothing supplied, leaving every floor a
+  // fee-and-cost breakeven. Harmless at a 12% margin, where the omission hides inside the margin;
+  // not harmless at the low floors an aggressive strategy wants.
+  //
+  // Returns are derived from our own sales history and stored here so a floor can be explained
+  // without re-deriving it. Storage and advertising need Amazon's FBA storage reports and the
+  // Advertising API, neither of which we pull, so they are set by hand or left out and REPORTED
+  // as left out rather than silently treated as zero.
+  returnsRatePct           Decimal? @map("returns_rate_pct") @db.Decimal(6, 4)
+  returnsRateSource        String?  @map("returns_rate_source") // sku | marketplace | default
+  storagePerUnitCents      Int?     @map("storage_per_unit_cents")
+  adCostPerUnitCents       Int?     @map("ad_cost_per_unit_cents")
+  /// Which cost components the stored floor accounts for, so a low floor can be trusted on evidence.
+  floorOmits               String[] @map("floor_omits")
 
   // Volatile engine state (§4.1 state block).
   currentPriceCents       Int?      @map("current_price_cents")

@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { VatService } from './vat.service';
 import { FeeService } from './fee.service';
 import { FloorInputs, solveFloors } from './floor-solver';
+import { describeCompleteness, resolveReturnsRate, type ReturnsObservation } from './returns-rate';
 import { eurToCents } from '../common/money';
 import { PricingFxService } from '../../pricing/fx.service';
 import { PricingService } from '../../pricing/pricing.service';
@@ -103,11 +104,19 @@ export class FloorService {
         fbaFulfillmentFeeCents: isFba ? fee?.fbaFulfillmentFeeCents ?? 0 : 0,
         closingFeeCents: fee?.closingFeeCents ?? 0,
         minMarginPct: row.minMarginPct != null ? Number(row.minMarginPct) : REPRICING_DEFAULTS.minMarginPct * 100,
+        returnsRatePct: row.returnsRatePct != null ? Number(row.returnsRatePct) : null,
+        returnsRateSource: row.returnsRateSource,
+        storagePerUnitCents: row.storagePerUnitCents ?? 0,
+        adCostPerUnitCents: row.adCostPerUnitCents ?? 0,
       },
       stored: {
         breakevenCents: row.breakevenCents,
         strategyFloorCents: row.strategyFloorCents,
         floorsComputedAt: row.floorsComputedAt,
+        // What this floor accounts for. A floor omitting returns or advertising is fine at a 12%
+        // margin and misleading at 2%, and the two look identical without this.
+        omits: row.floorOmits ?? [],
+        loaded: (row.floorOmits ?? []).length === 0,
       },
       recomputedNow: recomputed,
     };
@@ -206,6 +215,13 @@ export class FloorService {
       fixedPerUnitCents = eurToCents(unit.shippingEur / eurPerUnit);
     }
 
+    // Loaded costs. Returns come from our own history; storage and advertising need data we do
+    // not pull, so they are whatever a human has entered and are REPORTED as absent otherwise —
+    // a floor that quietly omits them looks identical to one that does not.
+    const returns = await this.returnsRateFor(row.sku, row.marketplaceId);
+    const storagePerUnitCents = row.storagePerUnitCents ?? 0;
+    const adCostPerUnitCents = row.adCostPerUnitCents ?? 0;
+
     const inputs: FloorInputs = {
       vatRate,
       referralBrackets: schedule,
@@ -213,8 +229,20 @@ export class FloorService {
       closingFeeCents: fee?.closingFeeCents ?? 0,
       cogsLandedCents,
       fixedPerUnitCents,
+      returnsRate: returns.rate,
+      refundAdminFeeCents: REPRICING_DEFAULTS.refundAdminFeeCents,
+      storagePerUnitCents,
+      adCostPerUnitCents,
       searchHiCents: row.amazonMaxAllowedCents ?? undefined,
     };
+
+    const completeness = describeCompleteness({
+      returnsRate: returns.rate,
+      returnsSource: returns.source,
+      storagePerUnitCents,
+      adCostPerUnitCents,
+      isFba,
+    });
 
     const minMarginPct = row.minMarginPct != null ? Number(row.minMarginPct) / 100 : REPRICING_DEFAULTS.minMarginPct;
     const { breakevenCents, strategyFloorCents } = solveFloors(inputs, minMarginPct);
@@ -233,6 +261,9 @@ export class FloorService {
         floorsComputedAt: now,
         floorStaleAfter: staleAfter,
         floorInputsHash: this.hashInputs(inputs, minMarginPct),
+        returnsRatePct: returns.rate * 100,
+        returnsRateSource: returns.source,
+        floorOmits: completeness.omits,
         exclusionReason: null,
         // Promote a previously input-blocked SKU into shadow; leave LIVE/human states untouched.
         automationState: !humanControlled && row.automationState === 'EXCLUDED' ? 'SHADOW' : row.automationState,
@@ -253,6 +284,50 @@ export class FloorService {
   }
 
   /** Deterministic hash of the fee+cost inputs, for the audit trail (§4.1 floors.inputsHash). */
+  /**
+   * How often this SKU comes back, from our own sales history.
+   *
+   * Counted over a trailing year on the same marketplace: a return rate is a property of the SKU
+   * and its audience, and a two-year-old rate describes a product that may no longer be the same
+   * one. Falls back to the marketplace's own rate and then to a configured default, because acting
+   * on one return out of three units sold would lift that SKU's floor by a third on noise.
+   */
+  private async returnsRateFor(sku: string, marketplaceId: string) {
+    const since = new Date(Date.now() - 365 * 24 * 3600 * 1000);
+    const iso = toCountryIso(MARKETPLACE_TO_ISO[marketplaceId] ?? '');
+
+    const rows = await this.prisma.$queryRaw<Array<{ scope: string; sold: number; returned: number }>>`
+      SELECT CASE WHEN lower(trim(i.sku)) = ${sku.trim().toLowerCase()} THEN 'sku' ELSE 'marketplace' END AS scope,
+             SUM(i.quantity) AS sold,
+             SUM(CASE WHEN t.resolution = 'returned' THEN i.quantity ELSE 0 END) AS returned
+      FROM sales_transaction_item i
+      JOIN sales_transaction t ON t.id = i.transaction_id
+      JOIN sales_channel sc ON sc.id = t.sales_channel_id
+      LEFT JOIN country c ON c.id = sc.native_country_id
+      WHERE i.deleted_at IS NULL AND t.deleted_at IS NULL
+        AND t.date >= ${since}
+        AND t.status = 'submitted'
+        AND c.iso_code = ${iso}
+      GROUP BY 1`;
+
+    const pick = (scope: string): ReturnsObservation | null => {
+      const r = rows.find((x) => x.scope === scope);
+      return r ? { unitsSold: Number(r.sold), unitsReturned: Number(r.returned) } : null;
+    };
+    // The marketplace row excludes this SKU's own rows, so add them back for the broader figure.
+    const own = pick('sku');
+    const others = pick('marketplace');
+    const marketplace: ReturnsObservation | null =
+      own || others
+        ? {
+            unitsSold: (own?.unitsSold ?? 0) + (others?.unitsSold ?? 0),
+            unitsReturned: (own?.unitsReturned ?? 0) + (others?.unitsReturned ?? 0),
+          }
+        : null;
+
+    return resolveReturnsRate(own, marketplace, REPRICING_DEFAULTS.defaultReturnsRate);
+  }
+
   private hashInputs(inputs: FloorInputs, minMarginPct: number): string {
     return createHash('sha256').update(JSON.stringify({ inputs, minMarginPct })).digest('hex').slice(0, 16);
   }

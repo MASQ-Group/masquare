@@ -225,3 +225,35 @@ describe('solveFloors input validation', () => {
     expect(() => solveFloors(baseFba({ vatRate: -0.1 }), 0.12)).toThrow(/vatRate/);
   });
 });
+
+// The solver has always accepted these; the service supplied none of them, so every floor was a
+// fee-and-cost breakeven. The gap is invisible at a 12% margin and decisive at 2%.
+describe('loaded costs', () => {
+  const base = {
+    vatRate: 0.19,
+    referralBrackets: [{ minCents: 1, maxCents: Number.MAX_SAFE_INTEGER, pct: 0.15 }],
+    cogsLandedCents: 2000,
+    fixedPerUnitCents: 500,
+  };
+
+  it('a returns allowance raises the breakeven', () => {
+    const bare = solveFloors(base, 0).breakevenCents!;
+    const withReturns = solveFloors({ ...base, returnsRate: 0.08 }, 0).breakevenCents!;
+    expect(withReturns).toBeGreaterThan(bare);
+  });
+
+  it('the omission is small against a 12% margin and decisive against 2%', () => {
+    const loaded = { ...base, returnsRate: 0.08, storagePerUnitCents: 15, adCostPerUnitCents: 60 };
+    // At 12% the bare floor still clears the loaded breakeven — the margin absorbs the omission.
+    expect(solveFloors(base, 0.12).strategyFloorCents!).toBeGreaterThan(solveFloors(loaded, 0).breakevenCents!);
+    // At 2% it does not: that price is below the true breakeven, i.e. sold at a loss while the
+    // engine reports a profit. This is why aggressive strategies need the loaded floor first.
+    expect(solveFloors(base, 0.02).strategyFloorCents!).toBeLessThan(solveFloors(loaded, 0).breakevenCents!);
+  });
+
+  it('storage and advertising both push the floor up', () => {
+    const bare = solveFloors(base, 0).breakevenCents!;
+    expect(solveFloors({ ...base, storagePerUnitCents: 100 }, 0).breakevenCents!).toBeGreaterThan(bare);
+    expect(solveFloors({ ...base, adCostPerUnitCents: 100 }, 0).breakevenCents!).toBeGreaterThan(bare);
+  });
+});
