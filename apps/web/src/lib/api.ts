@@ -925,6 +925,9 @@ export interface BlockedSeller {
 }
 
 export const repricingApi = {
+  /** Read-only: every input behind one SKU's floor, and what the floor leaves out. */
+  explainFloor: (sku: string, marketplace?: string) =>
+    api.get<FloorExplain>('/amazon-repricing/diagnostics/floor', { params: { sku, marketplace } }).then((r) => r.data),
   readiness: () => api.get<RepricingReadiness>('/amazon-repricing/readiness').then((r) => r.data),
   getControl: () => api.get<RepricingControl>('/amazon-repricing/control').then((r) => r.data),
   setControl: (patch: Partial<RepricingControl>) => api.post<RepricingControl>('/amazon-repricing/control', patch).then((r) => r.data),
@@ -2291,4 +2294,38 @@ export interface EbayOrderMoney {
     status?: number;
     errorCode?: string | number | null;
   } | null;
+}
+
+export interface FloorExplain {
+  error?: string;
+  sku?: string;
+  marketplaceId?: string;
+  currency?: string | null;
+  inputs?: {
+    vatPct?: number | null;
+    vatSource?: string;
+    costEur?: number | null;
+    shippingEur?: number | null;
+    shippingService?: string | null;
+    chargeableWeightKg?: number | null;
+    fxNativeToEur?: number | null;
+    cogsLandedCents?: number | null;
+    fixedPerUnitCents?: number | null;
+    fbaFulfillmentFeeCents?: number | null;
+    closingFeeCents?: number | null;
+    minMarginPct?: number | null;
+    returnsRatePct?: number | null;
+    returnsRateSource?: string | null;
+    storagePerUnitCents?: number | null;
+    adCostPerUnitCents?: number | null;
+  };
+  stored?: {
+    breakevenCents: number | null;
+    strategyFloorCents: number | null;
+    floorsComputedAt: string | null;
+    /** Cost components this floor does NOT account for. */
+    omits?: string[];
+    loaded?: boolean;
+  };
+  recomputedNow?: { breakevenCents: number | null; strategyFloorCents: number | null } | null;
 }
