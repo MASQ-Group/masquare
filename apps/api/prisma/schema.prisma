@@ -2220,6 +2220,9 @@ model RepricingSkuPricing {
 
   fulfillment     String // FBA | FBM | SFP
   strategy        String @default("BUY_BOX") // BUY_BOX | LOWEST_PRICE | VELOCITY | MANUAL_ONLY
+  /// Named preset this SKU follows. Per-SKU overrides below still win over it.
+  presetId        String? @map("preset_id") @db.Uuid
+  preset          RepricingStrategyPreset? @relation(fields: [presetId], references: [id], onDelete: SetNull)
   automationState String @default("EXCLUDED") @map("automation_state") // EXCLUDED | SHADOW | LIVE | QUARANTINED | KILLED
   exclusionReason String? @map("exclusion_reason") // e.g. FLOOR_UNKNOWN, COGS_MISSING, FLOOR_STALE
 
@@ -2306,6 +2309,42 @@ model RepricingOfferSnapshot {
 
 // Append-only decision audit (spec §6.6) — one row per evaluation, INCLUDING no-ops and vetoes.
 // Retention ≥ 24 months (enforced operationally, not by schema). Never soft-deleted.
+/// A named bundle of the repricing parameters that already existed per SKU.
+///
+/// Referenced, not copied: a SKU points at a preset and the values resolve at read time, so
+/// changing "Clear stock" moves every SKU on it. The per-SKU override columns remain for the
+/// exceptions, and win over the preset.
+model RepricingStrategyPreset {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique
+  description String?
+  /// Seeded presets cannot be deleted — a SKU pointing at a missing preset would silently fall
+  /// back to defaults, which is the kind of quiet change this feature exists to avoid.
+  isSystem    Boolean @default(false) @map("is_system")
+  sortOrder   Int     @default(0) @map("sort_order")
+
+  /// BUY_BOX | LOWEST_PRICE | VELOCITY | MANUAL_ONLY
+  strategy    String  @default("BUY_BOX")
+  minMarginPct         Decimal  @map("min_margin_pct") @db.Decimal(6, 4)
+  probeStepPct         Decimal? @map("probe_step_pct") @db.Decimal(6, 4)
+  probeIntervalMinutes Int?     @map("probe_interval_minutes")
+  fbmPremiumPct        Decimal? @map("fbm_premium_pct") @db.Decimal(6, 4)
+  epsilonCents         Int?     @map("epsilon_cents")
+
+  /// Below this margin a floor that omits storage or advertising is not merely optimistic, it is
+  /// wrong in a way that reports a loss as a profit. Presets under it refuse SKUs whose floor is
+  /// not fully loaded.
+  requiresLoadedFloor Boolean @default(false) @map("requires_loaded_floor")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  skus RepricingSkuPricing[]
+
+  @@map("repricing_strategy_preset")
+}
+
 model RepricingDecision {
   id                String    @id @default(uuid()) @db.Uuid
   sku               String

@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { canApplyPreset } from '../config/resolve-preset';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { AdminGuard } from '../../auth/admin.guard';
@@ -312,6 +313,59 @@ export class RepricingController {
 
   /** Quarantine queue (§5.5, §7): SKUs taken off automation by an unresolvable conflict, oldest
    *  first. `total`/`oldestHours` drive the §7 escalation flag (> 20 open or > 24h old). */
+  /** The named strategies a SKU can follow. */
+  @Get('strategies')
+  strategies() {
+    return this.prisma.repricingStrategyPreset.findMany({
+      where: { deletedAt: null },
+      orderBy: { sortOrder: 'asc' },
+    });
+  }
+
+  /**
+   * Put SKUs on a strategy.
+   *
+   * Previews by default. An aggressive preset is REFUSED on a SKU whose floor omits storage or
+   * advertising — at those margins the omission exceeds the margin, so the SKU would sell at a
+   * loss the engine reports as a profit. Refused rather than warned about: a warning on a bulk
+   * apply is read once, and the mispricing lasts until someone notices the margin.
+   */
+  @Post('strategies/assign')
+  async assignStrategy(@Body() body: { presetId: string; skuPricingIds?: string[]; marketplace?: string; apply?: boolean }) {
+    const preset = await this.prisma.repricingStrategyPreset.findFirst({ where: { id: body?.presetId, deletedAt: null } });
+    if (!preset) return { error: 'Strategy not found' };
+
+    const iso = body?.marketplace?.trim().toUpperCase();
+    const marketplaceId = iso ? ISO_TO_MARKETPLACE[iso] : undefined;
+    if (iso && !marketplaceId) return { error: `Unknown marketplace '${iso}'` };
+
+    const rows = await this.prisma.repricingSkuPricing.findMany({
+      where: {
+        deletedAt: null,
+        ...(body?.skuPricingIds?.length ? { id: { in: body.skuPricingIds } } : {}),
+        ...(marketplaceId ? { marketplaceId } : {}),
+      },
+      select: { id: true, sku: true, marketplaceId: true, floorOmits: true, strategyFloorCents: true },
+    });
+
+    const eligible: string[] = [];
+    const refused: Array<{ sku: string; marketplaceId: string; reason: string }> = [];
+    for (const r of rows) {
+      const v = canApplyPreset(preset, r);
+      if (v.ok) eligible.push(r.id);
+      else refused.push({ sku: r.sku, marketplaceId: r.marketplaceId, reason: v.reason });
+    }
+
+    if (!body?.apply) {
+      return { preview: true, strategy: preset.name, wouldApply: eligible.length, refused };
+    }
+
+    await this.prisma.repricingSkuPricing.updateMany({ where: { id: { in: eligible } }, data: { presetId: preset.id } });
+    // The floor depends on the margin, so a strategy change makes every stored floor on those SKUs
+    // stale until it is recomputed. Saying so beats leaving the old number on screen looking current.
+    return { applied: eligible.length, refused, recomputeNeeded: eligible.length > 0 };
+  }
+
   @Get('quarantine')
   async quarantine() {
     const items = await this.prisma.repricingSkuPricing.findMany({

@@ -6,6 +6,7 @@ import { VatService } from './vat.service';
 import { FeeService } from './fee.service';
 import { FloorInputs, solveFloors } from './floor-solver';
 import { describeCompleteness, resolveReturnsRate, type ReturnsObservation } from './returns-rate';
+import { resolveParams } from '../config/resolve-preset';
 import { eurToCents } from '../common/money';
 import { PricingFxService } from '../../pricing/fx.service';
 import { PricingService } from '../../pricing/pricing.service';
@@ -46,7 +47,7 @@ export class FloorService {
    * Mirrors computeFloorsForSku's input gathering; keep the two in step.
    */
   async explainFloor(skuPricingId: string) {
-    const row = await this.prisma.repricingSkuPricing.findUnique({ where: { id: skuPricingId } });
+    const row = await this.prisma.repricingSkuPricing.findUnique({ where: { id: skuPricingId }, include: { preset: true } });
     if (!row) return { error: 'SKU pricing row not found' };
 
     const tax = await this.channelTax(row.marketplaceId, row.currentPriceCents);
@@ -88,7 +89,7 @@ export class FloorService {
           adCostPerUnitCents: row.adCostPerUnitCents ?? 0,
           searchHiCents: row.amazonMaxAllowedCents ?? undefined,
         },
-        row.minMarginPct != null ? Number(row.minMarginPct) / 100 : REPRICING_DEFAULTS.minMarginPct,
+        resolveParams(row, (row as any).preset).minMarginPct,
       );
     }
 
@@ -113,7 +114,9 @@ export class FloorService {
         fixedPerUnitCents,
         fbaFulfillmentFeeCents: isFba ? fee?.fbaFulfillmentFeeCents ?? 0 : 0,
         closingFeeCents: fee?.closingFeeCents ?? 0,
-        minMarginPct: row.minMarginPct != null ? Number(row.minMarginPct) : REPRICING_DEFAULTS.minMarginPct * 100,
+        minMarginPct: resolveParams(row, (row as any).preset).minMarginPctDisplay,
+        marginFrom: resolveParams(row, (row as any).preset).marginFrom,
+        presetName: resolveParams(row, (row as any).preset).presetName,
         returnsRatePct: explainReturns.rate * 100,
         returnsRateSource: explainReturns.source,
         storagePerUnitCents: row.storagePerUnitCents ?? 0,
@@ -165,7 +168,7 @@ export class FloorService {
    * inputs are now healthy is promoted to SHADOW (submits nothing until a human/rollout goes LIVE).
    */
   async computeFloorsForSku(skuPricingId: string): Promise<void> {
-    const row = await this.prisma.repricingSkuPricing.findUnique({ where: { id: skuPricingId } });
+    const row = await this.prisma.repricingSkuPricing.findUnique({ where: { id: skuPricingId }, include: { preset: true } });
     if (!row) throw new Error(`RepricingSkuPricing ${skuPricingId} not found`);
 
     // KILLED / MANUAL_ONLY / QUARANTINED are human-controlled — compute floors for reference but
@@ -254,7 +257,8 @@ export class FloorService {
       isFba,
     });
 
-    const minMarginPct = row.minMarginPct != null ? Number(row.minMarginPct) / 100 : REPRICING_DEFAULTS.minMarginPct;
+    // Per-SKU override, then the named preset the SKU follows, then the global default.
+    const minMarginPct = resolveParams(row, (row as any).preset).minMarginPct;
     const { breakevenCents, strategyFloorCents } = solveFloors(inputs, minMarginPct);
     if (breakevenCents == null || strategyFloorCents == null) {
       return this.exclude(row.id, 'FLOOR_INFEASIBLE', humanControlled);
