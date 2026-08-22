@@ -338,7 +338,21 @@ export class RepricingController {
    * apply is read once, and the mispricing lasts until someone notices the margin.
    */
   @Post('strategies/assign')
-  async assignStrategy(@Body() body: { presetId: string; skuPricingIds?: string[]; marketplace?: string; apply?: boolean }) {
+  async assignStrategy(
+    @Body()
+    body: {
+      presetId: string;
+      apply?: boolean;
+      // Any combination narrows the set; they compose rather than override one another, so
+      // "Beurer on UK" is one selection rather than a choice between two.
+      skuPricingIds?: string[];
+      marketplace?: string;
+      brandId?: string;
+      vendorId?: string;
+      productTypeId?: string;
+      q?: string;
+    },
+  ) {
     const preset = await this.prisma.repricingStrategyPreset.findFirst({ where: { id: body?.presetId, deletedAt: null } });
     if (!preset) return { error: 'Strategy not found' };
 
@@ -346,11 +360,38 @@ export class RepricingController {
     const marketplaceId = iso ? ISO_TO_MARKETPLACE[iso] : undefined;
     if (iso && !marketplaceId) return { error: `Unknown marketplace '${iso}'` };
 
+    // Brand, vendor and product type live on the product, not the pricing row.
+    let productIds: string[] | undefined;
+    if (body?.brandId || body?.vendorId || body?.productTypeId) {
+      const products = await this.prisma.product.findMany({
+        where: {
+          ...(body.brandId ? { brandId: body.brandId } : {}),
+          ...(body.vendorId ? { vendorId: body.vendorId } : {}),
+          ...(body.productTypeId ? { productTypeId: body.productTypeId } : {}),
+        },
+        select: { id: true },
+      });
+      productIds = products.map((p) => p.id);
+      // An empty match must select NOTHING, not fall through to every SKU — the difference
+      // between a filter that found nobody and no filter at all is the whole catalogue.
+      if (productIds.length === 0) return { preview: !body?.apply, strategy: preset.name, wouldApply: 0, refused: [] };
+    }
+
+    const term = body?.q?.trim();
     const rows = await this.prisma.repricingSkuPricing.findMany({
       where: {
         deletedAt: null,
         ...(body?.skuPricingIds?.length ? { id: { in: body.skuPricingIds } } : {}),
         ...(marketplaceId ? { marketplaceId } : {}),
+        ...(productIds ? { productId: { in: productIds } } : {}),
+        ...(term
+          ? {
+              OR: [
+                { sku: { contains: term, mode: 'insensitive' as const } },
+                { asin: { contains: term, mode: 'insensitive' as const } },
+              ],
+            }
+          : {}),
       },
       select: { id: true, sku: true, marketplaceId: true, floorOmits: true, strategyFloorCents: true },
     });

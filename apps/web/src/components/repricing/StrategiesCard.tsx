@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Ban, Eye, Gauge } from 'lucide-react';
-import { integrationsApi, repricingApi, type RepricingStrategyPreset, type StrategyAssignResult } from '../../lib/api';
+import { Select } from '@masquare/ui';
+import { brandsApi, integrationsApi, productTypesApi, repricingApi, vendorsApi, type RepricingStrategyPreset, type StrategyAssignResult } from '../../lib/api';
 
 /**
  * Put SKUs on a named strategy.
@@ -13,11 +14,20 @@ import { integrationsApi, repricingApi, type RepricingStrategyPreset, type Strat
 export function StrategiesCard() {
   const qc = useQueryClient();
   const [presetId, setPresetId] = useState('');
+  // Scope narrows by any combination: a marketplace, a brand, a vendor, a product type, or a
+  // SKU. They compose, so "Beurer on UK" is one selection rather than a choice between two.
   const [scope, setScope] = useState('');
+  const [brandId, setBrandId] = useState('');
+  const [vendorId, setVendorId] = useState('');
+  const [productTypeId, setProductTypeId] = useState('');
+  const [q, setQ] = useState('');
   const [result, setResult] = useState<StrategyAssignResult | null>(null);
 
   const { data: presets = [] } = useQuery({ queryKey: ['repricing-strategies'], queryFn: repricingApi.strategies });
   const { data: integrations = [] } = useQuery({ queryKey: ['integrations'], queryFn: integrationsApi.list });
+  const { data: brands = [] } = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
+  const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
+  const { data: types = [] } = useQuery({ queryKey: ['product-types'], queryFn: () => productTypesApi.list() });
   const markets = [...new Set(
     integrations.filter((i: any) => i.channelType === 'amazon' && i.marketplace).map((i: any) => i.marketplace as string),
   )].sort();
@@ -27,7 +37,15 @@ export function StrategiesCard() {
 
   const run = useMutation({
     mutationFn: (apply: boolean) =>
-      repricingApi.assignStrategy({ presetId, marketplace: scope || undefined, apply }),
+      repricingApi.assignStrategy({
+        presetId,
+        marketplace: scope || undefined,
+        brandId: brandId || undefined,
+        vendorId: vendorId || undefined,
+        productTypeId: productTypeId || undefined,
+        q: q.trim() || undefined,
+        apply,
+      }),
     onSuccess: (r) => {
       setResult(r);
       if (r.applied != null) {
@@ -72,6 +90,24 @@ export function StrategiesCard() {
           <option value="">All marketplaces</option>
           {markets.map((m) => <option key={m} value={m}>{m} only</option>)}
         </select>
+        <div className="w-[170px]">
+          <Select value={brandId} onChange={(v) => { setBrandId(v); reset(); }} placeholder="Any brand" searchable dense
+            options={[{ value: '', label: 'Any brand' }, ...brands.map((b: any) => ({ value: b.id, label: b.name }))]} />
+        </div>
+        <div className="w-[170px]">
+          <Select value={vendorId} onChange={(v) => { setVendorId(v); reset(); }} placeholder="Any vendor" searchable dense
+            options={[{ value: '', label: 'Any vendor' }, ...vendors.map((v: any) => ({ value: v.id, label: v.name }))]} />
+        </div>
+        <div className="w-[170px]">
+          <Select value={productTypeId} onChange={(v) => { setProductTypeId(v); reset(); }} placeholder="Any type" searchable dense
+            options={[{ value: '', label: 'Any type' }, ...types.map((t: any) => ({ value: t.id, label: t.name }))]} />
+        </div>
+        <input
+          className="input mono h-8 w-[160px] text-[12.5px]"
+          placeholder="SKU or ASIN"
+          value={q}
+          onChange={(e) => { setQ(e.target.value); reset(); }}
+        />
 
         <button
           onClick={() => run.mutate(false)}
