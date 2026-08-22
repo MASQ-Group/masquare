@@ -8,6 +8,10 @@ import { getConnector } from '../../integrations/connectors';
 export const REPRICING_DEFAULTS = {
   /** §9-#1 Minimum net margin for the strategy floor, as a fraction of net (ex-VAT) revenue. FINANCE. */
   minMarginPct: 0.12,
+  /** Returns rate used when a SKU and its marketplace both have too little history to measure. */
+  defaultReturnsRate: 0.02,
+  /** Amazon's per-return administration fee, in cents. Charged whether or not the unit is resold. */
+  refundAdminFeeCents: 0,
   /** §9-#13 Floor staleness window. Past this the SKU auto-excludes from automation. FINANCE. */
   floorStalenessDays: 7,
   /** §9-#7 Change epsilon — skip sub-threshold churn. max(10c, 0.5%). ENGINEERING. */
