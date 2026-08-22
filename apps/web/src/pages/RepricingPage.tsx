@@ -428,7 +428,10 @@ function QuarantineCard() {
         <span className="rounded-pill bg-n-0 px-2 py-0.5 text-[11px] font-bold text-n-700">{data.total}</span>
         <span className="text-[12px] text-n-500">oldest {data.oldestHours}h</span>
         {escalate && <span className="text-[11px] font-bold uppercase tracking-wide text-red-600">escalate</span>}
-        <span className="ml-2 text-[11.5px] text-n-400">Conflicting bounds took these off automation — fix the values, then resolve.</span>
+        <span className="ml-2 text-[11.5px] text-n-400">
+          A bound the floor cannot satisfy took these off automation. The reason names it — often Amazon&rsquo;s own
+          maximum allowed price, which is not one of the columns.
+        </span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px]">
@@ -440,6 +443,7 @@ function QuarantineCard() {
               <th className="px-3 py-2 text-right font-semibold">MAP</th>
               <th className="px-3 py-2 text-right font-semibold">Max</th>
               <th className="px-3 py-2 text-right font-semibold">Ceiling</th>
+              <th className="px-3 py-2 font-semibold">Why</th>
               <th className="px-3 py-2 font-semibold">Since</th>
               <th className="px-3 py-2" />
             </tr>
@@ -453,6 +457,7 @@ function QuarantineCard() {
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.mapCents, r.currency)}</td>
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.maxPriceCents, r.currency)}</td>
                 <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.fairPricingCeilingCents, r.currency)}</td>
+                <td className="px-3 py-1.5 text-[11.5px] text-n-600">{r.reason ?? '—'}</td>
                 <td className="px-3 py-1.5 text-n-600">{when(r.updatedAt)}</td>
                 <td className="px-3 py-1.5 text-right">
                   <button

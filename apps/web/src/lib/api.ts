@@ -889,6 +889,8 @@ export interface RepricingQuarantineRow {
   maxPriceCents: number | null;
   fairPricingCeilingCents: number | null;
   updatedAt: string;
+  /** The conflict that took it off automation, from the decision that quarantined it. */
+  reason?: string | null;
 }
 export interface RepricingQuarantine {
   total: number;
