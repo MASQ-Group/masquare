@@ -4,8 +4,6 @@
 // human (§5.5). PURE.
 
 export interface ClampBounds {
-  /** MAP hard clamp — never advertise below it. Null = none. */
-  mapCents?: number | null;
   /** Strategy floor — breakeven + minimum margin. Required (the whole point of the engine). */
   strategyFloorCents: number;
   /** Absolute never-cross line — used only for conflict detection here; enforced in the safety layer. */
@@ -17,7 +15,7 @@ export interface ClampBounds {
 }
 
 export interface ClampStep {
-  clamp: 'MAP' | 'STRATEGY_FLOOR' | 'BUSINESS_MAX' | 'FAIR_PRICING_CEILING' | 'AMAZON_MIN_MAX';
+  clamp: 'STRATEGY_FLOOR' | 'BUSINESS_MAX' | 'FAIR_PRICING_CEILING' | 'AMAZON_MIN_MAX';
   bound: boolean;
   before: number;
   after: number;
@@ -30,10 +28,6 @@ export type ClampResult =
 export function applyClamps(rawTargetCents: number, b: ClampBounds): ClampResult {
   // Conflict detection first — if the mandatory floor exceeds any binding ceiling, no price can
   // satisfy both. Quarantine rather than pick a side (§5.5).
-  // MAP is deliberately absent: it is a MINIMUM advertised price, applied below as Math.max, so a
-  // strategy floor above it is the ordinary case and not a conflict — we simply price at the
-  // higher of the two. Treating it as a ceiling quarantined a SKU for being more profitable than
-  // its MAP, which would have hit every listing the moment MAP values were populated.
   const ceilings: Array<[string, number | null | undefined]> = [
     ['maxPrice', b.maxPriceCents],
     ['fairPricingCeiling', b.fairPricingCeilingCents],
@@ -53,9 +47,7 @@ export function applyClamps(rawTargetCents: number, b: ClampBounds): ClampResult
     price = next;
   };
 
-  // 1. MAP (hard): never advertise below MAP.
-  if (b.mapCents != null) step('MAP', Math.max(price, b.mapCents));
-  // 2. Strategy floor.
+  // 1. Strategy floor.
   step('STRATEGY_FLOOR', Math.max(price, b.strategyFloorCents));
   // 3. Business max.
   if (b.maxPriceCents != null) step('BUSINESS_MAX', Math.min(price, b.maxPriceCents));

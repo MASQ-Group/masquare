@@ -20,7 +20,6 @@ export interface RepricerConfig {
   breakevenCents: number | null;
   strategyFloorCents: number | null;
   maxPriceCents: number | null;
-  mapCents: number | null;
   fairPricingCeilingCents: number | null;
   amazonMinAllowedCents: number | null;
   amazonMaxAllowedCents: number | null;
@@ -112,7 +111,6 @@ export function buildDecideInput(
       maxPriceCents: cfg.maxPriceCents,
     },
     clampBounds: {
-      mapCents: cfg.mapCents,
       strategyFloorCents: cfg.strategyFloorCents,
       breakevenCents: cfg.breakevenCents,
       maxPriceCents: cfg.maxPriceCents,
