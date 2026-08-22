@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { resolveParams } from '../config/resolve-preset';
 import { Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -45,6 +46,9 @@ export class RepricerService {
   async evaluate(snapshot: MarketSnapshot, trigger: EvalTrigger): Promise<number> {
     const rows = await this.prisma.repricingSkuPricing.findMany({
       where: { asin: snapshot.asin, marketplaceId: snapshot.marketplaceId, deletedAt: null },
+      // Without the preset, resolveParams sees no preset and silently falls back to defaults —
+      // every SKU would evaluate on 12% regardless of the strategy it was put on.
+      include: { preset: true },
     });
     if (rows.length === 0) return 0;
 
@@ -302,13 +306,16 @@ export class RepricerService {
   /** Prisma row → engine config, converting Decimal percents (1.00 = 1%) to fractions (0.01). */
   private toConfig(row: Prisma.RepricingSkuPricingGetPayload<object>): RepricerConfig {
     const frac = (d: Prisma.Decimal | null): number | null => (d != null ? Number(d) / 100 : null);
+    // Per-SKU override, then the named preset, then the global default — resolved here so the
+    // engine sees one set of numbers and cannot disagree with the floor about which applied.
+    const p = resolveParams(row, (row as any).preset);
     return {
       sku: row.sku,
       asin: row.asin,
       marketplaceId: row.marketplaceId,
       currency: row.currency,
       fulfillment: row.fulfillment,
-      strategy: row.strategy as RepricerConfig['strategy'],
+      strategy: p.strategy as RepricerConfig['strategy'],
       automationState: row.automationState as RepricerConfig['automationState'],
       breakevenCents: row.breakevenCents,
       strategyFloorCents: row.strategyFloorCents,
@@ -320,10 +327,10 @@ export class RepricerService {
       holdingBuyBox: row.holdingBuyBox,
       probeAnchorCents: row.probeAnchorCents,
       lastSubmissionAtMs: row.lastSubmissionAt ? row.lastSubmissionAt.getTime() : null,
-      epsilonCents: row.epsilonCents,
+      epsilonCents: p.epsilonCents,
       cooldownSeconds: row.cooldownSeconds,
-      probeStepPct: frac(row.probeStepPct),
-      fbmPremiumPct: frac(row.fbmPremiumPct),
+      probeStepPct: p.probeStepPct != null ? p.probeStepPct / 100 : null,
+      fbmPremiumPct: p.fbmPremiumPct != null ? p.fbmPremiumPct / 100 : null,
     };
   }
 
