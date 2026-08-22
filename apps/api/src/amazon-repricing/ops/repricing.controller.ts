@@ -321,7 +321,30 @@ export class RepricingController {
       take: 200,
     });
     const oldestHours = items.length ? Math.floor((Date.now() - items[0].updatedAt.getTime()) / 3_600_000) : 0;
-    return { total: items.length, oldestHours, items };
+
+    // The conflict that quarantined each SKU. Without it the queue lists SKUs and asks the user to
+    // "fix the values" without saying which value is wrong — and the binding ceiling is often
+    // Amazon's own max allowed price, which is not one of the columns shown.
+    const reasons = new Map<string, string>();
+    if (items.length) {
+      const rows = await this.prisma.repricingDecision.findMany({
+        where: { outcome: 'QUARANTINED', OR: items.map((i) => ({ sku: i.sku, marketplaceId: i.marketplaceId })) },
+        orderBy: { at: 'desc' },
+        select: { sku: true, marketplaceId: true, reason: true },
+        take: 1000,
+      });
+      // Ordered newest first, so the first hit for a SKU is its most recent quarantine.
+      for (const r of rows) {
+        const key = `${r.sku}:${r.marketplaceId}`;
+        if (r.reason && !reasons.has(key)) reasons.set(key, r.reason);
+      }
+    }
+
+    return {
+      total: items.length,
+      oldestHours,
+      items: items.map((i) => ({ ...i, reason: reasons.get(`${i.sku}:${i.marketplaceId}`) ?? null })),
+    };
   }
 
   /** Resolve a quarantined SKU: after the human fixes the conflicting values, return it to shadow

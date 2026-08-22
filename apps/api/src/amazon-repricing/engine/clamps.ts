@@ -30,11 +30,14 @@ export type ClampResult =
 export function applyClamps(rawTargetCents: number, b: ClampBounds): ClampResult {
   // Conflict detection first — if the mandatory floor exceeds any binding ceiling, no price can
   // satisfy both. Quarantine rather than pick a side (§5.5).
+  // MAP is deliberately absent: it is a MINIMUM advertised price, applied below as Math.max, so a
+  // strategy floor above it is the ordinary case and not a conflict — we simply price at the
+  // higher of the two. Treating it as a ceiling quarantined a SKU for being more profitable than
+  // its MAP, which would have hit every listing the moment MAP values were populated.
   const ceilings: Array<[string, number | null | undefined]> = [
     ['maxPrice', b.maxPriceCents],
     ['fairPricingCeiling', b.fairPricingCeilingCents],
     ['amazonMaxAllowed', b.amazonMaxAllowedCents],
-    ['MAP', b.mapCents],
   ];
   for (const [name, ceil] of ceilings) {
     if (ceil != null && b.strategyFloorCents > ceil) {

@@ -262,6 +262,7 @@ export class RepricerService {
         branch: decision.branch,
         strategy: row.strategy,
         outcome: decision.outcome,
+        reason: decision.reason,
         rawTargetCents: decision.rawTargetCents,
         finalPriceCents: decision.finalPriceCents,
         beforePriceCents: row.currentPriceCents,

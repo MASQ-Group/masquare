@@ -75,3 +75,28 @@ describe('applyClamps', () => {
     if (r.ok) expect(r.steps.map((s) => s.clamp)).toEqual(['STRATEGY_FLOOR']);
   });
 });
+
+// MAP is a MINIMUM advertised price, so a strategy floor above it is the ordinary case: we price
+// at the higher of the two. Treating it as a ceiling quarantined SKUs for being more profitable
+// than their MAP, and would have hit every listing once MAP values were populated.
+describe('MAP is a floor, not a ceiling', () => {
+  const base = { strategyFloorCents: 5000, breakevenCents: 4000 };
+
+  it('does not quarantine when the floor is above MAP', () => {
+    const r = applyClamps(4500, { ...base, mapCents: 3000 });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.priceCents).toBe(5000); // lifted to the floor, the higher of the two
+  });
+
+  it('lifts to MAP when MAP is the higher of the two', () => {
+    const r = applyClamps(4500, { ...base, mapCents: 6000 });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.priceCents).toBe(6000);
+  });
+
+  it('still quarantines on a genuine ceiling conflict', () => {
+    const r = applyClamps(4500, { ...base, amazonMaxAllowedCents: 4000 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.conflict).toContain('amazonMaxAllowed');
+  });
+});
