@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ISO_TO_MARKETPLACE } from '../config/repricing.config';
+import type { ProgressSink } from '../../jobs/jobs.service';
 
 // Onboarding (spec §3.3): seed one RepricingSkuPricing row per matched Amazon listing so the
 // engine has SKUs to evaluate. Rows start EXCLUDED (no floor yet); the floor-service promotes
@@ -40,7 +41,7 @@ export class OnboardingService {
    * once is rarely what you want during rollout: every onboarded SKU is then fee-refreshed by the
    * nightly cron with one live SP-API call apiece, so pilot one marketplace, watch a cycle, widen.
    */
-  async syncSkuPricingFromListings(opts: { marketplace?: string } = {}): Promise<SyncResult> {
+  async syncSkuPricingFromListings(opts: { marketplace?: string; progress?: ProgressSink } = {}): Promise<SyncResult> {
     const iso = opts.marketplace?.trim().toUpperCase();
     const integrations = await this.prisma.channelIntegration.findMany({
       where: { channelType: 'amazon', deletedAt: null, ...(iso ? { marketplace: iso } : {}) },
@@ -64,6 +65,8 @@ export class OnboardingService {
       where: { integrationId: { in: [...isoByIntegration.keys()] }, productId: null },
     });
 
+    opts.progress?.setTotal(listings.length);
+
     const result: SyncResult = {
       scannedListings: listings.length,
       created: 0,
@@ -78,6 +81,7 @@ export class OnboardingService {
       const marketplaceId = ISO_TO_MARKETPLACE[iso];
       if (!marketplaceId) {
         result.skipped += 1; // integration's country isn't a supported Amazon marketplace (DE/FR/ES)
+        opts.progress?.tick(false);
         continue;
       }
       const currentPriceCents = l.listedPrice != null ? Math.round(l.listedPrice * 100) : null;
@@ -113,6 +117,7 @@ export class OnboardingService {
         });
         result.created += 1;
       }
+      opts.progress?.tick(true);
     }
 
     this.logger.log(`Onboarding sync${iso ? ` [${iso}]` : ' [all marketplaces]'}: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped of ${result.scannedListings} listings.`);

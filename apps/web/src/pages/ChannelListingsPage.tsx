@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, ChevronDown, Edit3, ExternalLink, Eye, Grid2x2, LayoutGrid, Layers, Package, Pause, RefreshCw, Search, SlidersHorizontal, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
-import { Pagination, Select } from '@masquare/ui';
-import { brandsApi, channelListingsApi, productTypesApi, vendorsApi, type ChannelListingCell, type ChannelListingChannel } from '../lib/api';
+import { Pagination, ProgressButton, Select } from '@masquare/ui';
+import { brandsApi, channelListingsApi, productTypesApi, vendorsApi, type ChannelListingCell, type ChannelListingChannel, type ChannelSyncResult, type JobView } from '../lib/api';
+import { useJobProgress } from '../lib/useJobProgress';
 import { formatAmount } from '../lib/format';
 import { Flag } from '../components/common/Flag';
 import { PageHeader } from '../components/common/PageHeader';
@@ -307,18 +308,19 @@ export function ChannelListingsPage() {
   const { data: productTypes = [] } = useQuery({ queryKey: ['product-types'], queryFn: () => productTypesApi.list() });
   const { data, isLoading } = useQuery({ queryKey: ['channel-listings', { q, page, pageSize, brandId, vendorId, productTypeId }], queryFn: () => channelListingsApi.dashboard({ q: q || undefined, brandId: brandId || undefined, vendorId: vendorId || undefined, productTypeId: productTypeId || undefined, page, pageSize }) });
 
-  const sync = useMutation({
-    mutationFn: (integrationIds?: string[]) => channelListingsApi.sync(integrationIds),
-    onSuccess: (r) => {
-      const ok = r.channels.filter((c) => c.ok);
-      const fail = r.channels.filter((c) => !c.ok);
-      const failNote = fail.length ? ` · ${fail.length} skipped${fail[0].message ? ` (${fail[0].message})` : ''}` : '';
-      toast.success(`Synced ${r.total} listings across ${ok.length} channel${ok.length === 1 ? '' : 's'}${failNote}`);
-      qc.invalidateQueries({ queryKey: ['channel-listings'] });
-      qc.invalidateQueries({ queryKey: ['channel-listings-channels'] });
-    },
-    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Sync failed'),
-  });
+  // A full sync pulls every listing from every channel, so it runs server-side and reports back
+  // per channel; the page follows it and reloading mid-run re-attaches rather than losing it.
+  const onSynced = useCallback((job: JobView) => {
+    if (job.state === 'error') { toast.error(job.error ?? 'Sync failed'); return; }
+    const r = job.result as ChannelSyncResult;
+    const ok = r.channels.filter((c) => c.ok);
+    const fail = r.channels.filter((c) => !c.ok);
+    const failNote = fail.length ? ` · ${fail.length} skipped${fail[0].message ? ` (${fail[0].message})` : ''}` : '';
+    toast.success(`Synced ${r.total} listings across ${ok.length} channel${ok.length === 1 ? '' : 's'}${failNote}`);
+    qc.invalidateQueries({ queryKey: ['channel-listings'] });
+    qc.invalidateQueries({ queryKey: ['channel-listings-channels'] });
+  }, [qc]);
+  const sync = useJobProgress('channel-listings.sync', onSynced);
 
   // Columns always follow the canonical group sequence; visibility is one per-channel set.
   const orderedChannels = useMemo(() => sortChannelsCanonical(channels), [channels]);
@@ -383,11 +385,18 @@ export function ChannelListingsPage() {
         }
         primary={
           <span className="inline-flex">
-            <button onClick={() => sync.mutate(undefined)} disabled={sync.isPending}
-              className="inline-flex h-8 items-center gap-1.5 rounded-l-lg bg-primary px-3.5 text-[13px] font-semibold text-white hover:bg-primary-hover disabled:opacity-60">
-              <RefreshCw size={15} className={sync.isPending ? 'animate-spin' : ''} /> {sync.isPending ? 'Syncing…' : 'Sync all'}
-            </button>
-            <SyncMenu groups={presentGroups} channelsInGroup={channelsInGroup} busy={sync.isPending} onSync={(ids) => sync.mutate(ids)} />
+            <ProgressButton
+              tone="primary"
+              onClick={() => sync.start(() => channelListingsApi.sync(undefined))}
+              running={sync.running}
+              value={sync.value}
+              detail={sync.detail}
+              runningLabel={<><RefreshCw size={15} className="animate-spin motion-reduce:animate-none" /> Syncing</>}
+              className="!rounded-r-none"
+            >
+              <RefreshCw size={15} /> Sync all
+            </ProgressButton>
+            <SyncMenu groups={presentGroups} channelsInGroup={channelsInGroup} busy={sync.running} onSync={(ids) => sync.start(() => channelListingsApi.sync(ids))} />
           </span>
         }
         toolbar={tab === 'listings' ? (

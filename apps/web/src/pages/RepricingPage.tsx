@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { FloorExplainCard } from '../components/repricing/FloorExplainCard';
 import { StrategiesCard } from '../components/repricing/StrategiesCard';
 import { MarketplaceCostsCard } from '../components/repricing/MarketplaceCostsCard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle } from 'lucide-react';
-import { Pagination } from '@masquare/ui';
-import { brandsApi, integrationsApi, repricingApi, vendorsApi, type RoleProbe } from '../lib/api';
+import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle, Gauge, ListChecks, ScrollText, SlidersHorizontal, Plug } from 'lucide-react';
+import { Pagination, ProgressButton, Select, TabBar, TabPanel, TableScroll, type TabItem } from '@masquare/ui';
+import { brandsApi, integrationsApi, repricingApi, vendorsApi, type OnboardResult, type RecomputeResult, type RoleProbe } from '../lib/api';
+import { useJobProgress } from '../lib/useJobProgress';
 import { PageHeader } from '../components/common/PageHeader';
 
 // Amazon Buy Box repricing — ops console (Phase-appropriate: readiness, SKU floors, decision
@@ -66,11 +68,41 @@ function Badge({ value, styles }: { value: string; styles: Record<string, string
   );
 }
 
+type RepricingTab = 'overview' | 'skus' | 'decisions' | 'rules' | 'connection';
+
+const TAB_ORDER: RepricingTab[] = ['overview', 'skus', 'decisions', 'rules', 'connection'];
+
+/**
+ * Amazon Buy Box repricing — ops console.
+ *
+ * Grouped by what you came to do rather than by which service produces the data: watch the engine
+ * (Overview), work on SKUs, read the audit, set the rules, or fix the connection. Stacked as one
+ * column these ten panels ran to several screens, so the table you wanted was always below a
+ * diagnostic you had already read.
+ */
 export function RepricingPage() {
   const qc = useQueryClient();
+
+  // The open tab lives in the URL, so a reload keeps your place and a link to "the decision audit"
+  // opens the decision audit.
+  const [params, setParams] = useSearchParams();
+  const raw = params.get('tab') as RepricingTab | null;
+  const tab: RepricingTab = raw && TAB_ORDER.includes(raw) ? raw : 'overview';
+  const setTab = (t: RepricingTab) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('tab', t);
+        return next;
+      },
+      { replace: true },
+    );
+
   const readiness = useQuery({ queryKey: ['repricing', 'readiness'], queryFn: repricingApi.readiness });
 
-  const refreshAll = () => qc.invalidateQueries({ queryKey: ['repricing'] });
+  const refreshAll = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ['repricing'] });
+  }, [qc]);
 
   // Scope for Onboard / Recompute. Both hit live SP-API per SKU, so during rollout you pilot one
   // marketplace at a time; '' means the whole estate and is deliberately not the default.
@@ -80,11 +112,11 @@ export function RepricingPage() {
 
   // Recompute makes one live SP-API call per SKU, so cap the batch while piloting ('' = no cap).
   const [batch, setBatch] = useState('25');
-  const onboard = useMutation({ mutationFn: () => repricingApi.onboard(scope || undefined), onSuccess: refreshAll });
-  const recompute = useMutation({
-    mutationFn: () => repricingApi.recomputeFloors(scope || undefined, batch ? Number(batch) : undefined),
-    onSuccess: refreshAll,
-  });
+
+  // Both run server-side and report progress; the page only follows them. Reloading mid-run
+  // re-attaches to the run rather than appearing to have lost it.
+  const onboardJob = useJobProgress('repricing.onboard', refreshAll);
+  const recomputeJob = useJobProgress('repricing.recompute', refreshAll);
 
   const control = useQuery({ queryKey: ['repricing', 'control'], queryFn: repricingApi.getControl });
   const setControl = useMutation({
@@ -97,6 +129,17 @@ export function RepricingPage() {
   const total = readiness.data?.total ?? 0;
   const byState = readiness.data?.byState ?? {};
   const byExclusion = readiness.data?.byExclusion ?? {};
+  const quarantined = byState.QUARANTINED ?? 0;
+
+  const tabs: TabItem<RepricingTab>[] = [
+    { key: 'overview', label: 'Overview', icon: <Gauge size={14} />, count: quarantined || null, tone: 'warning' },
+    { key: 'skus', label: 'SKUs & floors', icon: <ListChecks size={14} />, count: total || null },
+    { key: 'decisions', label: 'Decisions', icon: <ScrollText size={14} /> },
+    { key: 'rules', label: 'Pricing rules', icon: <SlidersHorizontal size={14} /> },
+    { key: 'connection', label: 'Connection', icon: <Plug size={14} /> },
+  ];
+
+  const scopeLabel = scope || 'all marketplaces';
 
   return (
     <div className="w-full">
@@ -107,127 +150,190 @@ export function RepricingPage() {
         actions={
           <>
             {/* Scope guard: both actions below make one live SP-API call per SKU. */}
-            <select
-              value={scope}
-              onChange={(e) => setScope(e.target.value)}
-              title="Which marketplace these actions apply to"
-              className="h-8 rounded-lg border border-n-200 bg-n-0 px-2 text-[12.5px] text-n-700 outline-none focus:border-teal-400"
+            <div className="w-[152px]">
+              <Select
+                dense
+                searchable
+                value={scope}
+                onChange={setScope}
+                placeholder="Marketplace"
+                options={[...amazonMarkets.map((m) => ({ value: m, label: m + ' only' })), { value: '', label: 'All marketplaces' }]}
+              />
+            </div>
+            <ProgressButton
+              onClick={() => onboardJob.start(() => repricingApi.onboard(scope || undefined))}
+              running={onboardJob.running}
+              value={onboardJob.value}
+              detail={onboardJob.detail}
+              runningLabel={<><DownloadCloud size={15} /> Onboarding</>}
+              title={'Seed repricing rows from matched Amazon listings on ' + scopeLabel}
             >
-              {amazonMarkets.map((m) => <option key={m} value={m}>{m} only</option>)}
-              <option value="">All marketplaces</option>
-            </select>
-            <button
-              onClick={() => onboard.mutate()}
-              disabled={onboard.isPending}
-              className="hbtn"
-            >
-              <DownloadCloud size={15} /> {onboard.isPending ? 'Onboarding…' : 'Onboard SKUs'}
-            </button>
+              <DownloadCloud size={15} /> Onboard SKUs
+            </ProgressButton>
           </>
         }
         primary={
           <>
-            <select
-              value={batch}
-              onChange={(e) => setBatch(e.target.value)}
-              title="How many SKUs to fee-refresh in this run (one live SP-API call each)"
-              className="h-8 rounded-lg border border-n-200 bg-n-0 px-2 text-[12.5px] text-n-700 outline-none focus:border-teal-400"
+            <div className="w-[124px]">
+              <Select
+                dense
+                value={batch}
+                onChange={setBatch}
+                options={[
+                  { value: '25', label: 'first 25' },
+                  { value: '100', label: 'first 100' },
+                  { value: '500', label: 'first 500' },
+                  { value: '', label: 'no cap' },
+                ]}
+              />
+            </div>
+            <ProgressButton
+              tone="primary"
+              onClick={() => recomputeJob.start(() => repricingApi.recomputeFloors(scope || undefined, batch ? Number(batch) : undefined))}
+              running={recomputeJob.running}
+              value={recomputeJob.value}
+              detail={recomputeJob.detail}
+              runningLabel={<><RefreshCcw size={15} className="animate-spin motion-reduce:animate-none" /> Recomputing</>}
+              title={'Refresh fees and re-solve floors on ' + scopeLabel + ' — one live SP-API call per SKU'}
             >
-              <option value="25">first 25</option>
-              <option value="100">first 100</option>
-              <option value="500">first 500</option>
-              <option value="">no cap</option>
-            </select>
-            <button
-              onClick={() => recompute.mutate()}
-              disabled={recompute.isPending}
-              className="hbtn-primary"
-            >
-              <RefreshCcw size={15} /> {recompute.isPending ? 'Recomputing…' : 'Recompute floors'}
-            </button>
+              <RefreshCcw size={15} /> Recompute floors
+            </ProgressButton>
           </>
         }
       />
 
-      {/* Safety controls (§6.4): DB-backed kill switch + live-writes master (both default OFF). */}
-      <div className={`mb-5 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border px-4 py-3 ${killed ? 'border-red-300 bg-red-50' : 'border-n-200 bg-n-0'}`}>
+      {/* Safety controls (§6.4): DB-backed kill switch + live-writes master (both default OFF).
+          On every tab rather than filed under one — a stop control you have to go and find is not
+          a stop control. Quiet while nothing is engaged, loud the moment something is. */}
+      <div className={`mb-4 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border px-4 py-2 ${killed ? 'border-red-300 bg-red-50' : 'border-n-200 bg-n-0'}`}>
         <div className="flex items-center gap-2.5">
-          <ShieldAlert size={17} className={killed ? 'text-red-600' : 'text-n-400'} />
-          <span className="text-[13px] font-semibold text-n-800">Global kill switch</span>
+          <ShieldAlert size={16} className={killed ? 'text-red-600' : 'text-n-400'} />
           <button
             onClick={() => setControl.mutate({ killSwitchEngaged: !killed })}
             disabled={setControl.isPending}
-            className={`inline-flex h-9 items-center gap-2 rounded-md px-3.5 text-[13px] font-bold text-white disabled:opacity-50 ${killed ? 'bg-n-500 hover:bg-n-600' : 'bg-red-600 hover:bg-red-700'}`}
+            className={`inline-flex h-8 items-center gap-2 rounded-md px-3 text-[12.5px] font-bold text-white disabled:opacity-50 ${killed ? 'bg-n-500 hover:bg-n-600' : 'bg-red-600 hover:bg-red-700'}`}
           >
-            {killed ? 'Kill switch ENGAGED — click to release' : 'STOP all writes'}
+            {killed ? 'Kill switch engaged — release' : 'Stop all writes'}
           </button>
           {killed && <span className="text-[12px] font-semibold text-red-700">No prices will be submitted.</span>}
         </div>
-        <div className="h-6 w-px bg-n-200 max-md:hidden" />
+        <div className="h-5 w-px bg-n-200 max-md:hidden" />
         <div className="flex items-center gap-2.5">
-          <span className="text-[13px] font-semibold text-n-800">Live writes</span>
+          <span className="text-[12.5px] font-semibold text-n-800">Live writes</span>
           <button
             role="switch"
             aria-checked={liveWrites}
+            aria-label="Live writes"
             disabled={setControl.isPending || killed}
             onClick={() => setControl.mutate({ liveWritesEnabled: !liveWrites })}
             className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-50 ${liveWrites ? 'bg-teal-500' : 'bg-n-200'}`}
-            title={liveWrites ? 'Disable live writes (fall back to VALIDATION_PREVIEW dry-runs)' : 'Enable live writes for LIVE SKUs'}
+            title={liveWrites ? 'Turn off live writes — LIVE SKUs fall back to dry-runs' : 'Turn on live writes for LIVE SKUs'}
           >
             <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${liveWrites ? 'left-[22px]' : 'left-0.5'}`} />
           </button>
-          <span className="text-[12px] text-n-500">{liveWrites ? 'ON — LIVE SKUs submit real prices' : 'OFF — LIVE SKUs only dry-run (VALIDATION_PREVIEW)'}</span>
+          <span className="text-[12px] text-n-500">{liveWrites ? 'On — LIVE SKUs submit real prices' : 'Off — LIVE SKUs dry-run only'}</span>
         </div>
         <div className="flex-1" />
-        <span className="text-[11px] text-n-400">Env kill switch also forces STOP regardless of this.</span>
+        <span className="text-[11px] text-n-400">The env kill switch also forces stop, whatever this says.</span>
       </div>
 
-      {(onboard.data || recompute.data) && (
-        <div className="mb-4 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-[12.5px] text-teal-800">
-          {onboard.data && (
-            <span>
-              Onboarded {onboard.data.created} new + {onboard.data.updated} updated ({onboard.data.skipped} skipped) of {onboard.data.scannedListings} matched listings.
-              {onboard.data.unmatchedListings > 0 && (
-                <> <b>{onboard.data.unmatchedListings}</b> of {onboard.data.totalListings} listings aren’t linked to a product, so they can’t be priced (no cost basis) — link them on Channel Listings to include them.</>
-              )}{' '}
-            </span>
-          )}
-          {recompute.data && <span>Recomputed floors: {recompute.data.ok}/{recompute.data.processed} OK.</span>}
-        </div>
-      )}
+      <RunOutcome job={onboardJob} kind="onboard" />
+      <RunOutcome job={recomputeJob} kind="recompute" />
 
-      {/* Readiness stat row */}
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <StatTile label="Total SKUs" value={total} />
-        {['LIVE', 'SHADOW', 'EXCLUDED', 'QUARANTINED', 'KILLED'].map((s) => (
-          <StatTile key={s} label={s} value={byState[s] ?? 0} />
-        ))}
-      </div>
-      {Object.keys(byExclusion).length > 0 && (
-        <div className="mb-6 flex flex-wrap items-center gap-2 text-[12px] text-n-600">
-          <span className="text-n-500">Excluded by reason:</span>
-          {Object.entries(byExclusion)
-            .filter(([k]) => k !== 'none')
-            .map(([k, v]) => (
-              <span key={k} className="rounded border border-n-200 bg-n-25 px-1.5 py-0.5 font-mono">{k}: {v}</span>
-            ))}
-        </div>
-      )}
+      <TabBar tabs={tabs} value={tab} onChange={setTab} label="Repricing sections" className="mb-5" />
 
-      {/* One gap on the stack rather than spacer divs between pairs: the spacers were easy to
-          forget when a card was added, and three cards ended up flush against each other. */}
-      <div className="flex flex-col gap-6">
-        <QuarantineCard />
-        <PipelineCard />
-        <RoleCheckCard />
-        <StrategiesCard />
-        <MarketplaceCostsCard />
-        <FloorExplainCard />
-        <NotificationSetupCard />
-        <SkuTable />
+      <TabPanel tabKey="overview" active={tab === 'overview'}>
+        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <StatTile label="Total SKUs" value={total} />
+          {['LIVE', 'SHADOW', 'EXCLUDED', 'QUARANTINED', 'KILLED'].map((s) => (
+            <StatTile key={s} label={s} value={byState[s] ?? 0} />
+          ))}
+        </div>
+        {Object.keys(byExclusion).length > 0 && (
+          <div className="mb-5 flex flex-wrap items-center gap-2 text-[12px] text-n-600">
+            <span className="text-n-500">Excluded by reason:</span>
+            {Object.entries(byExclusion)
+              .filter(([k]) => k !== 'none')
+              .map(([k, v]) => (
+                <span key={k} className="rounded border border-n-200 bg-n-25 px-1.5 py-0.5 font-mono">{k}: {v}</span>
+              ))}
+          </div>
+        )}
+        <div className="flex flex-col gap-6">
+          <PipelineCard />
+          <QuarantineCard />
+        </div>
+      </TabPanel>
+
+      <TabPanel tabKey="skus" active={tab === 'skus'}>
+        <div className="flex flex-col gap-6">
+          <SkuTable />
+          <FloorExplainCard />
+        </div>
+      </TabPanel>
+
+      <TabPanel tabKey="decisions" active={tab === 'decisions'}>
         <DecisionTable />
-        <BlocklistCard />
+      </TabPanel>
+
+      <TabPanel tabKey="rules" active={tab === 'rules'}>
+        <div className="flex flex-col gap-6">
+          <StrategiesCard />
+          <MarketplaceCostsCard />
+          <BlocklistCard />
+        </div>
+      </TabPanel>
+
+      <TabPanel tabKey="connection" active={tab === 'connection'}>
+        <div className="flex flex-col gap-6">
+          <NotificationSetupCard />
+          <RoleCheckCard />
+        </div>
+      </TabPanel>
+    </div>
+  );
+}
+
+/**
+ * What a finished run did.
+ *
+ * Dismissed by hand rather than on a timer: a recompute can finish while you are reading another
+ * tab, and a banner that has already faded reported nothing at all.
+ */
+function RunOutcome({ job, kind }: { job: ReturnType<typeof useJobProgress>; kind: 'onboard' | 'recompute' }) {
+  if (job.running || (!job.result && !job.error)) return null;
+
+  if (job.error) {
+    return (
+      <div className="mb-4 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-800">
+        <span className="flex-1">{job.error}</span>
+        <button onClick={job.dismiss} className="shrink-0 text-red-500 hover:text-red-700" aria-label="Dismiss"><X size={14} /></button>
       </div>
+    );
+  }
+
+  const recomputed = kind === 'recompute' ? (job.result as RecomputeResult) : null;
+  const onboarded = kind === 'onboard' ? (job.result as OnboardResult) : null;
+
+  return (
+    <div className="mb-4 flex items-start gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-[12.5px] text-teal-800">
+      <span className="flex-1">
+        {recomputed && (
+          <>
+            Recomputed {recomputed.ok} of {recomputed.processed} floors.
+            {recomputed.stopped && <> Stopped early, so the rest still hold their previous floors.</>}
+          </>
+        )}
+        {onboarded && (
+          <>
+            Onboarded {onboarded.created} new + {onboarded.updated} updated ({onboarded.skipped} skipped) of {onboarded.scannedListings} matched listings.
+            {onboarded.unmatchedListings > 0 && (
+              <> <b>{onboarded.unmatchedListings}</b> of {onboarded.totalListings} listings aren&rsquo;t linked to a product, so they can&rsquo;t be priced (no cost basis) — link them on Channel Listings to include them.</>
+            )}
+          </>
+        )}
+      </span>
+      <button onClick={job.dismiss} className="shrink-0 text-teal-600 hover:text-teal-800" aria-label="Dismiss"><X size={14} /></button>
     </div>
   );
 }
@@ -271,35 +377,34 @@ function SkuTable() {
   const total = query.data?.total ?? 0;
   const loading = query.isLoading;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const sel = 'h-8 rounded-md border border-n-200 bg-n-0 px-2 text-[12.5px] text-n-700 outline-none focus:border-teal-400';
 
   return (
     <div className="card overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-2.5">
         <span className="text-[13px] font-semibold text-n-800">SKU pricing &amp; floors</span>
         <input value={q} onChange={(e) => reset(setQ)(e.target.value)} placeholder="Search SKU or ASIN…" className="h-8 w-48 rounded-md border border-n-200 px-2.5 font-mono text-[12.5px] outline-none focus:border-teal-400" />
-        <select value={marketplace} onChange={(e) => reset(setMarketplace)(e.target.value)} className={sel}>
-          <option value="">All marketplaces</option>
-          {markets.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <select value={brandId} onChange={(e) => reset(setBrandId)(e.target.value)} className={sel}>
-          <option value="">All brands</option>
-          {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
-        <select value={vendorId} onChange={(e) => reset(setVendorId)(e.target.value)} className={sel}>
-          <option value="">All vendors</option>
-          {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-        </select>
-        <select value={state} onChange={(e) => reset(setState)(e.target.value)} className={sel}>
-          <option value="">All states</option>
-          {STATES.map((st) => <option key={st} value={st}>{st}</option>)}
-        </select>
+        <div className="w-[150px]">
+          <Select dense searchable value={marketplace} onChange={reset(setMarketplace)}
+            options={[{ value: '', label: 'All marketplaces' }, ...markets.map((m) => ({ value: m, label: m }))]} />
+        </div>
+        <div className="w-[160px]">
+          <Select dense searchable value={brandId} onChange={reset(setBrandId)}
+            options={[{ value: '', label: 'All brands' }, ...brands.map((b) => ({ value: b.id, label: b.name }))]} />
+        </div>
+        <div className="w-[160px]">
+          <Select dense searchable value={vendorId} onChange={reset(setVendorId)}
+            options={[{ value: '', label: 'All vendors' }, ...vendors.map((v) => ({ value: v.id, label: v.name }))]} />
+        </div>
+        <div className="w-[140px]">
+          <Select dense value={state} onChange={reset(setState)}
+            options={[{ value: '', label: 'All states' }, ...STATES.map((st) => ({ value: st, label: st }))]} />
+        </div>
         <div className="flex-1" />
         <span className="text-[12px] text-n-500">{total.toLocaleString()} row{total === 1 ? '' : 's'}</span>
       </div>
-      <div className="overflow-x-auto">
+      <TableScroll>
         <table className="w-full text-[12.5px]">
-          <thead className="bg-n-25 text-left text-[11px] uppercase tracking-wide text-n-500">
+          <thead className="text-left text-[11px] uppercase tracking-wide text-n-500">
             <tr>
               <th className="px-4 py-2 font-semibold">SKU</th>
               <th className="px-3 py-2 font-semibold">ASIN</th>
@@ -342,7 +447,7 @@ function SkuTable() {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
       <div className="px-4 pb-3">
         <Pagination page={page} pageCount={pageCount} onPageChange={setPage} pageSize={pageSize} onPageSizeChange={(n) => { setPageSize(n); setPage(1); }} pageSizeOptions={[50, 100, 200, 500]} />
       </div>
@@ -356,27 +461,40 @@ const OUTCOMES = ['PRICED', 'HELD', 'SKIPPED', 'QUARANTINED'];
 function DecisionTable() {
   const [sku, setSku] = useState('');
   const [outcome, setOutcome] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
+
+  // Any filter change returns to page 1 — otherwise a narrowed result set lands on an empty page.
+  const reset = <T,>(set: (v: T) => void) => (v: T) => { set(v); setPage(1); };
+
   const decisions = useQuery({
-    queryKey: ['repricing', 'decisions', sku, outcome],
-    queryFn: () => repricingApi.decisions({ take: 100, sku, outcome }),
+    queryKey: ['repricing', 'decisions', { sku, outcome, page, pageSize }],
+    queryFn: () => repricingApi.decisions({ take: pageSize, skip: (page - 1) * pageSize, sku, outcome }),
+    placeholderData: (prev) => prev,
   });
-  const rows = decisions.data ?? [];
+  const rows = decisions.data?.items ?? [];
+  const total = decisions.data?.total ?? 0;
   const loading = decisions.isLoading;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   return (
     <div className="card overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-2.5">
         <span className="text-[13px] font-semibold text-n-800">Decision audit (shadow)</span>
         <div className="flex-1" />
-        <input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Filter by SKU…" className="h-8 w-44 rounded-md border border-n-200 px-2.5 font-mono text-[12.5px] outline-none focus:border-teal-400" />
-        <select value={outcome} onChange={(e) => setOutcome(e.target.value)} className="h-8 rounded-md border border-n-200 px-2 text-[12.5px] outline-none focus:border-teal-400">
-          <option value="">All outcomes</option>
-          {OUTCOMES.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-        <span className="text-[12px] text-n-500">{rows.length}</span>
+        <input value={sku} onChange={(e) => reset(setSku)(e.target.value)} placeholder="Filter by SKU…" className="h-8 w-44 rounded-md border border-n-200 px-2.5 font-mono text-[12.5px] outline-none focus:border-teal-400" />
+        <div className="w-[150px]">
+          <Select
+            dense
+            value={outcome}
+            onChange={reset(setOutcome)}
+            options={[{ value: '', label: 'All outcomes' }, ...OUTCOMES.map((o) => ({ value: o, label: o }))]}
+          />
+        </div>
+        <span className="text-[12px] text-n-500">{total.toLocaleString()} decision{total === 1 ? '' : 's'}</span>
       </div>
-      <div className="overflow-x-auto">
+      <TableScroll>
         <table className="w-full text-[12.5px]">
-          <thead className="bg-n-25 text-left text-[11px] uppercase tracking-wide text-n-500">
+          <thead className="text-left text-[11px] uppercase tracking-wide text-n-500">
             <tr>
               <th className="px-4 py-2 font-semibold">When</th>
               <th className="px-3 py-2 font-semibold">SKU</th>
@@ -409,6 +527,9 @@ function DecisionTable() {
             )}
           </tbody>
         </table>
+      </TableScroll>
+      <div className="px-4 pb-3">
+        <Pagination page={page} pageCount={pageCount} onPageChange={setPage} pageSize={pageSize} onPageSizeChange={(n) => { setPageSize(n); setPage(1); }} pageSizeOptions={[50, 100, 200, 500]} />
       </div>
     </div>
   );
@@ -418,7 +539,13 @@ function DecisionTable() {
  *  empty; flags escalation at > 20 open or > 24h old. Resolve returns a SKU to shadow. */
 function QuarantineCard() {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['repricing', 'quarantine'], queryFn: repricingApi.quarantine });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const q = useQuery({
+    queryKey: ['repricing', 'quarantine', { page, pageSize }],
+    queryFn: () => repricingApi.quarantine({ take: pageSize, skip: (page - 1) * pageSize }),
+    placeholderData: (prev) => prev,
+  });
   const resolve = useMutation({
     mutationFn: (id: string) => repricingApi.resolveQuarantine(id),
     onSuccess: () => {
@@ -430,8 +557,9 @@ function QuarantineCard() {
   const data = q.data;
   if (!data || data.total === 0) return null;
   const escalate = data.total > 20 || data.oldestHours > 24;
+  const pageCount = Math.max(1, Math.ceil(data.total / pageSize));
   return (
-    <div className={`mb-6 overflow-hidden rounded-xl border ${escalate ? 'border-red-300' : 'border-orange-200'} bg-n-0`}>
+    <div className={`overflow-hidden rounded-xl border ${escalate ? 'border-red-300' : 'border-orange-200'} bg-n-0`}>
       <div className={`flex items-center gap-2 px-4 py-2.5 ${escalate ? 'bg-red-50' : 'bg-orange-50'}`}>
         <AlertTriangle size={15} className={escalate ? 'text-red-600' : 'text-orange-600'} />
         <span className="text-[13px] font-semibold text-n-800">Quarantine queue</span>
@@ -443,9 +571,9 @@ function QuarantineCard() {
           maximum allowed price, which is not one of the columns.
         </span>
       </div>
-      <div className="overflow-x-auto">
+      <TableScroll>
         <table className="w-full text-[12.5px]">
-          <thead className="bg-n-25 text-left text-[11px] uppercase tracking-wide text-n-500">
+          <thead className="text-left text-[11px] uppercase tracking-wide text-n-500">
             <tr>
               <th className="px-4 py-2 font-semibold">SKU</th>
               <th className="px-3 py-2 font-semibold">Mkt</th>
@@ -480,6 +608,9 @@ function QuarantineCard() {
             ))}
           </tbody>
         </table>
+      </TableScroll>
+      <div className="px-4 pb-3">
+        <Pagination page={page} pageCount={pageCount} onPageChange={setPage} pageSize={pageSize} onPageSizeChange={(n) => { setPageSize(n); setPage(1); }} pageSizeOptions={[25, 50, 100, 200]} />
       </div>
     </div>
   );
@@ -497,7 +628,7 @@ function PipelineCard() {
   const tone = !d ? 'border-n-200' : healthy ? 'border-teal-200' : 'border-amber-200';
   const dot = !d ? 'bg-n-300' : healthy ? 'bg-teal-500' : 'bg-amber-500';
   return (
-    <div className={`mb-6 overflow-hidden rounded-xl border bg-n-0 ${tone}`}>
+    <div className={`overflow-hidden rounded-xl border bg-n-0 ${tone}`}>
       <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-2.5">
         <span className={`h-2 w-2 rounded-full ${dot}`} />
         <span className="text-[13px] font-semibold text-n-800">Shadow pipeline</span>
@@ -777,9 +908,9 @@ function RoleCheckCard() {
         </div>
       )}
       {d && (
-        <div className="overflow-x-auto">
+        <TableScroll>
           <table className="w-full text-[12.5px]">
-            <thead className="bg-n-25 text-left text-[11px] uppercase tracking-wide text-n-500">
+            <thead className="text-left text-[11px] uppercase tracking-wide text-n-500">
               <tr>
                 <th className="px-4 py-2 font-semibold">Connection</th>
                 <th className="px-3 py-2 font-semibold">Mkt</th>
@@ -798,7 +929,7 @@ function RoleCheckCard() {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       )}
     </div>
   );

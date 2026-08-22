@@ -141,3 +141,29 @@
     grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
   }
 }
+
+/* Long tables · sticky column headers.
+   Wrap a table in .tbl-scroll and the head stays put while the body scrolls, so column meaning
+   survives past the first screen of rows. The shadow replaces a border because a sticky element's
+   own border scrolls away from the cell edge at some zoom levels. */
+.tbl-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.tbl-scroll thead th {
+  @apply sticky top-0 z-[1] bg-n-25;
+  box-shadow: inset 0 -1px 0 theme(colors.n.200);
+}
+
+/* Progress CTAs · the sweep shown while a run's size is still unknown.
+   Determinate runs use a width, not this — a bar that moves without meaning is worse than none. */
+@keyframes masq-progress-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
+}
+.progress-sweep {
+  animation: masq-progress-sweep 1.15s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-sweep { animation: none; opacity: 0.5; }
+}

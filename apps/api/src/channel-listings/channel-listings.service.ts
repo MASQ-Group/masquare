@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { PricingService } from '../pricing/pricing.service';
+import type { ProgressSink } from '../jobs/jobs.service';
 
 const ACTIVE = { deletedAt: null };
 // Per-channel accent dots (fallback palette; overridden by the SalesChannel chip colour if set).
@@ -151,7 +152,7 @@ export class ChannelListingsService {
   // Channel types we can pull listings from today.
   private static readonly LISTING_CHANNELS = ['amazon', 'ebay', 'onbuy'];
 
-  async sync(integrationIds?: string[], companyIds?: string[]) {
+  async sync(integrationIds?: string[], companyIds?: string[], progress?: ProgressSink) {
     // "Sync all" (no explicit ids) syncs every channel type with a listings connector.
     // A selective sync may target any connected channel; types without a listings connector
     // yet are reported, not silently dropped.
@@ -162,10 +163,12 @@ export class ChannelListingsService {
       ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
     };
     const ints = await this.prisma.channelIntegration.findMany({ where, select: { id: true, name: true, channelType: true, targetCompanyId: true } });
+    progress?.setTotal(ints.length);
     const skuMap = await this.buildSkuMap();
     const now = new Date();
     const results: Array<{ integrationId: string; name: string; ok: boolean; pulled?: number; message?: string }> = [];
     for (const intg of ints) {
+      progress?.note(intg.name);
       try {
         const listings =
           intg.channelType === 'amazon' ? await this.integrations.fetchAmazonListings(intg.id)
@@ -200,8 +203,10 @@ export class ChannelListingsService {
         for (let i = 0; i < data.length; i += 1000) ops.push(this.prisma.channelListing.createMany({ data: data.slice(i, i + 1000), skipDuplicates: true }));
         await this.prisma.$transaction(ops);
         results.push({ integrationId: intg.id, name: intg.name, ok: true, pulled: data.length });
+        progress?.tick(true);
       } catch (e: any) {
         results.push({ integrationId: intg.id, name: intg.name, ok: false, message: (e?.message ?? 'failed').toString().slice(0, 160) });
+        progress?.tick(false);
       }
     }
     return { channels: results, total: results.reduce((s, r) => s + (r.pulled ?? 0), 0) };
