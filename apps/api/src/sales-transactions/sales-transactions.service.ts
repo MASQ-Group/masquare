@@ -1992,11 +1992,20 @@ export class SalesTransactionsService {
       checked++;
       const dateIso = t.date.toISOString();
       const { channel, currency, feeCurrency } = await this.channelInfo(t.salesChannelId);
-      // Historical FX is immutable — only re-fetch when the currency changed or was never set.
+      // Historical FX is immutable — re-fetched only when the currency changed or was never set.
+      //
+      // A channel with its own conversion spread is the exception, and it is a correction rather
+      // than a restatement: the stored rate was never the rate that money converted at. eBay
+      // settled the order roughly 3% below market, so the recorded rate describes a conversion
+      // that did not happen. Recomputing makes the transaction true.
+      //
+      // Safe to repeat: the rate is derived from the market rate for the transaction's own date
+      // and discounted once, never from the stored rate, so running this twice cannot compound.
+      const hasSpread = channel?.fxSpreadPct != null && Number(channel.fxSpreadPct) > 0;
       let exchangeRate = t.exchangeRate;
-      if (currency !== t.currency || exchangeRate == null) exchangeRate = await fx(currency, dateIso, channel);
+      if (currency !== t.currency || exchangeRate == null || hasSpread) exchangeRate = await fx(currency, dateIso, channel);
       let feeExchangeRate = t.feeExchangeRate;
-      if (feeCurrency !== t.feeCurrency || feeExchangeRate == null) {
+      if (feeCurrency !== t.feeCurrency || feeExchangeRate == null || hasSpread) {
         feeExchangeRate = feeCurrency && feeCurrency !== currency ? await fx(feeCurrency, dateIso, channel) : exchangeRate;
       }
       // Imported orders never carry a manual service pick, so always re-derive theirs from the

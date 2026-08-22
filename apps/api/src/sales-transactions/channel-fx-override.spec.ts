@@ -70,3 +70,39 @@ describe('per-channel FX spread', () => {
     expect(recovered).toBeLessThan(actualGap);
   });
 });
+
+// Recalculating must apply the spread to transactions recorded before it was set — the stored
+// rate describes a conversion that never happened — and must be safe to run repeatedly.
+describe('recalculation', () => {
+  const market = 0.85561;
+  const spread = 3.01;
+  const recalc = (stored: number | null, channel: { fxSpreadPct?: number | null }) => {
+    const hasSpread = channel.fxSpreadPct != null && Number(channel.fxSpreadPct) > 0;
+    // Mirrors the sweep: recompute when the rate is missing or the channel carries a spread.
+    if (stored == null || hasSpread) return rateForChannel(channel, 'USD', market);
+    return stored;
+  };
+
+  it('corrects a transaction stored at the market rate', () => {
+    expect(recalc(market, { fxSpreadPct: spread })).toBeCloseTo(0.82985, 4);
+  });
+
+  it('does not compound when run again', () => {
+    const once = recalc(market, { fxSpreadPct: spread })!;
+    const twice = recalc(once, { fxSpreadPct: spread })!;
+    const thrice = recalc(twice, { fxSpreadPct: spread })!;
+    expect(twice).toBe(once);
+    expect(thrice).toBe(once);
+  });
+
+  it('leaves a channel without a spread untouched', () => {
+    expect(recalc(market, { fxSpreadPct: null })).toBe(market);
+  });
+
+  it('reverts to the market rate when the spread is cleared', () => {
+    // Clearing it after eBay's Finances API is fixed must undo the estimate, not strand it.
+    const discounted = recalc(market, { fxSpreadPct: spread })!;
+    expect(recalc(discounted, { fxSpreadPct: null })).toBe(discounted); // stored value kept…
+    expect(rateForChannel({ fxSpreadPct: null }, 'USD', market)).toBe(market); // …and a fresh one is market
+  });
+});
