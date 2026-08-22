@@ -111,8 +111,8 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
     chipTextColor: channel?.chipTextColor ?? '#495057',
     vatThresholdEnabled: channel?.vatThresholdEnabled ?? false,
     pricesIncludeTax: channel?.pricesIncludeTax ?? true,
-    fxRateOverride: channel?.fxRateOverride != null ? String(channel.fxRateOverride) : '',
-    fxRateOverrideNote: channel?.fxRateOverrideNote ?? '',
+    fxSpreadPct: channel?.fxSpreadPct != null ? String(channel.fxSpreadPct) : '',
+    fxSpreadNote: channel?.fxSpreadNote ?? '',
     vatThresholdAmount: channel?.vatThresholdAmount?.toString() ?? '',
     vatThresholdCurrency: channel?.vatThresholdCurrency ?? null as string | null,
     vatBelowThresholdPct: channel?.vatBelowThresholdPct?.toString() ?? '',
@@ -166,8 +166,8 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
         feeChargedInNativeCurrency: form.feeChargedInNativeCurrency,
         feeCurrency: form.feeChargedInNativeCurrency ? null : form.feeCurrency,
         pricesIncludeTax: form.pricesIncludeTax,
-        fxRateOverride: form.fxRateOverride.trim() === '' ? null : Number(form.fxRateOverride),
-        fxRateOverrideNote: form.fxRateOverrideNote.trim() || null,
+        fxSpreadPct: form.fxSpreadPct.trim() === '' ? null : Number(form.fxSpreadPct),
+        fxSpreadNote: form.fxSpreadNote.trim() || null,
         vatThresholdEnabled: form.vatThresholdEnabled,
         vatThresholdAmount: form.vatThresholdEnabled && form.vatThresholdAmount.trim() !== '' ? Number(form.vatThresholdAmount) : null,
         vatThresholdCurrency: form.vatThresholdEnabled ? form.vatThresholdCurrency : null,
@@ -196,37 +196,41 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
         <div><label className="label">Native country</label><CountrySelect value={form.nativeCountryId} onChange={onNativeCountry} /></div>
         <div><label className="label">Native currency</label><CurrencySelect value={form.nativeCurrency} onChange={(v) => set({ nativeCurrency: v })} /></div>
         <div className="col-span-2 rounded-md border border-n-200 bg-n-25 p-3 max-[560px]:col-span-1">
-          <label className="label">Exchange rate for this channel</label>
+          <label className="label">Currency conversion spread</label>
           <p className="mb-2 text-[11.5px] text-n-500">
-            Some marketplaces convert at their own rate and pay out in EUR — eBay does, and theirs has run about
-            3% below the market rate, which overstates profit. Enter the rate from a payout statement to value this
-            channel&rsquo;s sales at what actually reaches the bank. Leave empty to use the market rate.
+            For channels that convert the order themselves and pay out in EUR. They rarely use the market
+            rate — eBay runs about 3% below it, which overstates profit on every non-EUR sale. Enter how far
+            below, and the market rate for the day is discounted by it. Leave empty for channels that pay out
+            in the currency they collected, where our own rate is the right one.
           </p>
           <div className="flex flex-wrap items-end gap-3">
             <div className="w-[150px]">
-              <label className="label">{form.nativeCurrency || 'EUR'} &rarr; EUR</label>
-              <input
-                className="input mono text-right"
-                inputMode="decimal"
-                placeholder="market rate"
-                value={form.fxRateOverride}
-                onChange={(e) => set({ fxRateOverride: e.target.value })}
-              />
+              <label className="label">Below market rate</label>
+              <div className="relative">
+                <input
+                  className="input mono h-9 pr-6 text-right"
+                  inputMode="decimal"
+                  placeholder="0"
+                  value={form.fxSpreadPct}
+                  onChange={(e) => set({ fxSpreadPct: e.target.value })}
+                />
+                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[12px] text-n-400">%</span>
+              </div>
             </div>
             <div className="min-w-[200px] flex-1">
               <label className="label">Where it came from</label>
               <input
                 className="input"
-                placeholder="e.g. eBay payout statement, Aug 2026"
-                value={form.fxRateOverrideNote}
-                onChange={(e) => set({ fxRateOverrideNote: e.target.value })}
+                placeholder="e.g. average of 5 payout statements, Jul–Aug 2026"
+                value={form.fxSpreadNote}
+                onChange={(e) => set({ fxSpreadNote: e.target.value })}
               />
             </div>
           </div>
-          {channel?.fxRateOverrideSetAt && form.fxRateOverride.trim() !== '' && (
+          {channel?.fxSpreadSetAt && form.fxSpreadPct.trim() !== '' && (
             <div className="mt-1.5 text-[11.5px] text-n-400">
-              Last set {new Date(channel.fxRateOverrideSetAt).toLocaleDateString('en-GB')} — worth refreshing when a new
-              statement arrives.
+              Last set {new Date(channel.fxSpreadSetAt).toLocaleDateString('en-GB')} — worth re-checking against a
+              payout statement now and then, since a marketplace can change its markup.
             </div>
           )}
         </div>

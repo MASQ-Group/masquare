@@ -1,4 +1,4 @@
-import { IsBoolean, IsNumber, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString, IsUUID, Max, Min, MinLength } from 'class-validator';
 
 export class CreateSalesChannelDto {
   @IsString() @MinLength(1) name!: string;
@@ -15,9 +15,9 @@ export class CreateSalesChannelDto {
   @IsOptional() @IsBoolean() vatThresholdEnabled?: boolean;
   @IsOptional() @IsBoolean() pricesIncludeTax?: boolean;
   @IsOptional() @IsNumber() vatThresholdAmount?: number | null;
-  /** Exchange rate to use for this channel instead of the platform market rate. Null clears it. */
-  @IsOptional() @IsNumber() fxRateOverride?: number | null;
-  @IsOptional() @IsString() fxRateOverrideNote?: string | null;
+  /** How far below the market rate this channel converts, as a percentage. Null clears it. */
+  @IsOptional() @IsNumber() @Min(0) @Max(99) fxSpreadPct?: number | null;
+  @IsOptional() @IsString() fxSpreadNote?: string | null;
   @IsOptional() @IsString() vatThresholdCurrency?: string | null;
   @IsOptional() @IsNumber() vatBelowThresholdPct?: number | null;
   @IsOptional() @IsNumber() vatAboveThresholdPct?: number | null;

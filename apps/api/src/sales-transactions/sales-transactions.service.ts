@@ -1199,16 +1199,20 @@ export class SalesTransactionsService {
   /**
    * The rate to value a sale at.
    *
-   * A channel that converts at its own rate and pays out in EUR is not described by any market
-   * rate: eBay's rate on a US order was 3.2% below ours, which overstated that order's profit by
-   * 7.4%. Where the channel's true rate has been entered, it is what the money actually converted
-   * at, so it wins over the market rate rather than being averaged with it.
+   * A channel that converts the order itself and pays out in EUR does not settle at any market
+   * rate: eBay's is consistently about 3% below it, which on one US order left 30.56 EUR of profit
+   * that was never earned. Where the channel's spread is known, the market rate for the day is
+   * discounted by it, so the figure tracks the market while still landing where the money does.
+   *
+   * A spread rather than a fixed rate because the market rate moves daily and the markup does not.
    */
   private async rateForChannel(channel: any, currency: string | null, date: string): Promise<number | null> {
-    if (!currency || currency.toUpperCase() === 'EUR') return this.fetchExchangeRate(currency, date);
-    const override = channel?.fxRateOverride != null ? Number(channel.fxRateOverride) : null;
-    if (override != null && override > 0) return override;
-    return this.fetchExchangeRate(currency, date);
+    const market = await this.fetchExchangeRate(currency, date);
+    if (market == null || !currency || currency.toUpperCase() === 'EUR') return market;
+    const spread = channel?.fxSpreadPct != null ? Number(channel.fxSpreadPct) : null;
+    // A spread at or beyond 100% would zero out or invert revenue; ignore it rather than apply it.
+    if (spread == null || !(spread > 0) || spread >= 100) return market;
+    return round(market * (1 - spread / 100), 8);
   }
 
   private async fetchExchangeRate(currency: string | null, date: string): Promise<number | null> {
