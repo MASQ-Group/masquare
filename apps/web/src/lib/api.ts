@@ -2302,7 +2302,7 @@ export interface FloorExplain {
   marketplaceId?: string;
   currency?: string | null;
   inputs?: {
-    vatPct?: number | null;
+    vatRate?: number | null;
     vatSource?: string;
     costEur?: number | null;
     shippingEur?: number | null;

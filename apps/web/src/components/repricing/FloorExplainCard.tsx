@@ -83,7 +83,7 @@ export function FloorExplainCard() {
             />
             <Row label="Storage / unit" value={i?.storagePerUnitCents ? cents(i.storagePerUnitCents) : 'not set'} />
             <Row label="Advertising / unit" value={i?.adCostPerUnitCents ? cents(i.adCostPerUnitCents) : 'not set'} />
-            <Row label="VAT" value={i?.vatPct != null ? `${i.vatPct}%` : '—'} sub={i?.vatSource} />
+            <Row label="VAT" value={i?.vatRate != null ? `${(i.vatRate * 100).toFixed(1)}%` : '—'} sub={i?.vatSource} />
             <Row label="Min margin" value={i?.minMarginPct != null ? `${i.minMarginPct}%` : '—'} />
           </div>
 
