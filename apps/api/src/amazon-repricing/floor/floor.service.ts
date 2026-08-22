@@ -66,6 +66,12 @@ export class FloorService {
     const cogsLandedCents = unit.costEur != null && eurPerUnit ? eurToCents(unit.costEur / eurPerUnit) : null;
     const fixedPerUnitCents = !isFba && unit.shippingEur != null && eurPerUnit ? eurToCents(unit.shippingEur / eurPerUnit) : 0;
 
+    // The same loaded costs the real computation uses. Previewing without them produces a LOWER
+    // floor than the stored one and reads as "your stored floor is stale" — sending a user to
+    // recompute a SKU whose floor is already correct, and undermining the one control that tells
+    // a stale floor from a wrong one.
+    const explainReturns = await this.returnsRateFor(row.sku, row.marketplaceId);
+
     let recomputed: { breakevenCents: number | null; strategyFloorCents: number | null } | null = null;
     if (vatRate != null && cogsLandedCents != null) {
       recomputed = solveFloors(
@@ -76,6 +82,10 @@ export class FloorService {
           closingFeeCents: fee?.closingFeeCents ?? 0,
           cogsLandedCents,
           fixedPerUnitCents,
+          returnsRate: explainReturns.rate,
+          refundAdminFeeCents: REPRICING_DEFAULTS.refundAdminFeeCents,
+          storagePerUnitCents: row.storagePerUnitCents ?? 0,
+          adCostPerUnitCents: row.adCostPerUnitCents ?? 0,
           searchHiCents: row.amazonMaxAllowedCents ?? undefined,
         },
         row.minMarginPct != null ? Number(row.minMarginPct) / 100 : REPRICING_DEFAULTS.minMarginPct,
@@ -104,8 +114,8 @@ export class FloorService {
         fbaFulfillmentFeeCents: isFba ? fee?.fbaFulfillmentFeeCents ?? 0 : 0,
         closingFeeCents: fee?.closingFeeCents ?? 0,
         minMarginPct: row.minMarginPct != null ? Number(row.minMarginPct) : REPRICING_DEFAULTS.minMarginPct * 100,
-        returnsRatePct: row.returnsRatePct != null ? Number(row.returnsRatePct) : null,
-        returnsRateSource: row.returnsRateSource,
+        returnsRatePct: explainReturns.rate * 100,
+        returnsRateSource: explainReturns.source,
         storagePerUnitCents: row.storagePerUnitCents ?? 0,
         adCostPerUnitCents: row.adCostPerUnitCents ?? 0,
       },

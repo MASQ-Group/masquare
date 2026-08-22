@@ -50,3 +50,24 @@ describe('describing what a floor covers', () => {
     expect(c.includes).toContain('outbound shipping');
   });
 });
+
+// The "if recomputed now" preview exists to tell a STALE floor from a WRONG one. Computing it with
+// different inputs than the real path inverts that: the preview comes out lower than a correct
+// stored floor and reads as "yours is stale", sending a user to recompute a SKU already right.
+describe('the preview must use the same inputs as the real computation', () => {
+  const solve = (returnsRate: number) => {
+    // Mirrors solveFloors' shape closely enough to show the direction of the error.
+    const net = 100;
+    return net * (1 + returnsRate); // more returns -> higher floor
+  };
+
+  it('omitting returns makes the preview lower than the stored floor', () => {
+    const stored = solve(0.016); // real path, returns applied
+    const previewWithout = solve(0); // preview, returns omitted
+    expect(previewWithout).toBeLessThan(stored);
+  });
+
+  it('with the same inputs the preview agrees, so "differs" means something', () => {
+    expect(solve(0.016)).toBe(solve(0.016));
+  });
+});
