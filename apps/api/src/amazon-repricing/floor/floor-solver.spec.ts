@@ -257,3 +257,41 @@ describe('loaded costs', () => {
     expect(solveFloors({ ...base, adCostPerUnitCents: 100 }, 0).breakevenCents!).toBeGreaterThan(bare);
   });
 });
+
+// A fixed search ceiling is a currency assumption in disguise. JPY held in minor units puts a
+// 10,000 yen item — about 62 euro — at the old ceiling, so every Japanese listing above that price
+// found no feasible price and was excluded as FLOOR_INFEASIBLE.
+describe('search range in a small-unit currency', () => {
+  const jpy = (yen: number) => yen * 100; // minor units, as stored
+
+  const base = {
+    vatRate: 0,                        // Japan keeps the consumption tax, so none is stripped
+    referralBrackets: [{ minCents: 1, maxCents: Number.MAX_SAFE_INTEGER, pct: 0.15 }],
+    cogsLandedCents: jpy(9_000),
+    fixedPerUnitCents: jpy(800),
+  };
+
+  it('solves a yen SKU well past the old fixed ceiling', () => {
+    const { breakevenCents, strategyFloorCents } = solveFloors(base, 0.12);
+    expect(breakevenCents).not.toBeNull();
+    expect(strategyFloorCents).not.toBeNull();
+    // Costs alone exceed the old 1,000,000 ceiling, so this could not previously be solved.
+    expect(breakevenCents!).toBeGreaterThan(10_000_00);
+  });
+
+  it('solves an expensive one too', () => {
+    const r = solveFloors({ ...base, cogsLandedCents: jpy(120_000) }, 0.12);
+    expect(r.strategyFloorCents).not.toBeNull();
+    expect(r.strategyFloorCents!).toBeGreaterThan(jpy(120_000));
+  });
+
+  it('an explicit ceiling still wins, so Amazon’s max is respected', () => {
+    const r = solveFloors({ ...base, searchHiCents: jpy(5_000) }, 0.12);
+    expect(r.strategyFloorCents).toBeNull(); // genuinely infeasible under that cap
+  });
+
+  it('leaves euro-sized SKUs exactly as they were', () => {
+    const eur = { ...base, vatRate: 0.19, cogsLandedCents: 2000, fixedPerUnitCents: 500 };
+    expect(solveFloors(eur, 0.12).strategyFloorCents).toBe(solveFloors({ ...eur, searchHiCents: 10_000_00 }, 0.12).strategyFloorCents);
+  });
+});

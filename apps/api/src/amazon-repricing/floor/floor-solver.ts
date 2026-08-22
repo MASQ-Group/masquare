@@ -74,7 +74,16 @@ export interface FloorResult {
   strategyFloorCents: number | null;
 }
 
-const DEFAULT_SEARCH_HI = 10_000_00; // €10,000 — generous upper bound for bisection.
+// A floor of last resort for the bisection range. Generous in a euro-like currency and NOT in a
+// currency with a small unit value: JPY held in minor units puts a 10,000 yen item — about 62
+// euro — at this ceiling, so every Japanese listing above that price found no feasible price and
+// was excluded as FLOOR_INFEASIBLE. The range is derived from the SKU's own costs below; this
+// only floors it.
+const DEFAULT_SEARCH_HI = 10_000_00;
+
+/** Multiple of a unit's fixed costs the search must span. Even when deductions take 90% of the
+ *  price, a feasible price is ~10x costs; 25x leaves room without making bisection slower. */
+const SEARCH_HI_COST_MULTIPLE = 25;
 
 // ---------------------------------------------------------------------------
 // Core cost model
@@ -162,9 +171,27 @@ export function netRevenueCents(priceCents: number, inp: FloorInputs): number {
  * revenue (0 ⇒ breakeven). Solves each referral bracket independently (the function is
  * increasing within a bracket, discontinuous between) and returns the global minimum.
  */
+/**
+ * Upper bound for the search, scaled to the unit's own costs.
+ *
+ * A fixed ceiling is a currency assumption in disguise. Deriving it from the costs the unit
+ * actually carries makes the solver work the same in yen as in euro.
+ */
+function defaultSearchHi(inp: FloorInputs): number {
+  const fixed =
+    inp.cogsLandedCents +
+    (inp.fbaFulfillmentFeeCents ?? 0) +
+    (inp.closingFeeCents ?? 0) +
+    (inp.storagePerUnitCents ?? 0) +
+    (inp.agedSurchargePerUnitCents ?? 0) +
+    (inp.adCostPerUnitCents ?? 0) +
+    (inp.fixedPerUnitCents ?? 0);
+  return Math.max(DEFAULT_SEARCH_HI, fixed * SEARCH_HI_COST_MULTIPLE);
+}
+
 function solveMinFeasiblePrice(inp: FloorInputs, requiredMarginOfNet: number): number | null {
   const searchLo = Math.max(1, inp.searchLoCents ?? 1);
-  const searchHi = inp.searchHiCents ?? DEFAULT_SEARCH_HI;
+  const searchHi = inp.searchHiCents ?? defaultSearchHi(inp);
   if (searchLo > searchHi) return null;
 
   // surplus(P) = NetRevenue(P) − requiredMargin(P); we want the smallest P with surplus ≥ 0.
