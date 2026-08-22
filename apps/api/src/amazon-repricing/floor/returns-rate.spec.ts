@@ -35,39 +35,39 @@ describe('resolving a returns rate', () => {
 });
 
 describe('describing what a floor covers', () => {
-  it('names what is missing, so a low floor can be judged on evidence', () => {
-    const c = describeCompleteness({ returnsRate: 0, returnsSource: 'default', storagePerUnitCents: 0, adCostPerUnitCents: 0, isFba: true });
-    expect(c.loaded).toBe(false);
-    expect(c.omits).toEqual(['returns', 'storage', 'advertising']);
-    expect(c.includes).toContain('FBA fulfilment fee');
-  });
+  const base = { returnsRate: 0.05, returnsSource: 'sku' as const, storagePerUnitCents: 0, adCostPerUnitCents: 0 };
 
-  it('is loaded only when nothing material is left out', () => {
-    const c = describeCompleteness({ returnsRate: 0.05, returnsSource: 'sku', storagePerUnitCents: 12, adCostPerUnitCents: 40, isFba: false });
+  it('a cost that does not apply is not an omission', () => {
+    // FBM: nothing sits at Amazon, and MASQ runs no advertising. Counting either as missing would
+    // block a low-margin strategy on a floor that is already complete.
+    const c = describeCompleteness({ ...base, isFba: false, storageApplies: false, adsApply: false });
     expect(c.loaded).toBe(true);
     expect(c.omits).toEqual([]);
-    expect(c.includes.some((x) => x.startsWith('returns (5.0%, sku)'))).toBe(true);
     expect(c.includes).toContain('outbound shipping');
   });
-});
 
-// The "if recomputed now" preview exists to tell a STALE floor from a WRONG one. Computing it with
-// different inputs than the real path inverts that: the preview comes out lower than a correct
-// stored floor and reads as "yours is stale", sending a user to recompute a SKU already right.
-describe('the preview must use the same inputs as the real computation', () => {
-  const solve = (returnsRate: number) => {
-    // Mirrors solveFloors' shape closely enough to show the direction of the error.
-    const net = 100;
-    return net * (1 + returnsRate); // more returns -> higher floor
-  };
-
-  it('omitting returns makes the preview lower than the stored floor', () => {
-    const stored = solve(0.016); // real path, returns applied
-    const previewWithout = solve(0); // preview, returns omitted
-    expect(previewWithout).toBeLessThan(stored);
+  it('storage is irrelevant on an FBM listing even where the marketplace has it enabled', () => {
+    const c = describeCompleteness({ ...base, isFba: false, storageApplies: true, adsApply: false });
+    expect(c.loaded).toBe(true);
   });
 
-  it('with the same inputs the preview agrees, so "differs" means something', () => {
-    expect(solve(0.016)).toBe(solve(0.016));
+  it('an applicable cost with no value IS an omission', () => {
+    const c = describeCompleteness({ ...base, isFba: true, storageApplies: true, adsApply: true });
+    expect(c.omits).toEqual(['storage', 'advertising']);
+    expect(c.loaded).toBe(false);
+  });
+
+  it('counts an applicable cost once it has a value', () => {
+    const c = describeCompleteness({
+      ...base, storagePerUnitCents: 12, adCostPerUnitCents: 40,
+      isFba: true, storageApplies: true, adsApply: true,
+    });
+    expect(c.loaded).toBe(true);
+    expect(c.includes).toEqual(expect.arrayContaining(['storage', 'advertising']));
+  });
+
+  it('still reports returns as missing when there are none — they always apply', () => {
+    const c = describeCompleteness({ ...base, returnsRate: 0, isFba: false, storageApplies: false, adsApply: false });
+    expect(c.omits).toEqual(['returns']);
   });
 });

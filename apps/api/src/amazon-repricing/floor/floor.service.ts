@@ -232,8 +232,13 @@ export class FloorService {
     // not pull, so they are whatever a human has entered and are REPORTED as absent otherwise —
     // a floor that quietly omits them looks identical to one that does not.
     const returns = await this.returnsRateFor(row.sku, row.marketplaceId);
-    const storagePerUnitCents = row.storagePerUnitCents ?? 0;
-    const adCostPerUnitCents = row.adCostPerUnitCents ?? 0;
+    // Storage and advertising only count where the marketplace actually incurs them. Off by
+    // default, so an FBM listing is not held to a storage cost that does not exist.
+    const costs = await this.prisma.repricingMarketplaceCosts.findUnique({ where: { marketplaceId: row.marketplaceId } });
+    const storageApplies = (costs?.storageApplies ?? false) && isFba;
+    const adsApply = costs?.adsApply ?? false;
+    const storagePerUnitCents = storageApplies ? row.storagePerUnitCents ?? costs?.defaultStoragePerUnitCents ?? 0 : 0;
+    const adCostPerUnitCents = adsApply ? row.adCostPerUnitCents ?? costs?.defaultAdCostPerUnitCents ?? 0 : 0;
 
     const inputs: FloorInputs = {
       vatRate,
@@ -255,6 +260,8 @@ export class FloorService {
       storagePerUnitCents,
       adCostPerUnitCents,
       isFba,
+      storageApplies: costs?.storageApplies ?? false,
+      adsApply,
     });
 
     // Per-SKU override, then the named preset the SKU follows, then the global default.

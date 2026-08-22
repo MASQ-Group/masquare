@@ -320,6 +320,41 @@ export class RepricingController {
 
   /** Quarantine queue (§5.5, §7): SKUs taken off automation by an unresolvable conflict, oldest
    *  first. `total`/`oldestHours` drive the §7 escalation flag (> 20 open or > 24h old). */
+  /** Which loaded costs each marketplace incurs. Absent = neither. */
+  @Get('marketplace-costs')
+  marketplaceCosts() {
+    return this.prisma.repricingMarketplaceCosts.findMany({ orderBy: { marketplaceId: 'asc' } });
+  }
+
+  /**
+   * Turn storage or advertising on for a marketplace.
+   *
+   * Enabling one makes it a REQUIRED input there: SKUs without a value are reported as omitting
+   * it and refuse an aggressive strategy until it is set. That is the intent — the cost is real
+   * on that marketplace — but it changes which SKUs a low-margin preset will accept.
+   */
+  @Post('marketplace-costs')
+  async setMarketplaceCosts(
+    @Body() body: { marketplace: string; storageApplies?: boolean; adsApply?: boolean; defaultStoragePerUnitCents?: number | null; defaultAdCostPerUnitCents?: number | null },
+  ) {
+    const iso = body?.marketplace?.trim().toUpperCase();
+    const marketplaceId = iso ? ISO_TO_MARKETPLACE[iso] : undefined;
+    if (!marketplaceId) return { error: `Unknown marketplace '${iso ?? ''}'` };
+    const data = {
+      storageApplies: body.storageApplies ?? false,
+      adsApply: body.adsApply ?? false,
+      defaultStoragePerUnitCents: body.defaultStoragePerUnitCents ?? null,
+      defaultAdCostPerUnitCents: body.defaultAdCostPerUnitCents ?? null,
+    };
+    const saved = await this.prisma.repricingMarketplaceCosts.upsert({
+      where: { marketplaceId },
+      create: { marketplaceId, ...data },
+      update: data,
+    });
+    // The floor is solved from these, so every stored floor on that marketplace is now stale.
+    return { ...saved, recomputeNeeded: true };
+  }
+
   /** The named strategies a SKU can follow. */
   @Get('strategies')
   strategies() {

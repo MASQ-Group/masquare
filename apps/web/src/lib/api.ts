@@ -927,6 +927,9 @@ export interface BlockedSeller {
 }
 
 export const repricingApi = {
+  marketplaceCosts: () => api.get<RepricingMarketplaceCosts[]>('/amazon-repricing/marketplace-costs').then((r) => r.data),
+  setMarketplaceCosts: (body: { marketplace: string; storageApplies?: boolean; adsApply?: boolean; defaultStoragePerUnitCents?: number | null; defaultAdCostPerUnitCents?: number | null }) =>
+    api.post('/amazon-repricing/marketplace-costs', body).then((r) => r.data),
   strategies: () => api.get<RepricingStrategyPreset[]>('/amazon-repricing/strategies').then((r) => r.data),
   assignStrategy: (body: {
     presetId: string; apply?: boolean;
@@ -2363,4 +2366,12 @@ export interface StrategyAssignResult {
   applied?: number;
   recomputeNeeded?: boolean;
   refused: { sku: string; marketplaceId: string; reason: string }[];
+}
+
+export interface RepricingMarketplaceCosts {
+  marketplaceId: string;
+  storageApplies: boolean;
+  adsApply: boolean;
+  defaultStoragePerUnitCents: number | null;
+  defaultAdCostPerUnitCents: number | null;
 }
