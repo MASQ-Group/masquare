@@ -5,9 +5,11 @@ import { toast } from 'sonner';
 import { CostHistory } from './CostHistory';
 import { ProductStockSection } from './ProductStockSection';
 import { ProductChannelIdentifiers } from './ProductChannelIdentifiers';
+import { ProductChannelsTab } from './ProductChannelsTab';
+import { FeatureList } from './FeatureList';
 import { FileDrop, ModalShell, Select } from '@masquare/ui';
 import {
-  attributesApi, brandsApi, categoriesApi, fulfilmentTypesApi, productClassesApi, productsApi,
+  attributesApi, brandsApi, categoriesApi, complianceOptionsApi, fulfilmentTypesApi, productClassesApi, productsApi,
   productTypesApi, vatClassesApi, vendorsApi,
   type Attribute, type Product, type ProductAlias, type ProductMediaItem, type RefLite,
 } from '../../lib/api';
@@ -20,15 +22,21 @@ interface Props {
   onSaved: () => void;
 }
 
+// The first five are what the business runs on daily and are deliberately left alone. Content and
+// Compliance are what the sales channels need — a different kind of data, on a different rhythm.
 const TABS = [
   { key: 'general', label: 'General' },
   { key: 'classification', label: 'Classification' },
   { key: 'identifiers', label: 'Identifiers' },
   { key: 'pricing', label: 'Cost & pricing' },
   { key: 'logistics', label: 'Package & logistics' },
+  { key: 'content', label: 'Content' },
+  { key: 'compliance', label: 'Compliance' },
 ];
-// Stock levels only mean anything for a saved product, so the tab appears in edit mode only.
+// Stock levels and channel plans only mean anything for a saved product, so both appear in edit
+// mode only — there is no product id to hang them on until then.
 const STOCK_TAB = { key: 'stock', label: 'Stock levels' };
+const CHANNELS_TAB = { key: 'channels', label: 'Channels' };
 
 const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s));
 
@@ -78,6 +86,40 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   });
   const [media, setMedia] = useState<ProductMediaItem[]>(product?.media ?? []);
 
+  // Listing copy. Amazon and OnBuy never display any of it — they carry our offer against their
+  // own catalogue entry — so this is eBay and Shopify only.
+  const [content, setContent] = useState({
+    ebayTitle: product?.ebayTitle ?? '',
+    descriptionHtml: product?.descriptionHtml ?? '',
+    searchKeywords: product?.searchKeywords ?? '',
+  });
+  // One row per feature rather than a textarea: bullets are an ordered list, and a list edited as
+  // prose loses its order the moment anyone reflows it.
+  const [features, setFeatures] = useState<string[]>(product?.keyFeatures ?? []);
+
+  // Typed rather than free text: the channel-eligibility rules have to read these without parsing
+  // prose, and "220-240V ~50Hz" sitting in a text attribute is not readable.
+  const [tech, setTech] = useState({
+    voltageRatingId: product?.voltageRatingId ?? '',
+    frequencyId: product?.frequencyId ?? '',
+    plugTypeId: product?.plugTypeId ?? '',
+    batteryRequired: product?.batteryRequired ?? false,
+    batteryTypeId: product?.batteryTypeId ?? '',
+    hazmatClassId: product?.hazmatClassId ?? '',
+    warrantyText: product?.warrantyText ?? '',
+    dangerousGoodsNote: product?.dangerousGoodsNote ?? '',
+  });
+
+  // The whole vocabulary in one request; it is small, static and shared by six fields.
+  const { data: complianceOptions = [] } = useQuery({
+    queryKey: ['compliance-options'],
+    queryFn: () => complianceOptionsApi.list(),
+  });
+  const optionsFor = (kind: string) => [
+    { value: '', label: 'Not stated' },
+    ...complianceOptions.filter((o) => o.kind === kind).map((o) => ({ value: o.id, label: o.label })),
+  ];
+
   const volumetric = useMemo(() => {
     const l = Number(dims.packageLengthCm), w = Number(dims.packageWidthCm), h = Number(dims.packageHeightCm);
     if (!l || !w || !h) return null;
@@ -107,6 +149,18 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
         packageLengthCm: numOrNull(dims.packageLengthCm),
         packageWidthCm: numOrNull(dims.packageWidthCm),
         packageHeightCm: numOrNull(dims.packageHeightCm),
+        ebayTitle: content.ebayTitle.trim() || null,
+        descriptionHtml: content.descriptionHtml.trim() || null,
+        keyFeatures: features.map((f) => f.trim()).filter(Boolean),
+        searchKeywords: content.searchKeywords.trim() || null,
+        voltageRatingId: tech.voltageRatingId || null,
+        frequencyId: tech.frequencyId || null,
+        plugTypeId: tech.plugTypeId || null,
+        batteryRequired: tech.batteryRequired,
+        batteryTypeId: tech.batteryTypeId || null,
+        hazmatClassId: tech.hazmatClassId || null,
+        warrantyText: tech.warrantyText.trim() || null,
+        dangerousGoodsNote: tech.dangerousGoodsNote.trim() || null,
         aliases: aliases.filter((a) => a.skuValue.trim()).map((a) => ({ skuValue: a.skuValue.trim(), label: a.label || undefined, fulfilmentTypeId: a.fulfilmentTypeId || undefined })),
         attributes: attrs
           .filter((a) => a.attributeId)
@@ -149,7 +203,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   return (
     <ModalShell
       open title={product ? 'Edit product' : 'New product'} subtitle={product?.mainSku}
-      tabs={product ? [...TABS, STOCK_TAB] : TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
+      tabs={product ? [...TABS, STOCK_TAB, CHANNELS_TAB] : TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
       primaryLabel={product ? 'Save changes' : 'Create product'} onPrimary={save} primaryDisabled={!canSave} busy={busy} onClose={onClose}
     >
       {tab === 'general' && (
@@ -390,7 +444,109 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
         </div>
       )}
 
+      {tab === 'content' && (
+        <div className="flex flex-col gap-4">
+          <p className="text-[12.5px] text-n-500">
+            Only eBay shows any of this. Amazon and OnBuy attach our offer to their own catalogue entry and
+            never display our copy.
+          </p>
+          <div>
+            <label className="label">eBay title</label>
+            <input
+              className="input"
+              maxLength={80}
+              value={content.ebayTitle}
+              onChange={(e) => { setContent((s) => ({ ...s, ebayTitle: e.target.value })); touch(); }}
+              placeholder="Search-optimised, English"
+            />
+            {/* eBay rejects anything longer, so the limit is shown rather than discovered. */}
+            <p className="mt-1 text-[12px] text-n-400">{content.ebayTitle.length}/80 characters</p>
+          </div>
+          <div>
+            <label className="label">Description</label>
+            <textarea
+              className="input min-h-[140px] py-2"
+              value={content.descriptionHtml}
+              onChange={(e) => { setContent((s) => ({ ...s, descriptionHtml: e.target.value })); touch(); }}
+              placeholder="Full description shown on the listing page. Basic HTML is accepted."
+            />
+          </div>
+          <FeatureList value={features} onChange={(next) => { setFeatures(next); touch(); }} />
+          <div>
+            <label className="label">Search keywords</label>
+            <input className="input" value={content.searchKeywords} onChange={(e) => { setContent((s) => ({ ...s, searchKeywords: e.target.value })); touch(); }} placeholder="Comma separated" />
+          </div>
+        </div>
+      )}
+
+      {tab === 'compliance' && (
+        <div className="flex flex-col gap-5">
+          <div>
+            <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-n-500">Technical facts</h4>
+            <p className="mb-3 text-[12.5px] text-n-500">
+              Chosen from fixed lists, never typed — these are compared by machine, and an answer that varies
+              with who filled it in cannot be. Pick a 220–240V rating and the product is blocked from the US,
+              Canada, Mexico and Japan automatically. Add missing values under Settings → Compliance values.
+            </p>
+            <div className="grid grid-cols-2 gap-4 max-[560px]:grid-cols-1">
+              <div>
+                <label className="label">Voltage rating</label>
+                <Select searchable value={tech.voltageRatingId} onChange={(v) => { setTech((s) => ({ ...s, voltageRatingId: v })); touch(); }}
+                  placeholder="Not stated" options={optionsFor('VOLTAGE_RATING')} />
+              </div>
+              <div>
+                <label className="label">Frequency</label>
+                <Select searchable value={tech.frequencyId} onChange={(v) => { setTech((s) => ({ ...s, frequencyId: v })); touch(); }}
+                  placeholder="Not stated" options={optionsFor('FREQUENCY')} />
+              </div>
+              <div>
+                <label className="label">Plug type</label>
+                <Select searchable value={tech.plugTypeId} onChange={(v) => { setTech((s) => ({ ...s, plugTypeId: v })); touch(); }}
+                  placeholder="Not stated" options={optionsFor('PLUG_TYPE')} />
+              </div>
+              <div>
+                <label className="label">Battery type</label>
+                <Select searchable value={tech.batteryTypeId} onChange={(v) => { setTech((s) => ({ ...s, batteryTypeId: v })); touch(); }}
+                  placeholder="Not stated" options={optionsFor('BATTERY_TYPE')} />
+              </div>
+              <div>
+                <label className="label">Battery</label>
+                <label className="flex h-9 cursor-pointer items-center gap-2 text-[13px] text-n-700">
+                  <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={tech.batteryRequired} onChange={(e) => { setTech((s) => ({ ...s, batteryRequired: e.target.checked })); touch(); }} />
+                  Contains or requires a battery
+                </label>
+              </div>
+              <div>
+                <label className="label">Dangerous goods class</label>
+                <Select searchable value={tech.hazmatClassId} onChange={(v) => { setTech((s) => ({ ...s, hazmatClassId: v })); touch(); }}
+                  placeholder="Not stated" options={optionsFor('HAZMAT_CLASS')} />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-n-500">Warranty &amp; safety</h4>
+            <div className="flex flex-col gap-4">
+              <div><label className="label">Warranty</label><input className="input" value={tech.warrantyText} onChange={(e) => { setTech((s) => ({ ...s, warrantyText: e.target.value })); touch(); }} placeholder="e.g. 2-year manufacturer warranty" /></div>
+              <div>
+                <label className="label">Dangerous goods note</label>
+                <textarea className="input min-h-[72px] py-2" value={tech.dangerousGoodsNote} onChange={(e) => { setTech((s) => ({ ...s, dangerousGoodsNote: e.target.value })); touch(); }} placeholder="Anything the class above does not capture — storage or transport restrictions" />
+              </div>
+            </div>
+          </div>
+
+          {/* Manufacturer and EU responsible person describe a company, not a product — they live on
+              the brand so one edit covers every line that brand sells. */}
+          <div className="rounded-lg border border-n-200 bg-n-25 px-3.5 py-3 text-[12.5px] text-n-600">
+            <span className="font-semibold text-n-800">Manufacturer and EU responsible person</span> are held on the
+            brand{brand ? <> — edit them on <b>{brand.name}</b> under Settings &rarr; Brands</> : ', so set this product’s brand first'}.
+            No channel demands them of us today; GPSR would make them required for EU listings.
+          </div>
+        </div>
+      )}
+
       {tab === 'stock' && product && <ProductStockSection productId={product.id} />}
+      {tab === 'channels' && product && <ProductChannelsTab productId={product.id} />}
     </ModalShell>
   );
 }

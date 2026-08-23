@@ -7,6 +7,9 @@ export interface ModalTab {
   label: string;
 }
 
+/** Above this many tabs a top strip wraps, so the rail takes over. Six fits 720px comfortably. */
+const SIDE_RAIL_FROM = 6;
+
 export interface ModalShellProps {
   open: boolean;
   title: string;
@@ -24,7 +27,13 @@ export interface ModalShellProps {
   onSecondary?: () => void;
   secondaryDisabled?: boolean;
   busy?: boolean;
-  /** Starting size before the user resizes (defaults to 720×560). */
+  /**
+   * Where the tabs sit. 'auto' puts them in a side rail once there are more than SIDE_RAIL_FROM of
+   * them, because a top strip silently wraps to a second row and half the tabs disappear below the
+   * fold — which is exactly how a nine-tab card ended up needing to be maximised to be used.
+   */
+  tabLayout?: 'auto' | 'top' | 'side';
+  /** Starting size before the user resizes. Defaults to 720×560, or wider when a rail is shown. */
   initialSize?: { w: number; h: number };
   onClose: () => void;
   children: ReactNode;
@@ -47,12 +56,18 @@ export function ModalShell({
   onSecondary,
   secondaryDisabled,
   busy,
+  tabLayout = 'auto',
   initialSize,
   onClose,
   children,
 }: ModalShellProps) {
+  const useRail = tabLayout === 'side' || (tabLayout === 'auto' && (tabs?.length ?? 0) > SIDE_RAIL_FROM);
   const [expanded, setExpanded] = useState(false);
-  const [size, setSize] = useState<{ w: number; h: number }>(initialSize ?? { w: 720, h: 560 });
+  // A rail costs horizontal space, so a modal that has one starts wider rather than making the
+  // first thing every user does be to drag it.
+  const [size, setSize] = useState<{ w: number; h: number }>(
+    initialSize ?? (useRail ? { w: 940, h: 640 } : { w: 720, h: 560 }),
+  );
   const dragState = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
   const attemptClose = useCallback(() => {
@@ -132,13 +147,15 @@ export function ModalShell({
           </button>
         </div>
 
-        {/* Tabs */}
-        {tabs && tabs.length > 0 && (
-          <div className="flex gap-1 border-b border-n-200 px-4">
+        {/* Tabs across the top — only while they fit on one line. */}
+        {tabs && tabs.length > 0 && !useRail && (
+          <div role="tablist" className="flex gap-1 border-b border-n-200 px-4">
             {tabs.map((t) => (
               <button
                 key={t.key}
                 type="button"
+                role="tab"
+                aria-selected={active === t.key}
                 onClick={() => onTabChange?.(t.key)}
                 className={cn(
                   'relative px-3 py-2.5 text-[13px] font-medium transition-colors',
@@ -153,8 +170,38 @@ export function ModalShell({
           </div>
         )}
 
-        {/* Body */}
-        <div className="flex-1 overflow-auto px-5 py-4">{children}</div>
+        {/* Body. With a rail the two scroll independently, so a long form never scrolls the nav
+            out of reach — the point of the rail is that every section stays one click away. */}
+        <div className="flex min-h-0 flex-1">
+          {tabs && tabs.length > 0 && useRail && (
+            <div
+              role="tablist"
+              aria-orientation="vertical"
+              className="w-[186px] shrink-0 overflow-y-auto border-r border-n-200 bg-n-25 p-2 max-[720px]:w-[54px]"
+            >
+              {tabs.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active === t.key}
+                  title={t.label}
+                  onClick={() => onTabChange?.(t.key)}
+                  className={cn(
+                    'mb-0.5 w-full truncate rounded-md px-2.5 py-2 text-left text-[13px] font-medium transition-colors',
+                    'max-[720px]:px-1 max-[720px]:text-center max-[720px]:text-[11px]',
+                    active === t.key
+                      ? 'bg-teal-500 text-white'
+                      : 'text-n-600 hover:bg-n-100 hover:text-n-900',
+                  )}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="min-w-0 flex-1 overflow-auto px-5 py-4">{children}</div>
+        </div>
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t border-n-200 px-5 py-3.5">

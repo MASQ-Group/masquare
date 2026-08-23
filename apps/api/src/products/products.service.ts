@@ -40,6 +40,11 @@ const listInclude = {
 } satisfies Prisma.ProductInclude;
 
 const fullInclude = {
+  voltageRating: { select: { id: true, code: true, label: true } },
+  frequency: { select: { id: true, code: true, label: true } },
+  plugTypeRef: { select: { id: true, code: true, label: true } },
+  batteryTypeRef: { select: { id: true, code: true, label: true } },
+  hazmatClassRef: { select: { id: true, code: true, label: true } },
   brand: { select: { id: true, name: true } },
   vendor: { select: { id: true, name: true } },
   productType: { select: { id: true, name: true } },
@@ -117,6 +122,30 @@ export class ProductsService {
       packageWidthCm: num(p.packageWidthCm),
       packageHeightCm: num(p.packageHeightCm),
       volumetricWeightKg: volumetric(p.packageLengthCm, p.packageWidthCm, p.packageHeightCm),
+
+      // Listing content. Only eBay and Shopify ever display any of it.
+      ebayTitle: p.ebayTitle ?? null,
+      descriptionHtml: p.descriptionHtml ?? null,
+      keyFeatures: p.keyFeatures ?? [],
+      searchKeywords: p.searchKeywords ?? null,
+
+      // Technical facts the channel-eligibility rules read. The id is what the form binds to; the
+      // resolved option travels with it so a list can show the label without a second request.
+      voltageRatingId: p.voltageRatingId ?? null,
+      frequencyId: p.frequencyId ?? null,
+      plugTypeId: p.plugTypeId ?? null,
+      batteryRequired: p.batteryRequired ?? null,
+      batteryTypeId: p.batteryTypeId ?? null,
+      hazmatClassId: p.hazmatClassId ?? null,
+      voltageRating: p.voltageRating ?? null,
+      frequency: p.frequency ?? null,
+      plugTypeRef: p.plugTypeRef ?? null,
+      batteryTypeRef: p.batteryTypeRef ?? null,
+      hazmatClassRef: p.hazmatClassRef ?? null,
+
+      warrantyText: p.warrantyText ?? null,
+      dangerousGoodsNote: p.dangerousGoodsNote ?? null,
+
       aliases:
         p.aliases?.map((a: any) => ({
           id: a.id,
@@ -297,6 +326,18 @@ export class ProductsService {
       mapCurrency: map.currency,
       msrpAmount: msrp.amount,
       msrpCurrency: msrp.currency,
+      ebayTitle: dto.ebayTitle ?? null,
+      descriptionHtml: dto.descriptionHtml ?? null,
+      keyFeatures: dto.keyFeatures ?? [],
+      searchKeywords: dto.searchKeywords ?? null,
+      voltageRatingId: dto.voltageRatingId ?? null,
+      frequencyId: dto.frequencyId ?? null,
+      plugTypeId: dto.plugTypeId ?? null,
+      batteryRequired: dto.batteryRequired ?? null,
+      batteryTypeId: dto.batteryTypeId ?? null,
+      hazmatClassId: dto.hazmatClassId ?? null,
+      warrantyText: dto.warrantyText ?? null,
+      dangerousGoodsNote: dto.dangerousGoodsNote ?? null,
       productWeightKg: dto.productWeightKg ?? null,
       packageWeightKg: dto.packageWeightKg ?? null,
       packageLengthCm: dto.packageLengthCm ?? null,

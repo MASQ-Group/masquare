@@ -18,6 +18,20 @@ export function BrandsSection() {
   const fields: SimpleField[] = [
     { key: 'name', label: 'Name', required: true },
     { key: 'website', label: 'Website' },
+
+    { key: 'manufacturerName', label: 'Legal name', section: 'Manufacturer',
+      hint: 'Used for GPSR. No channel requires it of us today; EU listings would.' },
+    { key: 'manufacturerAddress', label: 'Address' },
+    { key: 'manufacturerEmail', label: 'Email' },
+    { key: 'manufacturerPhone', label: 'Phone' },
+    { key: 'manufacturerContactUrl', label: 'Contact URL' },
+
+    { key: 'euRpName', label: 'Legal name', section: 'EU responsible person',
+      hint: 'Required by GPSR only when the manufacturer sits outside the EU.' },
+    { key: 'euRpAddress', label: 'Address' },
+    { key: 'euRpEmail', label: 'Email' },
+    { key: 'euRpPhone', label: 'Phone' },
+    { key: 'euRpContactUrl', label: 'Contact URL' },
   ];
 
   return (
@@ -34,6 +48,14 @@ export function BrandsSection() {
         columns={[
           { key: 'name', header: 'Name', render: (r) => <span className="font-medium text-n-800">{r.name}</span> },
           { key: 'website', header: 'Website', render: (r) => r.website ?? '—' },
+          {
+            key: 'gpsr',
+            header: 'GPSR contacts',
+            render: (r) =>
+              r.manufacturerName
+                ? <span className="text-teal-700">{r.euRpName ? 'Manufacturer + EU RP' : 'Manufacturer'}</span>
+                : <span className="text-n-400">Not set</span>,
+          },
         ]}
         onEdit={setEditing}
         onDelete={(r) => confirm(`Remove ${r.name}?`) && del.mutate(r.id)}

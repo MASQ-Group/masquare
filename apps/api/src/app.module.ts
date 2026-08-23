@@ -9,6 +9,7 @@ import { CompanyScopeInterceptor } from './common/company-scope.interceptor';
 import { PrismaModule } from './prisma/prisma.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { JobsModule } from './jobs/jobs.module';
+import { ListingModule } from './listing/listing.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -88,6 +89,7 @@ import { HealthController } from './health.controller';
     ChannelListingsModule,
     IntegrationsModule,
     AmazonRepricingModule,
+    ListingModule,
   ],
   controllers: [HealthController],
   providers: [

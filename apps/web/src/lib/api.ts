@@ -177,7 +177,22 @@ export interface Vendor {
   website?: string | null;
   contacts: VendorContact[];
 }
-export interface Brand { id: string; name: string; website?: string | null }
+export interface Brand {
+  id: string;
+  name: string;
+  website?: string | null;
+  /** GPSR contacts. Held on the brand because they describe a company, not a product. */
+  manufacturerName?: string | null;
+  manufacturerAddress?: string | null;
+  manufacturerEmail?: string | null;
+  manufacturerPhone?: string | null;
+  manufacturerContactUrl?: string | null;
+  euRpName?: string | null;
+  euRpAddress?: string | null;
+  euRpEmail?: string | null;
+  euRpPhone?: string | null;
+  euRpContactUrl?: string | null;
+}
 export interface ProductType { id: string; name: string }
 export interface FulfilmentType { id: string; name: string; code?: string | null; active: boolean }
 export interface Category { id: string; name: string; parentId: string | null; sortOrder: number }
@@ -351,6 +366,30 @@ export interface ProductAttr {
   attributeName?: string;
   inputType?: 'predefined' | 'free_text';
 }
+export interface ComplianceOptionLite { id: string; code: string; label: string }
+
+/** One entry in a compliance vocabulary. `kind` names the list it belongs to. */
+export interface ComplianceOption extends ComplianceOptionLite {
+  kind: string;
+  /** Only voltage ratings carry a range; it is what the eligibility rules compare. */
+  numericMin: number | null;
+  numericMax: number | null;
+  note: string | null;
+  sortOrder: number;
+  active: boolean;
+}
+
+export const complianceOptionsApi = {
+  kinds: () => api.get<{ kind: string; label: string }[]>('/compliance-options/kinds').then((r) => r.data),
+  list: (kind?: string, includeInactive = false) =>
+    api.get<ComplianceOption[]>('/compliance-options', { params: { kind, includeInactive: includeInactive || undefined } }).then((r) => r.data),
+  usage: (id: string) => api.get<{ id: string; products: number }>(`/compliance-options/${id}/usage`).then((r) => r.data),
+  create: (dto: Partial<ComplianceOption>) => api.post<ComplianceOption>('/compliance-options', dto).then((r) => r.data),
+  update: (id: string, dto: Partial<ComplianceOption>) => api.patch<ComplianceOption>(`/compliance-options/${id}`, dto).then((r) => r.data),
+  /** Retires rather than deletes when products still reference it. */
+  remove: (id: string) => api.delete<{ ok: boolean; retired: boolean; inUse: number }>(`/compliance-options/${id}`).then((r) => r.data),
+};
+
 export interface Product {
   id: string;
   mainSku: string;
@@ -375,6 +414,30 @@ export interface Product {
   manufacturerSku: string | null;
   countryOfOrigin: string | null;
   hsCode: string | null;
+
+  // Listing content. Only eBay and Shopify ever display any of it.
+  ebayTitle: string | null;
+  descriptionHtml: string | null;
+  keyFeatures: string[];
+  searchKeywords: string | null;
+
+  // Technical facts, chosen from the compliance vocabulary rather than typed. The id is what the
+  // form binds to; the resolved option rides along so a label can be shown without a second call.
+  voltageRatingId: string | null;
+  frequencyId: string | null;
+  plugTypeId: string | null;
+  batteryRequired: boolean | null;
+  batteryTypeId: string | null;
+  hazmatClassId: string | null;
+  voltageRating: ComplianceOptionLite | null;
+  frequency: ComplianceOptionLite | null;
+  plugTypeRef: ComplianceOptionLite | null;
+  batteryTypeRef: ComplianceOptionLite | null;
+  hazmatClassRef: ComplianceOptionLite | null;
+
+  warrantyText: string | null;
+  dangerousGoodsNote: string | null;
+
   purchaseCost: Money;
   /** Individual units tracked by serial number; enforced at receiving and at sale. */
   serialTracked: boolean;
@@ -968,6 +1031,95 @@ export interface OnboardResult {
   unmatchedListings: number; totalListings: number;
 }
 export interface RecomputeResult { processed: number; ok: number; stopped?: boolean }
+
+// ---- Listing preparation (no marketplace writes) --------------------------
+
+export interface MarketplaceProfile {
+  id: string;
+  channelType: string;
+  marketplace: string;
+  label: string;
+  mainsVoltageMinV: number | null;
+  mainsVoltageMaxV: number | null;
+  mainsFrequencyHz: string | null;
+  plugTypes: string[];
+  requiresGpsrContacts: boolean;
+  active: boolean;
+  note: string | null;
+}
+
+/** One thing that is missing, and whether it stops a listing or merely weakens it. */
+export interface ReadinessGap {
+  key: string;
+  label: string;
+  severity: 'required' | 'recommended';
+}
+export interface ReadinessVerdict {
+  ready: boolean;
+  missing: ReadinessGap[];
+  satisfiedCount: number;
+  totalCount: number;
+}
+
+/** Why a product may not be sold somewhere. A block cannot be typed away. */
+export interface EligibilityFinding {
+  code: 'VOLTAGE' | 'PLUG' | 'FREQUENCY' | 'HAZMAT';
+  severity: 'block' | 'warn';
+  reason: string;
+}
+export interface EligibilityVerdict {
+  eligible: boolean;
+  findings: EligibilityFinding[];
+  unchecked: string[];
+  /** No profile exists for this market, so nothing was judged — not the same as a pass. */
+  noProfile?: boolean;
+}
+
+export interface ChannelPlan {
+  id: string;
+  categoryRef: string | null;
+  categoryName: string | null;
+  aspects: unknown;
+  condition: string;
+  handlingTimeDays: number | null;
+  deliveryTemplate: string | null;
+  boostPct: number;
+  status: string;
+  externalListingId: string | null;
+  listedAt: string | null;
+}
+
+export interface ProductChannelRow {
+  integrationId: string;
+  name: string;
+  channelType: string;
+  marketplace: string;
+  integrationStatus: string;
+  plan: ChannelPlan | null;
+  readiness: ReadinessVerdict;
+  eligibility: EligibilityVerdict;
+  /** eBay's required item specifics are not checked yet — the schemas arrive with Phase 4. */
+  aspectsPending: boolean;
+}
+
+export interface ProductChannels {
+  productId: string;
+  brand: { id: string; name: string; manufacturerName: string | null; euRpName: string | null } | null;
+  channels: ProductChannelRow[];
+  summary: { eligible: number; ready: number; blocked: number; total: number };
+}
+
+export const listingApi = {
+  marketplaceProfiles: () => api.get<MarketplaceProfile[]>('/listing/marketplace-profiles').then((r) => r.data),
+  updateMarketplaceProfile: (id: string, patch: Partial<MarketplaceProfile>) =>
+    api.patch<MarketplaceProfile>(`/listing/marketplace-profiles/${id}`, patch).then((r) => r.data),
+  productChannels: (productId: string) =>
+    api.get<ProductChannels>(`/listing/products/${productId}/channels`).then((r) => r.data),
+  upsertPlan: (productId: string, integrationId: string, patch: Partial<ChannelPlan>) =>
+    api.put<ChannelPlan>(`/listing/products/${productId}/channels/${integrationId}`, patch).then((r) => r.data),
+  removePlan: (productId: string, integrationId: string, marketplace: string) =>
+    api.delete<{ removed: boolean }>(`/listing/products/${productId}/channels/${integrationId}`, { params: { marketplace } }).then((r) => r.data),
+};
 
 export const repricingApi = {
   marketplaceCosts: () => api.get<RepricingMarketplaceCosts[]>('/amazon-repricing/marketplace-costs').then((r) => r.data),

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell, BulkImport, type ImportField } from '@masquare/ui';
@@ -177,6 +177,8 @@ export interface SimpleField {
   max?: number;
   suffix?: string;
   hint?: string;
+  /** Starts a labelled group. Fields without one continue the group above. */
+  section?: string;
 }
 
 export function SimpleRefModal({
@@ -230,8 +232,24 @@ export function SimpleRefModal({
       onClose={onClose}
     >
       <div className="flex flex-col gap-4">
-        {fields.map((f) =>
-          f.type === 'checkbox' ? (
+        {fields.map((f, i) => (
+          <Fragment key={f.key}>
+            {/* A heading only where the group actually changes, so a short form stays unadorned. */}
+            {f.section && f.section !== fields[i - 1]?.section && (
+              <div className={`text-[11px] font-bold uppercase tracking-wide text-n-500 ${i > 0 ? 'mt-1 border-t border-n-100 pt-3' : ''}`}>
+                {f.section}
+              </div>
+            )}
+            {renderField(f)}
+          </Fragment>
+        ))}
+      </div>
+    </ModalShell>
+  );
+
+  function renderField(f: SimpleField) {
+    return (
+        f.type === 'checkbox' ? (
             <label key={f.key} className="flex cursor-pointer items-center gap-2.5">
               <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={!!values[f.key]} onChange={(e) => set(f.key, e.target.checked)} />
               <span className="text-[13.5px] text-n-700">{f.label}</span>
@@ -273,9 +291,7 @@ export function SimpleRefModal({
               />
               {f.hint && <div className="mt-1 text-[11.5px] text-n-500">{f.hint}</div>}
             </div>
-          ),
-        )}
-      </div>
-    </ModalShell>
-  );
+          )
+    );
+  }
 }
