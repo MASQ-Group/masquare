@@ -408,6 +408,21 @@ model Brand {
   name    String
   website String?
 
+  // GPSR contacts (EU 2023/988, in force 13 Dec 2024). Held here rather than on the product
+  // because they describe a company: Fissler's responsible person is the same on every Fissler
+  // line. Products inherit these; nothing blocks on them being empty.
+  manufacturerName       String? @map("manufacturer_name")
+  manufacturerAddress    String? @map("manufacturer_address")
+  manufacturerEmail      String? @map("manufacturer_email")
+  manufacturerPhone      String? @map("manufacturer_phone")
+  manufacturerContactUrl String? @map("manufacturer_contact_url")
+  /** Required when the manufacturer sits outside the EU. */
+  euRpName               String? @map("eu_rp_name")
+  euRpAddress            String? @map("eu_rp_address")
+  euRpEmail              String? @map("eu_rp_email")
+  euRpPhone              String? @map("eu_rp_phone")
+  euRpContactUrl         String? @map("eu_rp_contact_url")
+
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
   createdById String?   @map("created_by") @db.Uuid
@@ -573,6 +588,11 @@ model PlatformSettings {
   // matters because opening stock is a physical count that already reflects past sales.
   deductStockOnSale Boolean @default(false) @map("deduct_stock_on_sale")
 
+  // The most OnBuy boost any listing may carry. OnBuy defaults new offers to 20%; we default to 0
+  // and refuse anything above this rather than warn, because a warning on a bulk action is read
+  // once and the commission is paid every month afterwards.
+  maxBoostPct Decimal @default(0) @map("max_boost_pct") @db.Decimal(5, 2)
+
   // Whether a channel sync applies cancellations & refunds it pulls (marking the matched
   // transaction cancelled/refunded, releasing stock, flagging the return decision). Off by
   // default so the behaviour stays dormant on an environment until it's deliberately enabled —
@@ -649,6 +669,35 @@ model Product {
   msrpAmount           Decimal? @map("msrp_amount") @db.Decimal(14, 4)
   msrpCurrency         String   @default("EUR") @map("msrp_currency")
 
+  // ---- Listing content ----------------------------------------------------
+  // Only eBay and Shopify ever display any of this. Amazon and OnBuy attach our offer to their own
+  // catalogue entry and show their own copy, so `title` above stays what it has always been: a name
+  // for our own people, not a marketplace field.
+  /** eBay's title, capped at 80 characters by eBay itself. Written for search, not for us. */
+  ebayTitle       String? @map("ebay_title")
+  descriptionHtml String? @map("description_html")
+  /** Ordered selling points. Rendered as bullets by every channel that takes them. */
+  keyFeatures     String[] @map("key_features")
+  searchKeywords  String? @map("search_keywords")
+
+  // ---- Technical facts (drive channel eligibility) ------------------------
+  // Chosen from a controlled vocabulary, never typed. A rule cannot reliably read "220-240V ~50Hz"
+  // out of free text, and a compliance answer that varies by who typed it is not an answer. Every
+  // one is nullable — "not stated" has to stay distinguishable from "stated as none".
+  voltageRatingId String? @map("voltage_rating_id") @db.Uuid
+  frequencyId     String? @map("frequency_id") @db.Uuid
+  plugTypeId      String? @map("plug_type_id") @db.Uuid
+  batteryRequired Boolean? @map("battery_required")
+  batteryTypeId   String? @map("battery_type_id") @db.Uuid
+  hazmatClassId   String? @map("hazmat_class_id") @db.Uuid
+
+  // ---- Product-level compliance -------------------------------------------
+  // Manufacturer and EU responsible person live on Brand — they are facts about a company, not a
+  // product, and retyping an address onto thousands of rows is how that data goes wrong. What
+  // genuinely varies per product sits here.
+  warrantyText       String? @map("warranty_text")
+  dangerousGoodsNote String? @map("dangerous_goods_note")
+
   // Package & logistics (metric base units: kg, cm)
   productWeightKg Decimal? @map("product_weight_kg") @db.Decimal(10, 3)
   packageWeightKg Decimal? @map("package_weight_kg") @db.Decimal(10, 3)
@@ -688,6 +737,13 @@ model Product {
   vendorImportChanges  VendorImportChange[]
   availabilityLedger   AvailabilityLedger[]
   channelListings      ChannelListing[]
+
+  voltageRating ComplianceOption? @relation("ProductVoltageRating", fields: [voltageRatingId], references: [id], onDelete: SetNull)
+  frequency     ComplianceOption? @relation("ProductFrequency", fields: [frequencyId], references: [id], onDelete: SetNull)
+  plugTypeRef   ComplianceOption? @relation("ProductPlugType", fields: [plugTypeId], references: [id], onDelete: SetNull)
+  batteryTypeRef ComplianceOption? @relation("ProductBatteryType", fields: [batteryTypeId], references: [id], onDelete: SetNull)
+  hazmatClassRef ComplianceOption? @relation("ProductHazmatClass", fields: [hazmatClassId], references: [id], onDelete: SetNull)
+  channelPlans         ProductChannelPlan[]
 
   // Every products list filters out soft-deleted rows and often filters by one of
   // these FKs (brand/vendor/type/category); none were indexed before.
@@ -778,6 +834,132 @@ model ChannelListing {
   @@index([productId])
   @@index([companyId])
   @@map("channel_listing")
+}
+
+/// What a marketplace's mains supply and plug standard actually are.
+///
+/// Reference data, not rules-as-code: a 230V appliance must never reach a US listing however
+/// complete its record is, and that verdict has to be reachable by someone editing a table rather
+/// than by a deploy. Compared against the product's own typed voltage/plug fields.
+/**
+ * Controlled vocabularies for the facts a marketplace judges a product on.
+ *
+ * One table rather than five, because the shape is identical and the alternative is five near-copies
+ * of the same CRUD. `kind` names the list; `code` is what the rules and the channels see; `label` is
+ * what a person reads. Editable, so a value nobody anticipated does not need a deploy.
+ */
+model ComplianceOption {
+  id    String @id @default(uuid()) @db.Uuid
+  /** VOLTAGE_RATING | FREQUENCY | PLUG_TYPE | BATTERY_TYPE | HAZMAT_CLASS */
+  kind  String
+  code  String
+  label String
+
+  /**
+   * The mains range a voltage rating stands for, in volts.
+   *
+   * Only VOLTAGE_RATING uses these, and it is why the vocabulary exists: the eligibility rules
+   * compare numbers, so the range has to travel with the option rather than be parsed out of its
+   * label. Null on every other kind, and on ratings that are not mains-powered at all.
+   */
+  numericMin Int? @map("numeric_min")
+  numericMax Int? @map("numeric_max")
+
+  note      String?
+  sortOrder Int     @default(0) @map("sort_order")
+  active    Boolean @default(true)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  productsVoltage     Product[] @relation("ProductVoltageRating")
+  productsFrequency   Product[] @relation("ProductFrequency")
+  productsPlugType    Product[] @relation("ProductPlugType")
+  productsBatteryType Product[] @relation("ProductBatteryType")
+  productsHazmatClass Product[] @relation("ProductHazmatClass")
+
+  @@unique([kind, code])
+  @@index([kind, active])
+  @@map("compliance_option")
+}
+
+model MarketplaceProfile {
+  id          String @id @default(uuid()) @db.Uuid
+  /// amazon | ebay | onbuy | shopify
+  channelType String @map("channel_type")
+  /// ISO-2 country of the marketplace. Empty string = every marketplace of this channel type.
+  marketplace String @default("")
+  label       String
+
+  mainsVoltageMinV Int?     @map("mains_voltage_min_v")
+  mainsVoltageMaxV Int?     @map("mains_voltage_max_v")
+  mainsFrequencyHz String?  @map("mains_frequency_hz")
+  /// IEC plug letters accepted in this market, e.g. ["G"] for the UK.
+  plugTypes        String[] @map("plug_types")
+  allowBatteries   Boolean  @default(true) @map("allow_batteries")
+  allowHazmat      Boolean  @default(true) @map("allow_hazmat")
+
+  /// Off switches the profile off without deleting it.
+  active Boolean @default(true)
+  note   String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([channelType, marketplace])
+  @@map("marketplace_profile")
+}
+
+/// Our intention to list one product on one channel — everything the channel needs that the
+/// product record itself does not carry.
+///
+/// Created on demand, never seeded: four thousand products across twenty channels would be eighty
+/// thousand empty rows, and a row existing means someone has started preparing a listing.
+/// Eligibility is NOT stored here; it is derived from the product and the marketplace profile, so
+/// correcting a voltage fixes every verdict at once instead of leaving stale ones behind.
+model ProductChannelPlan {
+  id            String @id @default(uuid()) @db.Uuid
+  productId     String @map("product_id") @db.Uuid
+  integrationId String @map("integration_id") @db.Uuid
+  /// ISO-2 for channels that span markets on one token (eBay); empty otherwise.
+  marketplace   String @default("")
+
+  /// The channel's own category handle: Amazon productType, eBay categoryId, OnBuy category.
+  categoryRef  String? @map("category_ref")
+  categoryName String? @map("category_name")
+  /// Category-specific values, keyed by the channel's own aspect names. JSON because the required
+  /// set differs per category and is discovered from the channel at runtime, never hard-coded.
+  aspects      Json?
+
+  /// NEW everywhere except eBay, which occasionally sells open box or used.
+  condition        String  @default("NEW")
+  handlingTimeDays Int?    @map("handling_time_days")
+  /// OnBuy delivery template key.
+  deliveryTemplate String? @map("delivery_template")
+  /// OnBuy boost. Zero unless a human decides otherwise — OnBuy's own default is 20%, a fifth of
+  /// revenue, so it is never inherited from them and never set by automation.
+  boostPct         Decimal @default(0) @map("boost_pct") @db.Decimal(5, 2)
+
+  /// DRAFT | READY | LISTED | ARCHIVED. A human moves it to LISTED; nothing publishes itself.
+  status String @default("DRAFT")
+  /// Set once the channel confirms the listing: ASIN, eBay ItemID, OnBuy OPC.
+  externalListingId String?   @map("external_listing_id")
+  listedAt          DateTime? @map("listed_at")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  product     Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  integration ChannelIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, integrationId, marketplace])
+  @@index([integrationId, status])
+  @@index([deletedAt])
+  @@map("product_channel_plan")
 }
 
 /// Audit of every quantity/price push to a channel listing (one row per listing per attempt),
@@ -1622,6 +1804,7 @@ model ChannelIntegration {
   secrets IntegrationSecret[]
   audits  IntegrationAudit[]
   channelListings ChannelListing[]
+  productPlans    ProductChannelPlan[]
 
   @@map("channel_integration")
 }

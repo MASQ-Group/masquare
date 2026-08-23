@@ -57,6 +57,27 @@ export class CreateProductDto {
   @IsOptional() @IsNumber() packageWidthCm?: number | null;
   @IsOptional() @IsNumber() packageHeightCm?: number | null;
 
+  // ---- Listing content --------------------------------------------------
+  // Only eBay and Shopify ever show any of this; Amazon and OnBuy display their own catalogue copy.
+  @IsOptional() @IsString() ebayTitle?: string | null;
+  @IsOptional() @IsString() descriptionHtml?: string | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) keyFeatures?: string[];
+  @IsOptional() @IsString() searchKeywords?: string | null;
+
+  // ---- Technical facts --------------------------------------------------
+  // References into the compliance vocabulary, never free text: these are compared by machine, and
+  // an answer that varies with whoever typed it is not comparable.
+  @IsOptional() @IsUUID() voltageRatingId?: string | null;
+  @IsOptional() @IsUUID() frequencyId?: string | null;
+  @IsOptional() @IsUUID() plugTypeId?: string | null;
+  @IsOptional() @IsBoolean() batteryRequired?: boolean | null;
+  @IsOptional() @IsUUID() batteryTypeId?: string | null;
+  @IsOptional() @IsUUID() hazmatClassId?: string | null;
+
+  // ---- Product-level compliance -----------------------------------------
+  @IsOptional() @IsString() warrantyText?: string | null;
+  @IsOptional() @IsString() dangerousGoodsNote?: string | null;
+
   @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => SkuAliasDto)
   aliases?: SkuAliasDto[];
 

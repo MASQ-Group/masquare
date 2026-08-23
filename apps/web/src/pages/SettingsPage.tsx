@@ -13,6 +13,7 @@ import { CategoriesSection } from '../components/settings/CategoriesSection';
 import { AttributesSection } from '../components/settings/AttributesSection';
 import { VatClassesSection } from '../components/settings/VatClassesSection';
 import { ProductClassesSection } from '../components/settings/ProductClassesSection';
+import { ComplianceSection } from '../components/settings/ComplianceSection';
 
 type TopTab = 'general' | 'countries' | 'products' | 'sales-channels' | 'shipping-services' | 'profit-tiers' | 'customs-fx';
 
@@ -35,6 +36,7 @@ const PRODUCT_SECTIONS = [
   { key: 'categories', label: 'Categories', Component: CategoriesSection },
   { key: 'attributes', label: 'Attributes', Component: AttributesSection },
   { key: 'vat-classes', label: 'VAT Classes', Component: VatClassesSection },
+  { key: 'compliance', label: 'Compliance Values', Component: ComplianceSection },
 ] as const;
 
 const isTopTab = (v: string | null): v is TopTab => TOP_TABS.some(([key]) => key === v);

@@ -17,6 +17,7 @@ import { VatClassesService } from './vat-classes.service';
 import { VatClassesController } from './vat-classes.controller';
 import { ProductClassesService } from './product-classes.service';
 import { ProductClassesController } from './product-classes.controller';
+import { ComplianceOptionsController, ComplianceOptionsService } from './compliance-options';
 
 @Module({
   controllers: [
@@ -29,6 +30,7 @@ import { ProductClassesController } from './product-classes.controller';
     SettingsController,
     VatClassesController,
     ProductClassesController,
+    ComplianceOptionsController,
   ],
   providers: [
     VendorsService,
@@ -41,6 +43,7 @@ import { ProductClassesController } from './product-classes.controller';
     SettingsService,
     VatClassesService,
     ProductClassesService,
+    ComplianceOptionsService,
   ],
   exports: [
     VendorsService,
