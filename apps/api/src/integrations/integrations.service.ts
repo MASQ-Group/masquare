@@ -847,6 +847,178 @@ export class IntegrationsService implements OnModuleInit {
     return { ok: true, status: res.status, payload: result };
   }
 
+
+  /**
+   * Everything an SP-API call needs for one integration, resolved once.
+   *
+   * The four listing calls below each need the row, its marketplace meta and a fresh token; doing
+   * it inline four times is four places for the marketplace resolution to drift apart.
+   */
+  private async amazonCtx(integrationId: string) {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) throw new BadRequestException('Integration not found');
+    if (row.channelType !== 'amazon') throw new BadRequestException('Not an Amazon integration');
+    const config = (row.config ?? {}) as Record<string, string>;
+    const meta = this.amazonMarketMeta(row);
+    const secrets = await this.decryptedSecrets(row.id);
+    const token = await this.amazonAccessToken(config, secrets);
+    return { row, config, meta, token, sellerId: config.sellerId as string | undefined };
+  }
+
+  /**
+   * Find an ASIN from a product identifier (Catalog Items 2022-04-01).
+   *
+   * The identifier is the whole point: matching on a title is how an offer ends up attached to a
+   * similar-looking product, and an offer on the wrong ASIN sells the wrong thing at our price.
+   * Returns every match rather than picking one — where Amazon holds more than one, a human
+   * decides, because we cannot tell the variants apart from here.
+   */
+  async searchAmazonCatalog(
+    integrationId: string,
+    identifiers: string[],
+    identifiersType: 'EAN' | 'UPC' | 'GTIN' | 'ASIN' = 'EAN',
+  ): Promise<{ ok: boolean; status?: number; message?: string; items: Array<{
+    asin: string; productType: string | null; title: string | null; brand: string | null; imageUrl: string | null;
+  }> }> {
+    const clean = identifiers.map((i) => i.trim()).filter(Boolean).slice(0, 20);
+    if (clean.length === 0) return { ok: false, message: 'No identifier to search on', items: [] };
+
+    const { meta, token } = await this.amazonCtx(integrationId);
+    const params = new URLSearchParams({
+      identifiers: clean.join(','),
+      identifiersType,
+      marketplaceIds: meta.marketplaceId,
+      includedData: 'summaries,productTypes,images',
+    });
+    const res = await this.amzFetch(`${meta.endpoint}/catalog/2022-04-01/items?${params.toString()}`, token);
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, status: res.status, message: IntegrationsService.amzErr(json) || `catalog ${res.status}`, items: [] };
+
+    const items = (json?.items ?? []).map((it: any) => {
+      const summary = (it.summaries ?? []).find((s: any) => s.marketplaceId === meta.marketplaceId) ?? it.summaries?.[0];
+      const image = (it.images ?? []).find((g: any) => g.marketplaceId === meta.marketplaceId) ?? it.images?.[0];
+      return {
+        asin: it.asin,
+        // The product type is what the offer schema is fetched for; without it we cannot submit.
+        productType: (it.productTypes ?? []).find((p: any) => p.marketplaceId === meta.marketplaceId)?.productType
+          ?? it.productTypes?.[0]?.productType ?? null,
+        title: summary?.itemName ?? null,
+        brand: summary?.brand ?? null,
+        imageUrl: image?.images?.[0]?.link ?? null,
+      };
+    });
+    return { ok: true, status: res.status, items };
+  }
+
+  /**
+   * May we offer on this ASIN at all? (Listings Restrictions 2021-08-01.)
+   *
+   * Brand gating, category approval and hazmat restrictions all surface here, cheaply, before a
+   * submission. Skipping it turns a clean "you are not approved for this brand" into a failed
+   * submit with a less useful message.
+   */
+  async getAmazonListingRestrictions(
+    integrationId: string,
+    asin: string,
+    conditionType = 'new_new',
+  ): Promise<{ ok: boolean; status?: number; message?: string; restricted: boolean; reasons: Array<{ message: string; reasonCode: string | null; linkUrl: string | null }> }> {
+    const { meta, token, sellerId } = await this.amazonCtx(integrationId);
+    if (!sellerId) return { ok: false, message: 'Amazon integration has no Seller ID', restricted: false, reasons: [] };
+
+    const params = new URLSearchParams({
+      asin,
+      sellerId,
+      marketplaceIds: meta.marketplaceId,
+      conditionType,
+    });
+    const res = await this.amzFetch(`${meta.endpoint}/listings/2021-08-01/restrictions?${params.toString()}`, token);
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, status: res.status, message: IntegrationsService.amzErr(json) || `restrictions ${res.status}`, restricted: false, reasons: [] };
+
+    // An empty restrictions array is the good case: nothing stands in the way.
+    const reasons = (json?.restrictions ?? []).flatMap((r: any) =>
+      (r.reasons ?? []).map((reason: any) => ({
+        message: reason.message ?? 'Restricted',
+        reasonCode: reason.reasonCode ?? null,
+        linkUrl: (reason.links ?? [])[0]?.resource ?? null,
+      })),
+    );
+    return { ok: true, status: res.status, restricted: reasons.length > 0, reasons };
+  }
+
+  /**
+   * Submit an offer against an existing ASIN (Listings Items 2021-08-01, PUT).
+   *
+   * PUT, not PATCH, because this creates the listing — and PUT REPLACES, so every later edit must
+   * go through the PATCH writers. Amazon's own guide warns that attributes omitted from a PUT may
+   * be dropped, which on a live listing means silently stripping it back to whatever this payload
+   * happened to contain.
+   *
+   * `dryRun` sends mode=VALIDATION_PREVIEW: the same validation, nothing created.
+   */
+  async putAmazonOffer(
+    integrationId: string,
+    sku: string,
+    body: { productType: string; requirements?: string; attributes: Record<string, unknown> },
+    dryRun = true,
+  ): Promise<{ ok: boolean; status?: number; submissionStatus: string | null; issues: Array<{ code: string; message: string; severity: string; attributeNames: string[] }>; message?: string }> {
+    const { meta, token, sellerId } = await this.amazonCtx(integrationId);
+    if (!sellerId) return { ok: false, submissionStatus: null, issues: [], message: 'Amazon integration has no Seller ID' };
+
+    const params = new URLSearchParams({ marketplaceIds: meta.marketplaceId });
+    if (dryRun) params.set('mode', 'VALIDATION_PREVIEW');
+    const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sku)}?${params.toString()}`;
+
+    const res = await this.amzWrite(url, token, 'PUT', {
+      productType: body.productType,
+      requirements: body.requirements ?? 'LISTING_OFFER_ONLY',
+      attributes: body.attributes,
+    });
+    const json: any = await res.json().catch(() => null);
+    const issues = (json?.issues ?? []).map((i: any) => ({
+      code: i.code ?? '',
+      message: i.message ?? '',
+      severity: i.severity ?? 'ERROR',
+      attributeNames: i.attributeNames ?? [],
+    }));
+    if (!res.ok) {
+      return { ok: false, status: res.status, submissionStatus: null, issues, message: IntegrationsService.amzErr(json) || `PUT ${res.status}` };
+    }
+    const status = json?.status ?? null;
+    return { ok: status !== 'INVALID', status: res.status, submissionStatus: status, issues };
+  }
+
+  /**
+   * What Amazon thinks of a listing now (Listings Items GET, issues included).
+   *
+   * Acceptance is not publication: a submission can be ACCEPTED and then rejected asynchronously,
+   * so the only way to know a listing is live is to look afterwards.
+   */
+  async getAmazonListingState(
+    integrationId: string,
+    sku: string,
+  ): Promise<{ ok: boolean; status?: number; message?: string; exists: boolean; listingStatus: string | null; asin: string | null; issues: Array<{ code: string; message: string; severity: string }> }> {
+    const { meta, token, sellerId } = await this.amazonCtx(integrationId);
+    if (!sellerId) return { ok: false, exists: false, listingStatus: null, asin: null, issues: [], message: 'Amazon integration has no Seller ID' };
+
+    const params = new URLSearchParams({ marketplaceIds: meta.marketplaceId, includedData: 'summaries,issues' });
+    const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sku)}?${params.toString()}`;
+    const res = await this.amzFetch(url, token);
+    const json: any = await res.json().catch(() => null);
+    if (res.status === 404) return { ok: true, status: 404, exists: false, listingStatus: null, asin: null, issues: [] };
+    if (!res.ok) return { ok: false, status: res.status, message: IntegrationsService.amzErr(json) || `getItem ${res.status}`, exists: false, listingStatus: null, asin: null, issues: [] };
+
+    const summary = (json?.summaries ?? [])[0];
+    return {
+      ok: true,
+      status: res.status,
+      exists: true,
+      listingStatus: summary?.status?.[0] ?? summary?.listingId ? (summary?.status?.[0] ?? 'UNKNOWN') : null,
+      asin: summary?.asin ?? null,
+      issues: (json?.issues ?? []).map((i: any) => ({ code: i.code ?? '', message: i.message ?? '', severity: i.severity ?? 'ERROR' })),
+    };
+  }
+
   /** Write a listing's price via the Listings Items PATCH (repricing price-writer, spec §6). Patches
    *  purchasable_offer.our_price and maintains minimum/maximum_seller_allowed_price backstops.
    *  dryRun uses mode=VALIDATION_PREVIEW — Amazon validates WITHOUT applying (§6.5 step 3).

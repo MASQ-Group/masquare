@@ -60,7 +60,7 @@ export class ListingService {
     });
     if (!product) throw new NotFoundException('Product not found');
 
-    const [integrations, profiles, plans] = await Promise.all([
+    const [integrations, profiles, plans, liveListings] = await Promise.all([
       this.prisma.channelIntegration.findMany({
         where: { deletedAt: null, channelType: { in: LISTABLE_CHANNELS } },
         select: { id: true, name: true, channelType: true, marketplace: true, status: true },
@@ -68,6 +68,17 @@ export class ListingService {
       }),
       this.prisma.marketplaceProfile.findMany(),
       this.prisma.productChannelPlan.findMany({ where: { productId, deletedAt: null } }),
+      // Where this product is already live. Read from the listings the channel sync has already
+      // pulled rather than asked of each marketplace: it is instant, free of rate limits, and it
+      // is the same data the Channel Listings page is built on.
+      this.prisma.channelListing.findMany({
+        where: { productId },
+        select: {
+          integrationId: true, channelSku: true, marketplace: true, asin: true,
+          externalListingId: true, listedPrice: true, listedQuantity: true,
+          currency: true, listingStatus: true, lastPulledAt: true,
+        },
+      }),
     ]);
 
     const profileFor = (channelType: string, marketplace: string | null): MarketProfile | null => {
@@ -116,6 +127,12 @@ export class ListingService {
 
       const profile = profileFor(integration.channelType, integration.marketplace);
 
+      // eBay splits one integration across marketplaces, so match on both where it carries one.
+      const live = liveListings.find(
+        (l) => l.integrationId === integration.id
+          && (l.marketplace === '' || l.marketplace === (integration.marketplace ?? '')),
+      );
+
       return {
         integrationId: integration.id,
         name: integration.name,
@@ -145,6 +162,18 @@ export class ListingService {
             { eligible: true, findings: [], unchecked: ['VOLTAGE' as const], noProfile: true },
         // Only aspects are pending; everything else the readiness check reports is real.
         aspectsPending: integration.channelType === 'ebay',
+        listing: live
+          ? {
+              channelSku: live.channelSku,
+              asin: live.asin,
+              externalListingId: live.externalListingId,
+              price: live.listedPrice,
+              currency: live.currency,
+              quantity: live.listedQuantity,
+              status: live.listingStatus,
+              lastPulledAt: live.lastPulledAt,
+            }
+          : null,
       };
     });
 
@@ -156,6 +185,8 @@ export class ListingService {
         eligible: rows.filter((r) => r.eligibility.eligible).length,
         ready: rows.filter((r) => r.readiness.ready && r.eligibility.eligible).length,
         blocked: rows.filter((r) => !r.eligibility.eligible).length,
+        // Counted first in the UI: listing something twice is worse than not listing it.
+        listed: rows.filter((r) => r.listing).length,
         total: rows.length,
       },
     };

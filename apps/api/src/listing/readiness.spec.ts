@@ -69,7 +69,9 @@ describe('eBay has to be given everything', () => {
     const v = evaluateReadiness('ebay', facts());
     expect(v.ready).toBe(false);
     expect(v.missing.map((m) => m.key)).toEqual(['ebayTitle', 'description', 'image', 'category', 'package']);
-    expect(v.missing[0].label).toContain('80 characters');
+    // Short noun phrases, because these are read as a list — "Needs eBay title, Description".
+    // The 80-character limit lives on the field itself, as a live counter, where it can be acted on.
+    expect(v.missing.map((m) => m.label)).toEqual(['eBay title', 'Description', 'Image', 'Category', 'Weight and dimensions']);
   });
 
   it('counts required aspects that are still empty', () => {
