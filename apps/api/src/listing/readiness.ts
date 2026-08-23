@@ -37,61 +37,61 @@ const hasText = (v: string | null | undefined): boolean => !!v && v.trim().lengt
 /** An identifier is how a catalogue channel finds the product it should attach our offer to. */
 const IDENTIFIER: Requirement = {
   key: 'identifier',
-  label: 'An EAN or UPC to match the marketplace catalogue',
+  label: 'EAN or UPC',
   satisfied: (f) => hasText(f.ean) || hasText(f.upc),
 };
 
 const CONDITION: Requirement = {
   key: 'condition',
-  label: 'Item condition',
+  label: 'Condition',
   satisfied: (f) => hasText(f.condition),
 };
 
 const HANDLING: Requirement = {
   key: 'handlingTime',
-  label: 'Handling time in days',
+  label: 'Handling time',
   satisfied: (f) => f.handlingTimeDays != null && f.handlingTimeDays >= 0,
 };
 
 const CATEGORY: Requirement = {
   key: 'category',
-  label: 'A category on this channel',
+  label: 'Category',
   satisfied: (f) => hasText(f.categoryRef),
 };
 
 const ASPECTS: Requirement = {
   key: 'aspects',
-  label: 'The category\u2019s required item specifics',
+  label: 'Item specifics',
   satisfied: (f) => f.missingRequiredAspects.length === 0,
 };
 
 const EBAY_TITLE: Requirement = {
   key: 'ebayTitle',
-  label: 'An eBay title (80 characters)',
+  label: 'eBay title',
   satisfied: (f) => hasText(f.ebayTitle),
 };
 
 const DESCRIPTION: Requirement = {
   key: 'description',
-  label: 'A product description',
+  label: 'Description',
   satisfied: (f) => hasText(f.descriptionHtml),
 };
 
 const IMAGE: Requirement = {
   key: 'image',
-  label: 'At least one image',
+  label: 'Image',
   satisfied: (f) => f.imageCount > 0,
 };
 
 const PACKAGE: Requirement = {
   key: 'package',
-  label: 'Package weight and dimensions',
+  label: 'Weight and dimensions',
   satisfied: (f) => f.packageWeightKg != null && f.packageWeightKg > 0 && f.hasPackageDimensions,
 };
 
 const DELIVERY_TEMPLATE: Requirement = {
   key: 'deliveryTemplate',
-  label: 'A delivery template',
+  label: 'Delivery template',
   satisfied: (f) => hasText(f.deliveryTemplate),
 };
 

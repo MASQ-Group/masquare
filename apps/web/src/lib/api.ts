@@ -1048,11 +1048,10 @@ export interface MarketplaceProfile {
   note: string | null;
 }
 
-/** One thing that is missing, and whether it stops a listing or merely weakens it. */
+/** One thing a listing cannot go without. Everything the API reports here is required. */
 export interface ReadinessGap {
   key: string;
   label: string;
-  severity: 'required' | 'recommended';
 }
 export interface ReadinessVerdict {
   ready: boolean;
@@ -1100,14 +1099,90 @@ export interface ProductChannelRow {
   eligibility: EligibilityVerdict;
   /** eBay's required item specifics are not checked yet — the schemas arrive with Phase 4. */
   aspectsPending: boolean;
+  /** Set when the channel sync has already pulled a live listing for this product here. */
+  listing: {
+    channelSku: string;
+    asin: string | null;
+    externalListingId: string | null;
+    price: number | null;
+    currency: string | null;
+    quantity: number | null;
+    status: string | null;
+    lastPulledAt: string | null;
+  } | null;
 }
 
 export interface ProductChannels {
   productId: string;
   brand: { id: string; name: string; manufacturerName: string | null; euRpName: string | null } | null;
   channels: ProductChannelRow[];
-  summary: { eligible: number; ready: number; blocked: number; total: number };
+  summary: { eligible: number; ready: number; blocked: number; listed: number; total: number };
 }
+
+export interface AmazonCandidate {
+  asin: string;
+  productType: string | null;
+  title: string | null;
+  brand: string | null;
+  imageUrl: string | null;
+  /** null when the restriction check itself failed — unknown is not the same as allowed. */
+  restricted: boolean | null;
+  restrictionReasons: Array<{ message: string; reasonCode: string | null; linkUrl: string | null }>;
+  restrictionError: string | null;
+}
+
+export interface AmazonCandidates {
+  productId: string;
+  /** Which identifier the search used. Null when the product has neither an EAN nor a UPC. */
+  searchedBy: { type: 'EAN' | 'UPC'; value: string } | null;
+  candidates: AmazonCandidate[];
+  message: string | null;
+}
+
+/**
+ * Amazon offer creation. Only `submit` writes anything, and it refuses unless the server allows
+ * live writes and the caller confirms; everything else asks Amazon questions or validates.
+ */
+export interface AmazonSweepRow {
+  integrationId: string;
+  name: string;
+  marketplace: string;
+  found: boolean;
+  asin: string | null;
+  productType: string | null;
+  title: string | null;
+  /** null when the restriction check itself failed — unknown is not the same as allowed. */
+  restricted: boolean | null;
+  restrictionReason: string | null;
+  error: string | null;
+  /** We already sell here. Not an opportunity, and not something to list again. */
+  alreadyListed: boolean;
+  listedSku: string | null;
+}
+
+export interface AmazonSweep {
+  productId: string;
+  results: AmazonSweepRow[];
+  summary: {
+    searched: number;
+    found: number;
+    alreadyListed: number;
+    /** Found, allowed, and NOT already listed — the only number that is an opportunity. */
+    sellable: number;
+    restricted: number;
+    notFound: number;
+    failed: number;
+  };
+}
+
+export const amazonListingApi = {
+  status: () => api.get<{ liveWritesEnabled: boolean }>('/listing/amazon/status').then((r) => r.data),
+  candidates: (productId: string, integrationId: string) =>
+    api.get<AmazonCandidates>(`/listing/amazon/products/${productId}/channels/${integrationId}/candidates`).then((r) => r.data),
+  /** Searches every Amazon marketplace. Slow, so it returns a job to follow. */
+  sweep: (productId: string) =>
+    api.post<JobView>(`/listing/amazon/products/${productId}/sweep`, {}).then((r) => r.data),
+};
 
 export const listingApi = {
   marketplaceProfiles: () => api.get<MarketplaceProfile[]>('/listing/marketplace-profiles').then((r) => r.data),

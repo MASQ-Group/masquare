@@ -1,16 +1,12 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Ban, Check, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { AlertTriangle, Ban, Check, ChevronDown, ChevronRight, Loader2, PackageCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Select } from '@masquare/ui';
-import { listingApi, type ProductChannelRow } from '../../lib/api';
-
-/** Channel identity, kept clear of the semantic colours so a channel chip never reads as a status. */
-const CHANNEL_TONE: Record<string, string> = {
-  amazon: 'bg-amber-50 text-amber-700 border-amber-200',
-  ebay: 'bg-blue-50 text-blue-700 border-blue-200',
-  onbuy: 'bg-teal-50 text-teal-700 border-teal-200',
-};
+import { amazonListingApi, listingApi, type AmazonSweep, type ProductChannelRow } from '../../lib/api';
+import { AmazonCandidates } from './AmazonCandidates';
+import { ChannelGroup, CHANNEL_TONE } from './ChannelGroup';
+import { useJobProgress } from '../../lib/useJobProgress';
 
 const CONDITIONS = [
   { value: 'NEW', label: 'New' },
@@ -34,6 +30,9 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
     queryFn: () => listingApi.productChannels(productId),
   });
 
+  // One sweep per product, keyed so a reload during a minute-long search re-attaches to it.
+  const sweep = useJobProgress(`listing.amazon.sweep.${productId}`);
+
   if (isLoading) {
     return <div className="flex items-center gap-2 py-10 text-[13px] text-n-500"><Loader2 size={15} className="animate-spin" /> Reading channels…</div>;
   }
@@ -53,8 +52,25 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
 
   const { summary } = data;
 
+  // Insertion order follows the API's ordering (channelType asc), which keeps the groups stable.
+  const groups = [...new Map(
+    data.channels.map((r) => [r.channelType, data.channels.filter((c) => c.channelType === r.channelType)]),
+  ).entries()];
+
   return (
     <div className="flex flex-col gap-3">
+      {/* Where it is already live, first and in its own line: the costly mistake here is listing a
+          product a second time, and that has to be visible before anyone starts searching. */}
+      {summary.listed > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3.5 py-2.5 text-[12.5px] text-teal-900">
+          <PackageCheck size={15} className="shrink-0 text-teal-600" />
+          <span className="font-semibold">Already listed on {summary.listed} channel{summary.listed === 1 ? '' : 's'}</span>
+          <span className="text-teal-700">
+            {data.channels.filter((c) => c.listing).map((c) => c.marketplace || c.name).join(', ')}
+          </span>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-n-200 bg-n-25 px-3.5 py-2.5 text-[12.5px]">
         <span className="font-semibold text-n-800">{summary.total} connected channel{summary.total === 1 ? '' : 's'}</span>
         <span className="text-teal-700"><b>{summary.ready}</b> ready to list</span>
@@ -63,19 +79,36 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
         <span className="text-[11.5px] text-n-400">Nothing here is sent to a channel — this is what we intend to list.</span>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-n-200">
-        {data.channels.map((row, i) => (
-          <ChannelRow
-            key={row.integrationId}
-            row={row}
-            productId={productId}
-            first={i === 0}
-            expanded={open === row.integrationId}
-            onToggle={() => setOpen(open === row.integrationId ? null : row.integrationId)}
-            onSaved={() => qc.invalidateQueries({ queryKey: ['listing', 'product-channels', productId] })}
-          />
-        ))}
-      </div>
+      {/* Grouped by marketplace family: eighteen Amazon rows beside one eBay row read as eighteen
+          unrelated channels rather than one marketplace in eighteen countries. */}
+      {groups.map(([channelType, rows]) => (
+        <ChannelGroup
+          key={channelType}
+          channelType={channelType}
+          rows={rows}
+          // Only Amazon keeps a separate catalogue per country, so only Amazon has anything to sweep.
+          sweep={channelType === 'amazon' ? {
+            running: sweep.running,
+            value: sweep.value,
+            detail: sweep.detail,
+            result: (sweep.result as AmazonSweep | null) ?? null,
+            error: sweep.error,
+            onRun: () => sweep.start(() => amazonListingApi.sweep(productId)),
+          } : undefined}
+        >
+          {rows.map((row, i) => (
+            <ChannelRow
+              key={row.integrationId}
+              row={row}
+              productId={productId}
+              first={i === 0}
+              expanded={open === row.integrationId}
+              onToggle={() => setOpen(open === row.integrationId ? null : row.integrationId)}
+              onSaved={() => qc.invalidateQueries({ queryKey: ['listing', 'product-channels', productId] })}
+            />
+          ))}
+        </ChannelGroup>
+      ))}
     </div>
   );
 }
@@ -111,17 +144,25 @@ function ChannelRow({
 
         <div className="flex-1" />
 
+        {row.listing && (
+          <span
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-teal-700"
+            title={`Listed as ${row.listing.channelSku}${row.listing.asin ? ` (${row.listing.asin})` : ''}`}
+          >
+            <PackageCheck size={13} /> Listed
+          </span>
+        )}
         {blocked ? (
           <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-danger">
             <Ban size={13} /> Blocked
           </span>
-        ) : row.readiness.ready ? (
+        ) : row.listing ? null : row.readiness.ready ? (
           <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-teal-700">
             <Check size={13} /> Ready to list
           </span>
         ) : (
           <span className="text-[12px] text-n-500">
-            Needs {row.readiness.missing.filter((m) => m.severity === 'required').map((m) => m.label.toLowerCase()).join(', ') || 'nothing'}
+            Needs {row.readiness.missing.map((m) => m.label).join(', ')}
           </span>
         )}
         <span className="mono shrink-0 text-[11px] tabular-nums text-n-400">
@@ -170,7 +211,11 @@ function PlanEditor({
   const [handling, setHandling] = useState(plan?.handlingTimeDays?.toString() ?? '');
   const [delivery, setDelivery] = useState(plan?.deliveryTemplate ?? '');
   const [boost, setBoost] = useState(plan?.boostPct?.toString() ?? '0');
+  // The ASIN we attach the offer to. Kept on the plan's aspects rather than as a column: it is one
+  // channel's identifier for this product, and eBay's equivalent will not look like it.
+  const asin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin ?? null;
 
+  const isAmazon = row.channelType === 'amazon';
   const isEbay = row.channelType === 'ebay';
   const isOnBuy = row.channelType === 'onbuy';
 
@@ -187,6 +232,22 @@ function PlanEditor({
     onSuccess: () => { toast.success('Saved'); onSaved(); },
     // The boost ceiling is enforced server-side, so its refusal arrives here as the message.
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save'),
+  });
+
+  // Saved on the spot rather than left for the Save button: choosing which Amazon listing we attach
+  // to is a decision in its own right, and losing it to an unsaved form is worse than an extra call.
+  const match = useMutation({
+    mutationFn: (picked: { asin: string; productType: string | null }) =>
+      listingApi.upsertPlan(productId, row.integrationId, {
+        aspects: { ...((plan?.aspects as Record<string, unknown>) ?? {}), asin: picked.asin },
+        ...(picked.productType ? { categoryRef: picked.productType } : {}),
+      }),
+    onSuccess: (_r, picked) => {
+      if (picked.productType) setCategoryRef(picked.productType);
+      toast.success(`Matched to ${picked.asin}`);
+      onSaved();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save the match'),
   });
 
   const missingByKey = new Map(row.readiness.missing.map((m) => [m.key, m]));
@@ -209,15 +270,24 @@ function PlanEditor({
         </div>
       )}
 
+      {isAmazon && (
+        <AmazonCandidates
+          productId={productId}
+          integrationId={row.integrationId}
+          selectedAsin={asin}
+          onSelect={(pickedAsin, productType) => match.mutate({ asin: pickedAsin, productType })}
+        />
+      )}
+
       <div className="grid grid-cols-2 gap-3 max-[720px]:grid-cols-1">
         <label className="flex flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">
-            {row.channelType === 'amazon' ? 'Product type' : isEbay ? 'eBay category id' : 'Category'}
+            {isAmazon ? 'Product type' : isEbay ? 'eBay category id' : 'Category'}
           </span>
           <input
             value={categoryRef}
             onChange={(e) => setCategoryRef(e.target.value)}
-            placeholder={row.channelType === 'amazon' ? 'e.g. COOKWARE' : isEbay ? 'e.g. 20628' : 'category'}
+            placeholder={isAmazon ? 'filled in by matching a listing' : isEbay ? 'e.g. 20628' : 'category'}
             className={`input mono h-8 text-[12.5px] ${flag('category')}`}
           />
         </label>
