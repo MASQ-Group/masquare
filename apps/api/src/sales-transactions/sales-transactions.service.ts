@@ -182,7 +182,7 @@ export class SalesTransactionsService {
     const sellShipVat = (it: any) => (isFba ? 0 : n(it.shippingAmountVat));
     const totals = items.reduce(
       (acc: any, it: any) => ({
-        quantity: acc.quantity + (it.quantity ?? 0),
+        quantity: acc.quantity + n(it.quantity),
         netSales: acc.netSales + n(it.netSalesAmount),
         vat: acc.vat + n(it.vatAmount),
         shipping: acc.shipping + n(it.shippingAmount),
@@ -257,7 +257,7 @@ export class SalesTransactionsService {
           // Volumetric services charge on the greater of volumetric and actual weight.
           unit = vol != null && actual != null ? Math.max(vol, actual) : vol ?? actual;
         }
-        if (unit != null) { w += unit * (it.quantity ?? 1); any = true; }
+        if (unit != null) { w += unit * n(it.quantity ?? 1); any = true; }
       }
       overallPackageWeight = any ? round(w, 3) : null;
     }
@@ -320,11 +320,11 @@ export class SalesTransactionsService {
         feePctMap.fbaBySku.get(`${(sku ?? '').trim().toLowerCase()}:${chId}`) ?? feePctMap.fbaByChannel.get(chId) ?? 0;
       for (const it of items) {
         const avg = this.fbaUnitCost(fbaAvgMap, it, t.salesChannelId);
-        fbaInboundCostEur += avg * (it.quantity ?? 1);
+        fbaInboundCostEur += avg * n(it.quantity ?? 1);
         if (fx == null) continue;
         const posted = n(it.fbaFulfilmentFeeAmount);
         // Only Amazon-sourced lines get an estimate: a manually keyed order states its own costs.
-        const native = posted > 0 || t.source !== 'amazon' ? posted : round(estFbaUnitFee(it.sku) * (it.quantity ?? 1), 2);
+        const native = posted > 0 || t.source !== 'amazon' ? posted : round(estFbaUnitFee(it.sku) * n(it.quantity ?? 1), 2);
         if (posted <= 0 && native > 0) fbaFeeEstimated = true;
         fbaFeeEur += native * (feeFxR ?? fx);
       }
@@ -376,7 +376,7 @@ export class SalesTransactionsService {
       for (const it of items) {
         revenue += revNativeOf(it) * fxRate;
         if (!cogsReversed) {
-          cost += unitCostOf(it) * (it.quantity ?? 1);
+          cost += unitCostOf(it) * n(it.quantity ?? 1);
         }
       }
       if (!t.feeRefunded) cost += effectiveSalesFee * (feeFx ?? fxRate); // actual fee, or estimate while unposted
@@ -412,7 +412,7 @@ export class SalesTransactionsService {
       const revIncVatEur = fxRate != null ? round((n(it.netSalesAmount) + n(it.vatAmount) + sellShip(it) + sellShipVat(it)) * fxRate, 2) : null;
       const fEur = fxRate != null ? round((t.feeRefunded ? 0 : feeInfos[idx].fee) * (feeFx ?? fxRate), 2) : null;
       const ptsEur = fxRate != null ? round(n(it.amazonPointsAmount) * (feeFx ?? fxRate), 2) : 0;
-      const cEur = cogsReversed ? 0 : round(unitCostOf(it) * (it.quantity ?? 1), 2);
+      const cEur = cogsReversed ? 0 : round(unitCostOf(it) * n(it.quantity ?? 1), 2);
       // Japan keeps the JCT as revenue (see revNativeOf) — add it back into per-SKU profit so
       // the SKU figures still sum to the transaction profit, while revExVatEur stays true ex-tax.
       const jctKeptEur = fxRate != null && keepsDestinationTax ? round((n(it.vatAmount) + sellShipVat(it)) * fxRate, 2) : 0;
@@ -773,7 +773,7 @@ export class SalesTransactionsService {
       if (!a) { a = { key, label, orders: new Set(), units: 0, revenueEur: 0, profitEur: 0 }; agg.set(key, a); }
       a.orders.add(orderId); a.units += units; a.revenueEur += revenue ?? 0; a.profitEur += profit ?? 0;
     };
-    const unitsOf = (t: any) => (t.items ?? []).reduce((s: number, it: any) => s + (it.quantity ?? 0), 0);
+    const unitsOf = (t: any) => (t.items ?? []).reduce((s: number, it: any) => s + n(it.quantity), 0);
 
     for (const t of serialized) {
       if (groupBy === 'channel') {
@@ -789,7 +789,7 @@ export class SalesTransactionsService {
           if (groupBy === 'sku') { key = it.sku || '__none'; label = it.sku || '— No SKU'; }
           else if (groupBy === 'brand') { const b = pid ? brandOf.get(pid) : null; key = b ?? '__none'; label = b ?? '— No brand'; }
           else { const v = pid ? vendorOf.get(pid) : null; key = v ?? '__none'; label = v ?? '— No vendor'; }
-          bump(key, label, t.id, it.quantity ?? 0, it.revenueExVatEur, it.profitEur);
+          bump(key, label, t.id, n(it.quantity), it.revenueExVatEur, it.profitEur);
         });
       }
     }
@@ -1063,7 +1063,7 @@ export class SalesTransactionsService {
     for (const it of items) {
       const ch = it.shipment?.salesChannelId ?? '';
       const cost = it.allocatedCostEur != null ? Number(it.allocatedCostEur) : 0;
-      const qty = it.quantity ?? 0;
+      const qty = n(it.quantity);
       if (it.productId) add(`p:${it.productId}:${ch}`, cost, qty);
       if (it.sku) add(`s:${String(it.sku).trim().toLowerCase()}:${ch}`, cost, qty);
     }
