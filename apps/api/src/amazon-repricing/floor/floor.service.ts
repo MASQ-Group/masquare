@@ -187,8 +187,12 @@ export class FloorService {
     isFba: boolean;
     /** Target margin as a fraction. 0.2 = 20%. */
     marginPct: number;
-    /** When given, the answer also reports what this price would earn. */
-    atPriceCents?: number | null;
+    /**
+     * Prices to report the profit of. Several at once on purpose: each call costs one live fee
+     * estimate, and evaluating the competition means pricing three or four candidates from the
+     * same cost basis.
+     */
+    atPricesCents?: number[];
   }): Promise<
     | { ok: false; reason: string }
     | {
@@ -197,8 +201,8 @@ export class FloorService {
         suggestedCents: number;
         currency: string;
         marginPct: number;
-        /** Present only when `atPriceCents` was supplied. */
-        at: { priceCents: number; profitCents: number; marginPct: number; aboveBreakeven: boolean } | null;
+        /** One entry per price asked about, in the order given. */
+        at: Array<{ priceCents: number; profitCents: number; marginPct: number; aboveBreakeven: boolean }>;
         /** What the figure is built on, so a surprising price can be traced without a second call. */
         inputs: {
           cogsLandedCents: number;
@@ -212,7 +216,7 @@ export class FloorService {
   > {
     // Tax resolved the same way as everywhere else: not the country's rate, which is 0% for GB
     // because the real rule lives on the sales channel.
-    const tax = await this.channelTax(args.marketplaceId, args.atPriceCents ?? null);
+    const tax = await this.channelTax(args.marketplaceId, args.atPricesCents?.[0] ?? null);
     if (tax == null) return { ok: false, reason: 'No VAT rule for this marketplace' };
 
     const destCountryId = await this.destinationCountryId(args.marketplaceId);
@@ -241,7 +245,7 @@ export class FloorService {
       asin: args.asin,
       currency: ccy,
       isFba: args.isFba,
-      referencePriceCents: args.atPriceCents ?? null,
+      referencePriceCents: args.atPricesCents?.[0] ?? null,
     });
     if (!fees) return { ok: false, reason: 'Amazon would not estimate fees for this listing' };
 
@@ -281,19 +285,18 @@ export class FloorService {
       return { ok: false, reason: `No price reaches ${Math.round(args.marginPct * 100)}% margin on this marketplace` };
     }
 
-    const at =
-      args.atPriceCents != null && args.atPriceCents > 0
-        ? (() => {
-            const profitCents = netRevenueCents(args.atPriceCents as number, inputs);
-            return {
-              priceCents: args.atPriceCents as number,
-              profitCents,
-              // Margin on revenue, the same basis the floor solver targets.
-              marginPct: Math.round((profitCents / (args.atPriceCents as number)) * 1000) / 10,
-              aboveBreakeven: profitCents > 0,
-            };
-          })()
-        : null;
+    const at = (args.atPricesCents ?? [])
+      .filter((p) => p > 0)
+      .map((priceCents) => {
+        const profitCents = netRevenueCents(priceCents, inputs);
+        return {
+          priceCents,
+          profitCents,
+          // Margin on revenue, the same basis the floor solver targets.
+          marginPct: Math.round((profitCents / priceCents) * 1000) / 10,
+          aboveBreakeven: profitCents > 0,
+        };
+      });
 
     return {
       ok: true,

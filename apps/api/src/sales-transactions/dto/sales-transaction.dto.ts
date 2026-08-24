@@ -1,12 +1,19 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested,
+  ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsPositive, IsString, IsUUID,
+  Min, MinLength, ValidateNested,
 } from 'class-validator';
 
 export class SalesTransactionItemDto {
   @IsOptional() @IsUUID() productId?: string | null;
   @IsString() @MinLength(1) sku!: string;
-  @IsInt() @Min(1) quantity!: number;
+  /**
+   * Units sold. Fractional is allowed — some goods are sold by length or weight.
+   *
+   * Positive rather than at-least-one: half a metre is a legitimate line, and a zero-quantity line
+   * is not a sale.
+   */
+  @IsNumber({ maxDecimalPlaces: 3 }) @IsPositive() quantity!: number;
 
   @IsOptional() @IsNumber() netSalesAmount?: number | null;
   /** Ignored for local sales — the server computes VAT from vatClassId and overwrites it. */

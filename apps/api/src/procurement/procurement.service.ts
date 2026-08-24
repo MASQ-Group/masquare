@@ -92,10 +92,10 @@ export class ProcurementService {
         productId: pid, requiredQuantity: 0, orderCount: 0,
         channels: new Map<string, string>(), refs: [], firstSale: t.date, lastSale: t.date,
       };
-      row.requiredQuantity += it.quantity;
+      row.requiredQuantity += Number(it.quantity);
       row.orderCount += 1;
       if (t.salesChannel) row.channels.set(t.salesChannel.id, t.salesChannel.name);
-      row.refs.push({ id: t.id, ref: t.transactionRef, date: t.date, quantity: it.quantity });
+      row.refs.push({ id: t.id, ref: t.transactionRef, date: t.date, quantity: Number(it.quantity) });
       if (t.date < row.firstSale) row.firstSale = t.date;
       if (t.date > row.lastSale) row.lastSale = t.date;
       byProduct.set(pid, row);
