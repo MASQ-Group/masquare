@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { AlertTriangle, Ban, Check, ChevronDown, ChevronRight, ClipboardCheck, Lock, Rocket } from 'lucide-react';
+import { AlertTriangle, Ban, Check, ChevronDown, ChevronRight, ClipboardCheck, Lock, RefreshCw, Rocket } from 'lucide-react';
 import { toast } from 'sonner';
-import { amazonListingApi, type AmazonOfferPreview as Preview, type AmazonSubmitResult } from '../../lib/api';
+import { amazonListingApi, type AmazonListingState, type AmazonOfferPreview as Preview, type AmazonSubmitResult } from '../../lib/api';
 import { useConfirm } from '../ConfirmProvider';
 
 /**
@@ -13,20 +13,45 @@ import { useConfirm } from '../ConfirmProvider';
  * Creates nothing: it is the same call as a submission with `mode=VALIDATION_PREVIEW`.
  */
 export function AmazonOfferPreview({
-  productId, integrationId, asin, onListed,
+  productId, integrationId, asin, quantity, onListed, savePlan,
 }: {
   productId: string;
   integrationId: string;
+  /** Units the offer would carry. Zero is valid to Amazon and useless to a buyer. */
+  quantity?: number | null;
   /** Null until a catalogue candidate has been matched; validation has nothing to attach to. */
   asin: string | null;
   onListed?: () => void;
+  /**
+   * Persists the plan as it stands on screen.
+   *
+   * Validation and submission read the SAVED plan, so without this a price typed but not saved
+   * reports as missing — the fields say one thing and the server sees another. Pressing Validate
+   * plainly means "validate what I am looking at", so the plan is written first.
+   */
+  savePlan?: () => Promise<unknown>;
 }) {
   const [showPayload, setShowPayload] = useState(false);
   const [submitted, setSubmitted] = useState<AmazonSubmitResult | null>(null);
+
+  /**
+   * What Amazon actually thinks of the listing now.
+   *
+   * The one source of truth after a submission. Amazon accepts synchronously and processes after,
+   * so a listing can exist while its price or quantity silently failed to apply — and only Amazon
+   * can say why. Read-only.
+   */
+  const state = useMutation({
+    mutationFn: () => amazonListingApi.state(productId, integrationId),
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not read the listing from Amazon'),
+  });
   const confirm = useConfirm();
 
   const run = useMutation({
-    mutationFn: () => amazonListingApi.preview(productId, integrationId),
+    mutationFn: async () => {
+      await savePlan?.();
+      return amazonListingApi.preview(productId, integrationId);
+    },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not validate with Amazon'),
   });
 
@@ -39,7 +64,10 @@ export function AmazonOfferPreview({
    * right product in the wrong place, and only the specifics catch that.
    */
   const create = useMutation({
-    mutationFn: () => amazonListingApi.submit(productId, integrationId),
+    mutationFn: async () => {
+      await savePlan?.();
+      return amazonListingApi.submit(productId, integrationId);
+    },
     onSuccess: (r) => {
       setSubmitted(r);
       if (r.ok) toast.success(`Offer submitted for ${r.sku}`);
@@ -78,7 +106,7 @@ export function AmazonOfferPreview({
           title={asin ? undefined : 'Match an Amazon listing above first'}
           className="inline-flex h-7 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50"
         >
-          <ClipboardCheck size={13} /> {run.isPending ? 'Asking Amazon…' : p ? 'Validate again' : 'Validate'}
+          <ClipboardCheck size={13} /> {run.isPending ? 'Saving and asking Amazon…' : p ? 'Validate again' : 'Save and validate'}
         </button>
       </div>
 
@@ -94,6 +122,24 @@ export function AmazonOfferPreview({
           this is the same submission run in validation mode.
         </p>
       )}
+
+      {/* Available whether or not a preview has been run: after a submission this is the question
+          worth asking, and it does not depend on anything on screen. */}
+      {asin && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-n-100 pt-2">
+          <button
+            type="button"
+            onClick={() => state.mutate()}
+            disabled={state.isPending}
+            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={state.isPending ? 'animate-spin' : ''} /> Check with Amazon
+          </button>
+          <span className="text-[11px] text-n-400">Reads the live listing and reports Amazon's own issues.</span>
+        </div>
+      )}
+
+      {state.data && <ListingState state={state.data} />}
 
       {p && (
         <div className="mt-2.5 flex flex-col gap-2">
@@ -140,6 +186,18 @@ export function AmazonOfferPreview({
                   )}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Amazon accepts a zero-quantity offer quite happily; it simply cannot be bought. Worth
+              saying at the last checkpoint rather than discovering it after nothing sells. */}
+          {quantity === 0 && p.validated && (
+            <div className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0 text-amber-600" />
+              <span>
+                This would go live with <b>no stock</b>. Amazon accepts it, but nobody can buy until Availability
+                has a quantity — worth setting first unless the listing is deliberately a placeholder.
+              </span>
             </div>
           )}
 
@@ -202,6 +260,67 @@ export function AmazonOfferPreview({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Amazon's own view of the listing.
+ *
+ * Reported verbatim, including when it disagrees with what we submitted: a listing that exists with
+ * a price we did not set is the failure mode worth catching, and only this call reveals it.
+ */
+function ListingState({ state }: { state: AmazonListingState }) {
+  if (!state.exists) {
+    return (
+      <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
+        Amazon has no listing under this SKU yet. If a submission was just accepted it may still be processing.
+      </div>
+    );
+  }
+  const errors = state.issues.filter((i) => i.severity === 'ERROR');
+  const warnings = state.issues.filter((i) => i.severity !== 'ERROR');
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-n-200 bg-n-25 px-2.5 py-2 text-[12px]">
+        <span className="font-semibold text-n-800">Live on Amazon</span>
+        {state.listingStatus && <span className="mono text-n-600">{state.listingStatus}</span>}
+        {state.asin && <span className="mono text-n-500">{state.asin}</span>}
+        {state.issues.length === 0 && <span className="text-teal-700">no issues reported</span>}
+      </div>
+      {/* DISCOVERABLE without a purchasable offer is the quiet failure: Amazon took the product
+          association and dropped the price and quantity, reporting nothing wrong. */}
+      {state.listingStatus === 'DISCOVERABLE' && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
+          <b>Discoverable, not buyable.</b> Amazon has the product but no valid offer on it — usually the price or
+          quantity did not apply. What Amazon actually stored is below.
+        </div>
+      )}
+
+      {state.attributes && (
+        <details className="text-[11.5px] text-n-500">
+          <summary className="cursor-pointer hover:text-n-700">What Amazon actually stored</summary>
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5">
+            <span>purchasable_offer: <b className={state.attributes.purchasable_offer ? 'text-teal-700' : 'text-danger'}>
+              {state.attributes.purchasable_offer ? 'present' : 'absent'}</b></span>
+            <span>fulfillment_availability: <b className={state.attributes.fulfillment_availability ? 'text-teal-700' : 'text-danger'}>
+              {state.attributes.fulfillment_availability ? 'present' : 'absent'}</b></span>
+          </div>
+          <pre className="mono mt-1 max-h-[240px] overflow-auto rounded-md border border-n-200 bg-n-25 p-2 text-[10.5px] leading-relaxed text-n-700">
+            {JSON.stringify({ attributes: state.attributes, offers: state.offers }, null, 2)}
+          </pre>
+        </details>
+      )}
+
+      {[...errors, ...warnings].map((i, n) => (
+        <div
+          key={`${i.code}-${n}`}
+          className={`rounded-md border px-2.5 py-1.5 text-[12px] ${i.severity === 'ERROR' ? 'border-danger-bd bg-danger-bg text-danger' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
+        >
+          <span>{i.message}</span>
+          {i.code && <span className="mono ml-1.5 text-[10.5px] opacity-70">{i.code}</span>}
+        </div>
+      ))}
     </div>
   );
 }

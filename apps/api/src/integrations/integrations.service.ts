@@ -849,6 +849,38 @@ export class IntegrationsService implements OnModuleInit {
 
 
   /**
+   * What the competition is charging for an ASIN (Product Pricing API, getItemOffers).
+   *
+   * A pull, unlike the rest of the pricing data we hold: the repricing engine learns competitor
+   * prices from ANY_OFFER_CHANGED notifications pushed to SQS, which only arrive for listings we
+   * already have. Deciding what to launch at means asking about an ASIN we do not sell yet.
+   *
+   * Returns the Summary block verbatim — the same shape the notification parser already models.
+   */
+  async getAmazonItemOffers(
+    integrationId: string,
+    asin: string,
+    itemCondition = 'New',
+  ): Promise<{ ok: boolean; status?: number; message?: string; summary?: unknown; offerCount?: number }> {
+    const { meta, token } = await this.amazonCtx(integrationId);
+    const params = new URLSearchParams({ MarketplaceId: meta.marketplaceId, ItemCondition: itemCondition });
+    const url = `${meta.endpoint}/products/pricing/v0/items/${encodeURIComponent(asin)}/offers?${params.toString()}`;
+
+    const res = await this.amzFetch(url, token);
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) {
+      return { ok: false, status: res.status, message: IntegrationsService.amzErr(json) || `getItemOffers ${res.status}` };
+    }
+    const payload = json?.payload ?? json;
+    return {
+      ok: true,
+      status: res.status,
+      summary: payload?.Summary ?? null,
+      offerCount: payload?.Summary?.TotalOfferCount ?? (payload?.Offers?.length ?? 0),
+    };
+  }
+
+  /**
    * Fee estimate for an ASIN we do not list yet (Product Fees API).
    *
    * The SKU variant needs a listing that already exists, which is exactly what a product being
@@ -1030,11 +1062,22 @@ export class IntegrationsService implements OnModuleInit {
   async getAmazonListingState(
     integrationId: string,
     sku: string,
-  ): Promise<{ ok: boolean; status?: number; message?: string; exists: boolean; listingStatus: string | null; asin: string | null; issues: Array<{ code: string; message: string; severity: string }> }> {
+  ): Promise<{
+    ok: boolean; status?: number; message?: string;
+    exists: boolean; listingStatus: string | null; asin: string | null;
+    issues: Array<{ code: string; message: string; severity: string }>;
+    /** The attributes Amazon holds for this SKU — not necessarily the ones we sent. */
+    attributes?: Record<string, unknown>;
+    offers?: Array<Record<string, unknown>>;
+    storedPrice?: unknown;
+  }> {
     const { meta, token, sellerId } = await this.amazonCtx(integrationId);
     if (!sellerId) return { ok: false, exists: false, listingStatus: null, asin: null, issues: [], message: 'Amazon integration has no Seller ID' };
 
-    const params = new URLSearchParams({ marketplaceIds: meta.marketplaceId, includedData: 'summaries,issues' });
+    const params = new URLSearchParams({
+      marketplaceIds: meta.marketplaceId,
+      includedData: 'summaries,issues,attributes,offers',
+    });
     const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sku)}?${params.toString()}`;
     const res = await this.amzFetch(url, token);
     const json: any = await res.json().catch(() => null);
@@ -1042,9 +1085,16 @@ export class IntegrationsService implements OnModuleInit {
     if (!res.ok) return { ok: false, status: res.status, message: IntegrationsService.amzErr(json) || `getItem ${res.status}`, exists: false, listingStatus: null, asin: null, issues: [] };
 
     const summary = (json?.summaries ?? [])[0];
+    // What Amazon actually holds, as opposed to what we sent. The two differing silently is the
+    // failure this whole call exists to catch.
+    const attributes = (json?.attributes ?? {}) as Record<string, unknown>;
+    const offers = (json?.offers ?? []) as Array<Record<string, unknown>>;
     return {
       ok: true,
       status: res.status,
+      attributes,
+      offers,
+      storedPrice: offers[0]?.price ?? null,
       exists: true,
       listingStatus: summary?.status?.[0] ?? summary?.listingId ? (summary?.status?.[0] ?? 'UNKNOWN') : null,
       asin: summary?.asin ?? null,

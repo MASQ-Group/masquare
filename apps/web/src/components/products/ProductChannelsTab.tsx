@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Ban, Check, ChevronDown, ChevronRight, Loader2, PackageCheck } from 'lucide-react';
+import { AlertTriangle, Ban, Check, ChevronDown, ChevronRight, Clock, Loader2, PackageCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Select } from '@masquare/ui';
 import { amazonListingApi, listingApi, type AmazonSweep, type ProductChannelRow } from '../../lib/api';
 import { AmazonCandidates } from './AmazonCandidates';
 import { AmazonOfferPreview } from './AmazonOfferPreview';
 import { LaunchPrice } from './LaunchPrice';
+import { CompetitorPrices } from './CompetitorPrices';
 import { ChannelGroup, CHANNEL_TONE } from './ChannelGroup';
 import { useJobProgress } from '../../lib/useJobProgress';
 
@@ -154,11 +155,21 @@ function ChannelRow({
             <PackageCheck size={13} /> Listed
           </span>
         )}
+        {/* Submitted but not yet seen by a sync. Without this the row reads "Ready to list" for a
+            listing that was created minutes ago, which invites listing it a second time. */}
+        {!row.listing && row.plan?.status === 'SUBMITTED' && (
+          <span
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-amber-700"
+            title="Sent to Amazon. It will show as listed once a channel sync picks it up."
+          >
+            <Clock size={13} /> Submitted
+          </span>
+        )}
         {blocked ? (
           <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-danger">
             <Ban size={13} /> Blocked
           </span>
-        ) : row.listing ? null : row.readiness.ready ? (
+        ) : row.listing || row.plan?.status === 'SUBMITTED' ? null : row.readiness.ready ? (
           <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-teal-700">
             <Check size={13} /> Ready to list
           </span>
@@ -197,7 +208,8 @@ function ChannelRow({
   );
 }
 
-function PlanEditor({
+/** Exported so the Channel Listings page can run the same flow for one channel, in a modal. */
+export function PlanEditor({
   row, productId, warnings, onSaved,
 }: {
   row: ProductChannelRow;
@@ -335,7 +347,7 @@ function PlanEditor({
             number typed here would immediately disagree with what we actually hold. */}
         <label className="flex flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Quantity to list</span>
-          <div className={`flex h-8 items-center rounded-lg border px-2.5 text-[12.5px] ${row.quantity.value == null ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-n-200 bg-n-50 text-n-700'}`}>
+          <div className={`flex h-8 items-center rounded-lg border px-2.5 text-[12.5px] ${row.quantity.value ? 'border-n-200 bg-n-50 text-n-700' : 'border-amber-300 bg-amber-50 text-amber-800'}`}>
             <span className="mono font-semibold">{row.quantity.value ?? 'none'}</span>
           </div>
           <span className="text-[11px] text-n-400">
@@ -343,6 +355,7 @@ function PlanEditor({
               : row.quantity.source === 'this-listing' ? 'From the live listing here'
               : row.quantity.source === 'sibling-listing' ? `Borrowed from ${row.quantity.from ?? 'another marketplace'} — no Availability recorded`
               : 'No sellable quantity recorded — set it on the Availability page'}
+            {row.quantity.value === 0 && ' · nobody can buy at zero'}
           </span>
         </label>
 
@@ -395,8 +408,17 @@ function PlanEditor({
         <LaunchPrice productId={productId} integrationId={row.integrationId} price={price} onPriceChange={setPrice} />
       )}
 
+      {isAmazon && asin && <CompetitorPrices productId={productId} integrationId={row.integrationId} />}
+
       {isAmazon && (
-        <AmazonOfferPreview productId={productId} integrationId={row.integrationId} asin={asin} onListed={onSaved} />
+        <AmazonOfferPreview
+          productId={productId}
+          integrationId={row.integrationId}
+          asin={asin}
+          quantity={row.quantity.value}
+          onListed={onSaved}
+          savePlan={() => save.mutateAsync()}
+        />
       )}
 
       <div className="flex items-center gap-2">

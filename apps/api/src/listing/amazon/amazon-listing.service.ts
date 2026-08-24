@@ -100,7 +100,11 @@ export class AmazonListingService {
    * therefore means asking each one, which is why this runs as a job — eighteen marketplaces at two
    * calls apiece is a minute of sequential work, and SP-API rate limits punish doing it faster.
    */
-  async sweepMarketplaces(productId: string, ctx?: { setTotal(n: number): void; tick(ok?: boolean): void; note(m: string): void }) {
+  async sweepMarketplaces(
+    productId: string,
+    ctx?: { setTotal(n: number): void; tick(ok?: boolean): void; note(m: string): void },
+    opts: { withPricing?: boolean } = {},
+  ) {
     const integrations = await this.prisma.channelIntegration.findMany({
       where: { deletedAt: null, channelType: 'amazon' },
       select: { id: true, name: true, marketplace: true },
@@ -120,6 +124,13 @@ export class AmazonListingService {
       found: boolean; asin: string | null; productType: string | null; title: string | null;
       restricted: boolean | null; restrictionReason: string | null; error: string | null;
       alreadyListed: boolean; listedSku: string | null;
+      /** What the offer that currently wins the Buy Box charges, and what we would make at it. */
+      featuredPriceCents: number | null;
+      featuredProfitCents: number | null;
+      featuredMarginPct: number | null;
+      lowestPriceCents: number | null;
+      /** True when we could win the Buy Box at a profit. The question worth asking before listing. */
+      competitive: boolean | null;
     }> = [];
 
     for (const integration of integrations) {
@@ -143,6 +154,11 @@ export class AmazonListingService {
           error: top ? null : (found.message ?? 'No catalogue entry for this identifier'),
           alreadyListed: !!live,
           listedSku: live?.channelSku ?? null,
+          // Priced only where listing is actually on the table: two more live calls per marketplace,
+          // and there is nothing to decide about one we are already on or cannot sell in.
+          ...(opts.withPricing && top && !live && top.restricted === false
+            ? await this.priceAgainstCompetition(productId, integration.id, integration.marketplace ?? '', top.asin)
+            : { featuredPriceCents: null, featuredProfitCents: null, featuredMarginPct: null, lowestPriceCents: null, competitive: null }),
         });
         ctx?.tick(true);
       } catch (e) {
@@ -153,6 +169,8 @@ export class AmazonListingService {
           restricted: null, restrictionReason: null, error: (e as Error)?.message ?? 'Search failed',
           alreadyListed: !!live,
           listedSku: live?.channelSku ?? null,
+          featuredPriceCents: null, featuredProfitCents: null, featuredMarginPct: null,
+          lowestPriceCents: null, competitive: null,
         });
         ctx?.tick(false);
       }
@@ -169,6 +187,9 @@ export class AmazonListingService {
         alreadyListed: results.filter((r) => r.alreadyListed).length,
         sellable: results.filter((r) => r.found && r.restricted === false && !r.alreadyListed).length,
         restricted: results.filter((r) => r.restricted === true && !r.alreadyListed).length,
+        /** Of the ones we could list, how many we could win the Buy Box on at a profit. */
+        competitive: results.filter((r) => r.competitive === true).length,
+        uncompetitive: results.filter((r) => r.competitive === false).length,
         notFound: results.filter((r) => !r.found && !r.alreadyListed && !r.error).length,
         failed: results.filter((r) => r.error && !r.found && !r.alreadyListed).length,
       },
@@ -182,7 +203,7 @@ export class AmazonListingService {
    * solver the floors are built on — so the profit quoted here and the profit quoted anywhere else
    * in the platform are the same number by construction rather than by coincidence.
    */
-  async quote(productId: string, integrationId: string, atPriceCents?: number | null) {
+  async quote(productId: string, integrationId: string, atPricesCents?: number[]) {
     const [product, integration, plan, settings] = await Promise.all([
       this.prisma.product.findFirst({ where: { id: productId, deletedAt: null }, select: { id: true } }),
       this.prisma.channelIntegration.findFirst({
@@ -213,8 +234,159 @@ export class AmazonListingService {
       // FBM unless we know otherwise; an FBA launch is a separate decision nobody has made here.
       isFba: false,
       marginPct,
-      atPriceCents: atPriceCents ?? null,
+      atPricesCents: atPricesCents ?? [],
     });
+  }
+
+
+  /**
+   * Could we win this listing at a profit?
+   *
+   * Judged against the FEATURED offer rather than the lowest price. The featured offer is the one
+   * that actually takes the sales, while the lowest is frequently an outlier — a used unit, or a
+   * seller shipping from another continent — and pricing against it answers a question nobody asked.
+   * The lowest is carried alongside for context, not for the verdict.
+   */
+  private async priceAgainstCompetition(productId: string, integrationId: string, iso: string, asin: string) {
+    const none = { featuredPriceCents: null, featuredProfitCents: null, featuredMarginPct: null, lowestPriceCents: null, competitive: null };
+    const marketplaceId = MARKETPLACE_IDS[iso.toUpperCase()];
+    if (!marketplaceId) return none;
+
+    const offers = await this.integrations.getAmazonItemOffers(integrationId, asin);
+    if (!offers.ok) return none;
+    const summary = (offers.summary ?? {}) as { BuyBoxPrices?: RawPriceLike[]; LowestPrices?: RawPriceLike[] };
+
+    const landed = (p?: RawPriceLike) => {
+      const listing = money(p?.ListingPrice?.Amount);
+      return listing == null ? null : listing + (money(p?.Shipping?.Amount) ?? 0);
+    };
+    const featured = landed(summary.BuyBoxPrices?.[0]);
+    const lowest = landed(summary.LowestPrices?.[0]);
+    if (featured == null) return { ...none, lowestPriceCents: lowest };
+
+    const settings = await this.prisma.platformSettings.findFirst({ select: { launchMarginPct: true } });
+    const quote = await this.floors.quoteForNewListing({
+      productId,
+      integrationId,
+      marketplaceId,
+      currency: MARKETPLACE_CURRENCY[iso.toUpperCase()] ?? 'EUR',
+      asin,
+      isFba: false,
+      marginPct: Number(settings?.launchMarginPct ?? 20) / 100,
+      atPricesCents: [featured],
+    });
+    if (!quote.ok || !quote.at[0]) return { ...none, featuredPriceCents: featured, lowestPriceCents: lowest };
+
+    return {
+      featuredPriceCents: featured,
+      featuredProfitCents: quote.at[0].profitCents,
+      featuredMarginPct: quote.at[0].marginPct,
+      lowestPriceCents: lowest,
+      competitive: quote.at[0].aboveBreakeven,
+    };
+  }
+
+  /**
+   * What the competition charges for this ASIN, and what each of those prices would earn us.
+   *
+   * Amazon shows a seller three reference prices and a Match button beside each. The prices are
+   * genuinely useful; the button is the dangerous part, because none of those numbers know our
+   * costs. On the blender that prompted this the featured offer was €70.57 against a €132.99
+   * suggestion — matching it would have sold at a heavy loss, and nothing on Amazon's screen says so.
+   *
+   * So: the same three prices, no Match, and what each one would actually make or lose, computed by
+   * the same engine as every other profit figure in the platform.
+   */
+  async competition(productId: string, integrationId: string) {
+    const [product, integration, plan, settings] = await Promise.all([
+      this.prisma.product.findFirst({ where: { id: productId, deletedAt: null }, select: { id: true } }),
+      this.prisma.channelIntegration.findFirst({
+        where: { id: integrationId, deletedAt: null },
+        select: { id: true, marketplace: true, channelType: true },
+      }),
+      this.prisma.productChannelPlan.findFirst({ where: { productId, integrationId, deletedAt: null } }),
+      this.prisma.platformSettings.findFirst({ select: { launchMarginPct: true } }),
+    ]);
+    if (!product) throw new NotFoundException('Product not found');
+    if (!integration || integration.channelType !== 'amazon') throw new BadRequestException('Not an Amazon channel');
+
+    const asin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin;
+    if (!asin) throw new BadRequestException('Match an Amazon listing first');
+
+    const iso = (integration.marketplace ?? '').toUpperCase();
+    const marketplaceId = MARKETPLACE_IDS[iso];
+    if (!marketplaceId) throw new BadRequestException(`Unknown marketplace ${iso}`);
+    const currency = MARKETPLACE_CURRENCY[iso] ?? 'EUR';
+
+    const offers = await this.integrations.getAmazonItemOffers(integrationId, asin);
+    if (!offers.ok) {
+      return { ok: false as const, reason: offers.message ?? 'Amazon would not return offers for this listing' };
+    }
+
+    const summary = (offers.summary ?? {}) as {
+      BuyBoxPrices?: RawPriceLike[];
+      LowestPrices?: RawPriceLike[];
+      CompetitivePriceThreshold?: { Amount?: number };
+      TotalOfferCount?: number;
+      NumberOfOffers?: Array<{ OfferCount?: number }>;
+    };
+
+    // Landed, not listing: a price without its shipping is not what a buyer pays, and comparing our
+    // delivered price against someone else's ex-shipping price flatters them by exactly the postage.
+    const landed = (p?: RawPriceLike): number | null => {
+      if (!p) return null;
+      const listing = money(p.ListingPrice?.Amount);
+      if (listing == null) return null;
+      return listing + (money(p.Shipping?.Amount) ?? 0);
+    };
+
+    const references: Array<{ kind: 'featured' | 'competitive' | 'lowest'; label: string; priceCents: number | null }> = [
+      { kind: 'featured', label: 'Featured offer', priceCents: landed(summary.BuyBoxPrices?.[0]) },
+      { kind: 'competitive', label: 'Competitive price', priceCents: money(summary.CompetitivePriceThreshold?.Amount) },
+      { kind: 'lowest', label: 'Lowest price', priceCents: landed(summary.LowestPrices?.[0]) },
+    ];
+
+    const known = references.filter((r) => r.priceCents != null) as Array<{
+      kind: 'featured' | 'competitive' | 'lowest'; label: string; priceCents: number;
+    }>;
+
+    // One quote covering every reference price plus our own suggestion: each call costs a live fee
+    // estimate, and they all sit on the same cost basis anyway.
+    const quote = await this.floors.quoteForNewListing({
+      productId,
+      integrationId,
+      marketplaceId,
+      currency,
+      asin,
+      isFba: false,
+      marginPct: Number(settings?.launchMarginPct ?? 20) / 100,
+      atPricesCents: known.map((r) => r.priceCents),
+    });
+    if (!quote.ok) return { ok: false as const, reason: quote.reason };
+
+    const byPrice = new Map(quote.at.map((a) => [a.priceCents, a]));
+
+    return {
+      ok: true as const,
+      currency,
+      offerCount: summary.TotalOfferCount ?? offers.offerCount ?? null,
+      suggestedCents: quote.suggestedCents,
+      breakevenCents: quote.breakevenCents,
+      marginPct: quote.marginPct,
+      prices: references.map((r) => {
+        const at = r.priceCents != null ? byPrice.get(r.priceCents) ?? null : null;
+        return {
+          kind: r.kind,
+          label: r.label,
+          priceCents: r.priceCents,
+          profitCents: at?.profitCents ?? null,
+          profitMarginPct: at?.marginPct ?? null,
+          // Below breakeven is a loss on every unit sold, which is the thing worth seeing at a
+          // glance next to a price Amazon is inviting you to match.
+          aboveBreakeven: at?.aboveBreakeven ?? null,
+        };
+      }),
+    };
   }
 
   /**
@@ -383,7 +555,7 @@ export class AmazonListingService {
     const input: OfferInput = {
       asin: (plan.aspects as Record<string, string> | null)?.asin ?? listing?.asin ?? '',
       marketplaceId: MARKETPLACE_IDS[(integration.marketplace ?? '').toUpperCase()] ?? '',
-      currency: listing?.currency ?? 'EUR',
+      currency: currencyForMarketplace(integration.marketplace, listing?.currency),
       priceCents: plan.offerPriceCents ?? (listing?.listedPrice != null ? Math.round(listing.listedPrice * 100) : null),
       quantity,
       handlingTimeDays: plan.handlingTimeDays,
@@ -441,6 +613,29 @@ export class AmazonListingService {
       liveWritesEnabled: await this.liveWritesEnabled(),
     };
   }
+}
+
+/** Amazon reports money as a decimal amount; the platform works in minor units throughout. */
+interface RawPriceLike {
+  ListingPrice?: { Amount?: number };
+  Shipping?: { Amount?: number };
+  LandedPrice?: { Amount?: number };
+}
+
+function money(amount: number | undefined): number | null {
+  return amount == null || !Number.isFinite(amount) ? null : Math.round(amount * 100);
+}
+
+/**
+ * The currency an offer on this marketplace must be denominated in.
+ *
+ * Never inferred from an existing listing: a first offer has none, and defaulting to EUR is how a
+ * UK listing went live priced in euros — Amazon accepted it, stored it, and had no GBP price to
+ * sell at. The marketplace is the only authority on this.
+ */
+export function currencyForMarketplace(iso: string | null | undefined, fallback?: string | null): string {
+  const known = MARKETPLACE_CURRENCY[(iso ?? '').toUpperCase()];
+  return known ?? fallback ?? 'EUR';
 }
 
 /** A marketplace has exactly one currency; quoting in the wrong one is quoting a different price. */

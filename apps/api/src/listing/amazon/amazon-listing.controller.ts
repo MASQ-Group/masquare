@@ -39,9 +39,14 @@ export class AmazonListingController {
    * Returns the job to follow; the result lands on it when the sweep finishes.
    */
   @Post('products/:productId/sweep')
-  sweep(@Param('productId') productId: string) {
-    return this.jobs.start('listing.amazon.sweep', 'Searching Amazon marketplaces', (ctx) =>
-      this.svc.sweepMarketplaces(productId, ctx),
+  sweep(@Param('productId') productId: string, @Body() body: { withPricing?: boolean } = {}) {
+    // Pricing doubles the calls per candidate marketplace, so it is asked for rather than assumed:
+    // the product card wants a fast "where does this exist", the listings page wants "and would it pay".
+    const withPricing = body.withPricing === true;
+    return this.jobs.start(
+      'listing.amazon.sweep',
+      withPricing ? 'Checking every Amazon marketplace' : 'Searching Amazon marketplaces',
+      (ctx) => this.svc.sweepMarketplaces(productId, ctx, { withPricing }),
     );
   }
 
@@ -54,9 +59,21 @@ export class AmazonListingController {
   quote(
     @Param('productId') productId: string,
     @Param('integrationId') integrationId: string,
-    @Body() body: { atPriceCents?: number | null } = {},
+    @Body() body: { atPricesCents?: number[] } = {},
   ) {
-    return this.svc.quote(productId, integrationId, body.atPriceCents ?? null);
+    return this.svc.quote(productId, integrationId, body.atPricesCents ?? []);
+  }
+
+  /**
+   * What the competition charges for this ASIN, with what each of those prices would earn us.
+   *
+   * Read-only and deliberately without a "match" action: the point is to inform the number a human
+   * types, not to hand over the decision. On the blender that prompted this, the featured offer was
+   * a third of our suggested price — a chip saying what that would lose is the whole value.
+   */
+  @Get('products/:productId/channels/:integrationId/competition')
+  competition(@Param('productId') productId: string, @Param('integrationId') integrationId: string) {
+    return this.svc.competition(productId, integrationId);
   }
 
   /** Build the offer and have Amazon validate it. Creates nothing. */

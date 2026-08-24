@@ -1,10 +1,15 @@
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw } from 'lucide-react';
-import { channelListingsApi } from '../lib/api';
+import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw, Search } from 'lucide-react';
+import { amazonListingApi, listingApi, type AmazonSweep, channelListingsApi } from '../lib/api';
+import { ProgressButton } from '@masquare/ui';
 import { formatAmount } from '../lib/format';
 import { Flag } from '../components/common/Flag';
+import { useJobProgress } from '../lib/useJobProgress';
+import { ListOnChannelModal } from '../components/channel-listings/ListOnChannelModal';
+import { NotListedPanel } from '../components/channel-listings/NotListedPanel';
 
 const STATUS: Record<string, { label: string; color: string; bg: string }> = {
   live: { label: 'Live', color: '#0E7A73', bg: '#E1F3F1' },
@@ -30,6 +35,22 @@ export function ChannelListingDetailPage() {
   const { productId = '' } = useParams();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ['channel-listing-detail', productId], queryFn: () => channelListingsApi.detail(productId) });
+
+  // Whether a channel CAN be listed on is a different question from what it currently sells, so it
+  // comes from the listing module rather than the listings snapshot this page is built on.
+  const { data: plans } = useQuery({
+    queryKey: ['listing', 'product-channels', productId],
+    queryFn: () => listingApi.productChannels(productId as string),
+    enabled: !!productId,
+  });
+  const planByIntegration = new Map((plans?.channels ?? []).map((c) => [c.integrationId, c]));
+
+  // The competitive read costs two live calls per candidate marketplace, so it is asked for.
+  const analysis = useJobProgress(`listing.amazon.sweep.${productId}`);
+  const sweepResult = analysis.result as AmazonSweep | null;
+  const sweepByIntegration = new Map((sweepResult?.results ?? []).map((r) => [r.integrationId, r]));
+
+  const [listing, setListing] = useState<{ integrationId: string; name: string } | null>(null);
 
   if (isLoading) return <div className="card p-10 text-center text-[13px] text-n-500">Loading…</div>;
   if (!data) return <div className="card p-10 text-center text-[13px] text-n-500">Product not found.</div>;
@@ -80,11 +101,56 @@ export function ChannelListingDetailPage() {
           </div>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* Two live calls per candidate marketplace, so it is a job with progress rather than
+              something that happens on page load. */}
+          <ProgressButton
+            running={analysis.running}
+            value={analysis.value}
+            detail={analysis.detail}
+            onClick={() => analysis.start(() => amazonListingApi.sweep(productId as string, true))}
+            runningLabel={<><Search size={15} /> Checking</>}
+            className="!h-[38px] !text-[13px]"
+            title="Searches every Amazon marketplace and works out whether we could win the Buy Box at a profit. Read-only."
+          >
+            <Search size={15} /> Check all Amazon channels
+          </ProgressButton>
           <button onClick={() => { qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] }); toast.success('Refreshed'); }}
             className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:bg-n-50"><RefreshCw size={15} /> Refresh</button>
           <Link to={`/products?edit=${productId}`} className="inline-flex h-[38px] items-center gap-2 rounded-md bg-teal-500 px-4 text-[13px] font-semibold text-white hover:bg-teal-600"><Edit3 size={15} /> Edit product</Link>
         </div>
       </div>
+
+      {analysis.error && (
+        <div className="mt-4 rounded-md border border-danger-bd bg-danger-bg px-3 py-2 text-[12.5px] text-danger">{analysis.error}</div>
+      )}
+      {sweepResult && (
+        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-lg border border-n-200 bg-n-25 px-3.5 py-2.5 text-[12.5px]">
+          <span className="font-semibold text-n-800">Checked {sweepResult.summary.searched} Amazon marketplaces</span>
+          <span className="text-teal-700"><b>{sweepResult.summary.alreadyListed}</b> already listed</span>
+          <span className="text-green-700"><b>{sweepResult.summary.competitive}</b> worth listing on</span>
+          {sweepResult.summary.uncompetitive > 0 && (
+            <span className="text-danger"><b>{sweepResult.summary.uncompetitive}</b> can't compete</span>
+          )}
+          {sweepResult.summary.restricted > 0 && (
+            <span className="text-danger"><b>{sweepResult.summary.restricted}</b> need approval</span>
+          )}
+          {sweepResult.summary.notFound > 0 && (
+            <span className="text-n-500"><b>{sweepResult.summary.notFound}</b> not in the catalogue</span>
+          )}
+        </div>
+      )}
+
+      {listing && (
+        <ListOnChannelModal
+          productId={productId as string}
+          integrationId={listing.integrationId}
+          channelName={listing.name}
+          onClose={() => {
+            setListing(null);
+            qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] });
+          }}
+        />
+      )}
 
       {/* KPI row (placeholder) */}
       <div className="mt-1.5 mb-1 flex items-center text-[12px] text-n-400">Performance metrics <Sample /> — indicative; wire up in a later phase.</div>
@@ -152,10 +218,14 @@ export function ChannelListingDetailPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center gap-2.5 px-4 py-6 text-center">
-                    <div className="text-[13px] text-n-500">Not listed on {c.name} yet.</div>
-                    <button className="h-9 rounded-md bg-teal-500 px-4 text-[13px] font-semibold text-white hover:bg-teal-600" title="Coming with push sync">+ List on {c.name}</button>
-                  </div>
+                  <NotListedPanel
+                    channelName={c.name}
+                    integrationId={c.integrationId ?? null}
+                    plan={c.integrationId ? planByIntegration.get(c.integrationId) ?? null : null}
+                    sweep={c.integrationId ? sweepByIntegration.get(c.integrationId) ?? null : null}
+                    analysed={!!analysis.result}
+                    onList={(integrationId) => setListing({ integrationId, name: c.name })}
+                  />
                 )}
               </div>
             );
