@@ -41,6 +41,21 @@ export function referralScheduleFor(categoryKey?: string | null): ReferralBracke
 }
 
 /**
+ * A schedule built from one sales channel's configured fee.
+ *
+ * The engine used to hard-code 15% while Individual Pricing read the channel's own
+ * generalSalesFeePct. They agreed only because both happened to be 15 — changing a fee in Settings
+ * would have made two screens disagree about the same sale.
+ *
+ * A zero fee is a real answer: some channels genuinely charge none, and treating it as "unknown"
+ * would quietly restore a 15% deduction that nobody configured. Only an absent fee falls back.
+ */
+export function scheduleFromChannelFee(pct: number | null | undefined): ReferralBracket[] {
+  if (pct == null || !Number.isFinite(pct) || pct < 0) return DEFAULT_REFERRAL_SCHEDULE;
+  return [{ minCents: 1, maxCents: MAX, pct: pct / 100 }];
+}
+
+/**
  * Assert a schedule is well-formed: sorted, contiguous, gap-free, covering [1, MAX]. The solver
  * assumes this; a malformed schedule would silently mis-price a floor. Throws on violation.
  */
