@@ -29,7 +29,8 @@ export function LaunchPrice({
   onPriceChange: (value: string) => void;
 }) {
   const quote = useMutation({
-    mutationFn: (atPriceCents?: number | null) => amazonListingApi.quote(productId, integrationId, atPriceCents),
+    mutationFn: (atPriceCents?: number | null) =>
+      amazonListingApi.quote(productId, integrationId, atPriceCents != null ? [atPriceCents] : []),
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not price this listing'),
   });
 
@@ -88,13 +89,13 @@ export function LaunchPrice({
 
         {/* Only shown for the price that was actually evaluated — a figure that lags the box by an
             edit is worse than no figure, because it looks current. */}
-        {q.at && typedCents === q.at.priceCents && (
-          <span className={`inline-flex items-center gap-1.5 text-[12px] font-semibold ${q.at.aboveBreakeven ? 'text-teal-700' : 'text-danger'}`}>
+        {q.at[0] && typedCents === q.at[0].priceCents && (
+          <span className={`inline-flex items-center gap-1.5 text-[12px] font-semibold ${q.at[0].aboveBreakeven ? 'text-teal-700' : 'text-danger'}`}>
             <TrendingUp size={13} />
-            {money(q.at.profitCents, q.currency)} profit · {q.at.marginPct}%
+            {money(q.at[0].profitCents, q.currency)} profit · {q.at[0].marginPct}%
           </span>
         )}
-        {q.at && typedCents !== q.at.priceCents && (
+        {q.at[0] && typedCents !== q.at[0].priceCents && (
           <span className="text-[11.5px] text-n-400">Price changed since the last calculation.</span>
         )}
       </div>

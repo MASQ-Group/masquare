@@ -80,7 +80,6 @@ function ChannelCell({ cell, solo, fields }: { cell?: ChannelListingCell; solo?:
     return (
       <div className="chc flex flex-col justify-center gap-1 border-l border-n-100 px-3 py-3">
         <span className="text-[12px] text-n-300">Not listed</span>
-        <button title="List on this channel (coming with push sync)" className="w-fit text-left text-[11px] font-semibold text-teal-700 hover:text-teal-600">+ List</button>
       </div>
     );
   }

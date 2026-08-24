@@ -1089,6 +1089,7 @@ export interface ChannelPlan {
   offerPriceCents: number | null;
   deliveryTemplate: string | null;
   boostPct: number;
+  /** DRAFT | READY | SUBMITTED | ARCHIVED. SUBMITTED means sent to the channel, not yet confirmed. */
   status: string;
   externalListingId: string | null;
   listedAt: string | null;
@@ -1199,6 +1200,13 @@ export interface AmazonSweepRow {
   /** We already sell here. Not an opportunity, and not something to list again. */
   alreadyListed: boolean;
   listedSku: string | null;
+  /** Present only when the sweep was asked to price. The featured offer is the one that sells. */
+  featuredPriceCents: number | null;
+  featuredProfitCents: number | null;
+  featuredMarginPct: number | null;
+  lowestPriceCents: number | null;
+  /** True when we could win the Buy Box at a profit; false when we could not; null if unpriced. */
+  competitive: boolean | null;
 }
 
 export interface AmazonSweep {
@@ -1213,6 +1221,8 @@ export interface AmazonSweep {
     restricted: number;
     notFound: number;
     failed: number;
+    competitive: number;
+    uncompetitive: number;
   };
 }
 
@@ -1225,7 +1235,7 @@ export type AmazonQuote =
       suggestedCents: number;
       currency: string;
       marginPct: number;
-      at: { priceCents: number; profitCents: number; marginPct: number; aboveBreakeven: boolean } | null;
+      at: Array<{ priceCents: number; profitCents: number; marginPct: number; aboveBreakeven: boolean }>;
       inputs: {
         cogsLandedCents: number;
         fixedPerUnitCents: number;
@@ -1249,22 +1259,50 @@ export interface AmazonSubmitResult {
 export interface AmazonListingState {
   ok: boolean;
   exists: boolean;
+  /** BUYABLE means a valid offer exists. DISCOVERABLE means the product is there but not sellable. */
   listingStatus: string | null;
   asin: string | null;
   issues: { code: string; message: string; severity: string }[];
+  /** What Amazon actually holds for this SKU — not necessarily what we sent. */
+  attributes?: Record<string, unknown>;
+  offers?: Array<Record<string, unknown>>;
   message?: string;
 }
+
+/** Amazon's own reference prices, each with what it would make or lose us. */
+export type AmazonCompetition =
+  | { ok: false; reason: string }
+  | {
+      ok: true;
+      currency: string;
+      offerCount: number | null;
+      suggestedCents: number;
+      breakevenCents: number;
+      marginPct: number;
+      prices: Array<{
+        kind: 'featured' | 'competitive' | 'lowest';
+        label: string;
+        /** Null when Amazon has no such price for this ASIN. */
+        priceCents: number | null;
+        profitCents: number | null;
+        profitMarginPct: number | null;
+        aboveBreakeven: boolean | null;
+      }>;
+    };
 
 export const amazonListingApi = {
   status: () => api.get<{ liveWritesEnabled: boolean }>('/listing/amazon/status').then((r) => r.data),
   candidates: (productId: string, integrationId: string) =>
     api.get<AmazonCandidates>(`/listing/amazon/products/${productId}/channels/${integrationId}/candidates`).then((r) => r.data),
   /** Searches every Amazon marketplace. Slow, so it returns a job to follow. */
-  sweep: (productId: string) =>
-    api.post<JobView>(`/listing/amazon/products/${productId}/sweep`, {}).then((r) => r.data),
+  sweep: (productId: string, withPricing = false) =>
+    api.post<JobView>(`/listing/amazon/products/${productId}/sweep`, { withPricing }).then((r) => r.data),
   /** The launch price here, and what a given price would earn. */
-  quote: (productId: string, integrationId: string, atPriceCents?: number | null) =>
-    api.post<AmazonQuote>(`/listing/amazon/products/${productId}/channels/${integrationId}/quote`, { atPriceCents }).then((r) => r.data),
+  quote: (productId: string, integrationId: string, atPricesCents?: number[]) =>
+    api.post<AmazonQuote>(`/listing/amazon/products/${productId}/channels/${integrationId}/quote`, { atPricesCents }).then((r) => r.data),
+  /** What the competition charges, and what each of those prices would earn us. Read-only. */
+  competition: (productId: string, integrationId: string) =>
+    api.get<AmazonCompetition>(`/listing/amazon/products/${productId}/channels/${integrationId}/competition`).then((r) => r.data),
   /**
    * Creates the offer for real. The only call in this module a customer can see the result of —
    * refused unless the server permits listing writes and `confirm` is set.
