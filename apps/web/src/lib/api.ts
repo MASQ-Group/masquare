@@ -1200,6 +1200,8 @@ export interface AmazonSweepRow {
   /** We already sell here. Not an opportunity, and not something to list again. */
   alreadyListed: boolean;
   listedSku: string | null;
+  /** The currency every money figure on this row is in. A marketplace has exactly one. */
+  currency: string;
   /** Present only when the sweep was asked to price. The featured offer is the one that sells. */
   featuredPriceCents: number | null;
   featuredProfitCents: number | null;

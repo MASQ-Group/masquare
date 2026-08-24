@@ -124,6 +124,8 @@ export class AmazonListingService {
       found: boolean; asin: string | null; productType: string | null; title: string | null;
       restricted: boolean | null; restrictionReason: string | null; error: string | null;
       alreadyListed: boolean; listedSku: string | null;
+      /** The currency every money figure on this row is in. A marketplace has exactly one. */
+      currency: string;
       /** What the offer that currently wins the Buy Box charges, and what we would make at it. */
       featuredPriceCents: number | null;
       featuredProfitCents: number | null;
@@ -158,7 +160,11 @@ export class AmazonListingService {
           // and there is nothing to decide about one we are already on or cannot sell in.
           ...(opts.withPricing && top && !live && top.restricted === false
             ? await this.priceAgainstCompetition(productId, integration.id, integration.marketplace ?? '', top.asin)
-            : { featuredPriceCents: null, featuredProfitCents: null, featuredMarginPct: null, lowestPriceCents: null, competitive: null }),
+            : {
+                currency: currencyForMarketplace(integration.marketplace),
+                featuredPriceCents: null, featuredProfitCents: null, featuredMarginPct: null,
+                lowestPriceCents: null, competitive: null,
+              }),
         });
         ctx?.tick(true);
       } catch (e) {
@@ -169,6 +175,7 @@ export class AmazonListingService {
           restricted: null, restrictionReason: null, error: (e as Error)?.message ?? 'Search failed',
           alreadyListed: !!live,
           listedSku: live?.channelSku ?? null,
+          currency: currencyForMarketplace(integration.marketplace),
           featuredPriceCents: null, featuredProfitCents: null, featuredMarginPct: null,
           lowestPriceCents: null, competitive: null,
         });
@@ -248,7 +255,8 @@ export class AmazonListingService {
    * The lowest is carried alongside for context, not for the verdict.
    */
   private async priceAgainstCompetition(productId: string, integrationId: string, iso: string, asin: string) {
-    const none = { featuredPriceCents: null, featuredProfitCents: null, featuredMarginPct: null, lowestPriceCents: null, competitive: null };
+    const currency = currencyForMarketplace(iso);
+    const none = { currency, featuredPriceCents: null, featuredProfitCents: null, featuredMarginPct: null, lowestPriceCents: null, competitive: null };
     const marketplaceId = MARKETPLACE_IDS[iso.toUpperCase()];
     if (!marketplaceId) return none;
 
@@ -269,7 +277,7 @@ export class AmazonListingService {
       productId,
       integrationId,
       marketplaceId,
-      currency: MARKETPLACE_CURRENCY[iso.toUpperCase()] ?? 'EUR',
+      currency,
       asin,
       isFba: false,
       marginPct: Number(settings?.launchMarginPct ?? 20) / 100,
@@ -278,6 +286,7 @@ export class AmazonListingService {
     if (!quote.ok || !quote.at[0]) return { ...none, featuredPriceCents: featured, lowestPriceCents: lowest };
 
     return {
+      currency,
       featuredPriceCents: featured,
       featuredProfitCents: quote.at[0].profitCents,
       featuredMarginPct: quote.at[0].marginPct,
