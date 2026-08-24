@@ -267,9 +267,18 @@ export class FloorService {
       closingFeeCents: fees.closingFeeCents ?? 0,
       cogsLandedCents,
       fixedPerUnitCents,
-      // No sales history on a marketplace we have never sold on, so this falls back to the default
-      // rate rather than pretending to a SKU-specific one.
-      returnsRate: REPRICING_DEFAULTS.defaultReturnsRate,
+      /**
+       * No returns allowance in a quoted profit.
+       *
+       * A repricing FLOOR carries one deliberately: it is a safety line for automated pricing, and
+       * a proportion of units really do come back. A quoted profit is a different question — what
+       * this sale earns — and a booked sale does not deduct a hypothetical return either. Deducting
+       * it here made the product card read 38.9% where Individual Pricing read 40.9% on the same
+       * SKU, price and channel, which is exactly the disagreement the platform is not allowed to have.
+       *
+       * The floors keep theirs. This is the figure a person compares against Individual Pricing.
+       */
+      returnsRate: 0,
       refundAdminFeeCents: REPRICING_DEFAULTS.refundAdminFeeCents,
       storagePerUnitCents: storageApplies ? marketplaceCosts?.defaultStoragePerUnitCents ?? 0 : 0,
       adCostPerUnitCents: adsApply ? marketplaceCosts?.defaultAdCostPerUnitCents ?? 0 : 0,
