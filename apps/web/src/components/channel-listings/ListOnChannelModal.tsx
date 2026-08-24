@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { ModalShell } from '@masquare/ui';
 import { listingApi } from '../../lib/api';
-import { PlanEditor } from '../products/ProductChannelsTab';
+import { PlanEditor } from '../products/ChannelPlanEditor';
 
 /**
  * List one product on one channel, from the Channel Listings page.
