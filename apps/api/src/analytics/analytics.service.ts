@@ -34,6 +34,12 @@ const pct = (profit: number, base: number) => (base > 0 ? round((profit / base) 
 
 /** Sales analytics/reporting — aggregates the already-computed per-transaction
  *  economics (revenue, fees, profit in EUR) so figures match the transaction view. */
+/**
+ * Sales quantities are DECIMAL, and `+` on a Prisma Decimal concatenates strings rather than adding
+ * — 1 + 2 became "012". Every quantity that reaches a sum goes through this.
+ */
+const num = (v: unknown) => Number(v ?? 0);
+
 @Injectable()
 export class AnalyticsService {
   constructor(private readonly tx: SalesTransactionsService) {}
@@ -119,8 +125,8 @@ export class AnalyticsService {
         totals.revenueIncVatEur += it.revenueIncVatEur ?? 0;
         totals.profitEur += it.profitEur ?? 0;
         totals.feesEur += it.feesEur ?? 0;
-        totals.units += it.quantity ?? 0;
-        orderUnits += it.quantity ?? 0;
+        totals.units += num(it.quantity);
+        orderUnits += num(it.quantity);
 
         const chId = t.salesChannelId ?? 'none';
         if (!channelMap.has(chId)) channelMap.set(chId, { channelId: t.salesChannelId, channelName: t.salesChannel?.name ?? '— No channel', currency: t.currency ?? null, revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, units: 0, ful: new Map<string, number>() });
@@ -129,15 +135,15 @@ export class AnalyticsService {
         ch.revenueIncVatEur += it.revenueIncVatEur ?? 0;
         ch.profitEur += it.profitEur ?? 0;
         ch.feesEur += it.feesEur ?? 0;
-        ch.units += it.quantity ?? 0;
+        ch.units += num(it.quantity);
         const fLabel = (() => { const f = String(t.fulfilmentType ?? '').toUpperCase(); return f === 'FBM' ? 'FBM' : f === 'FBA' ? 'FBA' : 'Local'; })();
-        ch.ful.set(fLabel, (ch.ful.get(fLabel) ?? 0) + (it.quantity ?? 0));
+        ch.ful.set(fLabel, (ch.ful.get(fLabel) ?? 0) + num(it.quantity));
 
         const d = new Date(t.date);
         const bucket = byMonth ? `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}` : d.toISOString().slice(0, 10);
         if (!trendMap.has(bucket)) trendMap.set(bucket, { revenueExVatEur: 0, profitEur: 0, feesEur: 0, units: 0 });
         const tr = trendMap.get(bucket)!;
-        tr.revenueExVatEur += rev; tr.profitEur += it.profitEur ?? 0; tr.feesEur += it.feesEur ?? 0; tr.units += it.quantity ?? 0;
+        tr.revenueExVatEur += rev; tr.profitEur += it.profitEur ?? 0; tr.feesEur += it.feesEur ?? 0; tr.units += num(it.quantity);
       }
       if (isReturned) { returns.orders += 1; returns.returnedUnits += orderUnits; returns.refundEur += t.refundEur ?? 0; }
     }
@@ -244,8 +250,8 @@ export class AnalyticsService {
         s.revenueIncVatEur += it.revenueIncVatEur ?? 0;
         s.profitEur += it.profitEur ?? 0;
         s.feesEur += it.feesEur ?? 0;
-        s.units += it.quantity ?? 0;
-        s.returnedUnits += isReturn ? (it.quantity ?? 0) : 0;
+        s.units += num(it.quantity);
+        s.returnedUnits += isReturn ? num(it.quantity) : 0;
         s.lines += 1;
       };
 
