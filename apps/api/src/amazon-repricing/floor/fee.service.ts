@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { MARKETPLACE_TO_ISO } from '../config/repricing.config';
-import { parseFeesEstimate } from './fees-parse';
+import { parseFeesEstimate, type ParsedFees } from './fees-parse';
 
 // Fees are DATA, not code (spec §4.3): this refreshes per-SKU fee estimates from Amazon's
 // getMyFeesEstimate into RepricingFeeEstimate, which the floor solver consumes. Reuses the
@@ -31,6 +31,30 @@ export class FeeService {
    * success. Resolves the Amazon integration for the marketplace's country; a missing integration
    * or a failed API call leaves fees unchanged (the SKU stays EXCLUDED as FEES_UNKNOWN upstream).
    */
+  /**
+   * Fees for an ASIN we do not list yet.
+   *
+   * Not persisted: RepricingFeeEstimate is keyed by our SKU, and there is no SKU here — this is a
+   * quote for a listing that does not exist. Returned to the caller and forgotten.
+   */
+  async estimateForAsin(args: {
+    integrationId: string;
+    asin: string;
+    currency: string;
+    isFba: boolean;
+    referencePriceCents: number | null;
+  }): Promise<ParsedFees | null> {
+    const refCents = args.referencePriceCents ?? NOMINAL_REFERENCE_CENTS;
+    const res = await this.integrations.getFeesEstimateForAsin(
+      args.integrationId, args.asin, refCents / 100, args.currency, args.isFba,
+    );
+    if (!res.ok) {
+      this.logger.warn(`feesEstimate by ASIN failed for ${args.asin}: ${res.message ?? res.status}`);
+      return null;
+    }
+    return parseFeesEstimate(res.payload);
+  }
+
   async refreshFeesForSku(args: {
     sku: string;
     asin: string | null;

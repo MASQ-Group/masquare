@@ -24,6 +24,8 @@ export function GeneralTab() {
   const [deductStockOnSale, setDeductStockOnSale] = useState(false);
   const [applyChannelResolutions, setApplyChannelResolutions] = useState(false);
   const [autoAdjustAvailabilityOnSale, setAutoAdjustAvailabilityOnSale] = useState(false);
+  const [launchMarginPct, setLaunchMarginPct] = useState('20');
+  const [listingLiveWrites, setListingLiveWrites] = useState(false);
 
   useEffect(() => {
     if (data) {
@@ -34,6 +36,8 @@ export function GeneralTab() {
       setDeductStockOnSale(data.deductStockOnSale ?? false);
       setApplyChannelResolutions(data.applyChannelResolutions ?? false);
       setAutoAdjustAvailabilityOnSale(data.autoAdjustAvailabilityOnSale ?? false);
+      setLaunchMarginPct(String(data.launchMarginPct ?? 20));
+      setListingLiveWrites(data.listingLiveWrites ?? false);
     }
   }, [data]);
 
@@ -42,7 +46,7 @@ export function GeneralTab() {
   const previewFonts = (body: string, mono: string) => { setBodyFont(body); setMonoFont(mono); applyFonts(body, mono); };
 
   const save = useMutation({
-    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions, autoAdjustAvailabilityOnSale }),
+    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions, autoAdjustAvailabilityOnSale, launchMarginPct: Number(launchMarginPct) || 0, listingLiveWrites }),
     onSuccess: () => { toast.success('Settings saved'); qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Save failed'),
   });
@@ -171,6 +175,54 @@ export function GeneralTab() {
               retroactively adjusted.</span>
           </p>
         )}
+
+        <div className="border-t border-n-100 pt-4">
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-[var(--teal-500)]"
+              checked={listingLiveWrites}
+              onChange={(e) => setListingLiveWrites(e.target.checked)}
+            />
+            <span>
+              <span className="block text-[13.5px] font-semibold text-n-800">Create real marketplace listings</span>
+              <span className="mt-0.5 block text-[12.5px] text-n-500">
+                Until this is on, the product card can search a marketplace and validate an offer against it, but
+                creating one is refused. Every listing is still made one at a time by a person, from the product
+                card, and confirmed separately.
+              </span>
+            </span>
+          </label>
+          {listingLiveWrites && (
+            <p className="mt-2 flex items-start gap-2 rounded-md border border-warning-bd bg-warning-bg px-3 py-2 text-[12px] text-warning">
+              <span>⚠</span>
+              <span>Offers created from now on are real and visible to customers at the price on the product card.
+                Validate first — it asks Amazon the same question and creates nothing.</span>
+            </p>
+          )}
+        </div>
+
+        <div className="border-t border-n-100 pt-4">
+          <label className="label">Launch margin</label>
+          <div className="flex items-center gap-2">
+            <input
+              className="input mono h-9 w-[110px] text-right"
+              inputMode="decimal"
+              value={launchMarginPct}
+              onChange={(e) => setLaunchMarginPct(e.target.value)}
+            />
+            <span className="text-[13px] text-n-500">%</span>
+          </div>
+          {/* Separate from the repricing floor margin on purpose — see the note below. */}
+          <p className="mt-1.5 text-[12.5px] text-n-500">
+            What a new marketplace listing is priced at, as profit on the selling price. The product card suggests
+            this figure and shows the profit at whatever price you set instead.
+          </p>
+          <p className="mt-1.5 text-[12px] text-n-400">
+            Deliberately higher than the 12% repricing floor: while repricing runs in shadow mode nothing raises a
+            price, so a listing launched at its floor would stay there. Set this to 12% once repricing writes live.
+          </p>
+        </div>
       </div>
 
       <div className="mt-6">

@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateSettingsDto {
   @IsOptional() @IsIn(['metric', 'imperial']) measurementSystem?: 'metric' | 'imperial';
@@ -16,4 +16,8 @@ export class UpdateSettingsDto {
   // When on, a submitted sale lowers channel Availability and schedules a push of the new figure
   // to every channel the SKU is listed on. Off until deliberately enabled (it makes live writes).
   @IsOptional() @IsBoolean() autoAdjustAvailabilityOnSale?: boolean;
+  /** Margin a new listing launches at, as a percentage. Separate from the repricing floor margin. */
+  @IsOptional() @IsNumber() launchMarginPct?: number;
+  /** Whether creating real marketplace listings is permitted. */
+  @IsOptional() @IsBoolean() listingLiveWrites?: boolean;
 }

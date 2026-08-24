@@ -567,6 +567,13 @@ model AttributeValue {
 
 // Singleton row holding platform-wide format defaults (§9).
 model PlatformSettings {
+  /// Whether creating real marketplace listings is permitted. Off by default; LISTING_LIVE_WRITES
+  /// can force it off regardless, and every submission is separately confirmed by a human.
+  listingLiveWrites Boolean @default(false) @map("listing_live_writes")
+
+  /// Margin a new listing launches at, as a percentage. Separate from the repricing floor margin
+  /// on purpose: listing at the floor only makes sense once the repricer is live to raise it.
+  launchMarginPct Decimal @default(20) @map("launch_margin_pct") @db.Decimal(5, 2)
   id                String            @id @default(uuid()) @db.Uuid
   measurementSystem MeasurementSystem @default(metric) @map("measurement_system")
   dateFormat        DateFormat        @default(ddmmyyyy) @map("date_format")
@@ -935,6 +942,10 @@ model ProductChannelPlan {
   /// NEW everywhere except eBay, which occasionally sells open box or used.
   condition        String  @default("NEW")
   handlingTimeDays Int?    @map("handling_time_days")
+  /// What this offer launches at, in the marketplace's own currency, in minor units. Per
+  /// marketplace rather than per product: a different currency, different competitors, different
+  /// fees. Null means nobody has decided yet — which is not the same as free.
+  offerPriceCents  Int?    @map("offer_price_cents")
   /// OnBuy delivery template key.
   deliveryTemplate String? @map("delivery_template")
   /// OnBuy boost. Zero unless a human decides otherwise — OnBuy's own default is 20%, a fifth of

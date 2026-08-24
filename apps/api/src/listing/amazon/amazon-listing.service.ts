@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { buildOfferAttributes, CONDITION_CODES, type OfferInput } from './offer-payload';
 import { evaluateEligibility, type MarketProfile } from '../eligibility';
+import { FloorService } from '../../amazon-repricing/floor/floor.service';
 
 /**
  * Creating an offer on an existing Amazon listing.
@@ -19,11 +20,20 @@ export class AmazonListingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly integrations: IntegrationsService,
+    private readonly floors: FloorService,
   ) {}
 
-  /** Off unless the environment says otherwise. Absent, empty or anything but 'true' means off. */
-  static liveWritesEnabled(): boolean {
-    return process.env.LISTING_LIVE_WRITES === 'true';
+  /**
+   * Whether a real listing may be created.
+   *
+   * Two gates, and the environment overrules the setting. LISTING_LIVE_WRITES=false forces off no
+   * matter what the toggle says, so a server can be made incapable of listing regardless of who is
+   * clicking — the same shape as the repricing kill switch. Unset means the toggle decides.
+   */
+  async liveWritesEnabled(): Promise<boolean> {
+    if (process.env.LISTING_LIVE_WRITES === 'false') return false;
+    const settings = await this.prisma.platformSettings.findFirst({ select: { listingLiveWrites: true } });
+    return settings?.listingLiveWrites ?? false;
   }
 
   /**
@@ -166,6 +176,48 @@ export class AmazonListingService {
   }
 
   /**
+   * What this product should launch at on one marketplace, and what a given price would earn.
+   *
+   * Both come from the repricing floor engine — the same tax resolution, landed cost, FX, fees and
+   * solver the floors are built on — so the profit quoted here and the profit quoted anywhere else
+   * in the platform are the same number by construction rather than by coincidence.
+   */
+  async quote(productId: string, integrationId: string, atPriceCents?: number | null) {
+    const [product, integration, plan, settings] = await Promise.all([
+      this.prisma.product.findFirst({ where: { id: productId, deletedAt: null }, select: { id: true } }),
+      this.prisma.channelIntegration.findFirst({
+        where: { id: integrationId, deletedAt: null },
+        select: { id: true, marketplace: true, channelType: true },
+      }),
+      this.prisma.productChannelPlan.findFirst({ where: { productId, integrationId, deletedAt: null } }),
+      this.prisma.platformSettings.findFirst({ select: { launchMarginPct: true } }),
+    ]);
+    if (!product) throw new NotFoundException('Product not found');
+    if (!integration || integration.channelType !== 'amazon') throw new BadRequestException('Not an Amazon channel');
+
+    const asin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin;
+    if (!asin) throw new BadRequestException('Match an Amazon listing first — fees are quoted against the ASIN');
+
+    const iso = (integration.marketplace ?? '').toUpperCase();
+    const marketplaceId = MARKETPLACE_IDS[iso];
+    if (!marketplaceId) throw new BadRequestException(`Unknown marketplace ${iso}`);
+
+    const marginPct = Number(settings?.launchMarginPct ?? 20) / 100;
+
+    return this.floors.quoteForNewListing({
+      productId,
+      integrationId,
+      marketplaceId,
+      currency: MARKETPLACE_CURRENCY[iso] ?? 'EUR',
+      asin,
+      // FBM unless we know otherwise; an FBA launch is a separate decision nobody has made here.
+      isFba: false,
+      marginPct,
+      atPriceCents: atPriceCents ?? null,
+    });
+  }
+
+  /**
    * Assemble the offer and ask Amazon to validate it, without creating anything.
    *
    * This is the step that answers "would this work", and it is the one to run first every time.
@@ -198,8 +250,12 @@ export class AmazonListingService {
    * than a warning: this is the only step in the module that a customer can see the result of.
    */
   async submit(productId: string, integrationId: string, opts: { confirm?: boolean } = {}) {
-    if (!AmazonListingService.liveWritesEnabled()) {
-      throw new BadRequestException('Live listing writes are switched off on this server. Nothing was sent to Amazon.');
+    if (!(await this.liveWritesEnabled())) {
+      throw new BadRequestException(
+        process.env.LISTING_LIVE_WRITES === 'false'
+          ? 'Listing writes are disabled on this server by configuration. Nothing was sent to Amazon.'
+          : 'Creating listings is switched off. Turn on "Create real marketplace listings" in Settings → General first. Nothing was sent to Amazon.',
+      );
     }
     if (!opts.confirm) {
       throw new BadRequestException('Creating a real offer needs an explicit confirmation.');
@@ -301,12 +357,35 @@ export class AmazonListingService {
       select: { quantity: true },
     });
 
+    // Availability owns sellable stock. Where a product has none recorded, fall back to what we are
+    // already publishing on another Amazon marketplace — it is the last figure we told Amazon we
+    // held, and it beats refusing to quote. The source travels with it so the underlying gap stays
+    // visible rather than being papered over by a number that appeared from nowhere.
+    let quantity = availability?.quantity ?? null;
+    let quantitySource: 'availability' | 'sibling-listing' | 'none' = availability ? 'availability' : 'none';
+    if (quantity == null) {
+      const sibling = await this.prisma.channelListing.findFirst({
+        where: {
+          productId,
+          listedQuantity: { not: null },
+          integration: { channelType: 'amazon', deletedAt: null },
+          integrationId: { not: integrationId },
+        },
+        orderBy: { lastPulledAt: 'desc' },
+        select: { listedQuantity: true, integration: { select: { marketplace: true } } },
+      });
+      if (sibling?.listedQuantity != null) {
+        quantity = sibling.listedQuantity;
+        quantitySource = 'sibling-listing';
+      }
+    }
+
     const input: OfferInput = {
       asin: (plan.aspects as Record<string, string> | null)?.asin ?? listing?.asin ?? '',
       marketplaceId: MARKETPLACE_IDS[(integration.marketplace ?? '').toUpperCase()] ?? '',
       currency: listing?.currency ?? 'EUR',
-      priceCents: listing?.listedPrice != null ? Math.round(listing.listedPrice * 100) : null,
-      quantity: availability?.quantity ?? null,
+      priceCents: plan.offerPriceCents ?? (listing?.listedPrice != null ? Math.round(listing.listedPrice * 100) : null),
+      quantity,
       handlingTimeDays: plan.handlingTimeDays,
       conditionType: CONDITION_CODES[plan.condition] ?? CONDITION_CODES.NEW,
       countryOfOrigin: product.countryOfOrigin,
@@ -357,11 +436,19 @@ export class AmazonListingService {
       channelName: integration.name,
       attributes,
       missing,
+      quantitySource,
       ...verdict,
-      liveWritesEnabled: AmazonListingService.liveWritesEnabled(),
+      liveWritesEnabled: await this.liveWritesEnabled(),
     };
   }
 }
+
+/** A marketplace has exactly one currency; quoting in the wrong one is quoting a different price. */
+const MARKETPLACE_CURRENCY: Record<string, string> = {
+  US: 'USD', CA: 'CAD', MX: 'MXN', BR: 'BRL', UK: 'GBP', GB: 'GBP', IE: 'EUR', DE: 'EUR',
+  FR: 'EUR', IT: 'EUR', ES: 'EUR', NL: 'EUR', BE: 'EUR', SE: 'SEK', PL: 'PLN', TR: 'TRY',
+  EG: 'EGP', SA: 'SAR', AE: 'AED', IN: 'INR', ZA: 'ZAR', JP: 'JPY', AU: 'AUD', SG: 'SGD',
+};
 
 /** Marketplace ids for the Amazon regions we sell on, keyed by our own ISO-style channel codes. */
 const MARKETPLACE_IDS: Record<string, string> = {

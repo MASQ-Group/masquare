@@ -849,6 +849,39 @@ export class IntegrationsService implements OnModuleInit {
 
 
   /**
+   * Fee estimate for an ASIN we do not list yet (Product Fees API).
+   *
+   * The SKU variant needs a listing that already exists, which is exactly what a product being
+   * priced for the first time does not have. Same payload otherwise, so the same parser reads it.
+   */
+  async getFeesEstimateForAsin(
+    integrationId: string,
+    asin: string,
+    priceAmount: number,
+    currencyCode: string,
+    isAmazonFulfilled: boolean,
+  ): Promise<{ ok: boolean; status?: number; message?: string; payload?: unknown }> {
+    const { meta, token } = await this.amazonCtx(integrationId);
+
+    const url = `${meta.endpoint}/products/fees/v0/items/${encodeURIComponent(asin)}/feesEstimate`;
+    const body = {
+      FeesEstimateRequest: {
+        MarketplaceId: meta.marketplaceId,
+        IsAmazonFulfilled: isAmazonFulfilled,
+        PriceToEstimateFees: { ListingPrice: { CurrencyCode: currencyCode, Amount: priceAmount } },
+        Identifier: `masq-asin-${asin}-${meta.marketplaceId}`,
+      },
+    };
+    const res = await this.amzWrite(url, token, 'POST', body);
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, status: res.status, message: IntegrationsService.amzErr(json) || `feesEstimate ${res.status}` };
+    const result = json?.payload?.FeesEstimateResult ?? json?.FeesEstimateResult;
+    const status = result?.Status;
+    if (status && status !== 'Success') return { ok: false, status: res.status, message: `feesEstimate status ${status}` };
+    return { ok: true, status: res.status, payload: result };
+  }
+
+  /**
    * Everything an SP-API call needs for one integration, resolved once.
    *
    * The four listing calls below each need the row, its marketplace meta and a fresh token; doing
