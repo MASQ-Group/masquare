@@ -214,6 +214,10 @@ export interface PlatformSettings {
   deductStockOnSale: boolean;
   applyChannelResolutions: boolean;
   autoAdjustAvailabilityOnSale: boolean;
+  /** What a new marketplace listing launches at, as a percentage margin. */
+  launchMarginPct: number;
+  /** Whether creating real marketplace listings is permitted. Off by default. */
+  listingLiveWrites: boolean;
 }
 export type VatTaxTreatment = 'standard' | 'reduced' | 'zero' | 'exempt';
 export interface VatClass {
@@ -1081,6 +1085,8 @@ export interface ChannelPlan {
   aspects: unknown;
   condition: string;
   handlingTimeDays: number | null;
+  /** Launch price in the marketplace's currency, minor units. Null = nobody has decided yet. */
+  offerPriceCents: number | null;
   deliveryTemplate: string | null;
   boostPct: number;
   status: string;
@@ -1099,6 +1105,13 @@ export interface ProductChannelRow {
   eligibility: EligibilityVerdict;
   /** eBay's required item specifics are not checked yet — the schemas arrive with Phase 4. */
   aspectsPending: boolean;
+  /** How many units an offer here would carry, and where that number came from. */
+  quantity: {
+    value: number | null;
+    source: 'availability' | 'this-listing' | 'sibling-listing' | 'none';
+    /** The marketplace the figure was borrowed from, when it was. */
+    from: string | null;
+  };
   /** Set when the channel sync has already pulled a live listing for this product here. */
   listing: {
     channelSku: string;
@@ -1143,6 +1156,34 @@ export interface AmazonCandidates {
  * Amazon offer creation. Only `submit` writes anything, and it refuses unless the server allows
  * live writes and the caller confirms; everything else asks Amazon questions or validates.
  */
+/** One thing Amazon objected to. ERROR blocks the submission; WARNING does not. */
+export interface AmazonIssue {
+  code: string;
+  message: string;
+  severity: string;
+  attributeNames: string[];
+}
+
+export interface AmazonOfferPreview {
+  sku: string;
+  asin: string;
+  productType: string;
+  marketplace: string;
+  channelName: string;
+  /** The attributes as they would be sent. Shown verbatim — this is the payload, not a summary. */
+  attributes: Record<string, unknown>;
+  /** Our own gaps, found before Amazon is asked. */
+  missing: { key: string; label: string }[];
+  eligible: boolean;
+  eligibilityReasons: string[];
+  liveWritesEnabled: boolean;
+  /** True when Amazon accepted the payload in validation. */
+  validated: boolean;
+  submissionStatus: string | null;
+  issues: AmazonIssue[];
+  message: string | null;
+}
+
 export interface AmazonSweepRow {
   integrationId: string;
   name: string;
@@ -1175,6 +1216,45 @@ export interface AmazonSweep {
   };
 }
 
+/** A launch price and what it earns, from the same engine the repricing floors use. */
+export type AmazonQuote =
+  | { ok: false; reason: string }
+  | {
+      ok: true;
+      breakevenCents: number;
+      suggestedCents: number;
+      currency: string;
+      marginPct: number;
+      at: { priceCents: number; profitCents: number; marginPct: number; aboveBreakeven: boolean } | null;
+      inputs: {
+        cogsLandedCents: number;
+        fixedPerUnitCents: number;
+        fbaFulfillmentFeeCents: number;
+        closingFeeCents: number;
+        vatRatePct: number;
+        returnsRatePct: number;
+      };
+    };
+
+export interface AmazonSubmitResult {
+  ok: boolean;
+  sku: string;
+  asin: string;
+  /** ACCEPTED means Amazon took the submission, not that the listing is live. */
+  submissionStatus: string | null;
+  issues: AmazonIssue[];
+  message: string | null;
+}
+
+export interface AmazonListingState {
+  ok: boolean;
+  exists: boolean;
+  listingStatus: string | null;
+  asin: string | null;
+  issues: { code: string; message: string; severity: string }[];
+  message?: string;
+}
+
 export const amazonListingApi = {
   status: () => api.get<{ liveWritesEnabled: boolean }>('/listing/amazon/status').then((r) => r.data),
   candidates: (productId: string, integrationId: string) =>
@@ -1182,6 +1262,21 @@ export const amazonListingApi = {
   /** Searches every Amazon marketplace. Slow, so it returns a job to follow. */
   sweep: (productId: string) =>
     api.post<JobView>(`/listing/amazon/products/${productId}/sweep`, {}).then((r) => r.data),
+  /** The launch price here, and what a given price would earn. */
+  quote: (productId: string, integrationId: string, atPriceCents?: number | null) =>
+    api.post<AmazonQuote>(`/listing/amazon/products/${productId}/channels/${integrationId}/quote`, { atPriceCents }).then((r) => r.data),
+  /**
+   * Creates the offer for real. The only call in this module a customer can see the result of —
+   * refused unless the server permits listing writes and `confirm` is set.
+   */
+  submit: (productId: string, integrationId: string) =>
+    api.post<AmazonSubmitResult>(`/listing/amazon/products/${productId}/channels/${integrationId}/submit`, { confirm: true }).then((r) => r.data),
+  /** What Amazon says about the listing now. Accepted is not the same as live. */
+  state: (productId: string, integrationId: string) =>
+    api.get<AmazonListingState>(`/listing/amazon/products/${productId}/channels/${integrationId}/state`).then((r) => r.data),
+  /** Builds the offer and has Amazon validate it. Creates nothing. */
+  preview: (productId: string, integrationId: string) =>
+    api.post<AmazonOfferPreview>(`/listing/amazon/products/${productId}/channels/${integrationId}/preview`, {}).then((r) => r.data),
 };
 
 export const listingApi = {

@@ -24,8 +24,8 @@ export class AmazonListingController {
 
   /** Whether a real offer could be created at all, so the UI can say so before anyone tries. */
   @Get('status')
-  status() {
-    return { liveWritesEnabled: AmazonListingService.liveWritesEnabled() };
+  async status() {
+    return { liveWritesEnabled: await this.svc.liveWritesEnabled() };
   }
 
   /** Search Amazon's catalogue by our EAN/UPC and report what may be offered on. Read-only. */
@@ -43,6 +43,20 @@ export class AmazonListingController {
     return this.jobs.start('listing.amazon.sweep', 'Searching Amazon marketplaces', (ctx) =>
       this.svc.sweepMarketplaces(productId, ctx),
     );
+  }
+
+  /**
+   * The launch price for this product here, and what a given price would earn.
+   *
+   * Read-only apart from one live fee estimate. POST because it takes a price to evaluate.
+   */
+  @Post('products/:productId/channels/:integrationId/quote')
+  quote(
+    @Param('productId') productId: string,
+    @Param('integrationId') integrationId: string,
+    @Body() body: { atPriceCents?: number | null } = {},
+  ) {
+    return this.svc.quote(productId, integrationId, body.atPriceCents ?? null);
   }
 
   /** Build the offer and have Amazon validate it. Creates nothing. */

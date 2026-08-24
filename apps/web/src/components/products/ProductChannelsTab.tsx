@@ -5,6 +5,8 @@ import { toast } from 'sonner';
 import { Select } from '@masquare/ui';
 import { amazonListingApi, listingApi, type AmazonSweep, type ProductChannelRow } from '../../lib/api';
 import { AmazonCandidates } from './AmazonCandidates';
+import { AmazonOfferPreview } from './AmazonOfferPreview';
+import { LaunchPrice } from './LaunchPrice';
 import { ChannelGroup, CHANNEL_TONE } from './ChannelGroup';
 import { useJobProgress } from '../../lib/useJobProgress';
 
@@ -211,6 +213,7 @@ function PlanEditor({
   const [handling, setHandling] = useState(plan?.handlingTimeDays?.toString() ?? '');
   const [delivery, setDelivery] = useState(plan?.deliveryTemplate ?? '');
   const [boost, setBoost] = useState(plan?.boostPct?.toString() ?? '0');
+  const [price, setPrice] = useState(plan?.offerPriceCents != null ? (plan.offerPriceCents / 100).toFixed(2) : '');
   // The ASIN we attach the offer to. Kept on the plan's aspects rather than as a column: it is one
   // channel's identifier for this product, and eBay's equivalent will not look like it.
   const asin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin ?? null;
@@ -226,6 +229,7 @@ function PlanEditor({
         categoryName: categoryName.trim() || null,
         condition,
         handlingTimeDays: handling.trim() === '' ? null : Number(handling),
+        offerPriceCents: price.trim() === '' ? null : Math.round(Number(price.replace(',', '.')) * 100),
         deliveryTemplate: delivery.trim() || null,
         boostPct: Number(boost || 0),
       }),
@@ -313,6 +317,36 @@ function PlanEditor({
         </label>
 
         <label className="flex flex-col gap-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">
+            Launch price{row.listing?.currency ? ` (${row.listing.currency})` : ''}
+          </span>
+          <input
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            inputMode="decimal"
+            placeholder="in this marketplace's currency"
+            className={`input mono h-8 text-right text-[12.5px] ${flag('price')}`}
+          />
+          {/* The repricing engine takes over once the offer exists; this is only the opening price. */}
+          <span className="text-[11px] text-n-400">What the offer starts at. Repricing manages it afterwards.</span>
+        </label>
+
+        {/* Read-only: Availability owns sellable stock for the whole platform, and a per-channel
+            number typed here would immediately disagree with what we actually hold. */}
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Quantity to list</span>
+          <div className={`flex h-8 items-center rounded-lg border px-2.5 text-[12.5px] ${row.quantity.value == null ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-n-200 bg-n-50 text-n-700'}`}>
+            <span className="mono font-semibold">{row.quantity.value ?? 'none'}</span>
+          </div>
+          <span className="text-[11px] text-n-400">
+            {row.quantity.source === 'availability' ? 'From Availability'
+              : row.quantity.source === 'this-listing' ? 'From the live listing here'
+              : row.quantity.source === 'sibling-listing' ? `Borrowed from ${row.quantity.from ?? 'another marketplace'} — no Availability recorded`
+              : 'No sellable quantity recorded — set it on the Availability page'}
+          </span>
+        </label>
+
+        <label className="flex flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Handling time (days)</span>
           <input
             value={handling}
@@ -355,6 +389,14 @@ function PlanEditor({
           Required item specifics are not checked yet — eBay's per-category schema is read live when
           listing creation is built. Treat this row's readiness as covering everything except aspects.
         </div>
+      )}
+
+      {isAmazon && asin && (
+        <LaunchPrice productId={productId} integrationId={row.integrationId} price={price} onPriceChange={setPrice} />
+      )}
+
+      {isAmazon && (
+        <AmazonOfferPreview productId={productId} integrationId={row.integrationId} asin={asin} onListed={onSaved} />
       )}
 
       <div className="flex items-center gap-2">

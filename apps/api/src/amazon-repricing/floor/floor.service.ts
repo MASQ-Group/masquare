@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { VatService } from './vat.service';
 import { FeeService } from './fee.service';
-import { FloorInputs, solveFloors } from './floor-solver';
+import { FloorInputs, netRevenueCents, solveFloors } from './floor-solver';
 import { describeCompleteness, resolveReturnsRate, type ReturnsObservation } from './returns-rate';
 import { resolveParams } from '../config/resolve-preset';
 import { eurToCents } from '../common/money';
@@ -167,6 +167,152 @@ export class FloorService {
    * success the floors + a staleAfter horizon + an inputsHash are stored; an EXCLUDED SKU whose
    * inputs are now healthy is promoted to SHADOW (submits nothing until a human/rollout goes LIVE).
    */
+
+  /**
+   * Price a product for a marketplace it is not listed on yet.
+   *
+   * Deliberately a method on this service rather than a new one: it reuses the same tax resolution,
+   * the same landed COGS from PricingService, the same FX, the same referral schedule and the same
+   * solver as `computeFloorsForSku`. A second implementation would be a second answer to "what does
+   * this earn", and the platform is supposed to have exactly one.
+   *
+   * The fee estimate comes by ASIN, because the SKU variant needs a listing that does not exist yet.
+   */
+  async quoteForNewListing(args: {
+    productId: string;
+    integrationId: string;
+    marketplaceId: string;
+    currency: string;
+    asin: string;
+    isFba: boolean;
+    /** Target margin as a fraction. 0.2 = 20%. */
+    marginPct: number;
+    /** When given, the answer also reports what this price would earn. */
+    atPriceCents?: number | null;
+  }): Promise<
+    | { ok: false; reason: string }
+    | {
+        ok: true;
+        breakevenCents: number;
+        suggestedCents: number;
+        currency: string;
+        marginPct: number;
+        /** Present only when `atPriceCents` was supplied. */
+        at: { priceCents: number; profitCents: number; marginPct: number; aboveBreakeven: boolean } | null;
+        /** What the figure is built on, so a surprising price can be traced without a second call. */
+        inputs: {
+          cogsLandedCents: number;
+          fixedPerUnitCents: number;
+          fbaFulfillmentFeeCents: number;
+          closingFeeCents: number;
+          vatRatePct: number;
+          returnsRatePct: number;
+        };
+      }
+  > {
+    // Tax resolved the same way as everywhere else: not the country's rate, which is 0% for GB
+    // because the real rule lives on the sales channel.
+    const tax = await this.channelTax(args.marketplaceId, args.atPriceCents ?? null);
+    if (tax == null) return { ok: false, reason: 'No VAT rule for this marketplace' };
+
+    const destCountryId = await this.destinationCountryId(args.marketplaceId);
+    const unit = await this.pricing.unitCostInputsEur(args.productId, destCountryId);
+    if (unit.costEur == null || Number(unit.costEur) <= 0) {
+      return { ok: false, reason: 'This product has no purchase cost, so nothing can be priced from it' };
+    }
+
+    // Everything the solver sees must be in the marketplace's own currency — Amazon's fees already
+    // are, our costs are in EUR.
+    const ccy = (args.currency ?? 'EUR').toUpperCase();
+    const eurPerUnit = ccy === 'EUR' ? 1 : await this.fx.toEur(ccy);
+    if (eurPerUnit == null || !(eurPerUnit > 0)) return { ok: false, reason: `No exchange rate for ${ccy}` };
+    const cogsLandedCents = Math.round((Number(unit.costEur) / eurPerUnit) * 100);
+
+    let fixedPerUnitCents = 0;
+    if (!args.isFba) {
+      if (unit.shippingEur == null) {
+        return { ok: false, reason: 'No outbound shipping cost for this destination, so the price would be understated' };
+      }
+      fixedPerUnitCents = Math.round((unit.shippingEur / eurPerUnit) * 100);
+    }
+
+    const fees = await this.fees.estimateForAsin({
+      integrationId: args.integrationId,
+      asin: args.asin,
+      currency: ccy,
+      isFba: args.isFba,
+      referencePriceCents: args.atPriceCents ?? null,
+    });
+    if (!fees) return { ok: false, reason: 'Amazon would not estimate fees for this listing' };
+
+    const schedule = referralScheduleFor(null);
+    assertValidSchedule(schedule);
+
+    // Storage and advertising only where the marketplace actually incurs them; returns from our own
+    // history. Same rules as a computed floor, so the two agree.
+    const marketplaceCosts = await this.prisma.repricingMarketplaceCosts.findUnique({
+      where: { marketplaceId: args.marketplaceId },
+    });
+    const storageApplies = (marketplaceCosts?.storageApplies ?? false) && args.isFba;
+    const adsApply = marketplaceCosts?.adsApply ?? false;
+
+    const inputs: FloorInputs = {
+      vatRate: tax.vatPct / 100,
+      referralBrackets: schedule,
+      fbaFulfillmentFeeCents: args.isFba ? fees.fbaFulfillmentFeeCents ?? 0 : 0,
+      closingFeeCents: fees.closingFeeCents ?? 0,
+      cogsLandedCents,
+      fixedPerUnitCents,
+      // No sales history on a marketplace we have never sold on, so this falls back to the default
+      // rate rather than pretending to a SKU-specific one.
+      returnsRate: REPRICING_DEFAULTS.defaultReturnsRate,
+      refundAdminFeeCents: REPRICING_DEFAULTS.refundAdminFeeCents,
+      storagePerUnitCents: storageApplies ? marketplaceCosts?.defaultStoragePerUnitCents ?? 0 : 0,
+      adCostPerUnitCents: adsApply ? marketplaceCosts?.defaultAdCostPerUnitCents ?? 0 : 0,
+    };
+
+    const solved = solveFloors(inputs, args.marginPct);
+    // Nulls are how the solver reports infeasibility: no price in the search range clears the
+    // deductions. Reported as a reason rather than passed on as a missing number.
+    if (solved.breakevenCents == null) {
+      return { ok: false, reason: 'No price covers this product’s costs and fees on this marketplace' };
+    }
+    if (solved.strategyFloorCents == null) {
+      return { ok: false, reason: `No price reaches ${Math.round(args.marginPct * 100)}% margin on this marketplace` };
+    }
+
+    const at =
+      args.atPriceCents != null && args.atPriceCents > 0
+        ? (() => {
+            const profitCents = netRevenueCents(args.atPriceCents as number, inputs);
+            return {
+              priceCents: args.atPriceCents as number,
+              profitCents,
+              // Margin on revenue, the same basis the floor solver targets.
+              marginPct: Math.round((profitCents / (args.atPriceCents as number)) * 1000) / 10,
+              aboveBreakeven: profitCents > 0,
+            };
+          })()
+        : null;
+
+    return {
+      ok: true,
+      breakevenCents: solved.breakevenCents,
+      suggestedCents: solved.strategyFloorCents,
+      currency: ccy,
+      marginPct: Math.round(args.marginPct * 1000) / 10,
+      at,
+      inputs: {
+        cogsLandedCents,
+        fixedPerUnitCents,
+        fbaFulfillmentFeeCents: inputs.fbaFulfillmentFeeCents ?? 0,
+        closingFeeCents: inputs.closingFeeCents ?? 0,
+        vatRatePct: tax.vatPct,
+        returnsRatePct: Math.round((inputs.returnsRate ?? 0) * 1000) / 10,
+      },
+    };
+  }
+
   async computeFloorsForSku(skuPricingId: string): Promise<void> {
     const row = await this.prisma.repricingSkuPricing.findUnique({ where: { id: skuPricingId }, include: { preset: true } });
     if (!row) throw new Error(`RepricingSkuPricing ${skuPricingId} not found`);

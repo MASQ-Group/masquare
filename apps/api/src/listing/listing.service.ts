@@ -12,6 +12,7 @@ import { evaluateReadiness, checkBoost, type ListingFacts } from './readiness';
 const LISTABLE_CHANNELS = ['amazon', 'ebay', 'onbuy'];
 
 export interface ChannelPlanPatch {
+  offerPriceCents?: number | null;
   categoryRef?: string | null;
   categoryName?: string | null;
   aspects?: Record<string, unknown> | null;
@@ -103,6 +104,36 @@ export class ListingService {
     const hasDimensions =
       product.packageLengthCm != null && product.packageWidthCm != null && product.packageHeightCm != null;
 
+    const availability = await this.prisma.productAvailability.findUnique({
+      where: { productId },
+      select: { quantity: true },
+    });
+
+    /**
+     * How many units an offer here would carry, and where the number came from.
+     *
+     * Availability owns sellable stock for the whole platform. Where a product has none recorded,
+     * what we already publish on a sibling marketplace of the same channel is the last figure we
+     * told that channel we held — better than refusing to quote, as long as the source is named.
+     * A quantity that appears from nowhere is worse than one somebody had to type.
+     */
+    const resolveQuantity = (
+      integration: { id: string; channelType: string },
+      live: { listedQuantity: number | null } | undefined,
+    ): { value: number | null; source: 'availability' | 'this-listing' | 'sibling-listing' | 'none'; from: string | null } => {
+      if (availability) return { value: availability.quantity, source: 'availability', from: null };
+      if (live?.listedQuantity != null) return { value: live.listedQuantity, source: 'this-listing', from: null };
+      const sibling = liveListings
+        .filter((l) => l.integrationId !== integration.id && l.listedQuantity != null)
+        .map((l) => ({ l, i: integrations.find((x) => x.id === l.integrationId) }))
+        .filter((x) => x.i?.channelType === integration.channelType)
+        .sort((a, b) => (b.l.lastPulledAt?.getTime() ?? 0) - (a.l.lastPulledAt?.getTime() ?? 0))[0];
+      if (sibling?.l.listedQuantity != null) {
+        return { value: sibling.l.listedQuantity, source: 'sibling-listing', from: sibling.i?.marketplace ?? sibling.i?.name ?? null };
+      }
+      return { value: null, source: 'none', from: null };
+    };
+
     const rows = integrations.map((integration) => {
       const plan = plans.find(
         (p) => p.integrationId === integration.id && p.marketplace === (integration.marketplace ?? ''),
@@ -147,6 +178,7 @@ export class ListingService {
               aspects: plan.aspects,
               condition: plan.condition,
               handlingTimeDays: plan.handlingTimeDays,
+              offerPriceCents: plan.offerPriceCents,
               deliveryTemplate: plan.deliveryTemplate,
               boostPct: Number(plan.boostPct),
               status: plan.status,
@@ -162,6 +194,7 @@ export class ListingService {
             { eligible: true, findings: [], unchecked: ['VOLTAGE' as const], noProfile: true },
         // Only aspects are pending; everything else the readiness check reports is real.
         aspectsPending: integration.channelType === 'ebay',
+        quantity: resolveQuantity(integration, live),
         listing: live
           ? {
               channelSku: live.channelSku,
@@ -231,6 +264,7 @@ export class ListingService {
       aspects: patch.aspects === null ? undefined : (patch.aspects as object | undefined),
       condition: patch.condition,
       handlingTimeDays: patch.handlingTimeDays,
+      offerPriceCents: patch.offerPriceCents,
       deliveryTemplate: patch.deliveryTemplate,
       boostPct: patch.boostPct,
       status: patch.status,

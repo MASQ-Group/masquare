@@ -26,6 +26,8 @@ export class SettingsService {
         ...(dto.deductStockOnSale !== undefined ? { deductStockOnSale: dto.deductStockOnSale } : {}),
         ...(dto.applyChannelResolutions !== undefined ? { applyChannelResolutions: dto.applyChannelResolutions } : {}),
         ...(dto.autoAdjustAvailabilityOnSale !== undefined ? { autoAdjustAvailabilityOnSale: dto.autoAdjustAvailabilityOnSale } : {}),
+        ...(dto.launchMarginPct !== undefined ? { launchMarginPct: dto.launchMarginPct } : {}),
+        ...(dto.listingLiveWrites !== undefined ? { listingLiveWrites: dto.listingLiveWrites } : {}),
       },
     });
     return { ...row, salesTxStandardColumns: this.parseColumns(row.salesTxStandardColumns) };
