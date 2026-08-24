@@ -2074,7 +2074,14 @@ model SalesTransactionItem {
   transactionId String @map("transaction_id") @db.Uuid
   productId     String? @map("product_id") @db.Uuid
   sku           String
-  quantity      Int    @default(1)
+  /**
+   * Units sold. Decimal because some goods are sold by length or weight — 1.5 is a real line.
+   *
+   * The stock ledger is still integer, so a fractional line cannot be deducted from stock; the
+   * sales service refuses rather than rounding, since a silently rounded stock figure is worse
+   * than a refused sale.
+   */
+  quantity      Decimal @default(1) @db.Decimal(14, 3)
 
   netSalesAmount             Float? @map("net_sales_amount")
   vatAmount                  Float? @map("vat_amount")

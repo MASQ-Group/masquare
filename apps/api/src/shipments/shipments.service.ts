@@ -152,7 +152,7 @@ export class ShipmentsService {
       defaultShippingService: t.shippingService,
       skus: t.items.map((i) => i.sku),
       itemCount: t.items.length,
-      quantity: t.items.reduce((s, i) => s + (i.quantity ?? 0), 0),
+      quantity: t.items.reduce((s, i) => s + Number(i.quantity ?? 0), 0),
       // Shipping the customer was charged on this order, in EUR — the default weight when
       // splitting a combined shipment's cost across its orders.
       shippingEur: Number((t.items.reduce((s, i) => s + (i.shippingAmount ?? 0), 0) * (t.exchangeRate ?? 1)).toFixed(2)),

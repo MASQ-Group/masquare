@@ -202,7 +202,7 @@ export class InventoryService {
     const map = new Map<string, number>();
     for (const it of items) {
       if (!it.productId) continue;
-      map.set(it.productId, (map.get(it.productId) ?? 0) + it.quantity);
+      map.set(it.productId, (map.get(it.productId) ?? 0) + Number(it.quantity));
     }
     return map;
   }

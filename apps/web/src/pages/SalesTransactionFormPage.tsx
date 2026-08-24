@@ -591,9 +591,10 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                           />
                           <input
                             className="input mono text-center"
-                            inputMode="numeric"
+                            inputMode="decimal"
                             value={it.quantity}
-                            onChange={(e) => setItem(i, { quantity: e.target.value })}
+                            onChange={(e) => setItem(i, { quantity: e.target.value.replace(',', '.') })}
+                            title="Units sold. Fractions are allowed for goods sold by length or weight."
                           />
                           {isLocal ? (
                             <>

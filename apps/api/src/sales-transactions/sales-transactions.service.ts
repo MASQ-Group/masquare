@@ -633,7 +633,7 @@ export class SalesTransactionsService {
 
         productWeightKg: it.product?.packageWeightKg != null ? Number(it.product.packageWeightKg) : it.product?.productWeightKg != null ? Number(it.product.productWeightKg) : null,
         sku: it.sku,
-        quantity: it.quantity,
+        quantity: Number(it.quantity),
         netSalesAmount: it.netSalesAmount,
         vatAmount: it.vatAmount,
         // Per-line VAT snapshot (local sales): the rate charged at the time of sale and the
@@ -1620,7 +1620,7 @@ export class SalesTransactionsService {
         id: true, status: true, transactionRef: true, fulfilmentType: true, resolution: true,
         items: {
           where: { deletedAt: null },
-          select: { id: true, productId: true, quantity: true, stockDeductedQty: true, stockWarehouseId: true, product: { select: { serialTracked: true } } },
+          select: { id: true, sku: true, productId: true, quantity: true, stockDeductedQty: true, stockWarehouseId: true, product: { select: { serialTracked: true } } },
         },
       },
     });
@@ -1635,7 +1635,9 @@ export class SalesTransactionsService {
     await this.prisma.$transaction(async (db) => {
       for (const it of tx.items) {
         if (!it.productId || it.product?.serialTracked) continue;
-        const desired = opts.forceRelease || cancelled || tx.status !== 'submitted' ? 0 : it.quantity;
+        const desired = opts.forceRelease || cancelled || tx.status !== 'submitted'
+          ? 0
+          : this.wholeUnitsForStock(it.quantity, it.sku, 'stock');
         await this.reconcileSaleLine(db, {
           txId: tx.id, ref: tx.transactionRef, actorId,
           itemId: it.id, productId: it.productId, desired,
@@ -1683,7 +1685,7 @@ export class SalesTransactionsService {
       where: { id: txId },
       select: {
         id: true, status: true, transactionRef: true, resolution: true,
-        items: { where: { deletedAt: null }, select: { id: true, productId: true, quantity: true, availabilityDeductedQty: true } },
+        items: { where: { deletedAt: null }, select: { id: true, sku: true, productId: true, quantity: true, availabilityDeductedQty: true } },
       },
     });
     if (!tx) return [];
@@ -1693,7 +1695,9 @@ export class SalesTransactionsService {
     await this.prisma.$transaction(async (db) => {
       for (const it of tx.items) {
         if (!it.productId) continue;
-        const desired = opts.forceRelease || cancelled || tx.status !== 'submitted' ? 0 : it.quantity;
+        const desired = opts.forceRelease || cancelled || tx.status !== 'submitted'
+          ? 0
+          : this.wholeUnitsForStock(it.quantity, it.sku, 'channel availability');
         const move = desired - it.availabilityDeductedQty; // >0 = sell more, <0 = give back
         if (move === 0) continue;
         await this.availability.adjust(
@@ -1708,6 +1712,26 @@ export class SalesTransactionsService {
   }
 
   /** One line's reconciliation. See reconcileSaleStock for the model. */
+  /**
+   * The whole units a stock ledger can carry, or a refusal.
+   *
+   * Sales lines may be fractional — some goods are sold by length or weight — but stock levels,
+   * movements and availability are all integer. Rounding 1.5 into 1 or 2 would put a figure in the
+   * stock ledger that no document supports, and nobody would ever find it. Refusing says plainly
+   * that the two cannot both be true, and points at the setting that made it a problem.
+   */
+  private wholeUnitsForStock(quantity: unknown, sku: string, ledger: string): number {
+    const n = Number(quantity);
+    if (!Number.isFinite(n)) return 0;
+    if (!Number.isInteger(n)) {
+      throw new BadRequestException(
+        `${sku} is sold in fractions (${n}), which cannot be taken off ${ledger} — that ledger holds whole units only. ` +
+        `Either sell whole units, or switch off the ${ledger} adjustment in Settings until the stock ledger supports fractions.`,
+      );
+    }
+    return n;
+  }
+
   private async reconcileSaleLine(
     db: Prisma.TransactionClient,
     a: { txId: string; ref: string | null; actorId?: string; itemId: string; productId: string; desired: number; deducted: number; warehouseId: string | null },
@@ -2160,15 +2184,15 @@ export class SalesTransactionsService {
     if (a.oldWarehouseId === a.newWarehouseId) return;
     const items = await db.salesTransactionItem.findMany({
       where: { transactionId: a.txId, deletedAt: null, productId: { not: null } },
-      select: { productId: true, quantity: true, product: { select: { serialTracked: true } } },
+      select: { sku: true, productId: true, quantity: true, product: { select: { serialTracked: true } } },
     });
     for (const it of items) {
       if (!it.productId || it.product?.serialTracked) continue;
       if (a.oldWarehouseId) {
-        await this.stock.applyDeltaWithin(db, { productId: it.productId, warehouseId: a.oldWarehouseId, qtyDelta: -it.quantity, reason: 'customer_return_reversed', reference: a.ref, actorId: a.actorId });
+        await this.stock.applyDeltaWithin(db, { productId: it.productId, warehouseId: a.oldWarehouseId, qtyDelta: -this.wholeUnitsForStock(it.quantity, it.sku, 'stock'), reason: 'customer_return_reversed', reference: a.ref, actorId: a.actorId });
       }
       if (a.newWarehouseId) {
-        await this.stock.applyDeltaWithin(db, { productId: it.productId, warehouseId: a.newWarehouseId, qtyDelta: it.quantity, reason: 'customer_return', reference: a.ref, actorId: a.actorId });
+        await this.stock.applyDeltaWithin(db, { productId: it.productId, warehouseId: a.newWarehouseId, qtyDelta: this.wholeUnitsForStock(it.quantity, it.sku, 'stock'), reason: 'customer_return', reference: a.ref, actorId: a.actorId });
       }
     }
   }
