@@ -11,7 +11,8 @@ import { eurToCents } from '../common/money';
 import { PricingFxService } from '../../pricing/fx.service';
 import { PricingService } from '../../pricing/pricing.service';
 import { MARKETPLACE_TO_ISO, REPRICING_DEFAULTS, toCountryIso } from '../config/repricing.config';
-import { assertValidSchedule, referralScheduleFor } from '../config/referral-schedule';
+import { assertValidSchedule, referralScheduleFor, scheduleFromChannelFee } from '../config/referral-schedule';
+import type { ReferralBracket } from './floor-solver';
 
 // floor-service (spec §4.3): recompute breakeven + strategy floors per SKU × marketplace, mark
 // stale floors, exclude SKUs whose inputs are missing/unknown. It is the ONLY writer of the
@@ -78,7 +79,7 @@ export class FloorService {
       recomputed = solveFloors(
         {
           vatRate,
-          referralBrackets: referralScheduleFor(null),
+          referralBrackets: await this.referralScheduleForMarketplace(row.marketplaceId),
           fbaFulfillmentFeeCents: isFba ? fee?.fbaFulfillmentFeeCents ?? 0 : 0,
           closingFeeCents: fee?.closingFeeCents ?? 0,
           cogsLandedCents,
@@ -154,6 +155,29 @@ export class FloorService {
   /** The destination Country row id for a marketplace, via its ISO code ('UK' normalises to 'GB').
    *  Null when unmapped — shipping then can't resolve and an FBM SKU is excluded rather than
    *  given a floor that ignores carriage. */
+  /**
+   * The referral schedule for one marketplace, taken from the sales channel's own fee.
+   *
+   * The engine used a hard-coded 15% while Individual Pricing read SalesChannel.generalSalesFeePct.
+   * They agreed only because both happened to be 15 — change a channel's fee in Settings and the
+   * two screens would have quietly disagreed about the same sale, which is the failure the platform
+   * is not allowed to have.
+   *
+   * Falls back to the built-in schedule when no channel is configured for the marketplace: a guess
+   * that is documented beats a floor that cannot be computed at all.
+   */
+  private async referralScheduleForMarketplace(marketplaceId: string): Promise<ReferralBracket[]> {
+    const iso = toCountryIso(MARKETPLACE_TO_ISO[marketplaceId]);
+    if (!iso) return referralScheduleFor(null);
+
+    const channel = await this.prisma.salesChannel.findFirst({
+      where: { deletedAt: null, nativeCountry: { isoCode: iso }, kind: { not: 'local' } },
+      select: { generalSalesFeePct: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return scheduleFromChannelFee(channel?.generalSalesFeePct != null ? Number(channel.generalSalesFeePct) : null);
+  }
+
   private async destinationCountryId(marketplaceId: string): Promise<string | null> {
     const iso = toCountryIso(MARKETPLACE_TO_ISO[marketplaceId]);
     if (!iso) return null;
@@ -249,7 +273,7 @@ export class FloorService {
     });
     if (!fees) return { ok: false, reason: 'Amazon would not estimate fees for this listing' };
 
-    const schedule = referralScheduleFor(null);
+    const schedule = await this.referralScheduleForMarketplace(args.marketplaceId);
     assertValidSchedule(schedule);
 
     // Storage and advertising only where the marketplace actually incurs them; returns from our own
@@ -374,7 +398,7 @@ export class FloorService {
     const isFba = row.fulfillment === 'FBA' || row.fulfillment === 'SFP';
     if (isFba && !fee) return this.exclude(row.id, 'FEES_UNKNOWN', humanControlled);
 
-    const schedule = referralScheduleFor(null); // per-category tiers pending finance sign-off (§9-#20)
+    const schedule = await this.referralScheduleForMarketplace(row.marketplaceId);
     assertValidSchedule(schedule);
 
     // FBM has no Amazon fulfilment fee — WE ship it, and that carrier charge is a per-unit cost.
