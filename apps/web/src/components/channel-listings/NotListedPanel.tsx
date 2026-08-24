@@ -2,7 +2,7 @@ import { Ban, Lock, Search, TrendingDown, TrendingUp } from 'lucide-react';
 import type { AmazonSweepRow, ProductChannelRow } from '../../lib/api';
 
 const SYMBOL: Record<string, string> = { EUR: '€', GBP: '£', USD: '$', CAD: 'CA$', AUD: 'A$', JPY: '¥', SEK: 'kr', PLN: 'zł', AED: 'AED ', SAR: 'SAR ', MXN: 'MX$', TRY: '₺', INR: '₹', BRL: 'R$', ZAR: 'R', SGD: 'S$' };
-const money = (cents: number, currency = 'EUR') =>
+const money = (cents: number, currency: string) =>
   `${SYMBOL[currency] ?? `${currency} `}${(cents / 100).toFixed(currency === 'JPY' ? 0 : 2)}`;
 
 /**
@@ -52,9 +52,9 @@ export function NotListedPanel({
             {sweep.competitive ? 'Competitive here' : 'Cannot compete here'}
           </span>
           <span className="text-[11.5px]">
-            Featured offer {money(sweep.featuredPriceCents)} ·{' '}
+            Featured offer {money(sweep.featuredPriceCents, sweep.currency)} ·{' '}
             {sweep.featuredProfitCents != null
-              ? `${sweep.competitive ? '' : '−'}${money(Math.abs(sweep.featuredProfitCents))} at that price`
+              ? `${sweep.competitive ? '' : '−'}${money(Math.abs(sweep.featuredProfitCents), sweep.currency)} at that price`
               : 'profit unknown'}
             {sweep.featuredMarginPct != null && ` · ${sweep.featuredMarginPct}%`}
           </span>
