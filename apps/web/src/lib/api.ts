@@ -1776,7 +1776,34 @@ export interface TxGroupRow { key: string; label: string; orders: number; units:
 export interface TxGroupedResult { groupBy: TxGroupBy; groups: TxGroupRow[]; totals: { orders: number; units: number; revenueEur: number; profitEur: number } }
 export interface TxFilterParams { q?: string; salesChannelId?: string[]; destinationCountryId?: string[]; status?: string[]; profitTierId?: string[]; shipmentStatus?: string[]; fulfilmentType?: string[]; feeType?: string[]; sku?: string; hasAlert?: boolean; needsReturn?: boolean; resolution?: string[]; dateFrom?: string; dateTo?: string }
 
+/** What one SKU has actually sold. Real figures; the page previously showed samples. */
+export interface ProductSalesMetrics {
+  /** The window actually used, echoed back so the page can label what it is showing. */
+  from: string;
+  to: string;
+  windowDays: number;
+  /** Null when it has never sold. Distinguishes "nobody wants it" from "nothing imported lately". */
+  lastSoldAt: string | null;
+  unitsSold: number;
+  /** Net of channel fees. */
+  revenueEur: number;
+  profitEur: number;
+  avgSellPriceEur: number | null;
+  returnRatePct: number | null;
+  returnedUnits: number;
+  orders: number;
+  /** Eight weeks, oldest first. */
+  weeklyUnits: number[];
+  byChannel: { name: string; units: number; revenueEur: number; profitEur: number }[];
+}
+
 export const salesTransactionsApi = {
+  productMetrics: (sku: string, range?: { from?: string | null; to?: string | null }) =>
+    api
+      .get<ProductSalesMetrics>('/sales-transactions/product-metrics', {
+        params: { sku, from: range?.from || undefined, to: range?.to || undefined },
+      })
+      .then((r) => r.data),
   list: (params: { q?: string; companyId?: string; salesChannelId?: string[]; destinationCountryId?: string[]; status?: string[]; profitTierId?: string[]; shipmentStatus?: string[]; fulfilmentType?: string[]; feeType?: string[]; sku?: string; hasAlert?: boolean; needsReturn?: boolean; resolution?: string[]; dateFrom?: string; dateTo?: string; sortBy?: 'date' | 'profit' | 'profitPct'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<SalesTransactionListResponse>('/sales-transactions', { params }).then((r) => r.data),
   grouped: (params: TxFilterParams, groupBy: TxGroupBy) =>
