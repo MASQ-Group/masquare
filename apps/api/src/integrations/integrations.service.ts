@@ -2183,7 +2183,13 @@ export class IntegrationsService implements OnModuleInit {
     const applyResolutions = (await this.prisma.platformSettings.findFirst({ select: { applyChannelResolutions: true } }))?.applyChannelResolutions ?? false;
     let maxDate = row.lastSyncedAt ?? null; // never regresses the high-water mark
     const advance = (d: Date) => { if (!maxDate || d > maxDate) maxDate = d; };
-    const sysUser = { sub: actorId ?? 'system', email: 'system', isAdmin: true } as any;
+    // `sub` reaches updated_by, which is a uuid column — so it is an id or it is null, never the
+    // word 'system'. It used to be 'system' whenever no actor was passed, which is exactly what the
+    // nightly auto-sync does (runScheduledSync calls syncOrders without one): every order it tried
+    // to UPDATE was rejected by Postgres and counted as an error, so scheduled syncs have only ever
+    // been able to create, never update. Null is also the honest value — no person made the change.
+    // isAdmin stays true: an automated import is not subject to the draft/unlock rules.
+    const sysUser = { sub: actorId ?? null, email: 'system', isAdmin: true } as any;
     let note = '';
     let feesRefreshed = 0;
     let mcfSkipped = 0;
