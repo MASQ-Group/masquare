@@ -2155,6 +2155,70 @@ export class IntegrationsService implements OnModuleInit {
     }
   }
 
+  /**
+   * Fill in cancelStage on cancelled Amazon orders imported before the column existed.
+   *
+   * Those rows read as a plain "cancelled", which lumps an order that never happened together with
+   * one that did. A full re-sync would fix it but re-imports months of orders across every
+   * marketplace to correct a single flag; this asks Amazon about one order at a time and writes
+   * nothing else.
+   *
+   * Only touches rows where the stage is missing, so it is safe to run repeatedly, and it never
+   * overrides a resolution an operator set by hand (applyChannelResolution refuses those).
+   */
+  async backfillCancelStages(opts: { limit?: number } = {}): Promise<{
+    scanned: number; filled: number; pending: number; placed: number; notFound: number; failed: number;
+  }> {
+    const rows = await this.prisma.salesTransaction.findMany({
+      where: {
+        deletedAt: null,
+        resolution: 'cancelled',
+        cancelStage: null,
+        source: 'amazon',
+        integrationId: { not: null },
+      },
+      select: { id: true, transactionRef: true, integrationId: true },
+      orderBy: { date: 'desc' },
+      take: opts.limit ?? 500,
+    });
+
+    const out = { scanned: rows.length, filled: 0, pending: 0, placed: 0, notFound: 0, failed: 0 };
+    // One token and endpoint per integration rather than per order.
+    const ctx = new Map<string, { endpoint: string; token: string }>();
+
+    for (const r of rows) {
+      try {
+        let c = ctx.get(r.integrationId!);
+        if (!c) {
+          const intg = await this.prisma.channelIntegration.findFirst({ where: { id: r.integrationId!, deletedAt: null } });
+          if (!intg) { out.failed++; continue; }
+          const meta = this.amazonMarketMeta(intg);
+          c = { endpoint: meta.endpoint, token: await this.amazonAccessToken((intg.config ?? {}) as any, await this.decryptedSecrets(intg.id)) };
+          ctx.set(r.integrationId!, c);
+        }
+
+        const res = await this.amzFetch(`${c.endpoint}/orders/v0/orders/${encodeURIComponent(r.transactionRef)}`, c.token);
+        const order: any = res.ok ? (await res.json())?.payload : null;
+        // A 200 with an empty payload means the order belongs to another region, not that it is gone.
+        if (!order?.AmazonOrderId) { out.notFound++; continue; }
+
+        const stage = amazonCancelStage(order);
+        if (!stage) { out.notFound++; continue; }
+
+        await this.prisma.salesTransaction.update({ where: { id: r.id }, data: { cancelStage: stage } });
+        out.filled++;
+        if (stage === 'pending') out.pending++; else out.placed++;
+      } catch (e: any) {
+        out.failed++;
+        this.logger.warn(`Cancel-stage backfill failed for ${r.transactionRef}: ${e?.message ?? e}`);
+      }
+      await sleep(120); // getOrder is rate limited; this is a backfill, not a race
+    }
+
+    this.logger.log(`Cancel-stage backfill: ${out.filled} filled (${out.pending} never placed, ${out.placed} cancelled after), ${out.notFound} not found, ${out.failed} failed`);
+    return out;
+  }
+
   /** Import channel orders into sales transactions. Incremental after the first
    *  run; imports as drafts, deduped by (integration + order id), never touching
    *  manual entries. Gated on a verified mapping + active status + configured target. */
