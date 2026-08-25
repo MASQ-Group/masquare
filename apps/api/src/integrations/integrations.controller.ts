@@ -135,6 +135,12 @@ export class IntegrationsController {
     return this.svc.syncOrders(id, 'manual', user.sub, range);
   }
 
+  /** Fill cancelStage on Amazon cancellations imported before the column existed. Idempotent. */
+  @Post('backfill-cancel-stages')
+  backfillCancelStages(@Body() dto: { limit?: number }) {
+    return this.svc.backfillCancelStages({ limit: dto?.limit });
+  }
+
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.svc.remove(id, user.sub);
