@@ -950,6 +950,106 @@ export class SalesTransactionsService {
   }
 
   /** All serialized transactions in a date range (for analytics/reporting). */
+
+  /**
+   * What one product has actually done, from booked sales.
+   *
+   * The Channel Listings product page shipped with sample figures standing in for these. A number
+   * labelled SAMPLE is at best ignored and at worst believed, so the ones that can be computed are
+   * computed and the ones that cannot were removed rather than left as decoration.
+   *
+   * Built on allInRange, which is the same reader analytics uses, so every EUR figure here is the
+   * platform's canonical one rather than a second derivation of it.
+   *
+   * Cancelled orders are excluded outright — they are not sales. Returns stay in the unit and
+   * revenue counts, because the sale did happen, and are reported separately as a rate.
+   */
+  async productMetrics(
+    sku: string,
+    companyIds?: string[],
+    range?: { from?: string | null; to?: string | null },
+  ) {
+    const now = new Date();
+    /**
+     * Twelve months by default, not thirty days.
+     *
+     * The question this page answers is "does this sell, and at what". A thirty-day window reads
+     * zero for every product whenever the last import is a few weeks old, which says nothing about
+     * the product and everything about the sync. A caller can ask for any window instead.
+     */
+    const from = range?.from ? new Date(`${range.from}T00:00:00.000Z`) : new Date(now.getTime() - 365 * 86_400_000);
+    const to = range?.to ? new Date(`${range.to}T23:59:59.999Z`) : now;
+    const from30 = from;
+    const txns = await this.allInRange(from, to, companyIds);
+    let lastSoldAt: Date | null = null;
+
+    const num = (v: unknown) => Number(v ?? 0);
+    let units = 0, revenue = 0, fees = 0, profit = 0, returnedUnits = 0, orders = 0;
+    const weeks = new Array(8).fill(0);
+    const byChannel = new Map<string, { name: string; units: number; revenueEur: number; profitEur: number }>();
+
+    for (const t of txns as any[]) {
+      const items = (t.items ?? []).filter((it: any) => it.sku === sku);
+      if (!items.length) continue;
+      if (t.resolution === 'cancelled') continue;
+
+      const date = new Date(t.date);
+      if (!lastSoldAt || date > lastSoldAt) lastSoldAt = date;
+      // Eight buckets counted back from today, oldest first so it reads left to right as time.
+      const weeksAgo = Math.floor((to.getTime() - date.getTime()) / (7 * 86_400_000));
+      const inLast30 = date >= from30;
+      if (inLast30) orders += 1;
+
+      for (const it of items) {
+        const qty = num(it.quantity);
+        if (weeksAgo >= 0 && weeksAgo < 8) weeks[7 - weeksAgo] += qty;
+        if (!inLast30) continue;
+
+        units += qty;
+        revenue += num(it.revenueExVatEur);
+        fees += num(it.feesEur);
+        profit += num(it.profitEur);
+        // A resolution other than none/cancelled means the goods came back.
+        if (t.resolution && t.resolution !== 'none') returnedUnits += qty;
+
+        const chName = t.salesChannel?.name ?? 'Unknown';
+        const key = t.salesChannel?.id ?? chName;
+        const cur = byChannel.get(key) ?? { name: chName, units: 0, revenueEur: 0, profitEur: 0 };
+        cur.units += qty;
+        cur.revenueEur += num(it.revenueExVatEur);
+        cur.profitEur += num(it.profitEur);
+        byChannel.set(key, cur);
+      }
+    }
+
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    return {
+      /** The window actually used, echoed back so the page can label what it is showing. */
+      from: from.toISOString().slice(0, 10),
+      to: to.toISOString().slice(0, 10),
+      windowDays: Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000)),
+      /**
+       * When this product last sold. Without it a zero is ambiguous — "nobody wants it" and "no
+       * sales have been imported lately" look identical, and they call for opposite responses.
+       */
+      lastSoldAt: lastSoldAt ? (lastSoldAt as Date).toISOString() : null,
+      unitsSold: r2(units),
+      /** Net of channel fees — the only revenue figure comparable across channels that charge differently. */
+      revenueEur: r2(revenue - fees),
+      profitEur: r2(profit),
+      /** Weighted by units. An average of prices is not a real number. */
+      avgSellPriceEur: units > 0 ? r2((revenue - fees) / units) : null,
+      returnRatePct: units > 0 ? Math.round((returnedUnits / units) * 1000) / 10 : null,
+      returnedUnits: r2(returnedUnits),
+      orders,
+      /** Eight weeks, oldest first. */
+      weeklyUnits: weeks.map(r2),
+      byChannel: [...byChannel.values()]
+        .map((v) => ({ name: v.name, units: r2(v.units), revenueEur: r2(v.revenueEur), profitEur: r2(v.profitEur) }))
+        .sort((a, b) => b.units - a.units),
+    };
+  }
+
   async allInRange(from: Date, to: Date, companyIds?: string[]) {
     const rows = await this.prisma.salesTransaction.findMany({
       where: { deletedAt: null, date: { gte: from, lte: to }, ...(companyIds ? { companyId: { in: companyIds } } : {}) },

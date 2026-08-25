@@ -55,6 +55,23 @@ export class SalesTransactionsController {
   }
 
   // --- Bulk actions & unlock requests (literal paths declared before ":id") ---
+  /**
+   * What one SKU has actually sold, for the Channel Listings product page.
+   *
+   * Served from here rather than folded into the listings detail: the figures come from booked
+   * sales and the canonical EUR computation lives on this service, and reaching across would have
+   * deepened the existing module cycle for no gain.
+   */
+  @Get('product-metrics')
+  productMetrics(
+    @VisibleCompanies() companyIds: string[],
+    @Query('sku') sku: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.svc.productMetrics(sku, companyIds, { from, to });
+  }
+
   @Get('ids')
   async ids(
     @VisibleCompanies() companyIds: string[],
