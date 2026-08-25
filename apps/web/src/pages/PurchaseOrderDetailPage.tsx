@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, FileDown, LockOpen, PackageCheck, Pencil, Send, Ban, Trash2, Undo2, SquarePen } from 'lucide-react';
+import { FileDown, LockOpen, PackageCheck, Send, Undo2, SquarePen } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
 import { goodsReceiptsApi, purchaseOrdersApi, vendorReturnsApi, type PurchaseOrder, type PurchaseOrderStatus } from '../lib/api';
@@ -11,6 +11,7 @@ import { ReturnToVendorModal } from '../components/purchase-orders/ReturnToVendo
 import { useConfirm } from '../components/ConfirmProvider';
 import { AmendOrderModal } from '../components/purchase-orders/AmendOrderModal';
 import { useAuth } from '../lib/auth';
+import { PageHeader } from '../components/common/PageHeader';
 
 const money = (v: number, ccy = 'EUR') => `${ccy === 'EUR' ? '€' : ccy + ' '}${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -117,81 +118,73 @@ export function PurchaseOrderDetailPage() {
 
   return (
     <div className="w-full">
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <button onClick={() => navigate('/purchase-orders')} className="inline-flex items-center gap-1 text-[13px] font-semibold text-n-600 hover:text-n-900">
-          <ChevronLeft size={16} /> Purchase orders
-        </button>
-        <div className="flex flex-1 items-center gap-3">
-          <h1 className="code text-[20px] font-bold tracking-tight text-n-900">{po.poNumber}</h1>
+      <PageHeader
+        module="Purchasing"
+        moduleHref="/purchase-orders"
+        title={po.poNumber}
+        // The status chip rides in the toolbar slot: it is the one piece of state that decides
+        // which actions are even possible, so it belongs beside them rather than down the page.
+        toolbar={
           <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[12px] font-semibold ${STATUS_STYLE[po.status]}`}>
             {STATUS_LABEL[po.status]}
           </span>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            onClick={async () => {
-              setPdfBusy(true);
-              try { await purchaseOrdersApi.downloadPdf(po.id, po.poNumber); }
-              catch { toast.error('Could not generate the PDF'); }
-              finally { setPdfBusy(false); }
-            }}
-            disabled={pdfBusy}
-            title="Download the branded purchase order"
-            className="inline-flex h-9 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-n-300 hover:bg-n-25 disabled:opacity-50"
-          >
-            <FileDown size={15} /> {pdfBusy ? 'Preparing…' : 'Export PDF'}
-          </button>
-          {isDraft && (
-            <>
-              <button onClick={() => navigate(`/purchase-orders/${po.id}/edit`)} className="inline-flex h-9 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-n-300 hover:bg-n-25">
-                <Pencil size={15} /> Edit
+        }
+        actions={
+          <>
+            <button
+              onClick={async () => {
+                setPdfBusy(true);
+                try { await purchaseOrdersApi.downloadPdf(po.id, po.poNumber); }
+                catch { toast.error('Could not generate the PDF'); }
+                finally { setPdfBusy(false); }
+              }}
+              disabled={pdfBusy}
+              title="Download the branded purchase order"
+              className="hbtn"
+            >
+              <FileDown size={15} /> {pdfBusy ? 'Preparing…' : 'Export PDF'}
+            </button>
+            {/* One contextual secondary at a time — these states are mutually exclusive in
+                practice, so the header never grows past two buttons plus the primary. */}
+            {canAmend && (
+              <button onClick={() => setAmendOpen(true)} title="Change ordered quantities or add items" className="hbtn">
+                <SquarePen size={15} /> Amend
               </button>
-              <button onClick={() => setConfirmDelete(true)} className="inline-flex h-9 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-600 hover:border-danger-bd hover:bg-danger-bg hover:text-danger">
-                <Trash2 size={15} /> Delete
+            )}
+            {canReturn && (
+              <button onClick={() => setReturnOpen(true)} title="Send received goods back to the vendor" className="hbtn">
+                <Undo2 size={15} /> Return to Vendor
               </button>
+            )}
+            {canUnlock && (
               <button
-                onClick={async () => { if (await confirm({ title: 'Submit this purchase order?', message: 'It locks the order and prepares a goods receipt to receive against.', confirmLabel: 'Submit' })) submit.mutate(); }}
-                disabled={submit.isPending}
-                className="inline-flex h-9 items-center gap-2 rounded-md bg-teal-500 px-3.5 text-[13px] font-semibold text-white hover:bg-teal-600 disabled:opacity-50"
+                onClick={() => setUnlockOpen(true)}
+                title={isAdmin ? 'Reopen this order for editing' : 'Ask an admin to reopen this order'}
+                className="hbtn"
               >
-                <Send size={15} /> Submit
+                <LockOpen size={15} /> {isAdmin ? 'Unlock' : 'Request unlock'}
               </button>
-            </>
-          )}
-          {canAmend && (
+            )}
+          </>
+        }
+        // Destructive and rarely-wanted actions sit behind the ⋯ so they cannot be hit by reflex.
+        overflow={[
+          ...(isDraft ? [{ label: 'Edit', onClick: () => navigate(`/purchase-orders/${po.id}/edit`) }] : []),
+          ...(isDraft ? [{ label: 'Delete', onClick: () => setConfirmDelete(true), danger: true }] : []),
+          ...(canCancel && !isDraft ? [{ label: 'Cancel PO', onClick: () => setConfirmCancel(true), danger: true }] : []),
+        ]}
+        primary={
+          isDraft ? (
             <button
-              onClick={() => setAmendOpen(true)}
-              title="Change ordered quantities or add items"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-n-300 hover:bg-n-25"
+              onClick={async () => { if (await confirm({ title: 'Submit this purchase order?', message: 'It locks the order and prepares a goods receipt to receive against.', confirmLabel: 'Submit' })) submit.mutate(); }}
+              disabled={submit.isPending}
+              className="hbtn-primary"
             >
-              <SquarePen size={15} /> Amend
+              <Send size={15} /> Submit
             </button>
-          )}
-          {canReturn && (
-            <button
-              onClick={() => setReturnOpen(true)}
-              title="Send received goods back to the vendor"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-n-300 hover:bg-n-25"
-            >
-              <Undo2 size={15} /> Return to Vendor
-            </button>
-          )}
-          {canUnlock && (
-            <button
-              onClick={() => setUnlockOpen(true)}
-              title={isAdmin ? 'Reopen this order for editing' : 'Ask an admin to reopen this order'}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-n-300 hover:bg-n-25"
-            >
-              <LockOpen size={15} /> {isAdmin ? 'Unlock' : 'Request unlock'}
-            </button>
-          )}
-          {canCancel && !isDraft && (
-            <button onClick={() => setConfirmCancel(true)} className="inline-flex h-9 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-600 hover:border-danger-bd hover:bg-danger-bg hover:text-danger">
-              <Ban size={15} /> Cancel PO
-            </button>
-          )}
-        </div>
-      </div>
+          ) : undefined
+        }
+      />
 
       {lockedReason && (
         <div className="mb-5 rounded-lg border border-n-200 bg-n-25 px-4 py-3 text-[12.5px] text-n-600">{lockedReason}</div>

@@ -55,6 +55,10 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
   const showTotal = !!t.showTransactionTotal;
   const chipFor = useChannelChips();
 
+  // Same rule as the list row: an order cancelled before it was ever placed took no payment and
+  // shipped nothing, so there is no resolution to record.
+  const nothingToResolve = t.cancelStage === 'pending';
+
   return (
     <>
     <ModalShell
@@ -64,7 +68,8 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
       initialSize={{ w: 1040, h: 660 }}
       primaryLabel="Edit transaction"
       onPrimary={onEdit}
-      secondaryLabel={t.resolution === 'none' ? 'Resolve / return' : 'Edit resolution'}
+      secondaryLabel={nothingToResolve ? 'Nothing to resolve' : t.resolution === 'none' ? 'Resolve / return' : 'Edit resolution'}
+      secondaryDisabled={nothingToResolve}
       onSecondary={onResolve}
       onClose={onClose}
     >

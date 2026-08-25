@@ -502,12 +502,25 @@ export function SalesTransactionsPage() {
           <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={selected.has(t.id)} onChange={() => toggleOne(t.id)} />
           {t.hasAlerts && <AlertBadge alerts={t.alerts} />}
           {t.resolution !== 'none' && (() => {
-            const label = t.resolution === 'cancelled' ? 'Cxl' : t.resolution === 'replaced' ? 'Rep' : 'Ref';
+            // A cancellation that never became an order is a different event from one that did,
+            // and they were reading identically. The first cost us nothing and needs no decision;
+            // the second is a real order that fell over on its way out of the door.
+            const neverPlaced = t.resolution === 'cancelled' && t.cancelStage === 'pending';
+            const label = t.resolution === 'cancelled' ? (neverPlaced ? 'Npl' : 'Cxl') : t.resolution === 'replaced' ? 'Rep' : 'Ref';
             const needsAction = t.resolution !== 'cancelled' && !t.returnHandled;
             return (
               <span
-                className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${t.resolution === 'cancelled' ? 'bg-n-100 text-n-500' : needsAction ? 'bg-warning-bg text-warning' : 'bg-teal-50 text-teal-700'}`}
-                title={t.resolution === 'cancelled' ? 'Cancelled order' : `${t.resolution === 'replaced' ? 'Replaced' : 'Returned / refunded'}${needsAction ? ' — return decision needed' : ' — resolved'}`}
+                className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                  neverPlaced ? 'border border-dashed border-n-300 bg-n-0 text-n-400'
+                    : t.resolution === 'cancelled' ? 'bg-n-100 text-n-500'
+                    : needsAction ? 'bg-warning-bg text-warning'
+                    : 'bg-teal-50 text-teal-700'
+                }`}
+                title={
+                  neverPlaced ? 'Never placed — cancelled while still pending, so it never became an order. No payment was taken and nothing shipped.'
+                    : t.resolution === 'cancelled' ? 'Cancelled — the order was placed, then cancelled before it shipped'
+                    : `${t.resolution === 'replaced' ? 'Replaced' : 'Returned / refunded'}${needsAction ? ' — return decision needed' : ' — resolved'}`
+                }
               >
                 {label}{needsAction ? '!' : ''}
               </span>
@@ -519,13 +532,21 @@ export function SalesTransactionsPage() {
       <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-end gap-1">
           <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Edit transaction" onClick={() => navigate(`/sales-transactions/${t.id}/edit`)}><Pencil size={15} /></button>
+          {/* An order cancelled before it was ever placed has nothing to resolve: no payment to
+              refund, no goods to take back, no restock decision. Offering the control anyway
+              invites someone to record a resolution for an event that never happened. */}
           <button
-            className={`relative grid h-8 w-8 place-items-center rounded-md hover:bg-n-100 hover:text-n-800 ${t.resolution !== 'none' ? 'text-orange-600' : 'text-n-500'}`}
-            title={t.resolution === 'none' ? 'Resolve / return' : 'Edit resolution'}
-            onClick={() => setResolving(t)}
+            disabled={t.cancelStage === 'pending'}
+            className={`relative grid h-8 w-8 place-items-center rounded-md hover:bg-n-100 hover:text-n-800 disabled:cursor-not-allowed disabled:text-n-200 disabled:hover:bg-transparent ${t.resolution !== 'none' ? 'text-orange-600' : 'text-n-500'}`}
+            title={
+              t.cancelStage === 'pending' ? 'Nothing to resolve — this order was cancelled while still pending, so no payment was taken and nothing shipped'
+                : t.resolution === 'none' ? 'Resolve / return'
+                : 'Edit resolution'
+            }
+            onClick={() => t.cancelStage !== 'pending' && setResolving(t)}
           >
             <RotateCcw size={15} />
-            {t.resolution !== 'none' && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-orange-500" />}
+            {t.resolution !== 'none' && t.cancelStage !== 'pending' && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-orange-500" />}
           </button>
           <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" title="Remove" onClick={() => window.confirm(`Remove transaction ${t.transactionRef}?`) && del.mutate(t.id)}><Trash2 size={15} /></button>
         </div>

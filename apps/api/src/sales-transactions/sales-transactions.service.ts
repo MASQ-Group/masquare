@@ -589,6 +589,8 @@ export class SalesTransactionsService {
       // Shipment status reported by the sales channel (for future mismatch alarms).
       channelShipmentStatus: t.channelShipmentStatus ?? null,
       resolution,
+      /** 'pending' = cancelled before it ever became an order; 'placed' = cancelled after. */
+      cancelStage: t.cancelStage ?? null,
       refundAmount: t.refundAmount,
       refundEur,
       restockItems: t.restockItems,
@@ -2205,10 +2207,18 @@ export class SalesTransactionsService {
   ) {
     const existing = await this.prisma.salesTransaction.findFirst({
       where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
-      select: { id: true, status: true, unlockedForEdit: true, fulfilmentStatus: true, fulfilmentType: true, resolution: true, returnWarehouseId: true, transactionRef: true },
+      select: { id: true, status: true, unlockedForEdit: true, fulfilmentStatus: true, fulfilmentType: true, resolution: true, cancelStage: true, returnWarehouseId: true, transactionRef: true },
     });
     if (!existing) throw new NotFoundException('Sales transaction not found');
     this.assertCanEdit(existing, user);
+    // An order cancelled before it was ever placed took no payment and shipped nothing, so there
+    // is no refund to record, nothing to restock and no return decision to make. The UI hides the
+    // control; this refuses the request, because a hidden button is not a rule.
+    if (existing.cancelStage === 'pending') {
+      throw new BadRequestException(
+        'This order was cancelled while still pending, so it never became an order — no payment was taken and nothing shipped. There is nothing to resolve.',
+      );
+    }
     const clearing = dto.resolution === 'none';
     const isFba = existing.fulfilmentType === 'FBA';
 
@@ -2240,6 +2250,10 @@ export class SalesTransactionsService {
       where: { id },
       data: {
         resolution: dto.resolution,
+        // The stage belongs to a cancellation and only to a cancellation. Changing a cancelled
+        // order to 'returned' while leaving the stage behind violates the database CHECK and
+        // fails the whole update — so it is cleared here rather than discovered in production.
+        cancelStage: dto.resolution === 'cancelled' ? undefined : null,
         refundAmount: clearing ? null : dto.refundAmount ?? null,
         restockItems: clearing ? false : restockItems,
         feeRefunded: clearing ? false : !!dto.feeRefunded,
@@ -2311,19 +2325,29 @@ export class SalesTransactionsService {
    */
   async applyChannelResolution(
     txId: string,
-    args: { resolution: 'cancelled' | 'returned'; refundAmount?: number | null; feeRefunded?: boolean },
+    args: {
+      resolution: 'cancelled' | 'returned';
+      refundAmount?: number | null;
+      feeRefunded?: boolean;
+      /** For a cancellation, whether the order was ever confirmed. See ChannelListing.cancelStage. */
+      cancelStage?: 'pending' | 'placed' | null;
+    },
     actorId?: string,
   ): Promise<{ applied: boolean; reason?: string }> {
     const existing = await this.prisma.salesTransaction.findFirst({
       where: { id: txId, deletedAt: null },
-      select: { id: true, resolution: true, resolutionSource: true, refundAmount: true, feeRefunded: true },
+      select: { id: true, resolution: true, resolutionSource: true, refundAmount: true, feeRefunded: true, cancelStage: true },
     });
     if (!existing) return { applied: false, reason: 'not_found' };
     // Never clobber a decision the operator made in the app.
     if (existing.resolutionSource === 'manual') return { applied: false, reason: 'manual' };
     // Nothing new to write — same resolution, same refund, same fee state.
     const sameRefund = args.refundAmount == null || Math.abs(Number(existing.refundAmount ?? 0) - Number(args.refundAmount)) < 0.005;
-    if (existing.resolution === args.resolution && sameRefund && (args.resolution !== 'returned' || existing.feeRefunded === !!args.feeRefunded)) {
+    // A stage we do not have yet is new information, even when everything else matches. Without
+    // this, every row cancelled before the column existed would answer "unchanged" forever and
+    // never learn which kind of cancellation it was.
+    const sameStage = args.cancelStage == null || existing.cancelStage === args.cancelStage;
+    if (existing.resolution === args.resolution && sameRefund && sameStage && (args.resolution !== 'returned' || existing.feeRefunded === !!args.feeRefunded)) {
       return { applied: false, reason: 'unchanged' };
     }
 
@@ -2340,6 +2364,9 @@ export class SalesTransactionsService {
         returnHandled: isCancel, // cancel is neutral & done; a refund needs a return decision
         resolutionSource: 'amazon',
         resolvedAt: new Date(),
+        // Only a cancellation carries a stage; anything else clears it (the CHECK constraint
+        // in the database enforces the same rule, so a bug here fails loudly rather than rots).
+        cancelStage: isCancel ? args.cancelStage ?? null : null,
         ...(isCancel ? { fulfilmentStatus: 'cancelled' } : {}),
         updatedById: actorId ?? null,
       },
