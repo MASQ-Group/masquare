@@ -42,6 +42,18 @@ model Company {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
+
+  /// What this company's Amazon integrations may be used for.
+  ///
+  /// 'full'   — everything: orders, listings, repricing, the marketplace sweep.
+  /// 'orders' — order ingestion ONLY. The company's integrations are invisible to repricing,
+  ///            listing creation, fee/floor lookups and the sweep — not disabled, unreachable.
+  ///
+  /// Deliberately has no API and no UI. Two Amazon seller accounts must never have work performed
+  /// against the wrong one, and a checkbox someone can tick by accident is not a safeguard. Changing
+  /// this is a migration, which is the point.
+  amazonScope String @default("full") @map("amazon_scope")
+
   vatRegistrations  CompanyVatRegistration[]
   contactPersons    CompanyContactPerson[]
   companyModules    CompanyModule[]

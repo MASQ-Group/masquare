@@ -13,6 +13,7 @@ import { PricingService } from '../../pricing/pricing.service';
 import { MARKETPLACE_TO_ISO, REPRICING_DEFAULTS, toCountryIso } from '../config/repricing.config';
 import { assertValidSchedule, referralScheduleFor, scheduleFromChannelFee } from '../config/referral-schedule';
 import type { ReferralBracket } from './floor-solver';
+import { fullScopeIntegrationWhere } from '../../common/amazon-scope';
 
 // floor-service (spec §4.3): recompute breakeven + strategy floors per SKU × marketplace, mark
 // stale floors, exclude SKUs whose inputs are missing/unknown. It is the ONLY writer of the
@@ -143,7 +144,7 @@ export class FloorService {
     const iso = MARKETPLACE_TO_ISO[marketplaceId]; // Amazon's code — integrations store 'UK', not 'GB'
     if (!iso) return null;
     const integration = await this.prisma.channelIntegration.findFirst({
-      where: { channelType: 'amazon', marketplace: iso, deletedAt: null, targetSalesChannelId: { not: null } },
+      where: { channelType: 'amazon', marketplace: iso, deletedAt: null, targetSalesChannelId: { not: null }, ...(await fullScopeIntegrationWhere(this.prisma)) },
       select: { targetSalesChannelId: true },
     });
     if (!integration?.targetSalesChannelId) return null;

@@ -7,6 +7,7 @@ import { checkSafety } from '../engine/safety-layer';
 import { REPRICING_DEFAULTS, ISO_TO_MARKETPLACE, MARKETPLACE_TO_ISO } from '../config/repricing.config';
 import { resolveWriteMode } from './write-mode';
 import { RepricingControlService } from './control.service';
+import { fullScopeIntegrationWhere } from '../../common/amazon-scope';
 
 // The price-writer (spec §6): the ONLY component that submits a price to Amazon. It runs the
 // independent safety layer (§6.3) as the final gate, then writes via patchListingsItem — as a
@@ -122,10 +123,17 @@ export class PriceWriterService {
   private async resolveIntegrationId(marketplaceId: string): Promise<string | null> {
     const iso = MARKETPLACE_TO_ISO[marketplaceId] ?? Object.keys(ISO_TO_MARKETPLACE).find((k) => ISO_TO_MARKETPLACE[k] === marketplaceId);
     if (!iso) return null;
-    const integration = await this.prisma.channelIntegration.findFirst({
-      where: { channelType: 'amazon', marketplace: iso, deletedAt: null },
+    const matches = await this.prisma.channelIntegration.findMany({
+      where: { channelType: 'amazon', marketplace: iso, deletedAt: null, ...(await fullScopeIntegrationWhere(this.prisma)) },
       select: { id: true },
     });
-    return integration?.id ?? null;
+    // More than one full-scope integration for a marketplace means two seller accounts could serve
+    // this write and nothing here can say which is right. Refusing is the only safe answer: a price
+    // written to the wrong account is not recoverable by noticing it later.
+    if (matches.length > 1) {
+      this.logger.error(`Refusing to price ${iso}: ${matches.length} full-scope Amazon integrations match. Resolve the ambiguity before repricing this marketplace.`);
+      return null;
+    }
+    return matches[0]?.id ?? null;
   }
 }
