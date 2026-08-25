@@ -171,20 +171,39 @@ export class IntegrationsService implements OnModuleInit {
     };
   }
 
-  async list() {
+  /**
+   * The integrations belonging to the companies in scope.
+   *
+   * An integration holds one company's marketplace credentials, so showing another company's is
+   * both noise and a trap: every action on this page acts on a seller account, and the two here
+   * are separate legal entities.
+   *
+   * Rows with NO company are included deliberately. A half-configured integration has none yet,
+   * and hiding it would strand it — visible to nobody, fixable by nobody.
+   */
+  async list(companyIds?: string[]) {
     const rows = await this.prisma.channelIntegration.findMany({
-      where: { deletedAt: null },
+      where: {
+        deletedAt: null,
+        ...(companyIds ? { OR: [{ targetCompanyId: { in: companyIds } }, { targetCompanyId: null }] } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       include: { secrets: { select: { fieldKey: true, last4: true } } },
     });
     return rows.map((r) => this.serialize(r, r.secrets));
   }
 
-  async get(id: string) {
+  async get(id: string, companyIds?: string[]) {
     const row = await this.prisma.channelIntegration.findFirst({
-      where: { id, deletedAt: null },
+      where: {
+        id,
+        deletedAt: null,
+        ...(companyIds ? { OR: [{ targetCompanyId: { in: companyIds } }, { targetCompanyId: null }] } : {}),
+      },
       include: { secrets: { select: { fieldKey: true, last4: true } } },
     });
+    // Deliberately the same 'not found' as a missing id: out of scope is not a distinction worth
+    // leaking, and there is nothing the caller can do with the difference.
     if (!row) throw new NotFoundException('Integration not found');
     return this.serialize(row, row.secrets);
   }
@@ -199,20 +218,38 @@ export class IntegrationsService implements OnModuleInit {
     return out;
   }
 
-  async create(dto: CreateIntegrationDto, actorId?: string) {
+  /**
+   * @param companyId the company this integration belongs to — taken from the session, never from
+   *        the request body. Someone working in one company cannot create credentials that file
+   *        themselves under the other, whatever a client sends.
+   */
+  async create(dto: CreateIntegrationDto, actorId?: string, companyId?: string) {
     const connector = this.requireConnector(dto.channelType);
     const config = this.cleanConfig(connector, dto.config);
     const created = await this.prisma.channelIntegration.create({
-      data: { name: dto.name, channelType: dto.channelType, marketplace: dto.marketplace ?? null, config, createdById: actorId, updatedById: actorId },
+      data: {
+        name: dto.name, channelType: dto.channelType, marketplace: dto.marketplace ?? null, config,
+        targetCompanyId: companyId ?? null,
+        createdById: actorId, updatedById: actorId,
+      },
     });
     await this.audit(created.id, actorId, 'create', dto.name);
     if (dto.secrets) await this.writeSecrets(created.id, connector, dto.secrets, actorId, true);
     return this.get(created.id);
   }
 
-  async update(id: string, dto: UpdateIntegrationDto, actorId?: string) {
+  async update(id: string, dto: UpdateIntegrationDto, actorId?: string, companyIds?: string[]) {
     const existing = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
     if (!existing) throw new NotFoundException('Integration not found');
+    // Reading it and moving it are the same permission: if the integration is out of scope, or the
+    // destination company is, the answer is no. Otherwise "you cannot see it" would be undone by
+    // "but you may hand it to yourself".
+    if (companyIds) {
+      if (existing.targetCompanyId && !companyIds.includes(existing.targetCompanyId)) throw new NotFoundException('Integration not found');
+      if (dto.targetCompanyId && !companyIds.includes(dto.targetCompanyId)) {
+        throw new BadRequestException('That company is not available in the current scope.');
+      }
+    }
     const connector = this.requireConnector(existing.channelType);
     const nextConfig = dto.config ? { ...(existing.config as object), ...this.cleanConfig(connector, dto.config) } : undefined;
     await this.prisma.channelIntegration.update({
@@ -247,8 +284,10 @@ export class IntegrationsService implements OnModuleInit {
     }
   }
 
-  async remove(id: string, actorId?: string) {
-    const existing = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
+  async remove(id: string, actorId?: string, companyIds?: string[]) {
+    const existing = await this.prisma.channelIntegration.findFirst({
+      where: { id, deletedAt: null, ...(companyIds ? { OR: [{ targetCompanyId: { in: companyIds } }, { targetCompanyId: null }] } : {}) },
+    });
     if (!existing) throw new NotFoundException('Integration not found');
     await this.prisma.channelIntegration.update({ where: { id }, data: { deletedAt: new Date() } });
     await this.audit(id, actorId, 'delete', existing.name);

@@ -6,6 +6,7 @@ import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { IntegrationsService } from './integrations.service';
 import { CreateIntegrationDto, TestIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
+import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 
 // Admin-only across the board: managing third-party API credentials is privileged.
 @ApiTags('integrations')
@@ -55,18 +56,20 @@ export class IntegrationsController {
   }
 
   @Get()
-  list() {
-    return this.svc.list();
+  list(@VisibleCompanies() companyIds: string[]) {
+    return this.svc.list(companyIds);
   }
 
   @Get(':id')
-  get(@Param('id') id: string) {
-    return this.svc.get(id);
+  get(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.get(id, companyIds);
   }
 
   @Post()
-  create(@Body() dto: CreateIntegrationDto, @CurrentUser() user: AuthUser) {
-    return this.svc.create(dto, user.sub);
+  create(@Body() dto: CreateIntegrationDto, @CurrentUser() user: AuthUser, @WriteCompany() companyId: string) {
+    // The company comes from the session, not the body: marketplace credentials must belong to the
+    // company you are actually working in.
+    return this.svc.create(dto, user.sub, companyId);
   }
 
   /** One-time: register SP-API notification subscriptions (repricing) to an SQS queue ARN. */
@@ -100,8 +103,8 @@ export class IntegrationsController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateIntegrationDto, @CurrentUser() user: AuthUser) {
-    return this.svc.update(id, dto, user.sub);
+  update(@Param('id') id: string, @Body() dto: UpdateIntegrationDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.update(id, dto, user.sub, companyIds);
   }
 
   @Post(':id/test')
@@ -142,7 +145,7 @@ export class IntegrationsController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    return this.svc.remove(id, user.sub);
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.remove(id, user.sub, companyIds);
   }
 }

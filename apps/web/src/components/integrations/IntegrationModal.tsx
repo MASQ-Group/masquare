@@ -14,8 +14,13 @@ interface Props {
 
 export function IntegrationModal({ integration, onClose, onSaved }: Props) {
   const editing = !!integration;
-  const { user } = useAuth();
+  const { user, activeCompany } = useAuth();
   const companies = user?.companies ?? [];
+  // The company an integration belongs to is the one you are working in — the server decides it
+  // from the session and ignores anything sent here. Offering a picker would suggest otherwise, and
+  // these credentials belong to two separate Amazon seller accounts; filing them under the wrong
+  // company is not a mistake worth making available.
+  const ownerCompany = companies.find((c) => c.id === (integration?.targetCompanyId ?? activeCompany?.id)) ?? activeCompany ?? null;
   const { data: connectors = [] } = useQuery({ queryKey: ['integration-connectors'], queryFn: () => integrationsApi.connectors() });
   const { data: channels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list(), enabled: editing });
 
@@ -217,12 +222,9 @@ export function IntegrationModal({ integration, onClose, onSaved }: Props) {
                   </div>
                   <div>
                     <label className="label">Imported orders → company</label>
-                    <Select
-                      value={targetCompanyId}
-                      onChange={(v) => { setTargetCompanyId(v); touch(); }}
-                      placeholder="Select…"
-                      options={companies.map((c) => ({ value: c.id, label: c.officialName }))}
-                    />
+                    <div className="input flex items-center bg-n-25 text-n-700" title="Set by the company you are working in">
+                      {ownerCompany?.officialName ?? 'Select a company first'}
+                    </div>
                   </div>
                   <div>
                     <label className="label">First-run backfill (days)</label>
