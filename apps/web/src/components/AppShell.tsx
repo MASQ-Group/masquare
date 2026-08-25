@@ -58,9 +58,9 @@ interface NavDef {
   icon: LucideIcon;
   badge?: string;
   adminOnly?: boolean;
-  /** Acts on an Amazon SELLER account (lists, prices, pushes stock) rather than just reading
-   *  history. Hidden for a company whose Amazon access is order ingestion only. */
-  sellerAccountOnly?: boolean;
+  /** Belongs to running a trading operation — listings, prices, stock. A company connected only to
+   *  pull order history for analytics has none of that, so the page is hidden for it. */
+  ordersOnlyHidden?: boolean;
   disabled?: boolean;
   exact?: boolean; // match this route only, not its sub-paths (e.g. /analytics vs /analytics/sales)
 }
@@ -98,8 +98,8 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
   {
     label: 'Sales channels',
     items: [
-      { to: '/channel-listings', label: 'Channel Listings', icon: Share2, sellerAccountOnly: true },
-      { to: '/repricing', label: 'Amazon Repricing', icon: Gauge, adminOnly: true, sellerAccountOnly: true },
+      { to: '/channel-listings', label: 'Channel Listings', icon: Share2, ordersOnlyHidden: true },
+      { to: '/repricing', label: 'Amazon Repricing', icon: Gauge, adminOnly: true, ordersOnlyHidden: true },
     ],
   },
   {
@@ -127,7 +127,7 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
     items: [
       { to: '/products', label: 'Products', icon: Package },
       { to: '/inventory', label: 'Inventory', icon: Boxes },
-      { to: '/availability', label: 'Availability', icon: Store },
+      { to: '/availability', label: 'Availability', icon: Store, ordersOnlyHidden: true },
       { to: '/stock-owed', label: 'Stock Owed', icon: PackageX },
       { to: '/warehouses', label: 'Warehouses', icon: Warehouse },
       { to: '/serials', label: 'Serial Numbers', icon: ScanBarcode },
@@ -161,7 +161,7 @@ export function AppShell() {
   // whatever the sidebar shows; hiding them stops the app offering what it will not do.
   const ordersOnlyCompany = activeCompany?.amazonScope === 'orders';
   const canSee = (i: NavDef) =>
-    (!i.adminOnly || user?.isAdmin) && !(i.sellerAccountOnly && ordersOnlyCompany);
+    (!i.adminOnly || user?.isAdmin) && !(i.ordersOnlyHidden && ordersOnlyCompany);
   const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
