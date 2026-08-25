@@ -8,7 +8,7 @@ import { SalesTransactionsService } from '../sales-transactions/sales-transactio
 import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFieldKeys, type ConnectorDef } from './connectors';
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
 import { mapOnBuyOrder } from './mappings/onbuy-mapping';
-import { mapAmazonOrder } from './mappings/amazon-mapping';
+import { amazonCancelStage, mapAmazonOrder } from './mappings/amazon-mapping';
 import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
 import { readOrderMoney, readFinances, impliedEbayRate, type EbayFinancesRead } from './ebay-money-diagnostic';
 import { signedRequest, type SigningCipher, type SigningKey } from './ebay-signature';
@@ -2290,6 +2290,8 @@ export class IntegrationsService implements OnModuleInit {
             // skip whatever their status (checked before the cancel branch so MCF cancels skip too).
             if (String(order.SalesChannel ?? '') === 'Non-Amazon') { mcfSkipped++; continue; }
             if (String(order.OrderStatus) === 'Canceled') {
+              // Which kind of cancellation: one that never became an order, or one that did.
+              const cancelStage = amazonCancelStage(order);
               counts.cancelled++;
               advance(orderDate);
               // Gate off → pre-feature behaviour: a cancellation is simply skipped (not registered).
@@ -2299,7 +2301,7 @@ export class IntegrationsService implements OnModuleInit {
               const existingTx = await this.prisma.salesTransaction.findFirst({ where: { integrationId: row.id, transactionRef: order.AmazonOrderId, deletedAt: null }, select: { id: true } });
               if (existingTx) {
                 // Cancelled after we imported it: downgrade + release any reserved stock.
-                const r = await this.salesTx.applyChannelResolution(existingTx.id, { resolution: 'cancelled' }, actorId);
+                const r = await this.salesTx.applyChannelResolution(existingTx.id, { resolution: 'cancelled', cancelStage }, actorId);
                 if (r.applied) counts.cancelledUpdated++;
               } else {
                 // Never imported: bring it in as a neutral record, then mark it cancelled. Cancelled
@@ -2309,7 +2311,7 @@ export class IntegrationsService implements OnModuleInit {
                 if (await this.importMappedOrder(row, cancelledMapped, orderDate, sysUser, actorId, counts)) {
                   const createdTx = await this.prisma.salesTransaction.findFirst({ where: { integrationId: row.id, transactionRef: order.AmazonOrderId, deletedAt: null }, select: { id: true } });
                   // importMappedOrder counted it as a create; reclassify it as a cancellation record.
-                  if (createdTx) { await this.salesTx.applyChannelResolution(createdTx.id, { resolution: 'cancelled' }, actorId); counts.cancelledImported++; counts.created--; }
+                  if (createdTx) { await this.salesTx.applyChannelResolution(createdTx.id, { resolution: 'cancelled', cancelStage }, actorId); counts.cancelledImported++; counts.created--; }
                 }
                 await sleep(300);
               }

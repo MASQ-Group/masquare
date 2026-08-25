@@ -32,10 +32,35 @@ const TAX_ON_TOP = new Set(['US', 'CA', 'MX', 'AU']);
  *                       withheld (Amazon hides it without Restricted Data access);
  *                       the marketplace's own country is a safe domestic default.
  */
+/**
+ * When a cancelled order was cancelled — before it ever became an order, or after.
+ *
+ * Amazon reports `OrderStatus: Canceled` for both, so the status alone cannot tell them apart.
+ * But Amazon withholds an order's financials while it sits in Pending: no `OrderTotal` on the
+ * header, no `ItemPrice` on the items. An order cancelled out of Pending therefore never had
+ * those populated, while one that was confirmed and then cancelled keeps them.
+ *
+ * Verified against two real orders cancelled on the same day:
+ *   203-0357262-8533160 — no OrderTotal, no ItemPrice, cancelled 2 minutes after purchase
+ *   702-2579052-5535426 — OrderTotal CAD 296.01, ItemPrice CAD 296.01, cancelled 12 hours later
+ *
+ * `QuantityOrdered` is 0 on BOTH — Amazon zeroes it on cancellation — so quantity is not the
+ * signal and must not be used as one.
+ *
+ * Returns null when the order is not cancelled at all.
+ */
+export function amazonCancelStage(o: any): 'pending' | 'placed' | null {
+  if (String(o?.OrderStatus ?? '') !== 'Canceled') return null;
+  // A zero total is still a total; only a missing one means Amazon never confirmed the order.
+  const total = o?.OrderTotal?.Amount;
+  return total !== undefined && total !== null && String(total).trim() !== '' ? 'placed' : 'pending';
+}
+
 export function mapAmazonOrder(o: any, orderItems: any[], defaultCountry: string | null): MappedOrder {
   const status = String(o.OrderStatus ?? '');
   const channelShipmentStatus: 'shipped' | 'not_shipped' = status === 'Shipped' ? 'shipped' : 'not_shipped';
   const resolution: 'none' | 'cancelled' = status === 'Canceled' ? 'cancelled' : 'none';
+  const cancelStage = resolution === 'cancelled' ? amazonCancelStage(o) : null;
   // FulfillmentChannel: AFN = Amazon (FBA), MFN = merchant (FBM).
   const fc = String(o.FulfillmentChannel ?? '');
   const fulfilmentType: 'FBA' | 'FBM' | null = fc === 'AFN' ? 'FBA' : fc === 'MFN' ? 'FBM' : null;
@@ -50,6 +75,7 @@ export function mapAmazonOrder(o: any, orderItems: any[], defaultCountry: string
     { target: 'fulfilmentType', label: 'Fulfilment type', source: 'FulfillmentChannel (AFN→FBA, MFN→FBM)', value: fulfilmentType },
     { target: 'channelShipmentStatus', label: 'Channel shipment status', source: 'OrderStatus', value: channelShipmentStatus },
     { target: 'resolution', label: 'Resolution', source: 'OrderStatus', value: resolution },
+    { target: 'cancelStage', label: 'Cancelled at', source: 'OrderTotal (absent while Pending)', value: cancelStage },
   ];
 
   const items: MappedItem[] = (orderItems ?? []).map((it: any) => {

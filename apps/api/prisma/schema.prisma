@@ -1976,6 +1976,14 @@ model SalesTransaction {
   discountBase  String? @map("discount_base") // net | gross
   // Order resolution (returns/cancellations/refunds). Adjusts revenue/COGS in the profit calc.
   resolution      String   @default("none") @map("resolution") // none | cancelled | returned | replaced
+  /// For a cancelled order, WHEN it was cancelled. 'pending' = cancelled while still in Amazon's
+  /// Pending state, so it never became an order: no payment taken, nothing shipped, nothing to
+  /// decide. 'placed' = a confirmed order cancelled before dispatch. Null on legacy rows and on
+  /// channels that do not report it — those keep the old undifferentiated display.
+  /// Both stay resolution='cancelled': they are equally cancelled and equally neutral to profit.
+  /// Splitting the resolution instead would have meant auditing 45 `resolution === 'cancelled'`
+  /// checks across profit, analytics and fulfilment for a distinction none of them care about.
+  cancelStage     String?  @map("cancel_stage") // pending | placed
   refundAmount    Float?   @map("refund_amount") // our-revenue portion refunded (net+shipping, exc VAT), native currency
   restockItems    Boolean  @default(false) @map("restock_items") // returned goods resellable → reverse COGS
   feeRefunded     Boolean  @default(false) @map("fee_refunded") // channel refunded its selling fee

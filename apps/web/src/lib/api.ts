@@ -1506,6 +1506,15 @@ export interface SalesTransaction {
   outboundShipmentCount: number;
   channelShipmentStatus: 'shipped' | 'not_shipped' | null;
   resolution: 'none' | 'cancelled' | 'returned' | 'replaced';
+  /**
+   * For a cancelled order, when it was cancelled.
+   *
+   * 'pending' — cancelled while Amazon still had it Pending, so it never became an order: no
+   * payment taken, nothing shipped, nothing to resolve. 'placed' — a confirmed order cancelled
+   * before dispatch. Null on rows cancelled before we recorded this, and on channels that do
+   * not report it.
+   */
+  cancelStage: 'pending' | 'placed' | null;
   refundAmount: number | null;
   refundEur: number;
   restockItems: boolean;

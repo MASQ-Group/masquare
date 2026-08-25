@@ -37,3 +37,6 @@ coverage/
 # NB: do NOT ignore *.sql broadly — Prisma migration files are .sql and MUST be committed.
 # Ignore only ad-hoc dump SQL at the repo root.
 /*.sql
+
+# Throwaway diagnostic scripts (one-off Amazon/DB probes). Never part of the build.
+apps/api/.tmp/
