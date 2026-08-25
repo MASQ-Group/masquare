@@ -10,6 +10,7 @@ import { Flag } from '../components/common/Flag';
 import { useJobProgress } from '../lib/useJobProgress';
 import { ListOnChannelModal } from '../components/channel-listings/ListOnChannelModal';
 import { NotListedPanel } from '../components/channel-listings/NotListedPanel';
+import { PageHeader } from '../components/common/PageHeader';
 
 const STATUS: Record<string, { label: string; color: string; bg: string }> = {
   live: { label: 'Live', color: '#0E7A73', bg: '#E1F3F1' },
@@ -110,15 +111,39 @@ export function ChannelListingDetailPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1320px]">
-      {/* breadcrumb */}
-      <div className="flex items-center gap-2 text-[12.5px] text-n-400">
-        <Link to="/channel-listings" className="font-semibold text-n-400 hover:text-teal-700">Channel listings</Link>
-        <span className="text-n-300">/</span>
-        <span className="truncate font-semibold text-n-700">{data.title}</span>
-      </div>
+      <PageHeader
+        module="Sales channels"
+        moduleHref="/channel-listings"
+        title={data.title}
+        actions={
+          <>
+            {/* Two live calls per candidate marketplace, so it is a job with progress rather than
+                something that happens on page load. */}
+            <ProgressButton
+              running={analysis.running}
+              value={analysis.value}
+              detail={analysis.detail}
+              onClick={() => analysis.start(() => amazonListingApi.sweep(productId as string, true))}
+              runningLabel={<><Search size={15} /> Checking</>}
+              className="!h-8 !text-[13px]"
+              title="Searches every Amazon marketplace and works out whether we could win the Buy Box at a profit. Read-only."
+            >
+              <Search size={15} /> Check all Amazon channels
+            </ProgressButton>
+            <button
+              onClick={() => { qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] }); toast.success('Refreshed'); }}
+              className="hbtn"
+            >
+              <RefreshCw size={15} /> Refresh
+            </button>
+          </>
+        }
+        primary={<Link to={`/products?edit=${productId}`} className="hbtn-primary"><Edit3 size={15} /> Edit product</Link>}
+      />
 
-      {/* product header */}
-      <div className="card mt-3.5 flex flex-wrap items-start gap-5 p-5">
+      {/* Identity and stock at a glance. The title used to repeat here under the breadcrumb; it
+          now lives in the header alone, so this card carries only what the header cannot. */}
+      <div className="card flex flex-wrap items-start gap-5 p-5">
         <div className="grid h-[84px] w-[84px] flex-none place-items-center rounded-xl border border-n-100 bg-n-50 text-n-300"><Package size={38} /></div>
         <div className="min-w-[280px] flex-1">
           <div className="flex flex-wrap items-center gap-2.5">
@@ -126,30 +151,11 @@ export function ChannelListingDetailPage() {
             {data.brand && <span className="text-[12.5px] text-n-500">{data.brand}</span>}
             <span className="rounded-full px-2.5 py-1 text-[12px] font-bold" style={{ color: '#B4791E', background: '#FBF1DE' }}>Listed on {data.listedCount}/{data.channelCount} channels</span>
           </div>
-          <h1 className="mt-2 text-[24px] font-bold tracking-tight text-n-900">{data.title}</h1>
           <div className="mt-2.5 flex flex-wrap items-center gap-4 text-[13px] text-n-500">
             <span>Master stock <strong className="font-semibold text-n-900">{data.masterStock ?? '—'}</strong></span>
             <span>Units live <strong className="font-semibold text-n-900">{data.unitsLive}</strong></span>
             <span>Last synced <strong className="font-semibold text-n-900">{ago(data.lastSyncedAt)}</strong></span>
           </div>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {/* Two live calls per candidate marketplace, so it is a job with progress rather than
-              something that happens on page load. */}
-          <ProgressButton
-            running={analysis.running}
-            value={analysis.value}
-            detail={analysis.detail}
-            onClick={() => analysis.start(() => amazonListingApi.sweep(productId as string, true))}
-            runningLabel={<><Search size={15} /> Checking</>}
-            className="!h-[38px] !text-[13px]"
-            title="Searches every Amazon marketplace and works out whether we could win the Buy Box at a profit. Read-only."
-          >
-            <Search size={15} /> Check all Amazon channels
-          </ProgressButton>
-          <button onClick={() => { qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] }); toast.success('Refreshed'); }}
-            className="inline-flex h-[38px] items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:bg-n-50"><RefreshCw size={15} /> Refresh</button>
-          <Link to={`/products?edit=${productId}`} className="inline-flex h-[38px] items-center gap-2 rounded-md bg-teal-500 px-4 text-[13px] font-semibold text-white hover:bg-teal-600"><Edit3 size={15} /> Edit product</Link>
         </div>
       </div>
 

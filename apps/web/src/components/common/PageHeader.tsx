@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { MoreHorizontal } from 'lucide-react';
 import { useIsMobile } from '../../lib/useIsMobile';
 import { AnchoredPanel } from './AnchoredPanel';
@@ -30,6 +31,10 @@ export interface PageHeaderOverflowItem {
 export interface PageHeaderProps {
   /** Breadcrumb module label (the sidebar group), e.g. "Products". */
   module: string;
+  /** Where the module crumb navigates. Detail pages pass their list route so the crumb keeps the
+   *  back affordance their bespoke "‹ Purchase orders" button used to provide. Omitted on list
+   *  pages, where the crumb names the section you are already in and has nowhere to go. */
+  moduleHref?: string;
   title: string;
   /** Page description — shown in the ⓘ tooltip instead of a full paragraph. */
   info?: ReactNode;
@@ -87,7 +92,7 @@ function OverflowMenu({ items }: { items: PageHeaderOverflowItem[] }) {
   );
 }
 
-export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, actions, overflow, primary, toolbar, summary }: PageHeaderProps) {
+export function PageHeader({ module, moduleHref, title, info, tabs, activeTab, onTabChange, actions, overflow, primary, toolbar, summary }: PageHeaderProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
   // `hidden` = scrolled down past the threshold. Desktop slides the whole bar out of view; mobile
@@ -138,7 +143,16 @@ export function PageHeader({ module, title, info, tabs, activeTab, onTabChange, 
       {/* Row 1 — page header: breadcrumb "MODULE › Title" + ⓘ on the left, actions on the right. */}
       <div className={`flex items-center gap-3 px-8 pt-3.5 max-[760px]:px-4 ${hasOptions && !mobileCollapsed ? 'pb-2.5' : 'pb-3.5'}`}>
         <div className="flex min-w-0 shrink items-baseline gap-2 whitespace-nowrap">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-n-400">{module}</span>
+          {moduleHref ? (
+            <Link
+              to={moduleHref}
+              className="rounded text-[11px] font-semibold uppercase tracking-[0.07em] text-n-400 hover:text-teal-700"
+            >
+              {module}
+            </Link>
+          ) : (
+            <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-n-400">{module}</span>
+          )}
           <span className="text-[12px] text-n-300">›</span>
           {/* Title + ⓘ in their own centered group so the icon sits on the title's vertical axis.
               min-w-0 on the title lets it ellipsize; the ⓘ never shrinks — so neither can spill
