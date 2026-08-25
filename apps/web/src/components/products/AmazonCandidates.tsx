@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Ban, Check, ExternalLink, Search } from 'lucide-react';
+import { AlertTriangle, Ban, Check, ExternalLink, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { amazonListingApi, type AmazonCandidate } from '../../lib/api';
 
@@ -74,6 +74,17 @@ export function AmazonCandidates({
           )}
           {data.message && <div className="text-[12px] text-amber-700">{data.message}</div>}
 
+          {/* Amazon requires one SKU to map to one ASIN across every marketplace. Saying so here —
+              before a candidate is picked — beats the refusal that otherwise arrives at validation
+              in the marketplace's own language, naming two ASINs and explaining neither. */}
+          {data.boundAsin && (
+            <div className="rounded-md border border-n-200 bg-n-25 px-2.5 py-2 text-[12px] text-n-600">
+              This SKU already uses <span className="mono font-semibold text-n-800">{data.boundAsin}</span>
+              {data.boundOn.length > 0 && ` on ${data.boundOn.join(', ')}`}. Amazon allows one ASIN per SKU, so
+              only that one can be used here.
+            </div>
+          )}
+
           {data.candidates.map((c) => (
             <CandidateRow key={c.asin} candidate={c} selected={c.asin === selectedAsin} onSelect={onSelect} />
           ))}
@@ -97,7 +108,12 @@ function CandidateRow({
   const cleared = c.restricted === false;
 
   return (
-    <div className={`rounded-md border px-2.5 py-2 ${selected ? 'border-teal-300 bg-teal-50' : blocked ? 'border-danger-bd bg-danger-bg' : 'border-n-200 bg-n-0'}`}>
+    <div className={`rounded-md border px-2.5 py-2 ${
+      selected ? 'border-teal-300 bg-teal-50'
+        : blocked ? 'border-danger-bd bg-danger-bg'
+        : c.conflictsWithBound ? 'border-n-200 bg-n-25 opacity-60'
+        : 'border-n-200 bg-n-0'
+    }`}>
       <div className="flex items-start gap-2.5">
         {c.imageUrl && <img src={c.imageUrl} alt="" className="h-10 w-10 shrink-0 rounded border border-n-200 object-contain" />}
         <div className="min-w-0 flex-1">
@@ -128,6 +144,12 @@ function CandidateRow({
               Could not check whether we may offer on this{c.restrictionError ? ` — ${c.restrictionError}` : ''}.
             </div>
           )}
+          {c.conflictsWithBound && (
+            <div className="mt-1.5 flex items-start gap-1.5 text-[11.5px] text-amber-700">
+              <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+              <span>A different ASIN from the one this SKU already uses — Amazon would refuse it.</span>
+            </div>
+          )}
           {/* Stated, not implied by silence. "Amazon says we may offer" and "we never asked" look
               identical when only the bad cases are drawn, and they are not the same fact. */}
           {cleared && (
@@ -140,7 +162,8 @@ function CandidateRow({
         <button
           type="button"
           onClick={() => onSelect(c.asin, c.productType)}
-          disabled={selected}
+          disabled={selected || c.conflictsWithBound}
+          title={c.conflictsWithBound ? 'This SKU is already bound to another ASIN on other marketplaces' : undefined}
           // A blocked candidate stays selectable: approval can be applied for, and recording the
           // match now is what makes that worth doing.
           className={`h-7 shrink-0 rounded-md px-2.5 text-[12px] font-semibold ${

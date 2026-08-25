@@ -57,19 +57,44 @@ export class AmazonListingService {
         productId,
         searchedBy: null,
         candidates: [],
+        boundAsin: null,
+        boundOn: [],
         message: 'This product has no EAN or UPC. Amazon can only be searched on a unique identifier — a title match would risk attaching the offer to a different product.',
       };
     }
 
+    /**
+     * The ASIN this SKU is already bound to elsewhere.
+     *
+     * Amazon requires one SKU to map to one ASIN across every marketplace, and refuses a submission
+     * that breaks it — "the seller-suggested ASIN value is not uniform across active Amazon sales
+     * sites". That refusal arrives at validation, in the marketplace's own language, naming two
+     * ASINs and leaving the reader to work out which is which. We already hold the answer, so it is
+     * far better said at the moment of choosing.
+     */
+    const boundElsewhere = await this.prisma.channelListing.findMany({
+      where: {
+        channelSku: product.mainSku,
+        asin: { not: null },
+        integration: { channelType: 'amazon', deletedAt: null },
+        integrationId: { not: integrationId },
+      },
+      select: { asin: true, integration: { select: { marketplace: true, name: true } } },
+    });
+    const boundAsin = boundElsewhere[0]?.asin ?? null;
+    const boundOn = [...new Set(boundElsewhere.map((l) => l.integration.marketplace ?? l.integration.name))];
+
     const search = await this.integrations.searchAmazonCatalog(integrationId, [identifier], identifierType);
     if (!search.ok) {
-      return { productId, searchedBy: { type: identifierType, value: identifier }, candidates: [], message: search.message };
+      return { productId, searchedBy: { type: identifierType, value: identifier }, candidates: [], message: search.message, boundAsin, boundOn };
     }
 
     // Restrictions are per ASIN, so each candidate is checked on its own. Sequential on purpose:
     // there are rarely more than a handful, and SP-API rate limits are unkind to bursts.
     const candidates: Array<{
       asin: string; productType: string | null; title: string | null; brand: string | null; imageUrl: string | null;
+      /** True when this SKU is already bound to a different ASIN — Amazon refuses the mismatch. */
+      conflictsWithBound: boolean;
       restricted: boolean | null;
       restrictionReasons: Array<{ message: string; reasonCode: string | null; linkUrl: string | null }>;
       restrictionError: string | null;
@@ -78,16 +103,25 @@ export class AmazonListingService {
       const restrictions = await this.integrations.getAmazonListingRestrictions(integrationId, item.asin);
       candidates.push({
         ...item,
+        // Amazon will refuse any candidate other than the one this SKU already uses.
+        conflictsWithBound: boundAsin != null && item.asin !== boundAsin,
         restricted: restrictions.ok ? restrictions.restricted : null,
         restrictionReasons: restrictions.reasons,
         restrictionError: restrictions.ok ? null : restrictions.message ?? null,
       });
     }
 
+    // The bound ASIN first. The sweep takes candidates[0] and the picker defaults to it, so leaving
+    // Amazon's own ordering to decide would sometimes pick the one ASIN we know it will refuse.
+    if (boundAsin) candidates.sort((a, b) => Number(a.conflictsWithBound) - Number(b.conflictsWithBound));
+
     return {
       productId,
       searchedBy: { type: identifierType, value: identifier },
       candidates,
+      /** The ASIN this SKU already uses on other marketplaces, if any. */
+      boundAsin,
+      boundOn,
       message: candidates.length === 0 ? 'Amazon has no catalogue entry for this identifier in this marketplace.' : null,
     };
   }

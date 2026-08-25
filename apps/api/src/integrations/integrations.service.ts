@@ -28,6 +28,15 @@ export interface RoleProbe {
 }
 import type { MappedOrder } from './mappings/types';
 
+/**
+ * The language Amazon returns issue messages in.
+ *
+ * Without it a French marketplace answers in French and a Japanese one in Japanese, leaving the
+ * people who read these screens unable to act on their own error messages. Amazon localises the
+ * text itself, so this is its official English wording rather than a translation of it.
+ */
+const ISSUE_LOCALE = 'en_GB';
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const num = (v: any) => { const x = Number(String(v ?? '').trim()); return Number.isFinite(x) ? x : 0; };
 const round2 = (x: number) => Math.round(x * 100) / 100;
@@ -794,13 +803,13 @@ export class IntegrationsService implements OnModuleInit {
     const qty = Math.max(0, Math.trunc(quantity));
 
     // The PATCH requires the item's productType — fetch it from the listing summary.
-    const getRes = await this.amzFetch(`${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(channelSku)}?marketplaceIds=${meta.marketplaceId}&includedData=summaries`, token);
+    const getRes = await this.amzFetch(`${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(channelSku)}?marketplaceIds=${meta.marketplaceId}&issueLocale=${ISSUE_LOCALE}&includedData=summaries`, token);
     const getJson: any = await getRes.json().catch(() => null);
     if (!getRes.ok) return { ok: false, message: `getItem ${getRes.status}${IntegrationsService.amzErr(getJson) ? ': ' + IntegrationsService.amzErr(getJson) : ''}` };
     const productType = getJson?.summaries?.[0]?.productType;
     if (!productType) return { ok: false, message: 'Could not resolve productType' };
 
-    const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(channelSku)}?marketplaceIds=${meta.marketplaceId}${dryRun ? '&mode=VALIDATION_PREVIEW' : ''}`;
+    const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(channelSku)}?marketplaceIds=${meta.marketplaceId}&issueLocale=${ISSUE_LOCALE}${dryRun ? '&mode=VALIDATION_PREVIEW' : ''}`;
     const body = { productType, patches: [{ op: 'replace', path: '/attributes/fulfillment_availability', value: [{ fulfillment_channel_code: 'DEFAULT', quantity: qty }] }] };
     const res = await this.amzWrite(url, token, 'PATCH', body);
     const json: any = await res.json().catch(() => null);
@@ -1030,7 +1039,7 @@ export class IntegrationsService implements OnModuleInit {
     const { meta, token, sellerId } = await this.amazonCtx(integrationId);
     if (!sellerId) return { ok: false, submissionStatus: null, issues: [], message: 'Amazon integration has no Seller ID' };
 
-    const params = new URLSearchParams({ marketplaceIds: meta.marketplaceId });
+    const params = new URLSearchParams({ marketplaceIds: meta.marketplaceId, issueLocale: ISSUE_LOCALE });
     if (dryRun) params.set('mode', 'VALIDATION_PREVIEW');
     const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sku)}?${params.toString()}`;
 
@@ -1077,6 +1086,7 @@ export class IntegrationsService implements OnModuleInit {
     const params = new URLSearchParams({
       marketplaceIds: meta.marketplaceId,
       includedData: 'summaries,issues,attributes,offers',
+      issueLocale: ISSUE_LOCALE,
     });
     const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sku)}?${params.toString()}`;
     const res = await this.amzFetch(url, token);
@@ -1126,7 +1136,7 @@ export class IntegrationsService implements OnModuleInit {
     const token = await this.amazonAccessToken(config, secrets);
 
     // productType is required by the PATCH — resolve it from the listing summary.
-    const getRes = await this.amzFetch(`${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sellerSku)}?marketplaceIds=${meta.marketplaceId}&includedData=summaries`, token);
+    const getRes = await this.amzFetch(`${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sellerSku)}?marketplaceIds=${meta.marketplaceId}&issueLocale=${ISSUE_LOCALE}&includedData=summaries`, token);
     const getJson: any = await getRes.json().catch(() => null);
     if (!getRes.ok) return { ok: false, status: 'ERROR', message: `getItem ${getRes.status}${IntegrationsService.amzErr(getJson) ? ': ' + IntegrationsService.amzErr(getJson) : ''}` };
     const productType = getJson?.summaries?.[0]?.productType;
@@ -1140,7 +1150,7 @@ export class IntegrationsService implements OnModuleInit {
     if (backstops.minAmount != null) patches.push({ op: 'replace', path: '/attributes/minimum_seller_allowed_price', value: allowed(backstops.minAmount) });
     if (backstops.maxAmount != null) patches.push({ op: 'replace', path: '/attributes/maximum_seller_allowed_price', value: allowed(backstops.maxAmount) });
 
-    const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sellerSku)}?marketplaceIds=${meta.marketplaceId}${dryRun ? '&mode=VALIDATION_PREVIEW' : ''}`;
+    const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sellerSku)}?marketplaceIds=${meta.marketplaceId}&issueLocale=${ISSUE_LOCALE}${dryRun ? '&mode=VALIDATION_PREVIEW' : ''}`;
     const res = await this.amzWrite(url, token, 'PATCH', { productType, patches });
     const json: any = await res.json().catch(() => null);
     if (!res.ok) return { ok: false, status: 'ERROR', message: `PATCH ${res.status}${IntegrationsService.amzErr(json) ? ': ' + IntegrationsService.amzErr(json) : ''}` };

@@ -1143,6 +1143,8 @@ export interface AmazonCandidate {
   restricted: boolean | null;
   restrictionReasons: Array<{ message: string; reasonCode: string | null; linkUrl: string | null }>;
   restrictionError: string | null;
+  /** True when this SKU is already bound to a different ASIN. Amazon refuses the mismatch. */
+  conflictsWithBound: boolean;
 }
 
 export interface AmazonCandidates {
@@ -1150,6 +1152,13 @@ export interface AmazonCandidates {
   /** Which identifier the search used. Null when the product has neither an EAN nor a UPC. */
   searchedBy: { type: 'EAN' | 'UPC'; value: string } | null;
   candidates: AmazonCandidate[];
+  /**
+   * The ASIN this SKU already uses on other marketplaces, and where.
+   *
+   * Amazon requires one SKU to map to one ASIN everywhere, and refuses a submission that breaks it.
+   */
+  boundAsin: string | null;
+  boundOn: string[];
   message: string | null;
 }
 
