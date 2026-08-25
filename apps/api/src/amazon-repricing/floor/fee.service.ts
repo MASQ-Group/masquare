@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { MARKETPLACE_TO_ISO } from '../config/repricing.config';
 import { parseFeesEstimate, type ParsedFees } from './fees-parse';
+import { fullScopeIntegrationWhere } from '../../common/amazon-scope';
 
 // Fees are DATA, not code (spec §4.3): this refreshes per-SKU fee estimates from Amazon's
 // getMyFeesEstimate into RepricingFeeEstimate, which the floor solver consumes. Reuses the
@@ -69,7 +70,7 @@ export class FeeService {
       return false;
     }
     const integration = await this.prisma.channelIntegration.findFirst({
-      where: { channelType: 'amazon', marketplace: iso, deletedAt: null },
+      where: { channelType: 'amazon', marketplace: iso, deletedAt: null, ...(await fullScopeIntegrationWhere(this.prisma)) },
       select: { id: true },
     });
     if (!integration) {

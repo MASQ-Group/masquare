@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ISO_TO_MARKETPLACE } from '../config/repricing.config';
 import type { ProgressSink } from '../../jobs/jobs.service';
+import { fullScopeIntegrationWhere } from '../../common/amazon-scope';
 
 // Onboarding (spec §3.3): seed one RepricingSkuPricing row per matched Amazon listing so the
 // engine has SKUs to evaluate. Rows start EXCLUDED (no floor yet); the floor-service promotes
@@ -44,7 +45,7 @@ export class OnboardingService {
   async syncSkuPricingFromListings(opts: { marketplace?: string; progress?: ProgressSink } = {}): Promise<SyncResult> {
     const iso = opts.marketplace?.trim().toUpperCase();
     const integrations = await this.prisma.channelIntegration.findMany({
-      where: { channelType: 'amazon', deletedAt: null, ...(iso ? { marketplace: iso } : {}) },
+      where: { channelType: 'amazon', deletedAt: null, ...(iso ? { marketplace: iso } : {}), ...(await fullScopeIntegrationWhere(this.prisma)) },
       select: { id: true, marketplace: true },
     });
     if (integrations.length === 0) {

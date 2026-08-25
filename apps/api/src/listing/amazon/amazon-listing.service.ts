@@ -4,6 +4,7 @@ import { IntegrationsService } from '../../integrations/integrations.service';
 import { buildOfferAttributes, CONDITION_CODES, type OfferInput } from './offer-payload';
 import { evaluateEligibility, type MarketProfile } from '../eligibility';
 import { FloorService } from '../../amazon-repricing/floor/floor.service';
+import { fullScopeIntegrationWhere, isOrdersOnlyCompany } from '../../common/amazon-scope';
 
 /**
  * Creating an offer on an existing Amazon listing.
@@ -76,7 +77,9 @@ export class AmazonListingService {
       where: {
         channelSku: product.mainSku,
         asin: { not: null },
-        integration: { channelType: 'amazon', deletedAt: null },
+        // Amazon enforces one SKU to one ASIN WITHIN a seller account. Another company's account is
+        // a different seller, so its binding constrains nothing here and must not be read as if it did.
+        integration: { channelType: 'amazon', deletedAt: null, ...(await fullScopeIntegrationWhere(this.prisma)) },
         integrationId: { not: integrationId },
       },
       select: { asin: true, integration: { select: { marketplace: true, name: true } } },
@@ -140,7 +143,7 @@ export class AmazonListingService {
     opts: { withPricing?: boolean } = {},
   ) {
     const integrations = await this.prisma.channelIntegration.findMany({
-      where: { deletedAt: null, channelType: 'amazon' },
+      where: { deletedAt: null, channelType: 'amazon', ...(await fullScopeIntegrationWhere(this.prisma)) },
       select: { id: true, name: true, marketplace: true },
       orderBy: { marketplace: 'asc' },
     });
@@ -244,7 +247,28 @@ export class AmazonListingService {
    * solver the floors are built on — so the profit quoted here and the profit quoted anywhere else
    * in the platform are the same number by construction rather than by coincidence.
    */
+  /**
+   * Refuse to do listing work on an orders-only company's integration.
+   *
+   * The scope filter already makes those integrations invisible to the sweep, so nothing in the UI
+   * offers them. This covers the direct call — an integration id in a URL, a stale tab, a script —
+   * because an integration that cannot be chosen is not the same as one that cannot be used.
+   */
+  private async assertListingAllowed(integrationId: string): Promise<void> {
+    const integration = await this.prisma.channelIntegration.findFirst({
+      where: { id: integrationId, deletedAt: null },
+      select: { name: true, targetCompanyId: true },
+    });
+    if (!integration) throw new NotFoundException('Integration not found');
+    if (await isOrdersOnlyCompany(this.prisma, integration.targetCompanyId)) {
+      throw new BadRequestException(
+        `${integration.name} belongs to a company connected for order history only. Listings and pricing are not performed on this account.`,
+      );
+    }
+  }
+
   async quote(productId: string, integrationId: string, atPricesCents?: number[]) {
+    await this.assertListingAllowed(integrationId);
     const [product, integration, plan, settings] = await Promise.all([
       this.prisma.product.findFirst({ where: { id: productId, deletedAt: null }, select: { id: true } }),
       this.prisma.channelIntegration.findFirst({
@@ -438,6 +462,7 @@ export class AmazonListingService {
    * This is the step that answers "would this work", and it is the one to run first every time.
    */
   async preview(productId: string, integrationId: string) {
+    await this.assertListingAllowed(integrationId);
     const built = await this.buildFromPlan(productId, integrationId);
     if (built.missing.length > 0) {
       return { ...built, validated: false, submissionStatus: null, issues: [], message: 'Fill in what is missing before validating.' };
@@ -465,6 +490,7 @@ export class AmazonListingService {
    * than a warning: this is the only step in the module that a customer can see the result of.
    */
   async submit(productId: string, integrationId: string, opts: { confirm?: boolean } = {}) {
+    await this.assertListingAllowed(integrationId);
     if (!(await this.liveWritesEnabled())) {
       throw new BadRequestException(
         process.env.LISTING_LIVE_WRITES === 'false'
@@ -583,7 +609,9 @@ export class AmazonListingService {
         where: {
           productId,
           listedQuantity: { not: null },
-          integration: { channelType: 'amazon', deletedAt: null },
+          // Never borrow from another company's account: their FBA quantity is Amazon-controlled
+          // stock we do not hold, and publishing it as ours would oversell.
+          integration: { channelType: 'amazon', deletedAt: null, ...(await fullScopeIntegrationWhere(this.prisma)) },
           integrationId: { not: integrationId },
         },
         orderBy: { lastPulledAt: 'desc' },

@@ -69,6 +69,20 @@ function RequireAdmin({ children }: { children: JSX.Element }) {
   return children;
 }
 
+/**
+ * Keeps seller-account pages out of a company connected for order history only.
+ *
+ * The sidebar already hides these and the API refuses the calls behind them, but a typed URL or a
+ * bookmarked tab reaches the route directly — and a page that loads and then fails piecemeal is a
+ * worse answer than not opening at all.
+ */
+function RequireSellerAccount({ children }: { children: JSX.Element }) {
+  const { loading, activeCompany } = useAuth();
+  if (loading) return <FullScreenLoader />;
+  if (activeCompany?.amazonScope === 'orders') return <Navigate to="/" replace />;
+  return children;
+}
+
 function FullScreenLoader() {
   return (
     <div className="grid h-full place-items-center text-[13px] text-n-500">Loading…</div>
@@ -97,9 +111,9 @@ export function App() {
         <Route path="/fba-shipments" element={<FbaShipmentsPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/availability" element={<AvailabilityPage />} />
-        <Route path="/channel-listings" element={<ChannelListingsPage />} />
-        <Route path="/channel-listings/:productId" element={<ChannelListingDetailPage />} />
-        <Route path="/repricing" element={<RequireAdmin><RepricingPage /></RequireAdmin>} />
+        <Route path="/channel-listings" element={<RequireSellerAccount><ChannelListingsPage /></RequireSellerAccount>} />
+        <Route path="/channel-listings/:productId" element={<RequireSellerAccount><ChannelListingDetailPage /></RequireSellerAccount>} />
+        <Route path="/repricing" element={<RequireAdmin><RequireSellerAccount><RepricingPage /></RequireSellerAccount></RequireAdmin>} />
         <Route path="/stock-owed" element={<StockOwedPage />} />
         <Route path="/warehouses" element={<WarehousesPage />} />
         <Route path="/procurement" element={<ProcurementPage />} />

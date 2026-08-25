@@ -45,6 +45,13 @@ export interface CompanyRef {
   officialName: string;
   registrationNumber?: string | null;
   addressCountry?: string | null;
+  /**
+   * What this company's Amazon integrations may be used for.
+   *
+   * 'orders' — connected to pull order history only. Repricing and channel listings are hidden and
+   * the API refuses them; the two seller accounts must never have work done against the wrong one.
+   */
+  amazonScope?: 'full' | 'orders';
 }
 export interface ModuleRef {
   key: string;
