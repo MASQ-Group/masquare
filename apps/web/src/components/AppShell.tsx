@@ -58,6 +58,9 @@ interface NavDef {
   icon: LucideIcon;
   badge?: string;
   adminOnly?: boolean;
+  /** Acts on an Amazon SELLER account (lists, prices, pushes stock) rather than just reading
+   *  history. Hidden for a company whose Amazon access is order ingestion only. */
+  sellerAccountOnly?: boolean;
   disabled?: boolean;
   exact?: boolean; // match this route only, not its sub-paths (e.g. /analytics vs /analytics/sales)
 }
@@ -95,8 +98,8 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
   {
     label: 'Sales channels',
     items: [
-      { to: '/channel-listings', label: 'Channel Listings', icon: Share2 },
-      { to: '/repricing', label: 'Amazon Repricing', icon: Gauge, adminOnly: true },
+      { to: '/channel-listings', label: 'Channel Listings', icon: Share2, sellerAccountOnly: true },
+      { to: '/repricing', label: 'Amazon Repricing', icon: Gauge, adminOnly: true, sellerAccountOnly: true },
     ],
   },
   {
@@ -152,7 +155,13 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
 ];
 
 export function AppShell() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, activeCompany } = useAuth();
+  // A company connected purely to pull order history has no listings to manage and no prices to
+  // set — its Amazon account belongs to a different legal entity. The API refuses these calls
+  // whatever the sidebar shows; hiding them stops the app offering what it will not do.
+  const ordersOnlyCompany = activeCompany?.amazonScope === 'orders';
+  const canSee = (i: NavDef) =>
+    (!i.adminOnly || user?.isAdmin) && !(i.sellerAccountOnly && ordersOnlyCompany);
   const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -200,7 +209,7 @@ export function AppShell() {
 
   const renderNav = (items: NavDef[]) =>
     items
-      .filter((i) => !i.adminOnly || user?.isAdmin)
+      .filter(canSee)
       .map((item) => {
         const Icon = item.icon;
         if (item.disabled || !item.to) {
@@ -296,7 +305,7 @@ export function AppShell() {
 
           {NAV_GROUPS.map((group) => {
             // Skip the whole section when the viewer can't see any of its items.
-            const visible = group.items.filter((i) => !i.adminOnly || user?.isAdmin);
+            const visible = group.items.filter(canSee);
             if (visible.length === 0) return null;
             // Section collapse applies only in the expanded sidebar; the rail shows all items.
             const groupOpen = collapsed || !collapsedGroups.has(group.label);

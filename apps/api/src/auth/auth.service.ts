@@ -78,6 +78,10 @@ export class AuthService {
         officialName: c.officialName,
         registrationNumber: c.registrationNumber,
         addressCountry: c.addressCountry,
+        // 'orders' means this company's Amazon account is connected for order history only, so the
+        // navigation hides the pages that would act on a seller account. The API refuses those
+        // calls regardless — this only stops the app offering what it will not do.
+        amazonScope: c.amazonScope,
       })),
       modules: modules.map((m) => ({ key: m.key, name: m.name, status: m.status })),
     };
