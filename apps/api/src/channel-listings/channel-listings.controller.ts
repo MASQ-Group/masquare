@@ -28,7 +28,14 @@ export class ChannelListingsController {
     @VisibleCompanies() companyIds: string[],
     @CurrentUser() user: AuthUser,
   ) {
-    return this.svc.restoreQuantities(dto ?? {}, companyIds, user.sub);
+    // A dry run answers immediately; a real one is hundreds of sequential marketplace calls and
+    // outlives the gateway, so it runs as a job you can follow.
+    if (!dto?.confirm) return this.svc.restoreQuantities(dto ?? {}, companyIds, user.sub);
+    return this.jobs.start(
+      'channel-listings.restore-quantities',
+      'Restoring quantities on ' + (dto.marketplace ?? 'GB'),
+      (ctx) => this.svc.restoreQuantities(dto, companyIds, user.sub, ctx),
+    );
   }
 
   /** What we have actually sent to the channels, newest first. Read-only. */

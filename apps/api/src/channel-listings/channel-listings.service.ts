@@ -397,6 +397,7 @@ export class ChannelListingsService {
     opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string } = {},
     companyIds?: string[],
     actorId?: string,
+    ctx?: ProgressSink,
   ) {
     const marketplace = opts.marketplace ?? 'GB';
     const channelType = opts.channelType ?? 'ebay';
@@ -459,8 +460,13 @@ export class ChannelListingsService {
       };
     }
 
+    // Hundreds of sequential Trading API calls outlive any HTTP request — the first attempt died on
+    // a 502 from the gateway while the server carried on working, which is the worst of both: no
+    // result to read and no way to know how far it got. Runs as a job so progress is followable.
+    ctx?.setTotal(plan.length);
     const results: any[] = [];
     for (const p of plan) {
+      ctx?.note(p.l.channelSku);
       const r = await this.integrations.pushEbayQuantity(
         p.l.integrationId, p.l.channelSku, p.l.marketplace, p.target, false, p.l.externalListingId,
       );
@@ -476,6 +482,7 @@ export class ChannelListingsService {
         },
       });
       results.push({ sku: p.l.channelSku, restoreTo: p.target, ok: r.ok, message: r.message });
+      ctx?.tick(r.ok);
     }
 
     const ok = results.filter((r) => r.ok).length;
