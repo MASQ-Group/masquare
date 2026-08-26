@@ -453,6 +453,13 @@ export class ChannelListingsService {
         ...(marketplace !== undefined ? { marketplace } : {}),
         ...(opts.integrationId ? { integrationId: opts.integrationId } : {}),
         integration: { channelType, deletedAt: null },
+        // Amazon owns FBA quantity: it holds the stock, it counts it, and a quantity we send is
+        // accepted and discarded. pushAvailability has always excluded these; the restore did not,
+        // so it reported success on writes that could never take effect.
+        //
+        // Both forms are spelt out because NOT and { not: 'FBA' } each drop NULLs in SQL, and an
+        // eBay or OnBuy listing has no fulfilment channel at all.
+        OR: [{ fulfilmentChannel: null }, { fulfilmentChannel: { not: 'FBA' } }],
         ...(companyIds ? { companyId: { in: companyIds } } : {}),
       },
       select: {
