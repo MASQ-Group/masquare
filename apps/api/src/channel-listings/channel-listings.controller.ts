@@ -45,9 +45,14 @@ export class ChannelListingsController {
     @Query('channelType') channelType?: string,
     @Query('field') field?: string,
     @Query('since') since?: string,
+    @Query('before') before?: string,
+    @Query('offset') offset?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.svc.pushHistory({ channelType, field, since, limit: limit ? Number(limit) : undefined }, companyIds);
+    return this.svc.pushHistory(
+      { channelType, field, since, before, offset: offset ? Number(offset) : undefined, limit: limit ? Number(limit) : undefined },
+      companyIds,
+    );
   }
 
   @Get()

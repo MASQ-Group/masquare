@@ -343,7 +343,10 @@ export class ChannelListingsService {
    * record instead of inferred from behaviour. Read-only, and it existed all along with nothing
    * exposing it.
    */
-  async pushHistory(opts: { channelType?: string; field?: string; limit?: number; since?: string } = {}, companyIds?: string[]) {
+  async pushHistory(
+    opts: { channelType?: string; field?: string; limit?: number; since?: string; before?: string; offset?: number } = {},
+    companyIds?: string[],
+  ) {
     // Resolve the channel type to integration ids and filter IN the query.
     //
     // This used to take the newest N rows and filter afterwards, which quietly lies whenever one
@@ -358,10 +361,16 @@ export class ChannelListingsService {
       where: {
         ...(companyIds ? { companyId: { in: companyIds } } : {}),
         ...(opts.field ? { field: opts.field } : {}),
-        ...(opts.since ? { createdAt: { gte: new Date(opts.since) } } : {}),
+        // A window rather than only a floor. Newest-first with a cap answers "what happened lately"
+        // and cannot answer "how far back does this go" — the question that actually matters when
+        // you are trying to date the start of something.
+        ...(opts.since || opts.before
+          ? { createdAt: { ...(opts.since ? { gte: new Date(opts.since) } : {}), ...(opts.before ? { lt: new Date(opts.before) } : {}) } }
+          : {}),
         ...(typeIds ? { integrationId: { in: typeIds } } : {}),
       },
       orderBy: { createdAt: 'desc' },
+      skip: Math.max(0, opts.offset ?? 0),
       take: Math.min(opts.limit ?? 100, 500),
       select: {
         id: true, createdAt: true, integrationId: true, channelSku: true, marketplace: true,
@@ -376,8 +385,28 @@ export class ChannelListingsService {
     const withChannel = rows.map((r) => ({ ...r, channel: byId.get(r.integrationId)?.name ?? null, channelType: byId.get(r.integrationId)?.channelType ?? null }));
     const filtered = withChannel; // the channel type is now part of the query, not an afterthought
 
+    // The total the FILTERS match, independent of the page. Without it a full page is
+    // indistinguishable from the last page, which is how "0 Amazon pushes" got read as "we never
+    // pushed to Amazon" when it meant "you cannot see that far back".
+    const matching = await this.prisma.channelPush.count({
+      where: {
+        ...(companyIds ? { companyId: { in: companyIds } } : {}),
+        ...(opts.field ? { field: opts.field } : {}),
+        ...(opts.since || opts.before
+          ? { createdAt: { ...(opts.since ? { gte: new Date(opts.since) } : {}), ...(opts.before ? { lt: new Date(opts.before) } : {}) } }
+          : {}),
+        ...(typeIds ? { integrationId: { in: typeIds } } : {}),
+      },
+    });
+    const offset = Math.max(0, opts.offset ?? 0);
+
     return {
       count: filtered.length,
+      matching,
+      offset,
+      hasMore: offset + filtered.length < matching,
+      /** Feed this back as the before parameter to walk further into the past. */
+      oldestOnPage: filtered.length ? filtered[filtered.length - 1].createdAt : null,
       // The shape of the damage at a glance: how many asked for zero, and when the run began.
       zeroPushes: filtered.filter((r) => r.requestedValue === 0 && !r.dryRun).length,
       earliest: filtered.length ? filtered[filtered.length - 1].createdAt : null,
