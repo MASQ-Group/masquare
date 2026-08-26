@@ -20,4 +20,15 @@ export class UpdateSettingsDto {
   @IsOptional() @IsNumber() launchMarginPct?: number;
   /** Whether creating real marketplace listings is permitted. */
   @IsOptional() @IsBoolean() listingLiveWrites?: boolean;
+  /**
+   * Whether the platform may CHANGE quantities and prices on the marketplaces.
+   *
+   * Separate from the integrations, which keep reading orders either way. Turning quantity pushes
+   * off stops both the Push to Channels button and the automatic sell-through push, which is the
+   * one that runs without anyone asking for it.
+   */
+  @IsOptional() @IsBoolean() channelQuantityPushEnabled?: boolean;
+  @IsOptional() @IsBoolean() channelPricePushEnabled?: boolean;
+  /** How many listings one run may take from a real quantity down to zero before it refuses. */
+  @IsOptional() @IsNumber() maxZeroingPushesPerRun?: number;
 }

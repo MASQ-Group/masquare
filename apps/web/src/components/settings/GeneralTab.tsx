@@ -26,6 +26,9 @@ export function GeneralTab() {
   const [autoAdjustAvailabilityOnSale, setAutoAdjustAvailabilityOnSale] = useState(false);
   const [launchMarginPct, setLaunchMarginPct] = useState('20');
   const [listingLiveWrites, setListingLiveWrites] = useState(false);
+  // Default TRUE so a failed load never reads as "pushes are off" and quietly stops outbound writes.
+  const [channelQuantityPushEnabled, setChannelQuantityPushEnabled] = useState(true);
+  const [channelPricePushEnabled, setChannelPricePushEnabled] = useState(true);
 
   useEffect(() => {
     if (data) {
@@ -38,6 +41,8 @@ export function GeneralTab() {
       setAutoAdjustAvailabilityOnSale(data.autoAdjustAvailabilityOnSale ?? false);
       setLaunchMarginPct(String(data.launchMarginPct ?? 20));
       setListingLiveWrites(data.listingLiveWrites ?? false);
+      setChannelQuantityPushEnabled(data.channelQuantityPushEnabled ?? true);
+      setChannelPricePushEnabled(data.channelPricePushEnabled ?? true);
     }
   }, [data]);
 
@@ -46,7 +51,7 @@ export function GeneralTab() {
   const previewFonts = (body: string, mono: string) => { setBodyFont(body); setMonoFont(mono); applyFonts(body, mono); };
 
   const save = useMutation({
-    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions, autoAdjustAvailabilityOnSale, launchMarginPct: Number(launchMarginPct) || 0, listingLiveWrites }),
+    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions, autoAdjustAvailabilityOnSale, launchMarginPct: Number(launchMarginPct) || 0, listingLiveWrites, channelQuantityPushEnabled, channelPricePushEnabled }),
     onSuccess: () => { toast.success('Settings saved'); qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Save failed'),
   });
@@ -175,6 +180,50 @@ export function GeneralTab() {
               retroactively adjusted.</span>
           </p>
         )}
+
+        <div className="border-t border-n-100 pt-4">
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-[var(--teal-500)]"
+              checked={channelQuantityPushEnabled}
+              onChange={(e) => setChannelQuantityPushEnabled(e.target.checked)}
+            />
+            <span>
+              <span className="block text-[13.5px] font-semibold text-n-800">Send quantities to the sales channels</span>
+              <span className="mt-0.5 block text-[12.5px] text-n-500">
+                Covers both the Push to Channels button and the automatic push that follows every sale — the one
+                that runs without anyone asking. Turning it off leaves the integrations connected and still
+                importing orders; only outbound quantity changes stop.
+              </span>
+            </span>
+          </label>
+          {!channelQuantityPushEnabled && (
+            <p className="mt-2 flex items-start gap-2 rounded-md border border-n-200 bg-n-25 px-3 py-2 text-[12px] text-n-600">
+              <span>⏸</span>
+              <span>Quantities on the marketplaces will not change, whatever happens here. Sensible while stock is
+                being onboarded into Availability — a product with no availability record is skipped anyway, so
+                until the catalogue is counted in there is little for a push to say.</span>
+            </p>
+          )}
+        </div>
+
+        <div className="border-t border-n-100 pt-4">
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-[var(--teal-500)]"
+              checked={channelPricePushEnabled}
+              onChange={(e) => setChannelPricePushEnabled(e.target.checked)}
+            />
+            <span>
+              <span className="block text-[13.5px] font-semibold text-n-800">Send prices to the sales channels</span>
+              <span className="mt-0.5 block text-[12.5px] text-n-500">
+                The same switch for prices, so quantity and price can be stopped independently.
+              </span>
+            </span>
+          </label>
+        </div>
 
         <div className="border-t border-n-100 pt-4">
           <label className="flex cursor-pointer items-start gap-3">
