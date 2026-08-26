@@ -33,6 +33,14 @@ export interface EbayOfferInput {
   returnPolicyId: string | null;
   /** Days to dispatch. eBay wants this on the offer, not the item. */
   handlingTimeDays?: number | null;
+  /**
+   * Category-specific item specifics, merged over the defaults.
+   *
+   * Every eBay category demands its own — Table Top Blenders requires Model, another will want
+   * Capacity or Power — and the list is only discoverable from the Taxonomy API at runtime. So the
+   * defaults cover what every product has and this carries whatever the chosen category adds.
+   */
+  extraAspects?: Record<string, string[]>;
 }
 
 export interface MissingField { key: string; label: string }
@@ -68,7 +76,16 @@ export function missingForPublish(input: EbayOfferInput): MissingField[] {
 export function buildInventoryItem(input: EbayOfferInput) {
   const aspects: Record<string, string[]> = {};
   if (input.brand) aspects.Brand = [input.brand];
-  if (input.mpn) aspects.MPN = [input.mpn];
+  if (input.mpn) {
+    aspects.MPN = [input.mpn];
+    // Model is required by categories that never say so until they refuse the publish, and for the
+    // products we sell the manufacturer part number IS the model. A real model, when the category
+    // wants something else, comes through extraAspects and wins.
+    aspects.Model = [input.mpn];
+  }
+  for (const [k, v] of Object.entries(input.extraAspects ?? {})) {
+    if (v?.length) aspects[k] = v;
+  }
 
   return {
     availability: { shipToLocationAvailability: { quantity: Math.max(0, Math.trunc(input.quantity ?? 0)) } },
