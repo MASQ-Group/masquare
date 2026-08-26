@@ -16,6 +16,18 @@ export class ChannelListingsController {
     private readonly jobs: JobsService,
   ) {}
 
+  /** What we have actually sent to the channels, newest first. Read-only. */
+  @Get('pushes')
+  pushes(
+    @VisibleCompanies() companyIds: string[],
+    @Query('channelType') channelType?: string,
+    @Query('field') field?: string,
+    @Query('since') since?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.svc.pushHistory({ channelType, field, since, limit: limit ? Number(limit) : undefined }, companyIds);
+  }
+
   @Get()
   dashboard(
     @VisibleCompanies() companyIds: string[],
