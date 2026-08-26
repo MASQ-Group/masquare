@@ -583,6 +583,24 @@ model PlatformSettings {
   /// can force it off regardless, and every submission is separately confirmed by a human.
   listingLiveWrites Boolean @default(false) @map("listing_live_writes")
 
+  /// Outbound writes to the sales channels, separately from the integrations themselves.
+  ///
+  /// Turning an integration off stops order sync too, which is rarely what you want when the
+  /// problem is a push. These stop the platform CHANGING anything on a marketplace while it keeps
+  /// reading from it.
+  ///
+  /// On by default so enabling this feature changes nothing on its own; the protection that does
+  /// not depend on anyone remembering is the blast-radius guard in pushAvailability.
+  channelQuantityPushEnabled Boolean @default(true) @map("channel_quantity_push_enabled")
+  channelPricePushEnabled    Boolean @default(true) @map("channel_price_push_enabled")
+
+  /// How many listings one run may take from a real quantity down to zero before it refuses.
+  ///
+  /// A push that empties a catalogue is never routine. Whatever the cause — a bad default, an empty
+  /// availability table, a mis-set filter — the honest response is to stop and show the number
+  /// rather than carry on and be discovered afterwards. Raising it is a deliberate act.
+  maxZeroingPushesPerRun Int @default(25) @map("max_zeroing_pushes_per_run")
+
   /// Margin a new listing launches at, as a percentage. Separate from the repricing floor margin
   /// on purpose: listing at the floor only makes sense once the repricer is live to raise it.
   launchMarginPct Decimal @default(20) @map("launch_margin_pct") @db.Decimal(5, 2)
