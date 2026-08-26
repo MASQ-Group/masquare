@@ -250,7 +250,26 @@ export class ChannelListingsService {
       if (l.integration.channelType === 'ebay' && !l.marketplace) continue;
       const channelKey = channelKeyOf(l);
       if (channelKeys && !channelKeys.has(channelKey)) continue; // caller chose specific channels
-      const target = qtyByProduct.get(l.productId ?? '') ?? 0;
+      // "We have no availability record" is not "we have none in stock". It is "we do not know",
+      // and the honest answer to not knowing is to leave the channel alone.
+      //
+      // This defaulted to 0, so any product without an Availability row pushed ZERO to every
+      // channel it was listed on. It stayed invisible for as long as the eBay token was read-only
+      // and the pushes failed on auth; the morning write scope was enabled, ~1,900 matched eBay
+      // listings went out of stock, and every later order sync pushed them back to zero again.
+      //
+      // A row that genuinely says 0 still pushes 0 — out of stock is a real state worth sending.
+      const known = l.productId != null && qtyByProduct.has(l.productId);
+      if (!known) {
+        results.push({
+          productId: l.productId, channelKey, channel: l.integration.name, channelType: l.integration.channelType,
+          marketplace: l.marketplace, countryIso: isoOf(l), channelSku: l.channelSku,
+          currentQty: l.listedQuantity, targetQty: null, ok: false, skipped: true,
+          message: 'No availability record for this product — nothing pushed',
+        });
+        continue;
+      }
+      const target = qtyByProduct.get(l.productId as string) as number;
       const r =
         l.integration.channelType === 'amazon' ? await this.integrations.pushAmazonQuantity(l.integrationId, l.channelSku, target, dryRun)
         : l.integration.channelType === 'onbuy' ? await this.integrations.pushOnBuyQuantity(l.integrationId, l.channelSku, target, dryRun)
@@ -262,7 +281,57 @@ export class ChannelListingsService {
       }
       results.push({ productId: l.productId, channelKey, channel: l.integration.name, channelType: l.integration.channelType, marketplace: l.marketplace, countryIso: isoOf(l), channelSku: l.channelSku, currentQty: l.listedQuantity, targetQty: target, ok: r.ok, message: r.message });
     }
-    return { dryRun, count: results.length, ok: results.filter((x) => x.ok).length, failed: results.filter((x) => !x.ok).length, results };
+    const skipped = results.filter((x) => x.skipped).length;
+    return {
+      dryRun,
+      count: results.length,
+      ok: results.filter((x) => x.ok).length,
+      // A skip is not a failed push — nothing was sent. Counted apart so "0 failed" cannot be read
+      // as "everything was updated".
+      failed: results.filter((x) => !x.ok && !x.skipped).length,
+      skipped,
+      results,
+    };
+  }
+
+  /**
+   * What we have actually sent to a channel, newest first.
+   *
+   * Every push writes one of these rows with the value requested and the value it replaced, so a
+   * question like "did we zero the eBay catalogue, and when did it start" is answerable from the
+   * record instead of inferred from behaviour. Read-only, and it existed all along with nothing
+   * exposing it.
+   */
+  async pushHistory(opts: { channelType?: string; field?: string; limit?: number; since?: string } = {}, companyIds?: string[]) {
+    const rows = await this.prisma.channelPush.findMany({
+      where: {
+        ...(companyIds ? { companyId: { in: companyIds } } : {}),
+        ...(opts.field ? { field: opts.field } : {}),
+        ...(opts.since ? { createdAt: { gte: new Date(opts.since) } } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(opts.limit ?? 100, 500),
+      select: {
+        id: true, createdAt: true, integrationId: true, channelSku: true, marketplace: true,
+        field: true, requestedValue: true, previousValue: true, ok: true, message: true, dryRun: true,
+      },
+    });
+    const ints = await this.prisma.channelIntegration.findMany({
+      where: { id: { in: [...new Set(rows.map((r) => r.integrationId))] } },
+      select: { id: true, name: true, channelType: true },
+    });
+    const byId = new Map(ints.map((i) => [i.id, i]));
+    const withChannel = rows.map((r) => ({ ...r, channel: byId.get(r.integrationId)?.name ?? null, channelType: byId.get(r.integrationId)?.channelType ?? null }));
+    const filtered = opts.channelType ? withChannel.filter((r) => r.channelType === opts.channelType) : withChannel;
+
+    return {
+      count: filtered.length,
+      // The shape of the damage at a glance: how many asked for zero, and when the run began.
+      zeroPushes: filtered.filter((r) => r.requestedValue === 0 && !r.dryRun).length,
+      earliest: filtered.length ? filtered[filtered.length - 1].createdAt : null,
+      latest: filtered.length ? filtered[0].createdAt : null,
+      rows: filtered,
+    };
   }
 
   private readonly logger = new Logger(ChannelListingsService.name);
