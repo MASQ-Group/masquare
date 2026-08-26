@@ -420,6 +420,19 @@ export class SalesTransactionsService {
     const amazonPointsEur = fxRate != null ? round(amazonPoints * (feeFx ?? fxRate), 2) : null;
     const salesTaxEur = fxRate != null ? round(salesTax * fxRate, 2) : null;
 
+    // What the order is WORTH, as opposed to what it was for.
+    //
+    // A cancellation before dispatch settles at nothing, and that has to hold for every figure a
+    // reader might call revenue — not only the EUR ones analytics uses. The list's Net sales column
+    // reads these native totals directly, so zeroing the profit and leaving these intact showed an
+    // order earning nothing and selling 184.24 in the same row.
+    //
+    // The line items keep their prices, so what the customer actually ordered is still on the record
+    // where it belongs — on the order, not in the revenue.
+    const settledTotals = cancelledPreShip
+      ? { ...totals, netSales: 0, vat: 0, shipping: 0, shippingVat: 0 }
+      : totals;
+
     // Per-item (SKU) economics: transaction-level shipping/duty/refund are allocated to
     // items by revenue share so per-SKU figures sum back to the transaction totals.
     const totalRevExVatNative = items.reduce((s: number, it: any) => s + n(it.netSalesAmount) + sellShip(it), 0);
@@ -549,7 +562,7 @@ export class SalesTransactionsService {
       // For a local sale, shipping is our cost rather than a charge, so this equals net + VAT.
       showTransactionTotal: !!t.salesChannel?.showTransactionTotal,
       transactionTotal: t.salesChannel?.showTransactionTotal
-        ? round(totals.netSales + totals.vat + totals.shipping + totals.shippingVat, 2)
+        ? round(settledTotals.netSales + settledTotals.vat + settledTotals.shipping + settledTotals.shippingVat, 2)
         : null,
       destinationCountryId: t.destinationCountryId,
       destinationCountry: t.destinationCountry ? { id: t.destinationCountry.id, name: t.destinationCountry.name, isoCode: t.destinationCountry.isoCode } : null,
@@ -675,7 +688,7 @@ export class SalesTransactionsService {
         profitEur: itemEcon[idx].pEur,
       })),
       itemCount: items.length,
-      totals,
+      totals: settledTotals,
     };
   }
 
