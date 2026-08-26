@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { SalesTransactionsService } from '../sales-transactions/sales-transactions.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 export interface AnalyticsQuery {
   from: string;
@@ -42,7 +43,11 @@ const num = (v: unknown) => Number(v ?? 0);
 
 @Injectable()
 export class AnalyticsService {
-  constructor(private readonly tx: SalesTransactionsService) {}
+  constructor(
+    private readonly tx: SalesTransactionsService,
+    // Needed to resolve a SKU to its product and that product's aliases.
+    private readonly prisma: PrismaService,
+  ) {}
 
   async report(q: AnalyticsQuery) {
     const main = await this.aggregate(q.from, q.to, q);
@@ -98,10 +103,35 @@ export class AnalyticsService {
     };
   }
 
+  /**
+   * Every SKU that means this product: its main SKU and every alias.
+   *
+   * The same product sells under different SKUs on different channels, so filtering on the string
+   * someone clicked shows a fraction of its trade and calls it the whole. Resolved from the
+   * catalogue rather than assumed, and falling back to the string itself when nothing matches —
+   * an unknown SKU is still a real line in the ledger and should report its own sales.
+   */
+  private async skuFamily(sku: string): Promise<Set<string>> {
+    const needle = sku.trim().toLowerCase();
+    const product = await this.prisma.product.findFirst({
+      where: {
+        deletedAt: null,
+        OR: [
+          { mainSku: { equals: sku, mode: 'insensitive' } },
+          { aliases: { some: { deletedAt: null, skuValue: { equals: sku, mode: 'insensitive' } } } },
+        ],
+      },
+      select: { mainSku: true, aliases: { where: { deletedAt: null }, select: { skuValue: true } } },
+    });
+    if (!product) return new Set([needle]);
+    return new Set([product.mainSku, ...product.aliases.map((a) => a.skuValue)].map((s) => s.trim().toLowerCase()));
+  }
+
   private async aggregateSku(sku: string, from: string, to: string, q: AnalyticsQuery) {
     const start = new Date(from + 'T00:00:00.000Z');
     const end = new Date(to + 'T23:59:59.999Z');
     const txns = (await this.tx.allInRange(start, end, q.companyIds)).filter((t) => matchesGlobal(t, q));
+    const family = await this.skuFamily(sku);
 
     const totals = { revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, units: 0, orders: 0 };
     const returns = { returnedUnits: 0, refundEur: 0, orders: 0 };
@@ -112,7 +142,8 @@ export class AnalyticsService {
     const byMonth = spanDays > 92;
 
     for (const t of txns) {
-      const items = (t.items ?? []).filter((it: any) => it.sku === sku);
+      // Every SKU that means this product, not just the one that was clicked.
+      const items = (t.items ?? []).filter((it: any) => family.has(String(it.sku ?? '').trim().toLowerCase()));
       if (!items.length) continue;
       totals.orders += 1;
       const isReturned = t.resolution && t.resolution !== 'none';
@@ -243,8 +274,17 @@ export class AnalyticsService {
       co.units += units;
 
       const addSku = (map: Map<string, any>, it: any) => {
-        const key = it.sku;
-        if (!map.has(key)) map.set(key, { sku: it.sku, productTitle: it.productTitle ?? null, revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, units: 0, returnedUnits: 0, lines: 0 });
+        // Group by the PRODUCT, not the SKU string it happened to sell under.
+        //
+        // The same product is listed under different SKUs on different channels — RE-S8540 and
+        // NK-S8450 are one thing shipped to one marketplace under two labels. Keying on the string
+        // split one product into several rows, each showing a fraction of its sales, so nothing on
+        // the page added up to the product a person had in mind.
+        //
+        // An unmatched line has no product, and there the SKU is all we know — so it keeps its own
+        // row rather than being merged into a bucket it does not belong to.
+        const key = it.productId ?? 'sku:' + String(it.sku ?? '').trim().toLowerCase();
+        if (!map.has(key)) map.set(key, { sku: it.sku, productId: it.productId ?? null, productTitle: it.productTitle ?? null, revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, units: 0, returnedUnits: 0, lines: 0 });
         const s = map.get(key);
         s.revenueExVatEur += it.revenueExVatEur ?? 0;
         s.revenueIncVatEur += it.revenueIncVatEur ?? 0;
@@ -253,6 +293,9 @@ export class AnalyticsService {
         s.units += num(it.quantity);
         s.returnedUnits += isReturn ? num(it.quantity) : 0;
         s.lines += 1;
+        // A row named after whichever alias arrived first is a coin toss. Prefer the product's own
+        // title, and keep the SKU that matches it where we can tell.
+        if (!s.productTitle && it.productTitle) s.productTitle = it.productTitle;
       };
 
       // Per SKU — global or scoped to one channel
