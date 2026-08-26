@@ -361,8 +361,15 @@ export class SalesTransactionsService {
     const resolution: string = t.resolution ?? 'none';
     // Refund reverses our revenue (net + shipping portion, exc VAT), in native currency.
     const refundEur = t.refundAmount != null && fxRate != null ? round(n(t.refundAmount) * fxRate, 2) : 0;
-    // Cancelled before anything shipped → goods never left: no COGS, no shipping.
-    const cancelledPreShip = resolution === 'cancelled' && !hasOutbound;
+    // Did the goods actually leave? For a channel order the CHANNEL's word decides, not ours.
+    //
+    // `hasOutbound` says whether WE recorded a shipment, which answers a different question. An
+    // order Amazon cancelled before dispatch has no shipment on either side, but an order we simply
+    // have not got round to recording looks identical — and only Amazon knows which it is. Manual
+    // sales have no channel status, so there our own record is the only word there is.
+    const channelShipped = t.channelShipmentStatus != null ? t.channelShipmentStatus === 'shipped' : hasOutbound;
+    // Cancelled before anything shipped → goods never left: no COGS, no shipping, and no money.
+    const cancelledPreShip = resolution === 'cancelled' && !channelShipped;
     // COGS is reversed when goods never left, or came back resellable (restock).
     const cogsReversed = cancelledPreShip || (resolution !== 'none' && !!t.restockItems);
     const shippingApplies = !cancelledPreShip;
@@ -385,6 +392,15 @@ export class SalesTransactionsService {
       if (shippingApplies) cost += effectiveShippingCost ?? 0;
       cost += returnShippingCost + dutyImportCost; // real spends regardless of resolution
       profit = round(revenue - cost, 2);
+      // An order cancelled before dispatch earns nothing. The money was either never taken or is
+      // certain to go back, and Amazon returns its fee, so the whole thing nets to zero.
+      //
+      // Reversing the COGS while KEEPING the revenue — which is what this did — reported a
+      // cancelled order as MORE profitable than a fulfilled one, because the sale stayed and the
+      // cost of goods vanished. A refund would have corrected it, but for an order cancelled before
+      // dispatch no refund event ever arrives: Amazon books refunds against a shipment, and there
+      // was no shipment.
+      if (cancelledPreShip) profit = 0;
     }
 
     // Profit (%): profit € / seller revenue in € (net + VAT + shipping + shipping VAT).
@@ -394,9 +410,12 @@ export class SalesTransactionsService {
     const profitPct = profit != null && totalEur != null && totalEur > 0 ? round((profit / totalEur) * 100, 2) : null;
 
     // EUR revenue/fee figures for analytics (revenue is gross of refunds; profit is net).
-    const revenueExVatEur = fxRate != null ? round((totals.netSales + (isFba ? 0 : totals.shipping)) * fxRate, 2) : null;
-    const revenueIncVatEur = fxRate != null ? round(sellerBaseNative * fxRate, 2) : null;
-    const feesEur = fxRate != null ? round(effectiveSalesFee * (feeFx ?? fxRate) * (t.feeRefunded ? 0 : 1), 2) : null;
+    // Zeroed for a cancellation that never shipped, exactly as the profit is. Analytics reads these
+    // rather than recomputing, so leaving them intact would keep the sale in every revenue total
+    // while the profit said zero — two numbers disagreeing about the same order.
+    const revenueExVatEur = fxRate != null ? (cancelledPreShip ? 0 : round((totals.netSales + (isFba ? 0 : totals.shipping)) * fxRate, 2)) : null;
+    const revenueIncVatEur = fxRate != null ? (cancelledPreShip ? 0 : round(sellerBaseNative * fxRate, 2)) : null;
+    const feesEur = fxRate != null ? (cancelledPreShip ? 0 : round(effectiveSalesFee * (feeFx ?? fxRate) * (t.feeRefunded ? 0 : 1), 2)) : null;
     const estimatedSalesFeeEur = fxRate != null ? round(estimatedSalesFee * (feeFx ?? fxRate), 2) : null;
     const amazonPointsEur = fxRate != null ? round(amazonPoints * (feeFx ?? fxRate), 2) : null;
     const salesTaxEur = fxRate != null ? round(salesTax * fxRate, 2) : null;
@@ -417,6 +436,9 @@ export class SalesTransactionsService {
       // the SKU figures still sum to the transaction profit, while revExVatEur stays true ex-tax.
       const jctKeptEur = fxRate != null && keepsDestinationTax ? round((n(it.vatAmount) + sellShipVat(it)) * fxRate, 2) : 0;
       const pEur = fxRate != null ? round((revExVatEur ?? 0) + jctKeptEur - refundEur * w - cEur - (fEur ?? 0) - (ptsEur ?? 0) - sharedCostEur * w, 2) : null;
+      // Per-SKU must agree with the transaction, or a product page reports revenue for an order the
+      // order page says earned nothing.
+      if (cancelledPreShip) return { revExVatEur: 0, revIncVatEur: 0, fEur: 0, cEur: 0, pEur: 0 };
       return { revExVatEur, revIncVatEur, fEur, cEur, pEur };
     });
 
