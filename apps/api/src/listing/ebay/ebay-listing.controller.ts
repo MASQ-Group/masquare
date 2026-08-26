@@ -54,7 +54,7 @@ export class EbayListingController {
    * private and deleted again — nothing public, nothing buyable.
    */
   @Post('diagnose')
-  diagnose(@Body() dto: PublishArgs & { productId: string }) {
+  diagnose(@Body() dto: PublishArgs & { productId: string; useRealSku?: boolean }) {
     return this.svc.diagnoseInventoryItem(dto.productId, dto);
   }
 

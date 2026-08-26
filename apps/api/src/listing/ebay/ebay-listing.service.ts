@@ -198,14 +198,17 @@ export class EbayListingService {
    * Everything here is private. An inventory item is not a listing, nothing is visible to buyers,
    * and the throwaway SKU is deleted afterwards whatever happens.
    */
-  async diagnoseInventoryItem(productId: string, args: PublishArgs) {
+  async diagnoseInventoryItem(productId: string, args: PublishArgs & { useRealSku?: boolean }) {
     if (!(await this.liveWritesEnabled())) {
       throw new BadRequestException('Listing writes are switched off, so nothing can be tried against eBay.');
     }
     const row = await this.ebayIntegration(args.integrationId);
     const { input } = await this.buildInput(productId, args);
     const full = buildInventoryItem(input) as any;
-    const DIAG_SKU = 'MASQDIAG' + input.sku;
+    // Normally a throwaway SKU, so a failure says something about the PAYLOAD. With useRealSku it
+    // uses the actual one, which is how you tell a bad payload apart from a SKU eBay will not take —
+    // still only an inventory item, still private, still deleted afterwards.
+    const DIAG_SKU = args.useRealSku ? input.sku : 'MASQDIAG' + input.sku;
 
     const strip = (obj: any, keys: string[]) => {
       const next = JSON.parse(JSON.stringify(obj));
@@ -235,9 +238,14 @@ export class EbayListingService {
     return {
       diagnosticSku: DIAG_SKU,
       results,
-      verdict: firstOk
-        ? `eBay accepts "${firstOk.rung}". Whatever the rung above it carried is what it refuses.`
-        : 'Even the plainest payload was refused — the problem is not a field in the product.',
+      verdict: !firstOk
+        ? 'Even the plainest payload was refused — the problem is not a field in the product.'
+        : results.length === 1
+          // The full payload went through under a throwaway SKU. Nothing is wrong with the fields,
+          // so what publish refused was the SKU itself — eBay will not let the Inventory API adopt
+          // a SKU already carried by a listing created outside it.
+          ? 'The full payload is fine under a different SKU. The rejection is about the SKU, not the content — most likely it already belongs to a listing created outside the Inventory API.'
+          : `eBay accepts "${firstOk.rung}". What the previous rung carried is what it refuses.`,
     };
   }
 
