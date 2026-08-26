@@ -448,11 +448,21 @@ export class ChannelListingsService {
       // this; the restore will not repeat it under another name.
       .filter((p) => p.target > 0);
 
+    // The ones we can do nothing for. Reported rather than silently dropped: after a restore they
+    // are the listings still sitting at zero, and "they were not restored" reads as a failure when
+    // it is actually the rule working — we hold no positive figure for them anywhere, and inventing
+    // one is what the whole incident was about.
+    const noFigure = listings
+      .filter((l) => (l.listedQuantity ?? 0) === 0 && !fromAudit.has(l.integrationId + '|' + l.channelSku))
+      .map((l) => ({ sku: l.channelSku, itemId: l.externalListingId }));
+
     if (dryRun) {
       return {
         dryRun: true,
         marketplace,
         candidates: plan.length,
+        noFigure: noFigure.length,
+        noFigureSample: noFigure.slice(0, 40),
         totalUnits: plan.reduce((s, p) => s + p.target, 0),
         fromLastSync: plan.filter((p) => p.source === 'last sync').length,
         fromPushAudit: plan.filter((p) => p.source === 'push audit').length,
