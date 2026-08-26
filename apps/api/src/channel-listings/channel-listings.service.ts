@@ -344,11 +344,22 @@ export class ChannelListingsService {
    * exposing it.
    */
   async pushHistory(opts: { channelType?: string; field?: string; limit?: number; since?: string } = {}, companyIds?: string[]) {
+    // Resolve the channel type to integration ids and filter IN the query.
+    //
+    // This used to take the newest N rows and filter afterwards, which quietly lies whenever one
+    // channel is noisy: a day of eBay restores filled the newest 500 rows, so asking for Amazon
+    // pushes returned zero and read as "we never pushed to Amazon" when it meant "you cannot see
+    // that far back". An empty answer must mean empty.
+    const typeIds = opts.channelType
+      ? (await this.prisma.channelIntegration.findMany({ where: { channelType: opts.channelType }, select: { id: true } })).map((i) => i.id)
+      : null;
+
     const rows = await this.prisma.channelPush.findMany({
       where: {
         ...(companyIds ? { companyId: { in: companyIds } } : {}),
         ...(opts.field ? { field: opts.field } : {}),
         ...(opts.since ? { createdAt: { gte: new Date(opts.since) } } : {}),
+        ...(typeIds ? { integrationId: { in: typeIds } } : {}),
       },
       orderBy: { createdAt: 'desc' },
       take: Math.min(opts.limit ?? 100, 500),
@@ -363,7 +374,7 @@ export class ChannelListingsService {
     });
     const byId = new Map(ints.map((i) => [i.id, i]));
     const withChannel = rows.map((r) => ({ ...r, channel: byId.get(r.integrationId)?.name ?? null, channelType: byId.get(r.integrationId)?.channelType ?? null }));
-    const filtered = opts.channelType ? withChannel.filter((r) => r.channelType === opts.channelType) : withChannel;
+    const filtered = withChannel; // the channel type is now part of the query, not an afterthought
 
     return {
       count: filtered.length,
