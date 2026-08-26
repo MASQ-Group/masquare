@@ -394,7 +394,7 @@ export class ChannelListingsService {
    * Dry run by default. Nothing is sent without `confirm`.
    */
   async restoreQuantities(
-    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number } = {},
+    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string } = {},
     companyIds?: string[],
     actorId?: string,
   ) {
@@ -417,8 +417,12 @@ export class ChannelListingsService {
     });
 
     // Where our push flattened our own copy, the audit remembers what it replaced.
+    // Only pushes from the incident window. Reaching further back resurrects figures that were
+    // true weeks ago, and a quantity restored too high oversells — a worse failure than the one
+    // being repaired, and one eBay penalises.
+    const since = opts.since ? new Date(opts.since) : new Date(Date.now() - 24 * 60 * 60 * 1000);
     const audit = await this.prisma.channelPush.findMany({
-      where: { field: 'quantity', marketplace, previousValue: { gt: 0 } },
+      where: { field: 'quantity', marketplace, previousValue: { gt: 0 }, createdAt: { gte: since } },
       orderBy: { createdAt: 'asc' },
       select: { channelSku: true, integrationId: true, previousValue: true },
     });
@@ -433,8 +437,11 @@ export class ChannelListingsService {
       .map((l) => {
         const stored = l.listedQuantity ?? 0;
         const recovered = fromAudit.get(l.integrationId + '|' + l.channelSku) ?? 0;
-        const target = Math.max(stored, recovered);
-        return { l, target, source: target === 0 ? 'none' : stored >= recovered ? 'last sync' : 'push audit' };
+        // The last sync is the truth unless WE flattened it. Only then does the audit stand in, and
+        // only from the incident window. Never the higher of the two: that would let a stale figure
+        // beat a current one and put stock on sale that is not there.
+        const target = stored > 0 ? stored : recovered;
+        return { l, target, source: target === 0 ? 'none' : stored > 0 ? 'last sync' : 'push audit' };
       })
       // Nothing to restore for a listing we have no positive figure for. Pushing 0 is what caused
       // this; the restore will not repeat it under another name.
