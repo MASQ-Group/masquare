@@ -186,6 +186,61 @@ export class EbayListingService {
     };
   }
 
+  /**
+   * Find out WHICH part of an inventory item eBay is rejecting.
+   *
+   * eBay answers a malformed inventory item with "A system error has occurred. Core Inventory
+   * Service internal error" — the same message whatever the cause, naming no field. Guessing costs
+   * a deploy and a round trip each time, so this tries a ladder of progressively plainer payloads
+   * against a throwaway SKU and reports where the boundary is: the first rung that succeeds tells
+   * you what the rung below it was carrying that eBay would not take.
+   *
+   * Everything here is private. An inventory item is not a listing, nothing is visible to buyers,
+   * and the throwaway SKU is deleted afterwards whatever happens.
+   */
+  async diagnoseInventoryItem(productId: string, args: PublishArgs) {
+    if (!(await this.liveWritesEnabled())) {
+      throw new BadRequestException('Listing writes are switched off, so nothing can be tried against eBay.');
+    }
+    const row = await this.ebayIntegration(args.integrationId);
+    const { input } = await this.buildInput(productId, args);
+    const full = buildInventoryItem(input) as any;
+    const DIAG_SKU = 'MASQDIAG' + input.sku;
+
+    const strip = (obj: any, keys: string[]) => {
+      const next = JSON.parse(JSON.stringify(obj));
+      for (const k of keys) delete next.product[k];
+      return next;
+    };
+
+    const rungs: Array<{ label: string; body: any }> = [
+      { label: 'full payload', body: full },
+      { label: 'without bulletPoints', body: strip(full, ['bulletPoints']) },
+      { label: 'without bulletPoints + aspects', body: strip(full, ['bulletPoints', 'aspects']) },
+      { label: 'without bulletPoints + aspects + ean/mpn/brand', body: strip(full, ['bulletPoints', 'aspects', 'ean', 'mpn', 'brand']) },
+      { label: 'title + description + images only', body: strip(full, ['bulletPoints', 'aspects', 'ean', 'mpn', 'brand', 'subtitle']) },
+      { label: 'title + description, NO images', body: strip(full, ['bulletPoints', 'aspects', 'ean', 'mpn', 'brand', 'imageUrls']) },
+    ];
+
+    const results: Array<{ rung: string; ok: boolean; status?: number; message?: string }> = [];
+    for (const r of rungs) {
+      const res = await this.integrations.ebayPutInventoryItem(row.id, DIAG_SKU, r.body);
+      results.push({ rung: r.label, ok: res.ok, ...(res.ok ? {} : { status: res.status, message: res.message }) });
+      // Clean up between rungs so each is judged on its own, not on what a previous one left behind.
+      await this.integrations.ebayDeleteInventoryItem(row.id, DIAG_SKU);
+      if (res.ok) break; // the first rung that works is the answer; plainer ones tell us nothing more
+    }
+
+    const firstOk = results.find((r) => r.ok);
+    return {
+      diagnosticSku: DIAG_SKU,
+      results,
+      verdict: firstOk
+        ? `eBay accepts "${firstOk.rung}". Whatever the rung above it carried is what it refuses.`
+        : 'Even the plainest payload was refused — the problem is not a field in the product.',
+    };
+  }
+
   /** End a published listing. The way back. */
   async withdraw(offerId: string, integrationId?: string) {
     const row = await this.ebayIntegration(integrationId);

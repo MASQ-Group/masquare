@@ -49,6 +49,15 @@ export class EbayListingController {
     return this.svc.publish(dto.productId, dto);
   }
 
+  /**
+   * Which part of the payload eBay refuses. Writes only a throwaway inventory item, which is
+   * private and deleted again — nothing public, nothing buyable.
+   */
+  @Post('diagnose')
+  diagnose(@Body() dto: PublishArgs & { productId: string }) {
+    return this.svc.diagnoseInventoryItem(dto.productId, dto);
+  }
+
   /** End a published listing. */
   @Post('withdraw')
   withdraw(@Body() dto: { offerId: string; integrationId?: string }) {
