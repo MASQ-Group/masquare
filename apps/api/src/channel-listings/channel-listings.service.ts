@@ -375,6 +375,107 @@ export class ChannelListingsService {
     };
   }
 
+  /**
+   * Put back the quantities that were lost, from the last good record we hold.
+   *
+   * eBay listings went to zero. eBaymag cannot fix it — its sync runs one way, FROM the origin eBay
+   * listing INTO eBaymag, so its own figures are a stale mirror rather than a source it can push
+   * back. Left alone it will eventually re-read the zeros and carry them to every other site. The
+   * restore therefore has to come from us, and it has to reach the ORIGIN listing, because that is
+   * what eBaymag propagates from.
+   *
+   * The source is `channelListing.listedQuantity` as at the last sync (24 Aug, two days before the
+   * incident) — untouched for every listing we never pushed to. Where our own push overwrote it, the
+   * audit still holds what it replaced, so `ChannelPush.previousValue` fills those in.
+   *
+   * Deliberately NOT driven by ProductAvailability: that table is empty, and reading quantities from
+   * it is what started this.
+   *
+   * Dry run by default. Nothing is sent without `confirm`.
+   */
+  async restoreQuantities(
+    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number } = {},
+    companyIds?: string[],
+    actorId?: string,
+  ) {
+    const marketplace = opts.marketplace ?? 'GB';
+    const channelType = opts.channelType ?? 'ebay';
+    const dryRun = !opts.confirm;
+
+    const listings = await this.prisma.channelListing.findMany({
+      where: {
+        marketplace,
+        integration: { channelType, deletedAt: null },
+        ...(companyIds ? { companyId: { in: companyIds } } : {}),
+      },
+      select: {
+        id: true, integrationId: true, channelSku: true, marketplace: true, productId: true,
+        listedQuantity: true, externalListingId: true, companyId: true,
+        integration: { select: { name: true, channelType: true } },
+      },
+      take: Math.min(opts.limit ?? 2000, 5000),
+    });
+
+    // Where our push flattened our own copy, the audit remembers what it replaced.
+    const audit = await this.prisma.channelPush.findMany({
+      where: { field: 'quantity', marketplace, previousValue: { gt: 0 } },
+      orderBy: { createdAt: 'asc' },
+      select: { channelSku: true, integrationId: true, previousValue: true },
+    });
+    const fromAudit = new Map<string, number>();
+    for (const a of audit) {
+      const key = a.integrationId + '|' + a.channelSku;
+      // Earliest wins: the first push is the one that saw the real figure.
+      if (!fromAudit.has(key)) fromAudit.set(key, a.previousValue as number);
+    }
+
+    const plan = listings
+      .map((l) => {
+        const stored = l.listedQuantity ?? 0;
+        const recovered = fromAudit.get(l.integrationId + '|' + l.channelSku) ?? 0;
+        const target = Math.max(stored, recovered);
+        return { l, target, source: target === 0 ? 'none' : stored >= recovered ? 'last sync' : 'push audit' };
+      })
+      // Nothing to restore for a listing we have no positive figure for. Pushing 0 is what caused
+      // this; the restore will not repeat it under another name.
+      .filter((p) => p.target > 0);
+
+    if (dryRun) {
+      return {
+        dryRun: true,
+        marketplace,
+        candidates: plan.length,
+        totalUnits: plan.reduce((s, p) => s + p.target, 0),
+        fromLastSync: plan.filter((p) => p.source === 'last sync').length,
+        fromPushAudit: plan.filter((p) => p.source === 'push audit').length,
+        sample: plan.slice(0, 20).map((p) => ({ sku: p.l.channelSku, itemId: p.l.externalListingId, currentlyStored: p.l.listedQuantity, restoreTo: p.target, source: p.source })),
+      };
+    }
+
+    const results: any[] = [];
+    for (const p of plan) {
+      const r = await this.integrations.pushEbayQuantity(
+        p.l.integrationId, p.l.channelSku, p.l.marketplace, p.target, false, p.l.externalListingId,
+      );
+      if (r.ok) {
+        await this.prisma.channelListing.update({ where: { id: p.l.id }, data: { listedQuantity: p.target, lastPushedAt: new Date() } });
+      }
+      await this.prisma.channelPush.create({
+        data: {
+          companyId: p.l.companyId, integrationId: p.l.integrationId, productId: p.l.productId,
+          channelSku: p.l.channelSku, marketplace: p.l.marketplace, field: 'quantity',
+          requestedValue: p.target, previousValue: p.l.listedQuantity, ok: r.ok,
+          message: ('restore: ' + r.message).slice(0, 300), dryRun: false, createdById: actorId ?? null,
+        },
+      });
+      results.push({ sku: p.l.channelSku, restoreTo: p.target, ok: r.ok, message: r.message });
+    }
+
+    const ok = results.filter((r) => r.ok).length;
+    this.logger.log('Quantity restore on ' + marketplace + ': ' + ok + '/' + results.length + ' listings put back.');
+    return { dryRun: false, marketplace, count: results.length, ok, failed: results.length - ok, results };
+  }
+
   private readonly logger = new Logger(ChannelListingsService.name);
   private pushQueue = new Set<string>();
   private pushTimer: NodeJS.Timeout | null = null;

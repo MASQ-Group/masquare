@@ -16,6 +16,21 @@ export class ChannelListingsController {
     private readonly jobs: JobsService,
   ) {}
 
+  /**
+   * Put back quantities lost to the zeroing, from the last good record we hold.
+   *
+   * Dry run unless confirm is passed. Targets the ORIGIN marketplace by default, because eBaymag
+   * propagates from there and syncs one way — it cannot restore anything itself.
+   */
+  @Post('restore-quantities')
+  restoreQuantities(
+    @Body() dto: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number },
+    @VisibleCompanies() companyIds: string[],
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.svc.restoreQuantities(dto ?? {}, companyIds, user.sub);
+  }
+
   /** What we have actually sent to the channels, newest first. Read-only. */
   @Get('pushes')
   pushes(
