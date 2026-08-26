@@ -394,7 +394,7 @@ export class ChannelListingsService {
    * Dry run by default. Nothing is sent without `confirm`.
    */
   async restoreQuantities(
-    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number } = {},
+    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number; onlyMissing?: boolean; excludeSkus?: string[] } = {},
     companyIds?: string[],
     actorId?: string,
     ctx?: ProgressSink,
@@ -434,6 +434,12 @@ export class ChannelListingsService {
       if (!fromAudit.has(key)) fromAudit.set(key, a.previousValue as number);
     }
 
+    // SKUs to leave entirely alone. They are already at zero on the channel, so "set these to 0"
+    // means touching nothing — the quietest correct action, and it keeps a listing someone has
+    // deliberately emptied from being refilled by an assumption.
+    const excluded = new Set((opts.excludeSkus ?? []).map((x) => x.trim().toLowerCase()).filter(Boolean));
+    const excludedMatched = new Set<string>();
+
     const plan = listings
       .map((l) => {
         const stored = l.listedQuantity ?? 0;
@@ -444,6 +450,11 @@ export class ChannelListingsService {
         // A flat figure for the listings no record can speak for. Opt-in and conservative by
         // construction: too LOW only costs a sale, too high oversells, and only one of those is
         // recoverable. Never applied on top of a figure we actually hold.
+        const key = l.channelSku.trim().toLowerCase();
+        if (excluded.has(key)) { excludedMatched.add(key); return { l, target: 0, source: 'excluded' as const }; }
+        // onlyMissing restricts the run to listings no record can speak for, so anything already
+        // put back keeps the figure it was given rather than being pushed again.
+        if (opts.onlyMissing && (stored > 0 || recovered > 0)) return { l, target: 0, source: 'already restored' as const };
         const target = stored > 0 ? stored : recovered > 0 ? recovered : (opts.fallbackQuantity ?? 0);
         const source = target === 0 ? 'none' : stored > 0 ? 'last sync' : recovered > 0 ? 'push audit' : 'fallback';
         return { l, target, source };
@@ -471,6 +482,9 @@ export class ChannelListingsService {
         fromLastSync: plan.filter((p) => p.source === 'last sync').length,
         fromPushAudit: plan.filter((p) => p.source === 'push audit').length,
         fromFallback: plan.filter((p) => p.source === 'fallback').length,
+        excludedByRequest: excludedMatched.size,
+        // A pasted SKU matching no listing here is silence otherwise, and silence reads as "applied".
+        excludeSkusUnmatched: [...excluded].filter((k) => !excludedMatched.has(k)),
         sample: plan.slice(0, 20).map((p) => ({ sku: p.l.channelSku, itemId: p.l.externalListingId, currentlyStored: p.l.listedQuantity, restoreTo: p.target, source: p.source })),
       };
     }
