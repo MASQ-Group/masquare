@@ -507,9 +507,19 @@ export class ChannelListingsService {
     const results: any[] = [];
     for (const p of plan) {
       ctx?.note(p.l.channelSku);
-      const r = await this.integrations.pushEbayQuantity(
-        p.l.integrationId, p.l.channelSku, p.l.marketplace, p.target, false, p.l.externalListingId,
-      );
+      // Route by the LISTING's own channel, not by the argument that selected it.
+      //
+      // This called pushEbayQuantity unconditionally while accepting a channelType parameter, so
+      // asking it to restore Amazon would have picked Amazon listings and then pushed them through
+      // eBay's Trading API. Nobody hit it because only GB was ever run, but it sat there loaded the
+      // moment an Amazon restore was discussed.
+      const type = p.l.integration.channelType;
+      const r =
+        type === 'ebay' ? await this.integrations.pushEbayQuantity(p.l.integrationId, p.l.channelSku, p.l.marketplace, p.target, false, p.l.externalListingId)
+        : type === 'amazon' ? await this.integrations.pushAmazonQuantity(p.l.integrationId, p.l.channelSku, p.target, false)
+        : type === 'onbuy' ? await this.integrations.pushOnBuyQuantity(p.l.integrationId, p.l.channelSku, p.target, false)
+        // Refusing beats guessing: a wrong channel writes a real quantity to the wrong marketplace.
+        : { ok: false, message: 'No quantity push for ' + type };
       if (r.ok) {
         await this.prisma.channelListing.update({ where: { id: p.l.id }, data: { listedQuantity: p.target, lastPushedAt: new Date() } });
       }
