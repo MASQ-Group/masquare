@@ -495,6 +495,149 @@ export class IntegrationsService implements OnModuleInit {
     return r.json.access_token as string;
   }
 
+  // ------------------------------------------------------------------ eBay Inventory API (listing)
+
+  /**
+   * A ready-to-use eBay call context: base URL, token and the headers the Inventory API insists on.
+   *
+   * Both headers are mandatory and neither failure says so clearly — a missing Accept-Language
+   * returns "Invalid value for header Accept-Language" for a header that was never sent, and a
+   * missing marketplace id fails later and elsewhere. Set once, here.
+   */
+  private async ebayCtx(integrationId: string): Promise<{ base: string; headers: Record<string, string>; marketplaceId: string }> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'ebay' } });
+    if (!row) throw new NotFoundException('eBay integration not found');
+    const config = (row.config ?? {}) as Record<string, string>;
+    const token = await this.ebayAccessToken(config, await this.decryptedSecrets(row.id));
+    const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+    const marketplaceId = 'EBAY_' + (row.marketplace ?? 'GB').toUpperCase();
+    return {
+      base,
+      marketplaceId,
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/json',
+        'Accept-Language': 'en-GB',
+        'Content-Language': 'en-GB',
+        'X-EBAY-C-MARKETPLACE-ID': marketplaceId,
+      },
+    };
+  }
+
+  private static ebayErr(json: any): string {
+    const e = json?.errors?.[0];
+    if (!e) return '';
+    return [e.message, e.longMessage].filter(Boolean).join(' - ').slice(0, 300);
+  }
+
+  /** Everything a publish needs, and whether it is there. Read-only. */
+  async ebayPublishPrerequisites(integrationId: string) {
+    const { base, headers, marketplaceId } = await this.ebayCtx(integrationId);
+    const get = async (path: string) => {
+      const r = await fetch(base + path, { headers, signal: AbortSignal.timeout(20000) });
+      return { ok: r.ok, status: r.status, json: await r.json().catch(() => null) };
+    };
+    const [ful, pay, ret, loc] = await Promise.all([
+      get('/sell/account/v1/fulfillment_policy?marketplace_id=' + marketplaceId),
+      get('/sell/account/v1/payment_policy?marketplace_id=' + marketplaceId),
+      get('/sell/account/v1/return_policy?marketplace_id=' + marketplaceId),
+      get('/sell/inventory/v1/location?limit=25'),
+    ]);
+    const pick = (r: any, key: string, idKey: string) =>
+      (r.json?.[key] ?? []).map((x: any) => ({ id: x[idKey], name: x.name ?? null }));
+
+    return {
+      marketplaceId,
+      fulfillmentPolicies: pick(ful, 'fulfillmentPolicies', 'fulfillmentPolicyId'),
+      paymentPolicies: pick(pay, 'paymentPolicies', 'paymentPolicyId'),
+      returnPolicies: pick(ret, 'returnPolicies', 'returnPolicyId'),
+      locations: (loc.json?.locations ?? []).map((l: any) => ({
+        key: l.merchantLocationKey,
+        status: l.merchantLocationStatus ?? null,
+        city: l.location?.address?.city ?? null,
+        country: l.location?.address?.country ?? null,
+      })),
+      errors: [ful, pay, ret, loc].filter((r) => !r.ok).map((r) => r.status + ': ' + IntegrationsService.ebayErr(r.json)),
+    };
+  }
+
+  /**
+   * Create a merchant location. Required on every offer, and the account has none until someone
+   * makes one.
+   *
+   * This is a write, but it creates an address record — not a listing. Nothing becomes visible or
+   * buyable, so it doubles as the safest possible check that the token really carries the write
+   * scope: if it does not, this fails before anything public exists.
+   */
+  async ebayCreateLocation(
+    integrationId: string,
+    key: string,
+    address: { addressLine1: string; city: string; postalCode: string; country: string; addressLine2?: string; stateOrProvince?: string },
+  ) {
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const body = {
+      location: { address },
+      locationInstructions: 'Dispatch origin',
+      merchantLocationStatus: 'ENABLED',
+      locationTypes: ['WAREHOUSE'],
+    };
+    const res = await fetch(base + '/sell/inventory/v1/location/' + encodeURIComponent(key), {
+      method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(20000),
+    });
+    if (res.status === 204) return { ok: true as const, created: true, key };
+    const json: any = await res.json().catch(() => null);
+    // 409 = already there, which is a success for our purposes.
+    if (res.status === 409) return { ok: true as const, created: false, key, message: 'Location already exists' };
+    return { ok: false as const, created: false, key, status: res.status, message: IntegrationsService.ebayErr(json) || ('HTTP ' + res.status) };
+  }
+
+  /** Step 1 of a publish: the private product record. Deleteable, invisible to buyers. */
+  async ebayPutInventoryItem(integrationId: string, sku: string, item: unknown) {
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const res = await fetch(base + '/sell/inventory/v1/inventory_item/' + encodeURIComponent(sku), {
+      method: 'PUT', headers, body: JSON.stringify(item), signal: AbortSignal.timeout(30000),
+    });
+    if (res.status === 204 || res.ok) return { ok: true as const };
+    const json: any = await res.json().catch(() => null);
+    return { ok: false as const, status: res.status, message: IntegrationsService.ebayErr(json) || ('HTTP ' + res.status) };
+  }
+
+  /** Step 2: the offer. Still private — an unpublished offer is not a listing. */
+  async ebayCreateOffer(integrationId: string, offer: unknown) {
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const res = await fetch(base + '/sell/inventory/v1/offer', {
+      method: 'POST', headers, body: JSON.stringify(offer), signal: AbortSignal.timeout(30000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (res.ok) return { ok: true as const, offerId: json?.offerId as string, reused: false };
+    // An offer for this SKU and marketplace already exists; reuse it rather than fail the run.
+    const existing = json?.errors?.find((e: any) => e.errorId === 25002)?.parameters?.find((p: any) => p.name === 'offerId')?.value;
+    if (existing) return { ok: true as const, offerId: existing as string, reused: true };
+    return { ok: false as const, status: res.status, message: IntegrationsService.ebayErr(json) || ('HTTP ' + res.status) };
+  }
+
+  /** Step 3: PUBLISH. This is the one that creates a live, publicly buyable listing. */
+  async ebayPublishOffer(integrationId: string, offerId: string) {
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const res = await fetch(base + '/sell/inventory/v1/offer/' + encodeURIComponent(offerId) + '/publish', {
+      method: 'POST', headers, signal: AbortSignal.timeout(30000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (res.ok) return { ok: true as const, listingId: json?.listingId as string };
+    return { ok: false as const, status: res.status, message: IntegrationsService.ebayErr(json) || ('HTTP ' + res.status) };
+  }
+
+  /** End a published listing. The way back from the test. */
+  async ebayWithdrawOffer(integrationId: string, offerId: string) {
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const res = await fetch(base + '/sell/inventory/v1/offer/' + encodeURIComponent(offerId) + '/withdraw', {
+      method: 'POST', headers, signal: AbortSignal.timeout(30000),
+    });
+    if (res.ok || res.status === 204) return { ok: true as const };
+    const json: any = await res.json().catch(() => null);
+    return { ok: false as const, status: res.status, message: IntegrationsService.ebayErr(json) || ('HTTP ' + res.status) };
+  }
+
   /** One page of eBay Sell Fulfillment API orders (line items + pricing included in the order). */
   private async ebayGetOrdersPage(base: string, token: string, opts: { filter?: string; limit?: number; offset?: number }): Promise<{ ok: boolean; status?: number; message?: string; orders: any[]; total: number }> {
     const q = new URLSearchParams();
