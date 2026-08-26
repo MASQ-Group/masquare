@@ -602,6 +602,17 @@ export class IntegrationsService implements OnModuleInit {
     return { ok: false as const, status: res.status, message: IntegrationsService.ebayErr(json) || ('HTTP ' + res.status) };
   }
 
+  /** Remove an inventory item. Private record, so this leaves no trace on the account. */
+  async ebayDeleteInventoryItem(integrationId: string, sku: string) {
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const res = await fetch(base + '/sell/inventory/v1/inventory_item/' + encodeURIComponent(sku), {
+      method: 'DELETE', headers, signal: AbortSignal.timeout(20000),
+    });
+    if (res.ok || res.status === 204 || res.status === 404) return { ok: true as const };
+    const json: any = await res.json().catch(() => null);
+    return { ok: false as const, status: res.status, message: IntegrationsService.ebayErr(json) || ('HTTP ' + res.status) };
+  }
+
   /** Step 2: the offer. Still private — an unpublished offer is not a listing. */
   async ebayCreateOffer(integrationId: string, offer: unknown) {
     const { base, headers } = await this.ebayCtx(integrationId);
