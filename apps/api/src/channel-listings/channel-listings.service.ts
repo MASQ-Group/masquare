@@ -434,7 +434,7 @@ export class ChannelListingsService {
    * Dry run by default. Nothing is sent without `confirm`.
    */
   async restoreQuantities(
-    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number; onlyMissing?: boolean; excludeSkus?: string[]; integrationId?: string } = {},
+    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number; onlyMissing?: boolean; onlyDamaged?: boolean; excludeSkus?: string[]; integrationId?: string } = {},
     companyIds?: string[],
     actorId?: string,
     ctx?: ProgressSink,
@@ -513,7 +513,11 @@ export class ChannelListingsService {
       })
       // Nothing to restore for a listing we have no positive figure for. Pushing 0 is what caused
       // this; the restore will not repeat it under another name.
-      .filter((p) => p.target > 0);
+      // onlyDamaged keeps just the listings we actually zeroed — the ones whose figure comes from
+      // the push audit because our own copy was flattened. Everything else already holds the right
+      // quantity, and re-sending it is thousands of pointless marketplace calls: ~10,000 to repair
+      // 2,345 listings. Fewer writes is not only quicker, it is less to go wrong.
+      .filter((p) => (opts.onlyDamaged ? p.source === 'push audit' : p.target > 0));
 
     // The ones we can do nothing for. Reported rather than silently dropped: after a restore they
     // are the listings still sitting at zero, and "they were not restored" reads as a failure when
