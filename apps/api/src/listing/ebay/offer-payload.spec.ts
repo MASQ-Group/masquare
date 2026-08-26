@@ -102,3 +102,34 @@ describe('buildOffer', () => {
     expect(offer.format).toBe('FIXED_PRICE');
   });
 });
+
+describe('required item specifics', () => {
+  it('sends Model, because a category can require it and only says so on refusal', () => {
+    // Table Top Blenders (133704) has exactly one required aspect: Model. The publish failed with
+    // "The item specific Model is missing" after the item and offer had both been accepted — so
+    // this is not something a payload check can catch, only a category can tell you.
+    const aspects = buildInventoryItem(base).product.aspects as Record<string, string[]>;
+    expect(aspects.Model).toEqual(['DEH-S320BT']);
+    expect(aspects.Brand).toEqual(['Pioneer']);
+    expect(aspects.MPN).toEqual(['DEH-S320BT']);
+  });
+
+  it('lets the caller override a default when the category means something else by it', () => {
+    const aspects = buildInventoryItem({ ...base, extraAspects: { Model: ['NBP003NBL'], Capacity: ['0.5 L'] } })
+      .product.aspects as Record<string, string[]>;
+    expect(aspects.Model).toEqual(['NBP003NBL']);
+    expect(aspects.Capacity).toEqual(['0.5 L']);
+    expect(aspects.Brand).toEqual(['Pioneer']); // untouched defaults survive
+  });
+
+  it('ignores an empty override rather than sending an empty aspect', () => {
+    const aspects = buildInventoryItem({ ...base, extraAspects: { Colour: [] } }).product.aspects as Record<string, string[]>;
+    expect(aspects.Colour).toBeUndefined();
+  });
+
+  it('omits Model when there is no part number to derive it from', () => {
+    const aspects = buildInventoryItem({ ...base, mpn: null }).product.aspects as Record<string, string[]>;
+    expect(aspects.Model).toBeUndefined();
+    expect(aspects.MPN).toBeUndefined();
+  });
+});

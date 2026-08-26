@@ -124,6 +124,7 @@ export class EbayListingService {
         paymentPolicyId: args.paymentPolicyId ?? null,
         returnPolicyId: args.returnPolicyId ?? null,
         handlingTimeDays: args.handlingTimeDays ?? null,
+        extraAspects: args.aspects,
       },
     };
   }
@@ -272,4 +273,6 @@ export interface PublishArgs {
   currency?: string;
   condition?: 'NEW' | 'USED_EXCELLENT' | 'USED_GOOD';
   handlingTimeDays?: number | null;
+  /** Item specifics the chosen category requires, e.g. { Model: ['NBP003NBL'] }. */
+  aspects?: Record<string, string[]>;
 }
