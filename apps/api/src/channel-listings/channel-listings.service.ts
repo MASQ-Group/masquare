@@ -242,6 +242,47 @@ export class ChannelListingsService {
       const raw = (l.marketplace || l.integration.marketplace || '').toUpperCase();
       return ISO_ALIAS[raw] ?? raw;
     };
+    // --- Two gates before anything leaves the building ------------------------------------------
+    const settings = await this.prisma.platformSettings.findFirst({
+      select: { channelQuantityPushEnabled: true, maxZeroingPushesPerRun: true },
+    });
+    if (!dryRun && settings?.channelQuantityPushEnabled === false) {
+      return { dryRun, count: 0, ok: 0, failed: 0, skipped: 0, blocked: 'Quantity pushes are switched off in Settings.', results: [] as any[] };
+    }
+
+    // Blast radius. Count what this run would take from a REAL quantity down to zero, and refuse
+    // the whole run if that exceeds the configured ceiling.
+    //
+    // Listings went out of stock across the catalogue and nothing stopped it or even remarked on
+    // it. A push that empties shelves is never routine, whatever the reason — an empty availability
+    // table, a bad filter, a default that reads as data. Refusing and showing the number is the only
+    // response that cannot be missed.
+    //
+    // Deliberately BEFORE the loop: a guard that trips halfway has already done the damage it
+    // exists to prevent.
+    const ceiling = settings?.maxZeroingPushesPerRun ?? 25;
+    const wouldZeroReal = listings.filter((l) => {
+      if (l.integration.channelType === 'ebay' && !l.marketplace) return false;
+      if (channelKeys && !channelKeys.has(channelKeyOf(l))) return false;
+      if (l.productId == null || !qtyByProduct.has(l.productId)) return false; // skipped anyway
+      return qtyByProduct.get(l.productId) === 0 && (l.listedQuantity ?? 0) > 0;
+    }).length;
+    if (!dryRun && wouldZeroReal > ceiling) {
+      this.logger.error('Push REFUSED: it would zero ' + wouldZeroReal + ' listings that currently hold stock (ceiling ' + ceiling + ').');
+      return {
+        dryRun,
+        count: 0,
+        ok: 0,
+        failed: 0,
+        skipped: 0,
+        blocked:
+          'Refused: this would take ' + wouldZeroReal + ' listings from a real quantity down to zero, over the limit of ' +
+          ceiling + '. Nothing was sent. Raise the limit in Settings if this is genuinely intended.',
+        wouldZeroReal,
+        results: [] as any[],
+      };
+    }
+
     const results: any[] = [];
     for (const l of listings) {
       // An eBay listing whose marketplace couldn't be resolved maps to no real sales channel — skip
