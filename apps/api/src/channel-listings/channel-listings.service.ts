@@ -394,7 +394,7 @@ export class ChannelListingsService {
    * Dry run by default. Nothing is sent without `confirm`.
    */
   async restoreQuantities(
-    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string } = {},
+    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number } = {},
     companyIds?: string[],
     actorId?: string,
     ctx?: ProgressSink,
@@ -441,8 +441,12 @@ export class ChannelListingsService {
         // The last sync is the truth unless WE flattened it. Only then does the audit stand in, and
         // only from the incident window. Never the higher of the two: that would let a stale figure
         // beat a current one and put stock on sale that is not there.
-        const target = stored > 0 ? stored : recovered;
-        return { l, target, source: target === 0 ? 'none' : stored > 0 ? 'last sync' : 'push audit' };
+        // A flat figure for the listings no record can speak for. Opt-in and conservative by
+        // construction: too LOW only costs a sale, too high oversells, and only one of those is
+        // recoverable. Never applied on top of a figure we actually hold.
+        const target = stored > 0 ? stored : recovered > 0 ? recovered : (opts.fallbackQuantity ?? 0);
+        const source = target === 0 ? 'none' : stored > 0 ? 'last sync' : recovered > 0 ? 'push audit' : 'fallback';
+        return { l, target, source };
       })
       // Nothing to restore for a listing we have no positive figure for. Pushing 0 is what caused
       // this; the restore will not repeat it under another name.
@@ -466,6 +470,7 @@ export class ChannelListingsService {
         totalUnits: plan.reduce((s, p) => s + p.target, 0),
         fromLastSync: plan.filter((p) => p.source === 'last sync').length,
         fromPushAudit: plan.filter((p) => p.source === 'push audit').length,
+        fromFallback: plan.filter((p) => p.source === 'fallback').length,
         sample: plan.slice(0, 20).map((p) => ({ sku: p.l.channelSku, itemId: p.l.externalListingId, currentlyStored: p.l.listedQuantity, restoreTo: p.target, source: p.source })),
       };
     }
