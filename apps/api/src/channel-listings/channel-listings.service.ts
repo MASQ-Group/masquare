@@ -434,18 +434,24 @@ export class ChannelListingsService {
    * Dry run by default. Nothing is sent without `confirm`.
    */
   async restoreQuantities(
-    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number; onlyMissing?: boolean; excludeSkus?: string[] } = {},
+    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number; onlyMissing?: boolean; excludeSkus?: string[]; integrationId?: string } = {},
     companyIds?: string[],
     actorId?: string,
     ctx?: ProgressSink,
   ) {
-    const marketplace = opts.marketplace ?? 'GB';
     const channelType = opts.channelType ?? 'ebay';
     const dryRun = !opts.confirm;
 
+    // eBay puts the marketplace on the LISTING (one token, many markets, per-market rows). Amazon
+    // puts it on the INTEGRATION and leaves the listing's own column empty. Filtering the listing
+    // column with a 'GB' default therefore matches nothing on Amazon — so an Amazon restore is
+    // addressed by integration id, which is unambiguous for either shape.
+    const marketplace = opts.integrationId ? undefined : (opts.marketplace ?? 'GB');
+
     const listings = await this.prisma.channelListing.findMany({
       where: {
-        marketplace,
+        ...(marketplace !== undefined ? { marketplace } : {}),
+        ...(opts.integrationId ? { integrationId: opts.integrationId } : {}),
         integration: { channelType, deletedAt: null },
         ...(companyIds ? { companyId: { in: companyIds } } : {}),
       },
@@ -463,7 +469,13 @@ export class ChannelListingsService {
     // being repaired, and one eBay penalises.
     const since = opts.since ? new Date(opts.since) : new Date(Date.now() - 24 * 60 * 60 * 1000);
     const audit = await this.prisma.channelPush.findMany({
-      where: { field: 'quantity', marketplace, previousValue: { gt: 0 }, createdAt: { gte: since } },
+      where: {
+        field: 'quantity',
+        previousValue: { gt: 0 },
+        createdAt: { gte: since },
+        ...(marketplace !== undefined ? { marketplace } : {}),
+        ...(opts.integrationId ? { integrationId: opts.integrationId } : {}),
+      },
       orderBy: { createdAt: 'asc' },
       select: { channelSku: true, integrationId: true, previousValue: true },
     });
@@ -514,7 +526,7 @@ export class ChannelListingsService {
     if (dryRun) {
       return {
         dryRun: true,
-        marketplace,
+        marketplace: marketplace ?? opts.integrationId,
         candidates: plan.length,
         noFigure: noFigure.length,
         noFigureSample: noFigure.slice(0, 40),
@@ -566,7 +578,7 @@ export class ChannelListingsService {
 
     const ok = results.filter((r) => r.ok).length;
     this.logger.log('Quantity restore on ' + marketplace + ': ' + ok + '/' + results.length + ' listings put back.');
-    return { dryRun: false, marketplace, count: results.length, ok, failed: results.length - ok, results };
+    return { dryRun: false, marketplace: marketplace ?? opts.integrationId, count: results.length, ok, failed: results.length - ok, results };
   }
 
   private readonly logger = new Logger(ChannelListingsService.name);

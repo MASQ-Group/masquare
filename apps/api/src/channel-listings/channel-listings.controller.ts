@@ -24,7 +24,7 @@ export class ChannelListingsController {
    */
   @Post('restore-quantities')
   restoreQuantities(
-    @Body() dto: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number; onlyMissing?: boolean; excludeSkus?: string[] },
+    @Body() dto: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number; onlyMissing?: boolean; excludeSkus?: string[]; integrationId?: string },
     @VisibleCompanies() companyIds: string[],
     @CurrentUser() user: AuthUser,
   ) {
