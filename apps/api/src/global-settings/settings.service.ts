@@ -28,6 +28,9 @@ export class SettingsService {
         ...(dto.autoAdjustAvailabilityOnSale !== undefined ? { autoAdjustAvailabilityOnSale: dto.autoAdjustAvailabilityOnSale } : {}),
         ...(dto.launchMarginPct !== undefined ? { launchMarginPct: dto.launchMarginPct } : {}),
         ...(dto.listingLiveWrites !== undefined ? { listingLiveWrites: dto.listingLiveWrites } : {}),
+        ...(dto.channelQuantityPushEnabled !== undefined ? { channelQuantityPushEnabled: dto.channelQuantityPushEnabled } : {}),
+        ...(dto.channelPricePushEnabled !== undefined ? { channelPricePushEnabled: dto.channelPricePushEnabled } : {}),
+        ...(dto.maxZeroingPushesPerRun !== undefined ? { maxZeroingPushesPerRun: dto.maxZeroingPushesPerRun } : {}),
       },
     });
     return { ...row, salesTxStandardColumns: this.parseColumns(row.salesTxStandardColumns) };

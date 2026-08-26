@@ -225,6 +225,9 @@ export interface PlatformSettings {
   launchMarginPct: number;
   /** Whether creating real marketplace listings is permitted. Off by default. */
   listingLiveWrites: boolean;
+  /** Whether the platform may CHANGE quantities / prices on the marketplaces. On by default. */
+  channelQuantityPushEnabled: boolean;
+  channelPricePushEnabled: boolean;
 }
 export type VatTaxTreatment = 'standard' | 'reduced' | 'zero' | 'exempt';
 export interface VatClass {
