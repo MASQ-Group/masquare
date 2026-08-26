@@ -96,3 +96,24 @@ describe('what it is worth', () => {
     expect(settle({ resolution: 'cancelled', channelShipmentStatus: 'shipped', hasOutbound: true })).toEqual(gross);
   });
 });
+
+describe('every figure a reader calls revenue', () => {
+  // The list column reads the NATIVE totals, not the EUR ones. Zeroing the profit and the EUR
+  // revenue while leaving these intact showed an order earning nothing and selling 184.24 on the
+  // same row — which is how this was spotted on order 702-2579052-5535426.
+  const totals = { netSales: 184.24, vat: 35.01, shipping: 4.99, shippingVat: 0.95 };
+  const settle = (cancelled: boolean) => (cancelled ? { ...totals, netSales: 0, vat: 0, shipping: 0, shippingVat: 0 } : totals);
+
+  it('zeroes the native totals, not just the EUR ones', () => {
+    expect(settle(true)).toEqual({ netSales: 0, vat: 0, shipping: 0, shippingVat: 0 });
+  });
+
+  it('makes the transaction total agree', () => {
+    const t = settle(true);
+    expect(t.netSales + t.vat + t.shipping + t.shippingVat).toBe(0);
+  });
+
+  it('leaves a real sale untouched', () => {
+    expect(settle(false)).toEqual(totals);
+  });
+});
