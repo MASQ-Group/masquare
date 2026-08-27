@@ -84,7 +84,7 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
     items: [
       { to: '/sales-transactions', label: 'Sales Transactions', icon: Receipt },
       { to: '/shipments', label: 'Shipments', icon: Truck },
-      { to: '/fba-shipments', label: 'FBA Shipments', icon: Container },
+      { to: '/fba-shipments', label: 'FBA Shipments', icon: Container, ordersOnlyHidden: true },
     ],
   },
   {

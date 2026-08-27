@@ -58,6 +58,13 @@ function buildFbaTemplate(channels: { name: string }[], services: { name: string
       { column: FBA_IMPORT_FIELDS.findIndex((f) => f.key === 'salesChannel'), values: channels.map((c) => c.name) },
       { column: FBA_IMPORT_FIELDS.findIndex((f) => f.key === 'shippingService'), values: services.map((s) => s.name) },
     ].filter((l) => l.column >= 0),
+  }).then(({ emptyLists }) => {
+    // A column with nothing to offer stays free text. Saying so beats a template that looks the
+    // same as one with dropdowns and quietly accepts anything — which is how this was noticed:
+    // downloaded from a company that has no sales channels of its own.
+    if (emptyLists.length) {
+      toast.warning('No values for ' + emptyLists.join(' or ') + ' in this company - those columns accept free text.');
+    }
   });
 }
 
