@@ -13,6 +13,7 @@
     "build": "echo \"(ui is consumed as source by the web app)\""
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "lucide-react": "^0.468.0",
     "xlsx": "^0.18.5"
   },
