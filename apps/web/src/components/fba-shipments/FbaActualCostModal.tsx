@@ -18,9 +18,14 @@ interface Props {
  *  Shipments page and the Shipments module. */
 export function FbaActualCostModal({ shipment, contextLine, onClose, onSaved }: Props) {
   const [value, setValue] = useState(shipment.actualCostEur != null ? String(shipment.actualCostEur) : '');
+  // Registering the cost is what permits confirming, so the operator does both in one action.
+  const [confirmToo, setConfirmToo] = useState(shipment.status !== 'confirmed');
   const save = useMutation({
-    mutationFn: (amount: number) => fbaShipmentsApi.setActualCost(shipment.id, amount),
-    onSuccess: () => { toast.success('Actual cost registered — allocation updated'); onSaved(); },
+    mutationFn: (amount: number) => fbaShipmentsApi.setActualCost(shipment.id, amount, confirmToo),
+    onSuccess: () => {
+      toast.success(confirmToo ? 'Cost registered and shipment confirmed' : 'Actual cost registered — allocation updated');
+      onSaved();
+    },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save'),
   });
   const busy = save.isPending;
@@ -40,6 +45,19 @@ export function FbaActualCostModal({ shipment, contextLine, onClose, onSaved }: 
           <label className="label">Actual cost <span className="font-normal text-n-400">(exc. VAT, €)</span></label>
           <input autoFocus className="input mono" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder="0.00" onKeyDown={(e) => { if (e.key === 'Enter' && !busy) submit(); }} />
           <p className="mt-2 text-[12px] text-n-500">This is the shipment's actual shipping cost. It overrides the estimate in the FBA module and re-allocates the cost across the shipment's SKUs by weight.</p>
+          {shipment.status !== 'confirmed' && (
+            <label className="mt-3 flex items-start gap-2 rounded-md border border-n-200 bg-n-25 p-2.5 text-[12.5px] text-n-700">
+              <input type="checkbox" className="mt-0.5" checked={confirmToo} onChange={(e) => setConfirmToo(e.target.checked)} />
+              <span>
+                Confirm the shipment as well
+                <span className="mt-0.5 block text-[11.5px] text-n-500">
+                  It leaves the FBA worklist and joins All shipments. A shipment cannot be confirmed
+                  without an actual cost, since confirming sets the cost used for every order fulfilled
+                  from it.
+                </span>
+              </span>
+            </label>
+          )}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-n-200 px-5 py-3.5">
           <button className="inline-flex h-10 items-center rounded-md border border-n-200 bg-n-0 px-4 text-[13.5px] font-semibold text-n-700 hover:bg-n-50" onClick={() => !busy && onClose()}>Cancel</button>

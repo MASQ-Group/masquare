@@ -22,8 +22,15 @@ export class ShipmentsController {
     @Query('sortDir') sortDir?: 'asc' | 'desc',
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('includeFba') includeFba?: string,
   ) {
-    const query: ShipmentQuery = { q, companyIds, salesChannelId, type, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
+    const query: ShipmentQuery = {
+      q, companyIds, salesChannelId, type, sortDir,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+      // Opt-in, so an existing caller that only knows about order shipments keeps its old result.
+      includeFba: includeFba === 'true',
+    };
     return this.svc.list(query);
   }
 

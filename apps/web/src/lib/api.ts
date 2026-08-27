@@ -1547,7 +1547,13 @@ export interface SalesTransactionListResponse { items: SalesTransaction[]; total
 export interface UnlockRequest { id: string; transactionId: string; transactionRef: string; requestedBy: string; createdAt: string }
 
 // ---- Shipments (operations: actual shipping cost + duty per transaction) ----
-export type ShipmentType = 'outbound' | 'inbound';
+/**
+ * 'fba' appears only in the shipments log, and only when includeFba is asked for.
+ *
+ * It is a settled FBA shipment folded in from a separate model: stock moving to Amazon, with no
+ * sales transaction behind it. Anything that treats a row as an order shipment must exclude it.
+ */
+export type ShipmentType = 'outbound' | 'inbound' | 'fba';
 export type CostBorneBy = 'company' | 'customer';
 
 export interface TransactionShipment {
@@ -1619,7 +1625,8 @@ export interface ShipmentImportRowResult {
 }
 
 export const shipmentsApi = {
-  list: (params: { q?: string; companyId?: string; salesChannelId?: string; type?: string; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
+  /** includeFba folds settled FBA shipments into the log — they have no transaction behind them. */
+  list: (params: { q?: string; companyId?: string; salesChannelId?: string; type?: string; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number; includeFba?: boolean }) =>
     api.get<ShipmentListResponse>('/shipments', { params }).then((r) => r.data),
   pending: (params: { q?: string; companyId?: string; salesChannelId?: string; channelKind?: 'local' | 'channel'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<PendingListResponse>('/shipments/pending', { params }).then((r) => r.data),
@@ -1793,7 +1800,8 @@ export const fbaShipmentsApi = {
   create: (body: FbaShipmentInput) => api.post<FbaShipment>('/fba-shipments', body).then((r) => r.data),
   update: (id: string, body: FbaShipmentInput) => api.patch<FbaShipment>(`/fba-shipments/${id}`, body).then((r) => r.data),
   setStatus: (id: string, status: 'draft' | 'confirmed') => api.patch<FbaShipment>(`/fba-shipments/${id}/status`, { status }).then((r) => r.data),
-  setActualCost: (id: string, actualCostEur: number) => api.patch<FbaShipment>(`/fba-shipments/${id}/actual-cost`, { actualCostEur }).then((r) => r.data),
+  /** confirm settles the shipment in the same call — the cost is what permits it. */
+  setActualCost: (id: string, actualCostEur: number, confirm = false) => api.patch<FbaShipment>(`/fba-shipments/${id}/actual-cost`, { actualCostEur, confirm }).then((r) => r.data),
   remove: (id: string) => api.delete(`/fba-shipments/${id}`).then((r) => r.data),
   skuCosts: (params: { q?: string; salesChannelId?: string }) =>
     api.get<FbaSkuCost[]>('/fba-shipments/sku-costs', { params }).then((r) => r.data),

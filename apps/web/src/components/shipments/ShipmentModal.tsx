@@ -38,7 +38,11 @@ export function ShipmentModal({ transactionId, transactionRef, contextLine, defa
   const touch = () => setDirty(true);
 
   // Shared across every parcel of this consignment.
-  const [type, setType] = useState<'outbound' | 'inbound'>(shipment?.type ?? 'outbound');
+  // This modal edits an order shipment. A settled FBA shipment can appear in the log but is not
+  // one of those and never reaches here, so it cannot be a starting type.
+  const [type, setType] = useState<'outbound' | 'inbound'>(
+    shipment?.type === 'inbound' ? 'inbound' : 'outbound',
+  );
   const [date, setDate] = useState(shipment ? shipment.shipmentDate.slice(0, 10) : today());
   const [borneBy, setBorneBy] = useState<'company' | 'customer'>(shipment?.costBorneBy ?? 'company');
   const [duty, setDuty] = useState(shipment?.dutyImportEur?.toString() ?? '');

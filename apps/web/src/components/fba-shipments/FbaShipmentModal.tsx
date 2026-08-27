@@ -146,6 +146,11 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
   // When editing a shipment whose actual cost is registered, show the allocation against
   // that actual cost (the estimate preview is proportional by weight, so we scale it).
   const actualCost = editing && shipment?.actualCostEur != null ? shipment.actualCostEur : null;
+  // Confirming settles the cost used for every order fulfilled from this shipment, so it needs a
+  // real one. A shipment being created never has that yet — it arrives with the carrier's invoice —
+  // so the only thing on offer here is a draft, and the cost is registered from the Shipments
+  // worklist afterwards.
+  const canConfirm = actualCost != null;
   const effectiveTotal = actualCost ?? estimate?.estimatedCostEur ?? null;
   const usingActual = actualCost != null;
   const allocScale = estimate?.estimatedCostEur && effectiveTotal != null ? effectiveTotal / estimate.estimatedCostEur : 1;
@@ -160,11 +165,11 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
       activeTab={tab}
       onTabChange={(k) => setTab(k as Tab)}
       dirty={dirty}
-      primaryLabel="Confirm shipment"
-      onPrimary={() => save('confirmed')}
+      primaryLabel={canConfirm ? 'Confirm shipment' : 'Save as draft'}
+      onPrimary={() => save(canConfirm ? 'confirmed' : 'draft')}
       primaryDisabled={!canSave}
-      secondaryLabel="Save as draft"
-      onSecondary={() => save('draft')}
+      secondaryLabel={canConfirm ? 'Save as draft' : undefined}
+      onSecondary={canConfirm ? () => save('draft') : undefined}
       secondaryDisabled={!canSave}
       busy={busy}
       initialSize={{ w: 860, h: 660 }}

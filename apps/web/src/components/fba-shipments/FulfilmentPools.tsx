@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Boxes, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Select } from '@masquare/ui';
+import { DatePicker, Select } from '@masquare/ui';
 import { fbaShipmentsApi, type FbaPool, type FbaPoolInput } from '../../lib/api';
 import { useConfirm } from '../ConfirmProvider';
 import { formatDate } from '../../lib/format';
@@ -195,18 +195,18 @@ function PoolModal({ draft, channels, busy, onChange, onClose, onSave }: {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          <div className="grid grid-cols-[1fr_140px_140px] gap-3">
+          <div className="grid grid-cols-[1fr_160px_160px] gap-3">
             <div>
               <label className="label">Name</label>
               <input autoFocus className="input" value={draft.name} placeholder="Pan-European FBA" onChange={(e) => onChange({ ...draft, name: e.target.value })} />
             </div>
             <div>
               <label className="label">Effective from</label>
-              <input type="date" className="input" value={draft.effectiveFrom} onChange={(e) => onChange({ ...draft, effectiveFrom: e.target.value })} />
+              <DatePicker clearable value={draft.effectiveFrom} onChange={(v) => onChange({ ...draft, effectiveFrom: v })} placeholder="Always" max={draft.effectiveTo || undefined} />
             </div>
             <div>
               <label className="label">Effective to</label>
-              <input type="date" className="input" value={draft.effectiveTo} onChange={(e) => onChange({ ...draft, effectiveTo: e.target.value })} />
+              <DatePicker clearable value={draft.effectiveTo} onChange={(v) => onChange({ ...draft, effectiveTo: v })} placeholder="Ongoing" min={draft.effectiveFrom || undefined} />
             </div>
           </div>
           <p className="mt-1.5 text-[12px] text-n-500">
