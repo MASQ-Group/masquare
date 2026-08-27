@@ -1771,6 +1771,8 @@ export interface FbaSkuCost {
   totalAllocatedCostEur: number;
   averageCostPerUnitEur: number | null;
   shipmentCount: number;
+  /** Every SKU this row covers — one product, however many labels it shipped under. */
+  skus?: string[];
 }
 export interface FbaShipmentInput {
   date?: string;

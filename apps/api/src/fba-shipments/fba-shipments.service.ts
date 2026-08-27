@@ -709,25 +709,41 @@ export class FbaShipmentsService {
     const agg = new Map<string, {
       sku: string; productId: string | null; title: string | null;
       salesChannelId: string | null; salesChannelName: string | null;
-      totalQuantity: number; totalAllocatedCostEur: number; shipmentIds: Set<string>;
+      totalQuantity: number; totalAllocatedCostEur: number; shipmentIds: Set<string>; skus: Set<string>;
     }>();
     for (const it of items) {
       const channelId = it.shipment?.salesChannelId ?? '';
-      const key = `${it.sku.trim().toLowerCase()}::${channelId}`;
+      // Group by the PRODUCT and channel, not by the SKU string the shipment happened to use.
+      //
+      // The same product goes to the same marketplace under different labels — RE-NE3150-FBA on one
+      // shipment, NK-NE3150-FBA on the next — and they are aliases of one product. Keying on the
+      // string split one product into two rows, each with its own average, which made it look as
+      // though the cost recorded under one label did not apply to the other. It always did: a sale
+      // resolves its inbound cost by product first, so both aliases already drew on the same pool.
+      // Only this list disagreed with what the profit calculation was actually doing.
+      //
+      // A line with no product keeps its own row under its SKU — it is genuinely unattributable,
+      // and merging every such line together would invent a product that does not exist.
+      const key = it.product?.id ? `p:${it.product.id}::${channelId}` : `s:${it.sku.trim().toLowerCase()}::${channelId}`;
       let g = agg.get(key);
       if (!g) {
         g = { sku: it.sku, productId: it.product?.id ?? null, title: it.product?.title ?? null,
           salesChannelId: channelId || null, salesChannelName: it.shipment?.salesChannel?.name ?? null,
-          totalQuantity: 0, totalAllocatedCostEur: 0, shipmentIds: new Set() };
+          totalQuantity: 0, totalAllocatedCostEur: 0, shipmentIds: new Set(), skus: new Set<string>() };
         agg.set(key, g);
       }
       g.totalQuantity += it.quantity ?? 0;
       g.totalAllocatedCostEur += it.allocatedCostEur != null ? Number(it.allocatedCostEur) : 0;
       if (it.shipment?.id) g.shipmentIds.add(it.shipment.id);
+      // Every label this product shipped under, so a row can say which SKUs it covers rather than
+      // showing one of them and leaving the reader to wonder where the others went.
+      g.skus.add(it.sku);
     }
     return [...agg.values()]
       .map((g) => ({
         sku: g.sku, productId: g.productId, title: g.title,
+        /** Every SKU this row covers — one product, however many labels it shipped under. */
+        skus: [...g.skus].sort(),
         salesChannelId: g.salesChannelId, salesChannelName: g.salesChannelName,
         totalQuantity: g.totalQuantity,
         totalAllocatedCostEur: round(g.totalAllocatedCostEur, 2),

@@ -236,7 +236,16 @@ export function FbaShipmentsPage() {
                   {!costsLoading && skuCosts.length === 0 && <tr><td colSpan={7} className="px-4 py-12 text-center text-[13px] text-n-500">No allocated costs. Add FBA shipments with SKUs to see per-SKU averages.</td></tr>}
                   {skuCosts.map((r) => (
                     <tr key={`${r.sku}:${r.salesChannelId}`} className="hover:bg-teal-50">
-                      <td className={`${td} code font-medium text-n-800`}>{r.sku}</td>
+                      <td className={`${td} code font-medium text-n-800`}>
+                        {r.sku}
+                        {/* One product can ship under several labels; the row covers all of them,
+                            so it says so rather than showing one and hiding the rest. */}
+                        {(r.skus?.length ?? 0) > 1 && (
+                          <span className="ml-1.5 rounded bg-n-100 px-1 py-0.5 text-[10px] font-semibold text-n-500" title={r.skus!.join(', ')}>
+                            +{r.skus!.length - 1}
+                          </span>
+                        )}
+                      </td>
                       <td className={td}>{r.title ?? <span className="text-n-400">unlinked</span>}</td>
                       <td className={td}><ChannelChip name={r.salesChannelName} {...chipFor(r.salesChannelId)} /></td>
                       <td className={`${td} mono text-right`}>{r.totalQuantity}</td>
