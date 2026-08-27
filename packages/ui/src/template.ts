@@ -60,7 +60,10 @@ export function columnLetter(index: number): string {
  * worst kind of failure: the file opens, the column looks ordinary, and free text is accepted
  * again. A range has no such limit.
  */
-export async function downloadTemplate(baseName: string, opts: TemplateOptions) {
+export async function downloadTemplate(
+  baseName: string,
+  opts: TemplateOptions,
+): Promise<{ emptyLists: string[] }> {
   const ExcelJS = await import('exceljs');
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet((opts.sheetName ?? 'Template').slice(0, 31));
@@ -75,6 +78,7 @@ export async function downloadTemplate(baseName: string, opts: TemplateOptions) 
     ws.getColumn(i + 1).width = Math.min(40, Math.max(12, h.length + 2, longestSample + 2));
   });
 
+  const empty: string[] = [];
   const lists = opts.lists ?? [];
   if (lists.length > 0) {
     const listSheet = wb.addWorksheet('Lists');
@@ -90,7 +94,13 @@ export async function downloadTemplate(baseName: string, opts: TemplateOptions) 
       listSheet.getCell(1, col).value = opts.headers[list.column] ?? `List ${col}`;
       list.values.forEach((v, ri) => { listSheet.getCell(ri + 2, col).value = v; });
 
-      if (list.values.length === 0) return; // nothing to choose from; leave the column free
+      if (list.values.length === 0) {
+        // Nothing to choose from, so the column stays free text — but say so. A template that
+        // quietly drops a dropdown looks identical to one that never had it, and the person filling
+        // it in has no way to tell that the column they were told to pick from now accepts anything.
+        empty.push(opts.headers[list.column] ?? columnLetter(list.column));
+        return;
+      }
       const letter = columnLetter(li);
       const source = `Lists!$${letter}$2:$${letter}$${list.values.length + 1}`;
       const target = columnLetter(list.column);
@@ -113,4 +123,5 @@ export async function downloadTemplate(baseName: string, opts: TemplateOptions) 
 
   const buf = await wb.xlsx.writeBuffer();
   triggerDownload(new Blob([buf], { type: 'application/octet-stream' }), `${baseName}.xlsx`);
+  return { emptyLists: empty };
 }

@@ -108,7 +108,7 @@ export function App() {
         <Route path="/sales-transactions/new" element={<SalesTransactionFormPage />} />
         <Route path="/sales-transactions/:id/edit" element={<SalesTransactionFormPage />} />
         <Route path="/shipments" element={<ShipmentsPage />} />
-        <Route path="/fba-shipments" element={<FbaShipmentsPage />} />
+        <Route path="/fba-shipments" element={<RequireTradingCompany><FbaShipmentsPage /></RequireTradingCompany>} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/availability" element={<RequireTradingCompany><AvailabilityPage /></RequireTradingCompany>} />
         <Route path="/channel-listings" element={<RequireTradingCompany><ChannelListingsPage /></RequireTradingCompany>} />
