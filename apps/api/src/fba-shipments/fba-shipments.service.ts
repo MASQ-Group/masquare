@@ -1,7 +1,7 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
-  CreateFbaShipmentDto, EstimateFbaShipmentDto, FbaShipmentBoxDto, UpdateFbaShipmentDto,
+  CreateFbaShipmentDto, EstimateFbaShipmentDto, FbaShipmentBoxDto, PoolDto, UpdateFbaShipmentDto,
 } from './dto/fba-shipment.dto';
 import type { ProgressSink } from '../jobs/jobs.service';
 
@@ -664,15 +664,137 @@ export class FbaShipmentsService {
     return { ok: true };
   }
 
+
+  // --- Fulfilment pools ------------------------------------------------------
+  // Which channels share one pool of inbound stock. Declared, never inferred: nothing in the data
+  // says that a shipment to Amazon IT is what a sale on Amazon SE was fulfilled from.
+
+  /** Pools for the companies in view, each with its channels. */
+  async listPools(companyIds?: string[]) {
+    const rows = await this.prisma.fbaFulfilmentPool.findMany({
+      where: { deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      orderBy: [{ active: 'desc' }, { name: 'asc' }],
+      include: {
+        channels: {
+          include: { salesChannel: { select: { id: true, name: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    return rows.map((p) => ({
+      id: p.id,
+      companyId: p.companyId,
+      name: p.name,
+      active: p.active,
+      effectiveFrom: p.effectiveFrom,
+      effectiveTo: p.effectiveTo,
+      channels: p.channels.map((c) => ({
+        salesChannelId: c.salesChannelId,
+        name: c.salesChannel?.name ?? null,
+        receives: c.receives,
+        sells: c.sells,
+      })),
+    }));
+  }
+
+  async createPool(dto: PoolDto, actorId?: string, companyId?: string) {
+    const channels = this.checkPoolChannels(dto);
+    const pool = await this.prisma.fbaFulfilmentPool.create({
+      data: {
+        companyId: companyId ?? null,
+        name: (dto.name ?? '').trim() || 'Fulfilment pool',
+        active: dto.active ?? true,
+        effectiveFrom: dto.effectiveFrom ? new Date(dto.effectiveFrom) : null,
+        effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : null,
+        createdById: actorId ?? null,
+        updatedById: actorId ?? null,
+        channels: { create: channels },
+      },
+      select: { id: true },
+    });
+    return (await this.listPools(companyId ? [companyId] : undefined)).find((p) => p.id === pool.id);
+  }
+
+  async updatePool(id: string, dto: PoolDto, actorId?: string, companyIds?: string[]) {
+    const existing = await this.prisma.fbaFulfilmentPool.findFirst({
+      where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Fulfilment pool not found');
+    const channels = dto.channels !== undefined ? this.checkPoolChannels(dto) : null;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.fbaFulfilmentPool.update({
+        where: { id },
+        data: {
+          ...(dto.name !== undefined ? { name: dto.name.trim() || 'Fulfilment pool' } : {}),
+          ...(dto.active !== undefined ? { active: dto.active } : {}),
+          ...(dto.effectiveFrom !== undefined ? { effectiveFrom: dto.effectiveFrom ? new Date(dto.effectiveFrom) : null } : {}),
+          ...(dto.effectiveTo !== undefined ? { effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : null } : {}),
+          updatedById: actorId ?? null,
+        },
+      });
+      if (channels) {
+        // Replaced wholesale: the membership IS the pool, and a diff would only be a slower way of
+        // saying the same thing. Scoped to this pool — never a bare deleteMany.
+        await tx.fbaFulfilmentPoolChannel.deleteMany({ where: { poolId: id } });
+        await tx.fbaFulfilmentPoolChannel.createMany({ data: channels.map((c) => ({ ...c, poolId: id })) });
+      }
+    });
+    return (await this.listPools(companyIds)).find((p) => p.id === id);
+  }
+
+  async removePool(id: string, companyIds?: string[]) {
+    const existing = await this.prisma.fbaFulfilmentPool.findFirst({
+      where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('Fulfilment pool not found');
+    await this.prisma.fbaFulfilmentPool.update({ where: { id }, data: { deletedAt: new Date() } });
+    return { ok: true };
+  }
+
+  /**
+   * A pool has to be able to answer "where did the stock come from" and "where was it sold".
+   *
+   * Without a receiving channel there is no cost to average and every sale on the pool would read
+   * zero — the very thing this exists to stop. Rejected at the door rather than discovered later in
+   * a profit figure.
+   */
+  private checkPoolChannels(dto: PoolDto) {
+    const seen = new Set<string>();
+    const rows = (dto.channels ?? [])
+      .filter((c) => c?.salesChannelId && !seen.has(c.salesChannelId) && seen.add(c.salesChannelId))
+      .map((c) => ({
+        salesChannelId: c.salesChannelId,
+        receives: c.receives ?? false,
+        sells: c.sells ?? true,
+      }));
+    if (!rows.some((c) => c.receives)) {
+      throw new BadRequestException('At least one channel must receive stock, or the pool has no cost to share.');
+    }
+    if (!rows.some((c) => c.sells)) {
+      throw new BadRequestException('At least one channel must sell from the pool, or nothing will use it.');
+    }
+    return rows;
+  }
+
   // --- Per-SKU average inbound cost (feeds FBA order profit later) -----------
   /** Average allocated inbound cost per unit for a product on a sales channel, across all
    *  FBA shipments (draft + confirmed). Uses actual cost when registered, else estimate. */
   async averageForProduct(productId: string, salesChannelId?: string) {
+    // If this channel sells from a shared pool, the cost comes from every channel that RECEIVES
+    // stock for that pool — not from this channel, which may never have received any. Amazon's
+    // Pan-European FBA is the case: stock lands in Italy and sells in Sweden.
+    const pooledChannelIds = salesChannelId ? await this.poolInboundChannels(salesChannelId) : null;
+    const channelFilter = pooledChannelIds
+      ? { salesChannelId: { in: pooledChannelIds } }
+      : salesChannelId ? { salesChannelId } : {};
     const items = await this.prisma.fbaShipmentItem.findMany({
       where: {
         deletedAt: null,
         productId,
-        shipment: { deletedAt: null, ...(salesChannelId ? { salesChannelId } : {}) },
+        shipment: { deletedAt: null, ...channelFilter },
       },
     });
     let totalCost = 0;
@@ -684,11 +806,28 @@ export class FbaShipmentsService {
     return {
       productId,
       salesChannelId: salesChannelId ?? null,
+      /** Set when the figure came from a shared pool rather than this channel alone. */
+      pooledFromChannelIds: pooledChannelIds,
       shipmentCount: new Set(items.map((i) => i.shipmentId)).size,
       totalQuantity: totalQty,
       totalAllocatedCostEur: round(totalCost, 4),
       averageCostPerUnitEur: totalQty > 0 ? round(totalCost / totalQty, 4) : null,
     };
+  }
+
+  /**
+   * The channels that receive stock for any active pool this channel sells from.
+   *
+   * Null when the channel belongs to no pool, so the caller keeps its ordinary per-channel
+   * behaviour rather than being handed a list that means the same thing.
+   */
+  private async poolInboundChannels(salesChannelId: string): Promise<string[] | null> {
+    const pools = await this.prisma.fbaFulfilmentPool.findMany({
+      where: { deletedAt: null, active: true, channels: { some: { salesChannelId, sells: true } } },
+      select: { channels: { where: { receives: true }, select: { salesChannelId: true } } },
+    });
+    const ids = [...new Set(pools.flatMap((p) => p.channels.map((c) => c.salesChannelId)))];
+    return ids.length ? ids : null;
   }
 
   /** Allocated inbound cost per SKU per sales channel, aggregated across all FBA shipments

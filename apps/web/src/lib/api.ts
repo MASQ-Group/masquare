@@ -1806,7 +1806,37 @@ export const fbaShipmentsApi = {
    */
   recalculateAll: (confirm = false) =>
     api.post<FbaRecalcDryRun & { id?: string }>('/fba-shipments/recalculate-all', { confirm }).then((r) => r.data),
+
+  // Fulfilment pools — which channels share one body of inbound stock.
+  listPools: () => api.get<FbaPool[]>('/fba-shipments/pools').then((r) => r.data),
+  createPool: (body: FbaPoolInput) => api.post<FbaPool>('/fba-shipments/pools', body).then((r) => r.data),
+  updatePool: (id: string, body: FbaPoolInput) => api.patch<FbaPool>(`/fba-shipments/pools/${id}`, body).then((r) => r.data),
+  removePool: (id: string) => api.delete(`/fba-shipments/pools/${id}`).then((r) => r.data),
 };
+
+/**
+ * A set of sales channels sharing one pool of inbound stock — Amazon's Pan-European FBA and
+ * anything like it. Stock is shipped to one marketplace and sells on another, so cost recorded
+ * against the receiving channel has to be available to the selling one.
+ */
+export interface FbaPool {
+  id: string;
+  companyId: string | null;
+  name: string;
+  active: boolean;
+  /** Judged against the ORDER date, so orders from before the arrangement keep their own figure. */
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  channels: { salesChannelId: string; name: string | null; receives: boolean; sells: boolean }[];
+}
+export interface FbaPoolInput {
+  name?: string;
+  active?: boolean;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  /** Omitted on an update leaves the membership alone; sent, it replaces it wholesale. */
+  channels?: { salesChannelId: string; receives: boolean; sells: boolean }[];
+}
 export interface FbaRecalcDryRun {
   dryRun: boolean;
   shipmentsWithUnlinkedLines: number;

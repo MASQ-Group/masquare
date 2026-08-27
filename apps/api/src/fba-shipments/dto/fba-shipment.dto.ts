@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import {
-  IsArray, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID,
+  IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID,
   Min, ValidateNested,
 } from 'class-validator';
 
@@ -50,4 +50,27 @@ export class SetActualCostDto {
 
 export class SetStatusDto {
   @IsIn(['draft', 'confirmed']) status!: 'draft' | 'confirmed';
+}
+
+/** One channel's part in a fulfilment pool. */
+export class PoolChannelDto {
+  @IsString() salesChannelId!: string;
+  /** Inbound shipments to this channel feed the pool's cost. */
+  @IsOptional() @IsBoolean() receives?: boolean;
+  /** Orders on this channel draw the pool's average. */
+  @IsOptional() @IsBoolean() sells?: boolean;
+}
+
+/**
+ * A set of channels sharing one pool of inbound stock — Amazon's Pan-European FBA and anything
+ * like it. `channels` left undefined on an update means "leave the membership alone"; sent as a
+ * list it replaces the membership wholesale.
+ */
+export class PoolDto {
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsBoolean() active?: boolean;
+  /** ISO dates. Judged against the ORDER date, so historic orders keep the figure true for them. */
+  @IsOptional() @IsString() effectiveFrom?: string | null;
+  @IsOptional() @IsString() effectiveTo?: string | null;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => PoolChannelDto) channels?: PoolChannelDto[];
 }
