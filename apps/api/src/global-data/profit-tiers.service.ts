@@ -6,14 +6,19 @@ import { SaveProfitTiersDto } from './dto/profit-tier.dto';
 export class ProfitTiersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  list() {
-    return this.prisma.profitTier.findMany({ orderBy: { sortOrder: 'asc' } });
+  list(companyIds?: string[]) {
+    return this.prisma.profitTier.findMany({
+      where: { ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      orderBy: { sortOrder: 'asc' },
+    });
   }
 
   /** Replace the whole tier list (the settings editor saves it in one go). */
-  async saveAll(dto: SaveProfitTiersDto) {
+  async saveAll(dto: SaveProfitTiersDto, companyId?: string) {
     await this.prisma.$transaction([
-      this.prisma.profitTier.deleteMany({}),
+      // Scoped to the company being edited. This deleted EVERY tier, so saving in one company wiped
+      // the other's bands — a replace-all is only safe once it knows whose list it is replacing.
+      this.prisma.profitTier.deleteMany({ where: { ...(companyId ? { companyId } : {}) } }),
       this.prisma.profitTier.createMany({
         data: dto.tiers.map((t, i) => ({
           name: t.name ?? null,
@@ -22,9 +27,10 @@ export class ProfitTiersService {
           bgColor: t.bgColor,
           fontColor: t.fontColor,
           sortOrder: i,
+          companyId: companyId ?? null,
         })),
       }),
     ]);
-    return this.list();
+    return this.list(companyId ? [companyId] : undefined);
   }
 }

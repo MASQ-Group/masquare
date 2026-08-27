@@ -56,6 +56,9 @@ export class SalesChannelsController {
 @Controller('profit-tiers')
 export class ProfitTiersController {
   constructor(private readonly svc: ProfitTiersService) {}
-  @Get() list() { return this.svc.list(); }
-  @Put() saveAll(@Body() dto: SaveProfitTiersDto) { return this.svc.saveAll(dto); }
+  @Get() list(@VisibleCompanies() companyIds: string[]) { return this.svc.list(companyIds); }
+  // WriteCompany rather than VisibleCompanies: this replaces a whole list, so it must know exactly
+  // whose it is replacing. It throws when a multi-company user has not picked one, which is the
+  // right answer — a replace-all cannot guess.
+  @Put() saveAll(@Body() dto: SaveProfitTiersDto, @WriteCompany() companyId: string) { return this.svc.saveAll(dto, companyId); }
 }
