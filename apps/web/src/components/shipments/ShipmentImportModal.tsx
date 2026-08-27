@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { FileDrop, ModalShell, downloadSheet, parseSheetFile } from '@masquare/ui';
-import { shipmentsApi, type ShipmentImportRowResult } from '../../lib/api';
+import { FileDrop, ModalShell, downloadTemplate, parseSheetFile } from '@masquare/ui';
+import { shipmentsApi, shippingServicesApi, type ShipmentImportRowResult } from '../../lib/api';
 import { SHIPMENT_COLUMNS, mapShipmentHeaders } from './shipmentColumns';
 
 interface Props { onClose: () => void; onDone: () => void }
@@ -57,8 +58,20 @@ export function ShipmentImportModal({ onClose, onDone }: Props) {
     } finally { setBusy(false); }
   };
 
-  const downloadTemplate = () =>
-    downloadSheet('masquare-shipments-template', [SHIPMENT_COLUMNS.map((c) => c.label), SHIPMENT_COLUMNS.map((c) => c.sample)], 'xlsx');
+  // Only for the template dropdown; the list must be the one that exists at download time.
+  const { data: shippingServices = [] } = useQuery({ queryKey: ['shipping-services'], queryFn: () => shippingServicesApi.list() });
+  const downloadSampleTemplate = () =>
+    downloadTemplate('masquare-shipments-template', {
+      sheetName: 'Shipments',
+      headers: SHIPMENT_COLUMNS.map((c) => c.label),
+      sampleRows: [SHIPMENT_COLUMNS.map((c) => c.sample)],
+      lists: [
+        // Fixed vocabularies declared alongside the columns themselves.
+        ...SHIPMENT_COLUMNS.map((c, i) => ({ column: i, values: c.options ?? [] })).filter((l) => l.values.length > 0),
+        // And the one that has to be read from the platform when the button is pressed.
+        { column: SHIPMENT_COLUMNS.findIndex((c) => c.key === 'shippingService'), values: shippingServices.map((x) => x.name) },
+      ].filter((l) => l.column >= 0 && l.values.length > 0),
+    });
 
   const errorCount = results.filter((r) => r.status === 'error').length;
   const skipCount = results.filter((r) => r.status === 'skip').length;
@@ -80,7 +93,7 @@ export function ShipmentImportModal({ onClose, onDone }: Props) {
             Tip: use <strong>Export</strong> on the Pending fulfilment tab to get a pre-filled template.
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <button className="btn btn-ghost" onClick={downloadTemplate}><Upload size={16} className="rotate-180" /> Download template</button>
+            <button className="btn btn-ghost" onClick={downloadSampleTemplate}><Upload size={16} className="rotate-180" /> Download template</button>
           </div>
           <FileDrop accept=".csv,.xls,.xlsx" onFiles={(f) => onFile(f[0])}>
             {({ dragging }) => (

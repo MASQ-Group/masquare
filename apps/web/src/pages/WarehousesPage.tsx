@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, EyeOff, Pencil, Plus, Search, Trash2, Upload, Warehouse as WarehouseIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { BulkImport, DEFAULT_PAGE_SIZES, ModalShell, Pagination, Select, downloadSheet, type ImportField } from '@masquare/ui';
+import { BulkImport, DEFAULT_PAGE_SIZES, ModalShell, Pagination, Select, downloadTemplate, type ImportField } from '@masquare/ui';
 import { stockApi, warehousesApi, type Warehouse, type WarehouseNode } from '../lib/api';
 import { usePersistentState } from '../lib/usePersistentState';
 import { WarehouseModal } from '../components/warehouses/WarehouseModal';
@@ -15,13 +15,18 @@ const STOCK_IMPORT_FIELDS: ImportField[] = [
   { key: 'quantity', label: 'Quantity', required: true },
 ];
 
-const downloadStockTemplate = () =>
-  downloadSheet('masquare-opening-stock-template', [
-    STOCK_IMPORT_FIELDS.map((f) => f.label),
-    ['RE-S8540', 'Main Warehouse', '25'],
-    ['RE-AC8820', 'Main Warehouse', '8'],
-    ['RE-S8540', 'Damaged Goods', '2'],
-  ], 'xlsx');
+/** Warehouse is a dropdown: a typo there files stock into a location that does not exist. */
+function downloadStockTemplate(warehouses: { name: string }[]) {
+  const first = warehouses[0]?.name ?? 'Main Warehouse';
+  const second = warehouses[1]?.name ?? first;
+  return downloadTemplate('masquare-opening-stock-template', {
+    sheetName: 'Opening Stock',
+    headers: STOCK_IMPORT_FIELDS.map((f) => f.label),
+    sampleRows: [['RE-S8540', first, '25'], ['RE-AC8820', first, '8'], ['RE-S8540', second, '2']],
+    lists: [{ column: STOCK_IMPORT_FIELDS.findIndex((f) => f.key === 'warehouse'), values: warehouses.map((w) => w.name) }]
+      .filter((l) => l.column >= 0 && l.values.length > 0),
+  });
+}
 
 const REASON_LABELS: Record<string, string> = {
   opening_balance: 'Opening balance',
@@ -449,6 +454,13 @@ function MovementsTab({ tree }: { tree: WarehouseNode[] }) {
 // ---------------------------------------------------------------- import
 
 function StockImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  // Warehouse names for the template dropdown, flattened from the tree — a nested list is still a
+  // flat set of names as far as a spreadsheet cell is concerned.
+  const { data: whTree = [] } = useQuery({ queryKey: ['warehouses', 'tree', true], queryFn: () => warehousesApi.tree({ includeInactive: false }) });
+  const flatten = (nodes: WarehouseNode[]): { name: string }[] =>
+    nodes.flatMap((n) => [{ name: n.name }, ...flatten((n.children ?? []) as WarehouseNode[])]);
+  const warehouses = flatten(whTree as WarehouseNode[]);
+
   const commit = async (rows: Record<string, string>[]) => {
     const check = await stockApi.importValidate(rows.map((r) => ({ sku: r.sku, warehouse: r.warehouse, quantity: r.quantity })));
     const bad = check.rows.filter((r) => !r.valid);
@@ -471,7 +483,7 @@ function StockImportModal({ onClose, onDone }: { onClose: () => void; onDone: ()
         <p className="rounded-md border border-info-bd bg-info-bg px-3 py-2 text-[12.5px] text-info">
           Quantities are treated as the <strong>true count</strong> for that SKU in that warehouse — not added to what is already there.
           Every change is recorded in the movement history as an opening balance.
-          <button onClick={downloadStockTemplate} className="ml-1 font-semibold underline">Download the template</button>.
+          <button onClick={() => downloadStockTemplate(warehouses)} className="ml-1 font-semibold underline">Download the template</button>.
         </p>
         <BulkImport fields={STOCK_IMPORT_FIELDS} onCommit={commit} onClose={onClose} />
       </div>

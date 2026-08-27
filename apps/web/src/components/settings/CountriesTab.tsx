@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Pencil, Search, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell, Select, downloadSheet } from '@masquare/ui';
+import { ModalShell, Select, downloadSheet, downloadTemplate } from '@masquare/ui';
 import { countriesApi, shippingServicesApi, type Country, type ShippingService } from '../../lib/api';
 import { AddButton, SectionHeader } from './shared';
 import { CountryImportModal } from './CountryImportModal';
@@ -50,13 +50,25 @@ export function CountriesTab() {
     downloadSheet(`countries-${chosen.length}`, [EXPORT_HEADERS, ...rows], 'xlsx');
     toast.success(`Exported ${chosen.length} countries`);
   };
-  const downloadTemplate = () =>
-    downloadSheet('countries-template', [EXPORT_HEADERS, ['Example Country', 'XX', 'Europe', 'Yes', '20', 'Cyprus Postal Service'], ['Another Country', 'YY', 'Asia', 'No', '0', '']], 'xlsx');
+  const downloadSampleTemplate = () =>
+    downloadTemplate('countries-template', {
+      sheetName: 'Countries',
+      headers: EXPORT_HEADERS,
+      sampleRows: [
+        ['Example Country', 'XX', 'Europe', 'Yes', '20', services[0]?.name ?? 'Cyprus Postal Service'],
+        ['Another Country', 'YY', 'Asia', 'No', '0', ''],
+      ],
+      lists: [
+        { column: EXPORT_HEADERS.indexOf('Continent'), values: ['Africa', 'Asia', 'Europe', 'North America', 'Oceania', 'South America'] },
+        { column: EXPORT_HEADERS.indexOf('EU VAT Zone'), values: ['Yes', 'No'] },
+        { column: EXPORT_HEADERS.indexOf('Default Shipping Service'), values: services.map((x: any) => x.name) },
+      ].filter((l) => l.column >= 0 && l.values.length > 0),
+    });
 
   return (
     <div>
       <SectionHeader title="Countries" description="All world countries with EU VAT status, VAT rate, and default shipping service. Add shipping-service columns to map each country to a zone.">
-        <button className="btn btn-ghost" onClick={downloadTemplate}><Download size={16} /> Template</button>
+        <button className="btn btn-ghost" onClick={downloadSampleTemplate}><Download size={16} /> Template</button>
         <button className="btn btn-ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button>
         <AddButton label="Add country" onClick={() => setEditing(null)} />
       </SectionHeader>
