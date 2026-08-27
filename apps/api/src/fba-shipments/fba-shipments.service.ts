@@ -1,8 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   CreateFbaShipmentDto, EstimateFbaShipmentDto, FbaShipmentBoxDto, UpdateFbaShipmentDto,
 } from './dto/fba-shipment.dto';
+import type { ProgressSink } from '../jobs/jobs.service';
 
 const VOLUMETRIC_DIVISOR = 5000; // (L×W×H cm) / 5000 = volumetric kg — matches sales-transactions.
 const round = (v: number, dp = 2) => {
@@ -60,6 +61,8 @@ export interface EstimateResult {
 
 @Injectable()
 export class FbaShipmentsService {
+  private readonly logger = new Logger(FbaShipmentsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /** Resolve each line's SKU to a live product (by main SKU or alias, case-insensitive). */
@@ -496,6 +499,140 @@ export class FbaShipmentsService {
       }
     });
     return this.get(id);
+  }
+
+  /**
+   * Re-resolve a shipment's SKUs against the catalogue as it stands now, and redo the maths.
+   *
+   * A line's product, title, unit weight and allocated cost are frozen when the shipment is saved.
+   * An imported SKU that matched nothing is stored with productId null and no weight — it shows as
+   * "unlinked", carries no allocated cost, and contributes nothing to the weight the cost was shared
+   * out over. Creating the product afterwards changed none of that, and there was no way to ask for
+   * it to be looked at again.
+   *
+   * Rebuilds the estimate input from what is stored and runs the SAME computeEstimate the save path
+   * uses, so a recalculated shipment cannot differ from one imported today with the catalogue in its
+   * current state.
+   *
+   * Dry run unless `confirm`. An actual cost, once registered, is preserved and re-shared over the
+   * new weights rather than reverting to a fresh estimate — the money that was really spent does not
+   * change because our catalogue improved.
+   */
+  async recalculate(
+    id: string,
+    opts: { confirm?: boolean } = {},
+    companyIds?: string[],
+    actorId?: string,
+    isAdmin = false,
+  ) {
+    const before = await this.get(id, companyIds);
+    if (before.status === 'confirmed' && !isAdmin) {
+      throw new ForbiddenException('Confirmed FBA shipments can only be recalculated by an admin.');
+    }
+
+    // Rebuild the input from stored state. productId is deliberately NOT carried over: a line that
+    // resolved to nothing must get a fresh look, and one that resolved before will resolve again.
+    const rows = await this.prisma.fbaShipmentBox.findMany({
+      where: { shipmentId: id },
+      orderBy: { sortOrder: 'asc' },
+      include: { items: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } } },
+    });
+    const dto: any = {
+      date: before.date,
+      salesChannelId: before.salesChannelId ?? null,
+      fbaShipmentRef: before.fbaShipmentRef ?? null,
+      shippingServiceId: before.shippingServiceId ?? null,
+      packagingPct: Number(before.packagingPct ?? 0),
+      comments: before.comments ?? null,
+      boxes: rows.map((b) => ({
+        label: b.label,
+        emptyWeightKg: b.emptyWeightKg != null ? Number(b.emptyWeightKg) : null,
+        lengthCm: b.lengthCm != null ? Number(b.lengthCm) : null,
+        widthCm: b.widthCm != null ? Number(b.widthCm) : null,
+        heightCm: b.heightCm != null ? Number(b.heightCm) : null,
+        trackingNumber: b.trackingNumber,
+        items: b.items.map((it) => ({ sku: it.sku, quantity: it.quantity })),
+      })),
+    };
+
+    const est = await this.computeEstimate(dto);
+    if (before.actualCostEur != null) {
+      const lines = est.boxes.flatMap((b) => b.items);
+      this.allocate(lines, Number(before.actualCostEur));
+      est.allocation = this.aggregate(lines);
+    }
+
+    const wasUnlinked = rows.flatMap((b) => b.items).filter((it) => it.productId == null).length;
+    const stillUnlinked = est.boxes.flatMap((b) => b.items).filter((l) => l.productId == null);
+    const nowLinked = wasUnlinked - stillUnlinked.length;
+
+    const summary = {
+      wasUnlinked,
+      nowLinked,
+      stillUnlinked: stillUnlinked.length,
+      stillUnlinkedSkus: [...new Set(stillUnlinked.map((l) => l.sku))].slice(0, 50),
+      // Weight and cost move when previously-weightless lines start counting, so both are reported:
+      // a recalculation that changes the chargeable weight has changed the shipment, not just a label.
+      chargeableWeightKg: { before: Number(before.chargeableWeightKg ?? 0), after: est.chargeableWeightKg },
+      estimatedCostEur: { before: Number(before.estimatedCostEur ?? 0), after: est.estimatedCostEur },
+      costSource: before.actualCostEur != null ? 'actual (preserved)' : 'estimated',
+      warnings: est.warnings,
+    };
+
+    if (!opts.confirm) return { dryRun: true, shipmentId: id, ...summary };
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.fbaShipmentItem.deleteMany({ where: { shipmentId: id } });
+      await tx.fbaShipmentBox.deleteMany({ where: { shipmentId: id } });
+      await tx.fbaShipment.update({
+        where: { id },
+        data: { ...this.headerData(dto, est), updatedById: actorId },
+      });
+      for (const box of this.boxesCreateData(est, id)) {
+        await tx.fbaShipmentBox.create({ data: box });
+      }
+    });
+    this.logger.log(`FBA shipment ${id} recalculated: ${nowLinked} line(s) linked, ${stillUnlinked.length} still unmatched.`);
+    return { dryRun: false, shipmentId: id, ...summary, shipment: await this.get(id) };
+  }
+
+  /**
+   * Recalculate every shipment that still has an unlinked line.
+   *
+   * After a catalogue clean-up the question is never "recalculate this one" but "which of these are
+   * now fixable" — and finding them by hand across a page of shipments is how some get missed.
+   */
+  async recalculateAll(opts: { confirm?: boolean } = {}, companyIds?: string[], actorId?: string, isAdmin = false, ctx?: ProgressSink) {
+    const candidates = await this.prisma.fbaShipment.findMany({
+      where: {
+        deletedAt: null,
+        ...(companyIds ? { companyId: { in: companyIds } } : {}),
+        items: { some: { productId: null, deletedAt: null } },
+      },
+      select: { id: true, fbaShipmentRef: true },
+      orderBy: { date: 'desc' },
+    });
+    ctx?.setTotal(candidates.length);
+
+    const results: any[] = [];
+    for (const s of candidates) {
+      ctx?.note(s.fbaShipmentRef ?? s.id);
+      try {
+        const r = await this.recalculate(s.id, opts, companyIds, actorId, isAdmin);
+        results.push({ shipmentId: s.id, ref: s.fbaShipmentRef, nowLinked: r.nowLinked, stillUnlinked: r.stillUnlinked });
+        ctx?.tick(true);
+      } catch (e: any) {
+        results.push({ shipmentId: s.id, ref: s.fbaShipmentRef, error: (e?.message ?? 'failed').slice(0, 200) });
+        ctx?.tick(false);
+      }
+    }
+    return {
+      dryRun: !opts.confirm,
+      shipmentsWithUnlinkedLines: candidates.length,
+      linked: results.reduce((n, r) => n + (r.nowLinked ?? 0), 0),
+      stillUnlinked: results.reduce((n, r) => n + (r.stillUnlinked ?? 0), 0),
+      results,
+    };
   }
 
   async setStatus(id: string, status: 'draft' | 'confirmed', actorId?: string, companyIds?: string[]) {

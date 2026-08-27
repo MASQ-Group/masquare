@@ -7,13 +7,17 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
+import { JobsService } from '../jobs/jobs.service';
 
 @ApiTags('fba-shipments')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('fba-shipments')
 export class FbaShipmentsController {
-  constructor(private readonly fba: FbaShipmentsService) {}
+  constructor(
+    private readonly fba: FbaShipmentsService,
+    private readonly jobs: JobsService,
+  ) {}
 
   // Literal subpaths declared before ":id" routes.
   @Post('estimate')
@@ -57,6 +61,37 @@ export class FbaShipmentsController {
   @Post()
   create(@Body() dto: CreateFbaShipmentDto, @CurrentUser() user: AuthUser, @WriteCompany() companyId: string) {
     return this.fba.create(dto, user.sub, companyId);
+  }
+
+  /**
+   * Re-resolve this shipment's SKUs against the catalogue as it stands now and redo the maths.
+   *
+   * Dry run unless confirm is passed: it reports how many lines would link, which SKUs still match
+   * nothing, and how the chargeable weight and cost would move.
+   */
+  @Post(':id/recalculate')
+  recalculate(
+    @Param('id') id: string,
+    @Body() dto: { confirm?: boolean },
+    @CurrentUser() user: AuthUser,
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    return this.fba.recalculate(id, { confirm: dto?.confirm }, companyIds, user.sub, !!user.isAdmin);
+  }
+
+  /** The same across every shipment that still has an unlinked line. Dry run unless confirmed. */
+  @Post('recalculate-all')
+  recalculateAll(
+    @Body() dto: { confirm?: boolean },
+    @CurrentUser() user: AuthUser,
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    if (!dto?.confirm) return this.fba.recalculateAll({ confirm: false }, companyIds, user.sub, !!user.isAdmin);
+    return this.jobs.start(
+      'fba.recalculate-all',
+      'Recalculating FBA shipments',
+      (ctx) => this.fba.recalculateAll({ confirm: true }, companyIds, user.sub, !!user.isAdmin, ctx),
+    );
   }
 
   @Patch(':id/status')
