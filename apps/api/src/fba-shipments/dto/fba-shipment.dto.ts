@@ -46,6 +46,8 @@ export class UpdateFbaShipmentDto extends FbaShipmentBaseDto {
 
 export class SetActualCostDto {
   @IsNumber() @Min(0) actualCostEur!: number;
+  /** Confirm in the same action — the cost is what permits it, so the operator does both at once. */
+  @IsOptional() @IsBoolean() confirm?: boolean;
 }
 
 export class SetStatusDto {

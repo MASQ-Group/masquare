@@ -15,6 +15,14 @@ export interface ShipmentQuery {
   channelKind?: 'local' | 'channel';
   /** Date order: pending sorts on the order date, the log on the shipment date. */
   sortDir?: 'asc' | 'desc';
+  /**
+   * Include settled FBA shipments in the log.
+   *
+   * They are a separate model with no sales transaction behind them — stock moving to Amazon, not
+   * an order going to a customer — but once confirmed they are as much a recorded shipment as any
+   * other, and this is where the operator expects to find them.
+   */
+  includeFba?: boolean;
   page?: number;
   pageSize?: number;
 }
@@ -67,7 +75,7 @@ export class ShipmentsService {
     const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
     const where: Prisma.ShipmentWhereInput = {
       deletedAt: null,
-      ...(query.type ? { type: query.type } : {}),
+      ...(query.type && query.type !== 'fba' ? { type: query.type } : {}),
       ...(query.q || query.companyIds || query.companyId || query.salesChannelId
         ? {
             transaction: {
@@ -86,11 +94,116 @@ export class ShipmentsService {
           }
         : {}),
     };
-    const [total, rows] = await this.prisma.$transaction([
+    const asc = query.sortDir === 'asc';
+
+    // Filtering by type picks a side: 'fba' shows only settled FBA shipments, and 'outbound' or
+    // 'inbound' are properties of an order shipment that an FBA row does not have.
+    if (query.includeFba && query.type === 'fba') {
+      const upTo = page * pageSize;
+      const fba = await this.fbaLog(query, upTo);
+      return { items: fba.items.slice((page - 1) * pageSize, upTo), total: fba.total, page, pageSize };
+    }
+    if (query.type && query.type !== 'fba') query = { ...query, includeFba: false };
+
+    if (!query.includeFba) {
+      const [total, rows] = await this.prisma.$transaction([
+        this.prisma.shipment.count({ where }),
+        this.prisma.shipment.findMany({ where, include, orderBy: [{ shipmentDate: asc ? 'asc' : 'desc' }, { createdAt: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
+      ]);
+      return { items: rows.map((r) => this.serialize(r)), total, page, pageSize };
+    }
+
+    // Two tables, one date-ordered page. To fill page N of the merged order, each source can
+    // contribute at most the rows up to the end of that page — so take that many from each and
+    // merge, rather than trying to express the union in SQL and losing Prisma's relation filters.
+    const upTo = page * pageSize;
+    const [ownTotal, ownRows, fba] = await Promise.all([
       this.prisma.shipment.count({ where }),
-      this.prisma.shipment.findMany({ where, include, orderBy: [{ shipmentDate: query.sortDir === 'asc' ? 'asc' : 'desc' }, { createdAt: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
+      this.prisma.shipment.findMany({ where, include, orderBy: [{ shipmentDate: asc ? 'asc' : 'desc' }, { createdAt: 'desc' }], take: upTo }),
+      this.fbaLog(query, upTo),
     ]);
-    return { items: rows.map((r) => this.serialize(r)), total, page, pageSize };
+    const at = (r: any) => new Date(r.shipmentDate ?? r.createdAt).getTime();
+    const merged = [...ownRows.map((r) => this.serialize(r)), ...fba.items]
+      .sort((a, b) => (asc ? at(a) - at(b) : at(b) - at(a)));
+    return {
+      items: merged.slice((page - 1) * pageSize, upTo),
+      total: ownTotal + fba.total,
+      page,
+      pageSize,
+    };
+  }
+
+  /**
+   * Settled FBA shipments, shaped like an ordinary shipment row.
+   *
+   * They have no sales transaction, so the transaction-shaped fields carry what the operator would
+   * look for instead: the FBA reference in place of the order reference, and the actual shipping
+   * cost as the cost. `type: 'fba'` marks them so the caller never treats one as an order shipment.
+   */
+  private async fbaLog(query: ShipmentQuery, limit: number) {
+    const and: any[] = [
+      { deletedAt: null },
+      // Confirmed is the whole point: an unconfirmed FBA shipment is still on the worklist, and its
+      // cost is an estimate. Only a settled one belongs in the log.
+      { status: 'confirmed' },
+      { actualCostEur: { not: null } },
+    ];
+    if (query.companyIds) and.push({ companyId: { in: query.companyIds } });
+    else if (query.companyId) and.push({ companyId: query.companyId });
+    if (query.salesChannelId) and.push({ salesChannelId: query.salesChannelId });
+    const q = query.q?.trim();
+    if (q) {
+      and.push({
+        OR: [
+          { fbaShipmentRef: { contains: q, mode: 'insensitive' } },
+          { items: { some: { deletedAt: null, sku: { contains: q, mode: 'insensitive' } } } },
+          { boxes: { some: { trackingNumber: { contains: q, mode: 'insensitive' } } } },
+        ],
+      });
+    }
+    const where = { AND: and };
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.fbaShipment.count({ where }),
+      this.prisma.fbaShipment.findMany({
+        where,
+        orderBy: [{ date: query.sortDir === 'asc' ? 'asc' : 'desc' }, { createdAt: 'desc' }],
+        take: limit,
+        include: {
+          salesChannel: { select: { id: true, name: true } },
+          company: { select: { id: true, officialName: true } },
+          destinationCountry: { select: { id: true, name: true } },
+          shippingService: { select: { id: true, name: true } },
+          boxes: { select: { trackingNumber: true } },
+        },
+      }),
+    ]);
+    const items = rows.map((r: any) => {
+      // One shipment can go in several boxes, each with its own tracking number.
+      const tracking = (r.boxes ?? []).map((b: any) => b.trackingNumber).filter(Boolean);
+      return {
+        id: r.id,
+        transactionId: null,
+        transactionRef: r.fbaShipmentRef ?? null,
+        transactionDate: null,
+        salesChannel: r.salesChannel ?? null,
+        company: r.company ?? null,
+        destinationCountry: r.destinationCountry ?? null,
+        fulfilmentStatus: null,
+        type: 'fba',
+        shipmentDate: r.date,
+        shippingServiceId: r.shippingServiceId ?? null,
+        shippingService: r.shippingService ?? null,
+        trackingNumber: tracking.length ? tracking.join(', ') : null,
+        shippingCostEur: r.actualCostEur != null ? Number(r.actualCostEur) : null,
+        // We ship stock to Amazon, so this is always ours — there is no customer to bear it.
+        costBorneBy: 'company',
+        dutyImportEur: null,
+        comments: r.comments ?? null,
+        groupId: null,
+        createdAt: r.createdAt,
+      };
+    });
+    return { total, items };
   }
 
   /** Fulfilment worklist: transactions still awaiting an outbound shipment. */

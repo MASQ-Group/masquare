@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowRight, ArrowUp, Coins, Download, Package, PackageCheck, PackagePlus, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ArrowDown, ArrowRight, ArrowUp, Coins, Download, ExternalLink, Package, PackageCheck, PackagePlus, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadSheet, Pagination, Select } from '@masquare/ui';
 import { countriesApi, fbaShipmentsApi, salesChannelsApi, shipmentsApi, type FbaShipment, type PendingShipment, type Shipment } from '../lib/api';
@@ -89,13 +90,16 @@ export function ShipmentsPage() {
   const pendingQ = useQuery({
     queryKey: ['shipments-pending', pendingParams], queryFn: () => shipmentsApi.pending(pendingParams), enabled: tab === 'pending',
   });
-  const allParams = { ...commonParams, type: filterType || undefined, sortDir: allSort };
+  const allParams = { ...commonParams, type: filterType || undefined, sortDir: allSort, includeFba: true };
   const allQ = useQuery({
     queryKey: ['shipments-all', allParams], queryFn: () => shipmentsApi.list(allParams), enabled: tab === 'all',
   });
-  const fbaParams = { q: q || undefined, salesChannelId: filterChannel || undefined, sortDir: allSort, page, pageSize };
+  // A worklist, not a log: once the actual cost is registered and the shipment confirmed, it is
+  // settled and moves to All shipments. Draft is exactly that set, since confirming now requires
+  // a cost.
+  const fbaParams = { q: q || undefined, salesChannelId: filterChannel || undefined, status: 'draft', sortDir: allSort, page, pageSize };
   const fbaQ = useQuery({
-    queryKey: ['fba-shipments', fbaParams], queryFn: () => fbaShipmentsApi.list(fbaParams), enabled: tab === 'fba',
+    queryKey: ['fba-shipments', fbaParams], queryFn: () => fbaShipmentsApi.list(fbaParams),
   });
 
   const del = useMutation({
@@ -181,8 +185,8 @@ export function ShipmentsPage() {
         info="Record actual shipping cost and duty per transaction. Actuals replace the calculated shipping estimate and update profit."
         tabs={[
           { key: 'pending', label: 'Pending fulfilment', count: (pendingQ.data?.total ?? 0) > 0 ? pendingQ.data?.total : undefined, attention: true },
+          { key: 'fba', label: 'FBA shipments', count: (fbaQ.data?.total ?? 0) > 0 ? fbaQ.data?.total : undefined, attention: true },
           { key: 'all', label: 'All shipments' },
-          { key: 'fba', label: 'FBA shipments' },
         ]}
         activeTab={tab}
         onTabChange={(k) => setTab(k as Tab)}
@@ -200,7 +204,7 @@ export function ShipmentsPage() {
             </div>
             <Select dense className="w-40" value={filterChannel} onChange={(v) => { setFilterChannel(v); setPage(1); }} options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]} />
             {tab === 'all' && (
-              <Select dense className="w-36" value={filterType} onChange={(v) => { setFilterType(v); setPage(1); }} options={[{ value: '', label: 'All types' }, { value: 'outbound', label: 'Outbound' }, { value: 'inbound', label: 'Inbound' }]} />
+              <Select dense className="w-36" value={filterType} onChange={(v) => { setFilterType(v); setPage(1); }} options={[{ value: '', label: 'All types' }, { value: 'outbound', label: 'Outbound' }, { value: 'inbound', label: 'Inbound' }, { value: 'fba', label: 'FBA inbound' }]} />
             )}
             {tab === 'pending' && (
               <Select dense className="w-36" value={pendingKind} onChange={(v) => { setPendingKind(v as '' | 'local' | 'channel'); setPage(1); }} options={[{ value: '', label: 'All sources' }, { value: 'local', label: 'Local only' }, { value: 'channel', label: 'Channel only' }]} />
@@ -351,7 +355,7 @@ export function ShipmentsPage() {
                   <tr key={s.id} className="hover:bg-teal-50/50">
                     <td className={`${td} mono`}>{formatDate(s.shipmentDate)}</td>
                     <td className={td}>
-                      <span className="font-medium text-n-800">{s.transactionRef}</span>
+                      <span className={`font-medium text-n-800${s.type === 'fba' ? ' mono' : ''}`}>{s.transactionRef ?? '—'}</span>
                       {s.groupId && (
                         <span className="ml-2 rounded-pill border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-violet-700" title="Shipped together with other orders as one parcel — cost split across them">
                           Combined
@@ -362,7 +366,9 @@ export function ShipmentsPage() {
                     <td className={td}>
                       {s.type === 'outbound'
                         ? <span className="tag border border-teal-100 bg-teal-50 text-teal-700">Outbound</span>
-                        : <span className="tag border border-orange-100 bg-orange-50 text-orange-700">Inbound</span>}
+                        : s.type === 'fba'
+                          ? <span className="tag border border-violet-200 bg-violet-50 text-violet-700" title="Stock sent to an Amazon fulfilment centre — no customer order behind it">FBA inbound</span>
+                          : <span className="tag border border-orange-100 bg-orange-50 text-orange-700">Inbound</span>}
                     </td>
                     <td className={td}>{s.shippingService?.name ?? '—'}</td>
                     <td className={`${td} code`}>{s.trackingNumber ?? '—'}</td>
@@ -371,6 +377,15 @@ export function ShipmentsPage() {
                     <td className={`${td} mono text-right`}>{s.dutyImportEur != null && s.dutyImportEur !== 0 ? eur(s.dutyImportEur) : '—'}</td>
                     <td className={`${td} max-w-[220px] truncate`} title={s.comments ?? undefined}>{s.comments ?? '—'}</td>
                     <td className="border-b border-n-100 px-4 py-2.5">
+                      {/* An FBA shipment has no transaction to add to and is not edited from the log —
+                          its lines and cost allocation belong to the FBA Shipments module. */}
+                      {s.type === 'fba' ? (
+                        <div className="flex justify-end">
+                          <Link to="/fba-shipments" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:border-teal-300 hover:text-teal-700" title="Open the FBA Shipments module">
+                            <ExternalLink size={14} /> FBA module
+                          </Link>
+                        </div>
+                      ) : (
                       <div className="flex justify-end gap-1">
                         <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Add another shipment for this transaction" onClick={() => openAddFor(s)}><Package size={15} /></button>
                         <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Edit" onClick={() => openForEdit(s)}><Pencil size={15} /></button>
@@ -388,6 +403,7 @@ export function ShipmentsPage() {
                           <Trash2 size={15} />
                         </button>
                       </div>
+                      )}
                     </td>
                   </tr>
                 ))}

@@ -446,7 +446,25 @@ export class FbaShipmentsService {
     };
   }
 
+  /**
+   * Confirming an FBA shipment means its cost is final, so it must have one.
+   *
+   * A confirmed shipment feeds every downstream FBA figure — the per-SKU allocation, the pool
+   * average, the profit on every order fulfilled from it. Confirming while still on the estimate
+   * publishes a guess as though it were settled, and nothing downstream can tell the difference.
+   */
+  private assertCostRegistered(actualCostEur: unknown) {
+    if (actualCostEur == null) {
+      throw new BadRequestException(
+        'Register the actual shipping cost before confirming — a confirmed shipment sets the cost used for every order fulfilled from it.',
+      );
+    }
+  }
+
   async create(dto: CreateFbaShipmentDto, actorId?: string, companyId?: string) {
+    // A shipment being created cannot have an actual cost yet — that arrives with the carrier's
+    // invoice — so it always starts as a draft.
+    if (dto.status === 'confirmed') this.assertCostRegistered(null);
     const est = await this.computeEstimate(dto);
     const created = await this.prisma.$transaction(async (tx) => {
       const shipment = await tx.fbaShipment.create({
@@ -473,6 +491,7 @@ export class FbaShipmentsService {
     if (before.status === 'confirmed' && !isAdmin) {
       throw new ForbiddenException('Confirmed FBA shipments can only be edited by an admin.');
     }
+    if (dto.status === 'confirmed') this.assertCostRegistered(before.actualCostEur);
     const est = await this.computeEstimate(dto);
     // If an actual cost was already registered, keep allocating the lines to it (by their
     // new weight shares) rather than reverting to the fresh estimate. actualCostEur itself
@@ -636,13 +655,14 @@ export class FbaShipmentsService {
   }
 
   async setStatus(id: string, status: 'draft' | 'confirmed', actorId?: string, companyIds?: string[]) {
-    await this.get(id, companyIds);
+    const before = await this.get(id, companyIds);
+    if (status === 'confirmed') this.assertCostRegistered(before.actualCostEur);
     await this.prisma.fbaShipment.update({ where: { id }, data: { status, updatedById: actorId } });
     return this.get(id);
   }
 
   /** Register the actual shipping cost; re-allocate each line by its weight share. */
-  async setActualCost(id: string, actualCostEur: number, actorId?: string, companyIds?: string[]) {
+  async setActualCost(id: string, actualCostEur: number, actorId?: string, companyIds?: string[], confirm = false) {
     const existing = await this.prisma.fbaShipment.findFirst({ where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) }, include: { items: { where: { deletedAt: null } } } });
     if (!existing) throw new NotFoundException('FBA shipment not found');
     const totalWeight = (existing.items ?? []).reduce(
@@ -653,7 +673,12 @@ export class FbaShipmentsService {
         const alloc = totalWeight > 0 ? round((lineW / totalWeight) * actualCostEur, 4) : null;
         await tx.fbaShipmentItem.update({ where: { id: it.id }, data: { allocatedCostEur: alloc } });
       }
-      await tx.fbaShipment.update({ where: { id }, data: { actualCostEur, updatedById: actorId } });
+      // Confirmed in the same transaction as the cost that permits it, so the two can never
+      // disagree — no window where a shipment is confirmed on a cost that failed to save.
+      await tx.fbaShipment.update({
+        where: { id },
+        data: { actualCostEur, ...(confirm ? { status: 'confirmed' } : {}), updatedById: actorId },
+      });
     });
     return this.get(id);
   }
