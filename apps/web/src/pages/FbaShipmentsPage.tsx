@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, Coins, Download, Lock, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, Coins, Download, Lock, Pencil, Plus, RefreshCw, Search, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { BulkImport, ModalShell, Pagination, Select, downloadTemplate, type ImportField } from '@masquare/ui';
+import { BulkImport, ModalShell, Pagination, ProgressButton, Select, downloadTemplate, type ImportField } from '@masquare/ui';
 import { fbaShipmentsApi, salesChannelsApi, shippingServicesApi, type FbaShipment } from '../lib/api';
+import { useJobProgress } from '../lib/useJobProgress';
+import { useConfirm } from '../components/ConfirmProvider';
 import { PageHeader } from '../components/common/PageHeader';
 import { useAuth } from '../lib/auth';
 import { usePersistentState } from '../lib/usePersistentState';
@@ -103,6 +105,36 @@ export function FbaShipmentsPage() {
   const { data: skuCosts = [], isLoading: costsLoading } = useQuery({
     queryKey: ['fba-sku-costs', costParams], queryFn: () => fbaShipmentsApi.skuCosts(costParams), enabled: view === 'costs',
   });
+  // Rows whose SKU never matched a product. Counted here so the CTA can say what it is for rather
+  // than sitting there unexplained.
+  const unlinkedCount = skuCosts.filter((r) => !r.title).length;
+  const confirmDialog = useConfirm();
+  const recalcJob = useJobProgress('fba.recalculate-all', () => {
+    qc.invalidateQueries({ queryKey: ['fba-sku-costs'] });
+    qc.invalidateQueries({ queryKey: ['fba-shipments'] });
+    toast.success('Allocations recalculated');
+  });
+
+  /** Dry run first, then ask. Recalculating changes stored weights and costs, so it is not a
+   *  refresh — the numbers it would move are shown before anything is written. */
+  const runRecalculate = async () => {
+    const dry = await fbaShipmentsApi.recalculateAll(false);
+    if (dry.shipmentsWithUnlinkedLines === 0) {
+      toast.info('Nothing to recalculate — every shipment line is already linked to a product.');
+      return;
+    }
+    const ok = await confirmDialog({
+      title: 'Recalculate cost allocations?',
+      message:
+        dry.linked + ' line(s) across ' + dry.shipmentsWithUnlinkedLines + ' shipment(s) will link to a product that exists now.'
+        + (dry.stillUnlinked > 0 ? ' ' + dry.stillUnlinked + ' will still match nothing.' : '')
+        + ' Chargeable weight and allocated costs will change on the affected shipments; a registered actual cost is kept and re-shared.',
+      confirmLabel: 'Recalculate',
+    });
+    if (!ok) return;
+    recalcJob.start(() => fbaShipmentsApi.recalculateAll(true) as any);
+  };
+
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['fba-shipments'] });
 
@@ -164,6 +196,27 @@ export function FbaShipmentsPage() {
 
       {view === 'costs' && (
         <>
+          {/* A SKU that was not in the catalogue when the shipment was imported is stored unlinked
+              and carries no weight — so its share of the shipping cost lands on the other lines.
+              Creating the product later fixes nothing on its own, which is what this is for. */}
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="text-[13px] text-n-500">
+              {unlinkedCount > 0
+                ? <><strong className="text-n-800">{unlinkedCount}</strong> {unlinkedCount === 1 ? 'SKU has' : 'SKUs have'} no product. Their cost share is being carried by the other lines.</>
+                : 'Every SKU here is linked to a product.'}
+            </div>
+            <ProgressButton
+              running={recalcJob.running}
+              value={recalcJob.value}
+              detail={recalcJob.detail}
+              onClick={runRecalculate}
+              runningLabel={<><RefreshCw size={15} /> Recalculating</>}
+              className="!h-8 !text-[13px]"
+              title="Re-check every unlinked SKU against the catalogue and redo the cost allocation"
+            >
+              <RefreshCw size={15} /> Recalculate allocations
+            </ProgressButton>
+          </div>
           <div className="card overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[820px] border-collapse">
