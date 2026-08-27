@@ -1797,7 +1797,23 @@ export const fbaShipmentsApi = {
     api.get<FbaSkuCost[]>('/fba-shipments/sku-costs', { params }).then((r) => r.data),
   importShipments: (rows: Record<string, string>[]) =>
     api.post<{ created: number; shipments: number; errors: { fbaRef: string; message: string }[] }>('/fba-shipments/import', { rows }).then((r) => r.data),
+  /**
+   * Re-resolve stored SKUs against the catalogue as it stands now and redo the allocation.
+   *
+   * Without confirm it reports what WOULD change and writes nothing. With confirm it returns a job.
+   */
+  recalculateAll: (confirm = false) =>
+    api.post<FbaRecalcDryRun & { id?: string }>('/fba-shipments/recalculate-all', { confirm }).then((r) => r.data),
 };
+export interface FbaRecalcDryRun {
+  dryRun: boolean;
+  shipmentsWithUnlinkedLines: number;
+  /** Lines that would gain a product because it exists now. */
+  linked: number;
+  /** Lines whose SKU still matches nothing, even as an alias. */
+  stillUnlinked: number;
+  results: { shipmentId: string; ref: string | null; nowLinked?: number; stillUnlinked?: number; error?: string }[];
+}
 
 export type TxGroupBy = 'channelGroup' | 'channel' | 'sku' | 'brand' | 'vendor';
 export interface TxGroupRow { key: string; label: string; orders: number; units: number; revenueEur: number; profitEur: number; marginPct: number | null }
