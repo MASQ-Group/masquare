@@ -1902,6 +1902,13 @@ model ChannelLogo {
 // transaction list (e.g. Tier 1: 1–10% → green chip). Managed in Global Settings.
 model ProfitTier {
   id        String @id @default(uuid()) @db.Uuid
+  /// The company these bands belong to.
+  ///
+  /// What counts as a healthy margin is not the same for a company selling FBA on marketplaces it
+  /// is new to as for one that has traded there for years, so the bands — and their colours — are
+  /// per company. They were global, which meant editing them in one company silently recoloured
+  /// every figure in the other.
+  companyId String? @map("company_id") @db.Uuid
   name      String?
   fromPct   Float  @map("from_pct")
   toPct     Float  @map("to_pct")
@@ -1912,6 +1919,7 @@ model ProfitTier {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  @@index([companyId])
   @@map("profit_tier")
 }
 
