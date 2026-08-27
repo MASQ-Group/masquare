@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Download, Trash2, Upload } from 'lucide-react';
-import { ModalShell, downloadSheet } from '@masquare/ui';
+import { ModalShell, downloadSheet, downloadTemplate } from '@masquare/ui';
 import { countriesApi, salesChannelsApi, type SalesChannel } from '../../lib/api';
+
+const SALES_CHANNEL_HEADERS = ['Name', 'Description', 'Native Country', 'Native Currency', 'Email', 'Website', 'Contact Name'];
 import { CountrySelect } from '../common/CountrySelect';
 import { CurrencySelect } from '../common/CurrencySelect';
 import { CountryTag } from '../common/Flag';
@@ -43,17 +45,23 @@ export function SalesChannelsTab() {
     return c?.id ?? null;
   };
 
-  const downloadTemplate = () =>
-    downloadSheet('sales-channels-template', [
-      ['Name', 'Description', 'Native Country', 'Native Currency', 'Email', 'Website', 'Contact Name'],
-      ['Amazon UK', 'Amazon United Kingdom', 'United Kingdom', 'GBP', '15', 'Yes', '', 'seller@example.com', 'https://amazon.co.uk', 'Marketplace Team'],
-      ['eBay DE', 'eBay Germany', 'Germany', 'EUR', '11', 'No', 'USD', 'seller@example.de', 'https://ebay.de', 'Sales'],
-    ], 'xlsx');
+  const downloadSampleTemplate = () =>
+    downloadTemplate('sales-channels-template', {
+      sheetName: 'Sales Channels',
+      headers: SALES_CHANNEL_HEADERS,
+      sampleRows: [
+        ['Amazon UK', 'Amazon United Kingdom', 'United Kingdom', 'GBP', '15', 'Yes', '', 'seller@example.com', 'https://amazon.co.uk', 'Marketplace Team'],
+        ['eBay DE', 'eBay Germany', 'Germany', 'EUR', '11', 'No', 'USD', 'seller@example.de', 'https://ebay.de', 'Sales'],
+      ],
+      lists: [
+        { column: SALES_CHANNEL_HEADERS.indexOf('Native Country'), values: countries.map((c: any) => c.name) },
+      ].filter((l) => l.column >= 0 && l.values.length > 0),
+    });
 
   return (
     <div>
       <SectionHeader title="Sales Channels" description="Marketplaces and channels the companies sell on, with their native country and currency.">
-        <button className="btn btn-ghost" onClick={downloadTemplate}><Download size={16} /> Template</button>
+        <button className="btn btn-ghost" onClick={downloadSampleTemplate}><Download size={16} /> Template</button>
         <button className="btn btn-ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button>
         <AddButton label="Add sales channel" onClick={() => setEditing(null)} />
       </SectionHeader>

@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Plus, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ModalShell, Select, downloadSheet, parseSheetFile } from '@masquare/ui';
+import { ModalShell, Select, downloadTemplate, parseSheetFile } from '@masquare/ui';
 import { countriesApi, shippingServicesApi, type ShippingService } from '../../lib/api';
 import { CountrySelect } from '../common/CountrySelect';
 import { AddButton, RefTable, SectionHeader } from './shared';
@@ -150,7 +150,13 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
     toast.success(`Imported ${map.size} zones${skipped ? ` (${skipped} skipped)` : ''}`);
   };
   const downloadZonesTemplate = () =>
-    downloadSheet('shipping-zones-template', [['Zone Name', 'Countries'], ['Zone 1', 'GB; DE; FR'], ['Zone 2', 'US; CA']], 'xlsx');
+    // No dropdown here: Countries holds a semicolon-separated LIST, and a cell validation accepts
+    // one value from a list, not several. Forcing it would make the common case impossible.
+    downloadTemplate('shipping-zones-template', {
+      sheetName: 'Shipping Zones',
+      headers: ['Zone Name', 'Countries'],
+      sampleRows: [['Zone 1', 'GB; DE; FR'], ['Zone 2', 'US; CA']],
+    });
 
   const onRatesFile = async (file: File) => {
     const { rows } = await parseSheetFile(file);
@@ -174,7 +180,17 @@ function ShippingServiceModal({ service, onClose, onSaved }: { service: Shipping
     toast.success(`Imported ${parsed.length} weight ranges`);
   };
   const downloadRatesTemplate = () =>
-    downloadSheet('shipping-rates-template', [['Zone Name', 'From Weight (kg)', 'To Weight (kg)', 'Shipping Charge (EUR)'], ['Zone 1', '0', '2', '3.50'], ['Zone 1', '2', '5', '5.90'], ['Zone 2', '0', '2', '7.90']], 'xlsx');
+    downloadTemplate('shipping-rates-template', {
+      sheetName: 'Shipping Rates',
+      headers: ['Zone Name', 'From Weight (kg)', 'To Weight (kg)', 'Shipping Charge (EUR)'],
+      sampleRows: [
+        [zoneNames[0] ?? 'Zone 1', '0', '2', '3.50'],
+        [zoneNames[0] ?? 'Zone 1', '2', '5', '5.90'],
+        [zoneNames[1] ?? 'Zone 2', '0', '2', '7.90'],
+      ],
+      // A rate against a zone that does not exist is silently useless, so the zone is chosen.
+      lists: [{ column: 0, values: zoneNames }].filter((l) => l.values.length > 0),
+    });
 
   return (
     <ModalShell open title={service ? 'Edit shipping service' : 'New shipping service'} subtitle={service?.name}

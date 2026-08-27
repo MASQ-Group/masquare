@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Coins, Download, Lock, Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { BulkImport, ModalShell, Pagination, Select, downloadSheet, type ImportField } from '@masquare/ui';
-import { fbaShipmentsApi, salesChannelsApi, type FbaShipment } from '../lib/api';
+import { BulkImport, ModalShell, Pagination, Select, downloadTemplate, type ImportField } from '@masquare/ui';
+import { fbaShipmentsApi, salesChannelsApi, shippingServicesApi, type FbaShipment } from '../lib/api';
 import { PageHeader } from '../components/common/PageHeader';
 import { useAuth } from '../lib/auth';
 import { usePersistentState } from '../lib/usePersistentState';
@@ -34,13 +34,32 @@ const FBA_IMPORT_FIELDS: ImportField[] = [
   { key: 'sku', label: 'SKU', required: true },
   { key: 'quantity', label: 'Quantity', required: true },
 ];
-const downloadFbaTemplate = () =>
-  downloadSheet('masquare-fba-shipments-template', [
-    FBA_IMPORT_FIELDS.map((f) => f.label),
-    ['FBA15ABC001', '2026-01-15', 'Amazon SG', 'DHL Express', '10', 'Box 1', '0.5', '40', '30', '30', 'TRACK123', 'RE-S8540-FBA', '6'],
-    ['FBA15ABC001', '2026-01-15', 'Amazon SG', 'DHL Express', '10', 'Box 1', '0.5', '40', '30', '30', 'TRACK123', 'RE-AC8820-FBA', '4'],
-    ['FBA15ABC001', '2026-01-15', 'Amazon SG', 'DHL Express', '10', 'Box 2', '0.4', '30', '20', '20', 'TRACK124', 'RE-S8540-FBA', '3'],
-  ], 'xlsx');
+/**
+ * The import template, with the columns that must match something in the platform offered as
+ * dropdowns rather than typed.
+ *
+ * A mistyped channel or service used to fail at import, or worse, match nothing and import as
+ * blank. The permitted values are read from the platform when the button is pressed, so a template
+ * downloaded today lists the channels that exist today.
+ */
+function buildFbaTemplate(channels: { name: string }[], services: { name: string }[]) {
+  const sample = (box: string, w: string, l: string, wd: string, h: string, track: string, sku: string, qty: string) => [
+    'FBA15ABC001', '2026-01-15', channels[0]?.name ?? 'Amazon SG', services[0]?.name ?? 'DHL Express',
+    '10', box, w, l, wd, h, track, sku, qty,
+  ];
+  return downloadTemplate('masquare-fba-shipments-template', {
+    sheetName: 'FBA Shipments',
+    headers: FBA_IMPORT_FIELDS.map((f) => f.label),
+    sampleRows: [
+      sample('Box 1', '0.5', '40', '30', '30', 'TRACK123', 'RE-S8540-FBA', '6'),
+      sample('Box 2', '0.4', '30', '20', '20', 'TRACK124', 'RE-AC8820-FBA', '4'),
+    ],
+    lists: [
+      { column: FBA_IMPORT_FIELDS.findIndex((f) => f.key === 'salesChannel'), values: channels.map((c) => c.name) },
+      { column: FBA_IMPORT_FIELDS.findIndex((f) => f.key === 'shippingService'), values: services.map((s) => s.name) },
+    ].filter((l) => l.column >= 0),
+  });
+}
 
 export function FbaShipmentsPage() {
   const qc = useQueryClient();
@@ -65,6 +84,9 @@ export function FbaShipmentsPage() {
   useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
 
   const { data: channels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
+  // Only for the template's dropdowns — the list must be the one that exists when it is downloaded.
+  const { data: shippingServices = [] } = useQuery({ queryKey: ['shipping-services'], queryFn: () => shippingServicesApi.list() });
+  const downloadFbaTemplate = () => buildFbaTemplate(channels, shippingServices);
   const chipFor = useChannelChips();
   const params = { q: q || undefined, salesChannelId: filterChannel || undefined, status: filterStatus || undefined, sortDir, page, pageSize };
   const { data, isLoading } = useQuery({ queryKey: ['fba-shipments', params], queryFn: () => fbaShipmentsApi.list(params) });

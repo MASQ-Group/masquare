@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { FileDrop, ModalShell, downloadSheet, parseSheetFile } from '@masquare/ui';
-import { expensesApi, type ExpenseImportRowResult } from '../../lib/api';
+import { FileDrop, ModalShell, downloadTemplate, parseSheetFile } from '@masquare/ui';
+import { expenseCategoriesApi, expenseTagsApi, expensesApi, type ExpenseImportRowResult } from '../../lib/api';
 import { EXPENSE_IMPORT_COLUMNS, EXPENSE_IMPORT_SAMPLE_ROWS, mapExpenseHeaders } from './expenseImportColumns';
 
 interface Props { companyId: string; onClose: () => void; onDone: () => void }
@@ -57,8 +58,20 @@ export function ExpenseImportModal({ companyId, onClose, onDone }: Props) {
     } finally { setBusy(false); }
   };
 
-  const downloadTemplate = () =>
-    downloadSheet('masquare-expenses-template', [EXPENSE_IMPORT_COLUMNS.map((c) => c.label), ...EXPENSE_IMPORT_SAMPLE_ROWS], 'xlsx');
+  // For the template dropdowns only — the lists must be the ones that exist at download time.
+  const { data: categories = [] } = useQuery({ queryKey: ['expense-categories'], queryFn: () => expenseCategoriesApi.list() });
+  const { data: tags = [] } = useQuery({ queryKey: ['expense-tags'], queryFn: () => expenseTagsApi.list() });
+  const downloadSampleTemplate = () =>
+    downloadTemplate('masquare-expenses-template', {
+      sheetName: 'Expenses',
+      headers: EXPENSE_IMPORT_COLUMNS.map((c) => c.label),
+      sampleRows: EXPENSE_IMPORT_SAMPLE_ROWS,
+      lists: [
+        { column: EXPENSE_IMPORT_COLUMNS.findIndex((c) => c.key === 'type'), values: ['Monthly', 'Annual', 'Once-off'] },
+        { column: EXPENSE_IMPORT_COLUMNS.findIndex((c) => c.key === 'category'), values: categories.map((c: any) => c.name) },
+        { column: EXPENSE_IMPORT_COLUMNS.findIndex((c) => c.key === 'tag'), values: tags.map((t: any) => t.name) },
+      ].filter((l) => l.column >= 0 && l.values.length > 0),
+    });
 
   const errorCount = results.filter((r) => r.status === 'error').length;
   const okCount = results.filter((r) => r.status === 'new').length;
@@ -80,7 +93,7 @@ export function ExpenseImportModal({ companyId, onClose, onDone }: Props) {
             (with its Category and Tag). Dates are <span className="mono">DD/MM/YYYY</span> — for Monthly/Annual only the month matters (the start month), for Once-off it's the exact expense date. Currency defaults to EUR.
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <button className="btn btn-ghost" onClick={downloadTemplate}><Upload size={16} className="rotate-180" /> Download template</button>
+            <button className="btn btn-ghost" onClick={downloadSampleTemplate}><Upload size={16} className="rotate-180" /> Download template</button>
           </div>
           <FileDrop accept=".csv,.xls,.xlsx" onFiles={(f) => onFile(f[0])}>
             {({ dragging }) => (

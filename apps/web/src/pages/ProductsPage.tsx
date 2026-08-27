@@ -3,9 +3,9 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Columns3, ChevronsUpDown, Download, Filter, Grid, List, Package, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { downloadSheet, Pagination } from '@masquare/ui';
+import { downloadTemplate, Pagination } from '@masquare/ui';
 import {
-  brandsApi, categoriesApi, fulfilmentTypesApi, productsApi, productTypesApi, vendorsApi,
+  brandsApi, categoriesApi, fulfilmentTypesApi, productsApi, productTypesApi, vatClassesApi, vendorsApi,
   type Product, type ProductListParams,
 } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -115,6 +115,8 @@ export function ProductsPage() {
   const vendors = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
   const brands = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
   const ftypes = useQuery({ queryKey: ['fulfilment-types'], queryFn: () => fulfilmentTypesApi.list() });
+  // For the template dropdown: a VAT class that does not exist is never created on import.
+  const vatClasses = useQuery({ queryKey: ['vat-classes'], queryFn: () => vatClassesApi.list() });
   const ptypes = useQuery({ queryKey: ['product-types'], queryFn: () => productTypesApi.list() });
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list() });
 
@@ -170,7 +172,20 @@ export function ProductsPage() {
 
   const onExport = async () => {
     if (selected.size === 0) {
-      downloadSheet('masquare-products-template', [EXPORT_COLUMNS.map((c) => c.label), EXPORT_COLUMNS.map((c) => c.sample)], 'xlsx');
+      // Dropdowns only where a value MUST already exist. Brand, vendor, category, product type and
+      // product class are created on import when they are new, so locking them to today's list
+      // would refuse a legitimate new brand — the opposite of helpful. VAT class is never
+      // auto-created (the server reports it and leaves the field empty), and fulfilment type is a
+      // closed set, so those two are exactly the columns a typo ruins.
+      await downloadTemplate('masquare-products-template', {
+        sheetName: 'Products',
+        headers: EXPORT_COLUMNS.map((c) => c.label),
+        sampleRows: [EXPORT_COLUMNS.map((c) => c.sample)],
+        lists: [
+          { column: EXPORT_COLUMNS.findIndex((c) => c.key === 'vatClass'), values: (vatClasses.data ?? []).map((v: any) => v.name) },
+          { column: EXPORT_COLUMNS.findIndex((c) => c.key === 'fulfilmentType'), values: (ftypes.data ?? []).map((f: any) => f.code ?? f.name) },
+        ].filter((l) => l.column >= 0 && l.values.length > 0),
+      });
       toast.success('Template downloaded — fill it in, then Import');
       return;
     }
