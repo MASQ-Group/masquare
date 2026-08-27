@@ -15,6 +15,7 @@ import { formatDate } from '../lib/format';
 import { FbaShipmentModal } from '../components/fba-shipments/FbaShipmentModal';
 import { FbaShipmentSummaryModal } from '../components/fba-shipments/FbaShipmentSummaryModal';
 import { FbaActualCostModal } from '../components/fba-shipments/FbaActualCostModal';
+import { FulfilmentPools } from '../components/fba-shipments/FulfilmentPools';
 
 const eur = (v: number | null | undefined) => (v != null ? `€${v.toFixed(2)}` : '—');
 const kg = (v: number | null | undefined) => (v != null ? `${v.toFixed(2)} kg` : '—');
@@ -100,7 +101,7 @@ export function FbaShipmentsPage() {
   const params = { q: q || undefined, salesChannelId: filterChannel || undefined, status: filterStatus || undefined, sortDir, page, pageSize };
   const { data, isLoading } = useQuery({ queryKey: ['fba-shipments', params], queryFn: () => fbaShipmentsApi.list(params) });
 
-  const [view, setView] = useState<'shipments' | 'costs'>('shipments');
+  const [view, setView] = useState<'shipments' | 'costs' | 'pools'>('shipments');
   const costParams = { q: q || undefined, salesChannelId: filterChannel || undefined };
   const { data: skuCosts = [], isLoading: costsLoading } = useQuery({
     queryKey: ['fba-sku-costs', costParams], queryFn: () => fbaShipmentsApi.skuCosts(costParams), enabled: view === 'costs',
@@ -160,9 +161,10 @@ export function FbaShipmentsPage() {
         tabs={[
           { key: 'shipments', label: 'Shipments' },
           { key: 'costs', label: 'Allocated cost per SKU' },
+          { key: 'pools', label: 'Fulfilment pools' },
         ]}
         activeTab={view}
-        onTabChange={(k) => setView(k as 'shipments' | 'costs')}
+        onTabChange={(k) => setView(k as 'shipments' | 'costs' | 'pools')}
         actions={
           <>
             <button className="hbtn" onClick={downloadFbaTemplate}><Download size={15} /> Template</button>
@@ -172,16 +174,20 @@ export function FbaShipmentsPage() {
         primary={<button className="hbtn-primary" onClick={() => setModal({})}><Plus size={16} /> New FBA shipment</button>}
         toolbar={
           <>
+            {view !== 'pools' && (
             <div className="flex h-8 min-w-[220px] flex-1 items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-3">
               <Search size={15} className="text-n-400" />
               <input className="h-full flex-1 bg-transparent text-[13px] outline-none" placeholder={view === 'costs' ? 'Search SKU…' : 'Search FBA ID or SKU…'} value={qInput} onChange={(e) => setQInput(e.target.value)} />
             </div>
+            )}
+            {view !== 'pools' && (
             <Select
               dense className="w-40"
               value={filterChannel}
               onChange={(v) => { setFilterChannel(v); setPage(1); }}
               options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]}
             />
+            )}
             {view === 'shipments' && (
               <Select
                 dense className="w-36"
@@ -193,6 +199,8 @@ export function FbaShipmentsPage() {
           </>
         }
       />
+
+      {view === 'pools' && <FulfilmentPools channels={channels} />}
 
       {view === 'costs' && (
         <>

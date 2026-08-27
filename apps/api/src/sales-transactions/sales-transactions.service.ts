@@ -96,6 +96,17 @@ interface FeeEstimateMaps {
   fbaBySku: Map<string, number>;
   fbaByChannel: Map<string, number>;
 }
+/**
+ * FBA inbound cost lookups: per channel, and per fulfilment pool.
+ *
+ *  is keyed p:{productId}:{channelId} / s:{sku}:{channelId}.  is null when no pool is
+ * configured, which is the ordinary case and keeps the old behaviour exactly.
+ */
+interface FbaAvg {
+  map: Map<string, number>;
+  pools: { avg: Map<string, number>; byChannel: Map<string, { id: string; from: Date | null; to: Date | null }[]> } | null;
+}
+
 const EMPTY_FEE_MAPS: FeeEstimateMaps = { bySku: new Map(), byChannel: new Map(), fbaBySku: new Map(), fbaByChannel: new Map() };
 
 @Injectable()
@@ -140,7 +151,7 @@ export class SalesTransactionsService {
     return this.moduleRef.get<ChannelListingsService>('CHANNEL_LISTINGS_SERVICE', { strict: false });
   }
 
-  private serialize(t: any, serviceMap: Map<string, any>, fbaAvgMap: Map<string, number> = new Map(), skuFulfilmentMap: Map<string, 'FBA' | 'FBM'> = new Map(), feePctMap: FeeEstimateMaps = EMPTY_FEE_MAPS, fxFallback: Map<string, number> = new Map()) {
+  private serialize(t: any, serviceMap: Map<string, any>, fbaAvgMap: FbaAvg = { map: new Map(), pools: null }, skuFulfilmentMap: Map<string, 'FBA' | 'FBM'> = new Map(), feePctMap: FeeEstimateMaps = EMPTY_FEE_MAPS, fxFallback: Map<string, number> = new Map()) {
     const items = t.items ?? [];
     // FBA: Amazon collects the buyer-paid shipping (it's not the seller's revenue), and there's
     // no seller-paid outbound leg. So for FBA the shipping charged to the buyer is excluded from
@@ -319,7 +330,7 @@ export class SalesTransactionsService {
       const estFbaUnitFee = (sku: string) =>
         feePctMap.fbaBySku.get(`${(sku ?? '').trim().toLowerCase()}:${chId}`) ?? feePctMap.fbaByChannel.get(chId) ?? 0;
       for (const it of items) {
-        const avg = this.fbaUnitCost(fbaAvgMap, it, t.salesChannelId);
+        const avg = this.fbaUnitCost(fbaAvgMap, it, t.salesChannelId, t.date);
         fbaInboundCostEur += avg * n(it.quantity ?? 1);
         if (fx == null) continue;
         const posted = n(it.fbaFulfilmentFeeAmount);
@@ -1171,7 +1182,78 @@ export class SalesTransactionsService {
   /** Average allocated inbound (to-Amazon) cost per unit, keyed `${productId}:${salesChannelId}`,
    *  for the FBA orders in `rows`. Sums each SKU's allocated cost across all FBA shipments to a
    *  channel (draft + confirmed) and divides by the total quantity sent — feeds FBA profit. */
-  private async buildFbaAverageMap(rows: any[]): Promise<Map<string, number>> {
+  /**
+   * Channels that share a pool of inbound stock, and the shipments that feed each pool.
+   *
+   * Amazon's Pan-European FBA: stock goes to Italy, Amazon redistributes it, and the sale arrives on
+   * Sweden. Inbound cost is recorded per channel, so a Swedish order found nothing and booked no
+   * inbound cost at all — an order reading more profitable than it was.
+   *
+   * The pool average is used even where the selling channel has inbound shipments of its own.
+   * Once Amazon commingles the stock the unit that sold cannot be traced to a particular shipment,
+   * so an average across the pool is the truthful figure and a direct match is false precision.
+   *
+   * Judged against the ORDER date: before enrolment an Italian shipment genuinely did not supply
+   * Sweden, so historic orders keep the figure that was true for them.
+   */
+  private async buildFbaPoolMap(productIds: Set<string>, skus: Set<string>) {
+    const pools = await this.prisma.fbaFulfilmentPool.findMany({
+      where: { deletedAt: null, active: true },
+      select: {
+        id: true, effectiveFrom: true, effectiveTo: true,
+        channels: { select: { salesChannelId: true, receives: true, sells: true } },
+      },
+    });
+    if (pools.length === 0) return null;
+
+    const inboundChannelIds = [...new Set(pools.flatMap((p) => p.channels.filter((c) => c.receives).map((c) => c.salesChannelId)))];
+    if (inboundChannelIds.length === 0) return null;
+
+    // Every shipment line into a receiving channel, for the products in question.
+    const items = await this.prisma.fbaShipmentItem.findMany({
+      where: {
+        deletedAt: null,
+        shipment: { deletedAt: null, salesChannelId: { in: inboundChannelIds } },
+        OR: [
+          ...(productIds.size ? [{ productId: { in: [...productIds] } }] : []),
+          ...(skus.size ? [{ sku: { in: [...skus] } }] : []),
+        ],
+      },
+      select: { productId: true, sku: true, quantity: true, allocatedCostEur: true, shipment: { select: { salesChannelId: true } } },
+    });
+
+    const agg = new Map<string, { cost: number; qty: number }>();
+    const add = (key: string, cost: number, qty: number) => {
+      const cur = agg.get(key) ?? { cost: 0, qty: 0 };
+      cur.cost += cost; cur.qty += qty; agg.set(key, cur);
+    };
+    for (const p of pools) {
+      const receiving = new Set(p.channels.filter((c) => c.receives).map((c) => c.salesChannelId));
+      for (const it of items) {
+        if (!receiving.has(it.shipment?.salesChannelId ?? '')) continue;
+        const cost = it.allocatedCostEur != null ? Number(it.allocatedCostEur) : 0;
+        const qty = n(it.quantity);
+        if (it.productId) add(`P:${p.id}:p:${it.productId}`, cost, qty);
+        if (it.sku) add(`P:${p.id}:s:${String(it.sku).trim().toLowerCase()}`, cost, qty);
+      }
+    }
+    const avg = new Map<string, number>();
+    for (const [k, v] of agg) if (v.qty > 0) avg.set(k, round(v.cost / v.qty, 4));
+
+    // Which pools a selling channel may draw on. A channel can sit in more than one.
+    const byChannel = new Map<string, { id: string; from: Date | null; to: Date | null }[]>();
+    for (const p of pools) {
+      for (const c of p.channels) {
+        if (!c.sells) continue;
+        const list = byChannel.get(c.salesChannelId) ?? [];
+        list.push({ id: p.id, from: p.effectiveFrom, to: p.effectiveTo });
+        byChannel.set(c.salesChannelId, list);
+      }
+    }
+    return { avg, byChannel };
+  }
+
+  private async buildFbaAverageMap(rows: any[]): Promise<FbaAvg> {
     const map = new Map<string, number>();
     const productIds = new Set<string>();
     const skus = new Set<string>();
@@ -1179,7 +1261,7 @@ export class SalesTransactionsService {
       if (r.fulfilmentType !== 'FBA') continue;
       for (const it of r.items ?? []) { if (it.productId) productIds.add(it.productId); if (it.sku) skus.add(String(it.sku).trim()); }
     }
-    if (!productIds.size && !skus.size) return map;
+    if (!productIds.size && !skus.size) return { map, pools: null };
     // Match FBA inbound cost by product AND by SKU: an FBA shipment line that never linked to a
     // product (productId null) would otherwise never match its orders, so its cost is invisible.
     const items = await this.prisma.fbaShipmentItem.findMany({
@@ -1205,16 +1287,31 @@ export class SalesTransactionsService {
       if (it.sku) add(`s:${String(it.sku).trim().toLowerCase()}:${ch}`, cost, qty);
     }
     for (const [key, v] of agg) if (v.qty > 0) map.set(key, round(v.cost / v.qty, 4));
-    return map;
+    return { map, pools: await this.buildFbaPoolMap(productIds, skus) };
   }
 
   /** Per-unit FBA inbound cost for a line: by product first, else by SKU (covers FBA lines that
    *  never linked to a product). Channel-scoped, matching how the cost was recorded. */
-  private fbaUnitCost(fbaAvgMap: Map<string, number>, it: any, salesChannelId: string | null): number {
+  private fbaUnitCost(fba: FbaAvg, it: any, salesChannelId: string | null, orderDate?: Date | null): number {
     const ch = salesChannelId ?? '';
+    const sku = String(it.sku ?? '').trim().toLowerCase();
+
+    // A pool wins over the channel's own figure. Once Amazon commingles the stock the unit that sold
+    // cannot be traced to a shipment, so the pool average is the truthful number and the direct
+    // match is false precision — see buildFbaPoolMap.
+    const pools = fba.pools?.byChannel.get(ch) ?? [];
+    const when = orderDate ? new Date(orderDate) : null;
+    for (const p of pools) {
+      if (when && p.from && when < p.from) continue;
+      if (when && p.to && when > p.to) continue;
+      const hit = (it.productId ? fba.pools!.avg.get(`P:${p.id}:p:${it.productId}`) : undefined)
+        ?? fba.pools!.avg.get(`P:${p.id}:s:${sku}`);
+      if (hit != null) return hit;
+    }
+
     return (
-      (it.productId ? fbaAvgMap.get(`p:${it.productId}:${ch}`) : undefined) ??
-      fbaAvgMap.get(`s:${String(it.sku ?? '').trim().toLowerCase()}:${ch}`) ??
+      (it.productId ? fba.map.get(`p:${it.productId}:${ch}`) : undefined) ??
+      fba.map.get(`s:${sku}:${ch}`) ??
       0
     );
   }

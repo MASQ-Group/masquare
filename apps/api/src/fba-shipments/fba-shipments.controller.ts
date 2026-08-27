@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { FbaShipmentsService } from './fba-shipments.service';
 import {
-  CreateFbaShipmentDto, EstimateFbaShipmentDto, SetActualCostDto, SetStatusDto, UpdateFbaShipmentDto,
+  CreateFbaShipmentDto, EstimateFbaShipmentDto, PoolDto, SetActualCostDto, SetStatusDto, UpdateFbaShipmentDto,
 } from './dto/fba-shipment.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
@@ -38,6 +38,28 @@ export class FbaShipmentsController {
   @Post('import')
   import(@Body() body: { rows?: Record<string, string>[] }, @CurrentUser() user: AuthUser, @WriteCompany() companyId: string) {
     return this.fba.importShipments(body?.rows ?? [], user.sub, companyId);
+  }
+
+  // Fulfilment pools. Declared before the ":id" routes so "pools" is not read as an id.
+
+  @Get('pools')
+  listPools(@VisibleCompanies() companyIds: string[]) {
+    return this.fba.listPools(companyIds);
+  }
+
+  @Post('pools')
+  createPool(@Body() dto: PoolDto, @CurrentUser() user: AuthUser, @WriteCompany() companyId: string) {
+    return this.fba.createPool(dto, user.sub, companyId);
+  }
+
+  @Patch('pools/:id')
+  updatePool(@Param('id') id: string, @Body() dto: PoolDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.fba.updatePool(id, dto, user.sub, companyIds);
+  }
+
+  @Delete('pools/:id')
+  removePool(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
+    return this.fba.removePool(id, companyIds);
   }
 
   @Get()
