@@ -7,6 +7,7 @@ import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { IntegrationsService } from './integrations.service';
 import { CreateIntegrationDto, TestIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
 import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
+import { JobsService } from '../jobs/jobs.service';
 
 // Admin-only across the board: managing third-party API credentials is privileged.
 @ApiTags('integrations')
@@ -14,7 +15,10 @@ import { VisibleCompanies, WriteCompany } from '../common/active-company.decorat
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('integrations')
 export class IntegrationsController {
-  constructor(private readonly svc: IntegrationsService) {}
+  constructor(
+    private readonly svc: IntegrationsService,
+    private readonly jobs: JobsService,
+  ) {}
 
   @Get('connectors')
   connectors() {
@@ -142,6 +146,24 @@ export class IntegrationsController {
   @Post('backfill-cancel-stages')
   backfillCancelStages(@Body() dto: { limit?: number }) {
     return this.svc.backfillCancelStages({ limit: dto?.limit });
+  }
+
+  /**
+   * Re-fetch Amazon fees and rewrite them, repairing orders where a SKU's fee was repeated across
+   * every line carrying that SKU.
+   *
+   * Without confirm it reports the scope and the overstatement arithmetically and calls nothing.
+   * With confirm it returns a job: one Amazon call per order, paced under the rate limit, so a
+   * full history takes a while.
+   */
+  @Post('repair-amazon-fees')
+  repairAmazonFees(@Body() dto: { confirm?: boolean; scope?: 'affected' | 'all' }) {
+    if (!dto?.confirm) return this.svc.repairAmazonFees({ confirm: false, scope: dto?.scope });
+    return this.jobs.start(
+      'integrations.repair-amazon-fees',
+      'Repairing Amazon fees',
+      (ctx) => this.svc.repairAmazonFees({ confirm: true, scope: dto?.scope }, ctx),
+    );
   }
 
   @Delete(':id')
