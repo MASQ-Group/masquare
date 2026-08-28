@@ -3,13 +3,15 @@ import { EbayOrderMoneyPanel } from '../components/integrations/EbayOrderMoneyPa
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle, CalendarRange, CheckCircle2, ChevronRight, Clock, Download, ExternalLink, Eye, EyeOff, Globe,
-  KeyRound, ListChecks, MoreHorizontal, Pause, Pencil, Play, Plug, Plus, RefreshCw, Search, Trash2, XCircle,
+  Coins, KeyRound, ListChecks, MoreHorizontal, Pause, Pencil, Play, Plug, Plus, RefreshCw, Search, Trash2, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ProgressButton } from '@masquare/ui';
 import { integrationsApi, salesChannelsApi, type ChannelIntegration } from '../lib/api';
 import { useIsMobile } from '../lib/useIsMobile';
 import { PageHeader } from '../components/common/PageHeader';
+import { useConfirm } from '../components/ConfirmProvider';
+import { useJobProgress } from '../lib/useJobProgress';
 import { IntegrationModal } from '../components/integrations/IntegrationModal';
 import { MappingVerifyModal } from '../components/integrations/MappingVerifyModal';
 import { ListingsPreviewModal } from '../components/integrations/ListingsPreviewModal';
@@ -158,6 +160,41 @@ export function IntegrationsPage() {
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Sync failed'),
     onSettled: () => setSyncingId(null),
   });
+  const confirmDialog = useConfirm();
+
+  const feeRepairJob = useJobProgress('integrations.repair-amazon-fees', (job) => {
+    const r = job.result as { repaired?: number; unchanged?: number; failed?: number } | undefined;
+    qc.invalidateQueries({ queryKey: ['sales-transactions'] });
+    toast.success(`Fees repaired on ${r?.repaired ?? 0} order(s)`
+      + (r?.failed ? ` — ${r.failed} could not be read from Amazon` : ''));
+  });
+
+  /**
+   * Repair fees that were recorded as a multiple of what Amazon charged.
+   *
+   * Dry run first, and it calls nothing: the overstatement is arithmetic from what we stored, so
+   * the size of the problem is on screen before a single API call is spent.
+   */
+  const runFeeRepair = async () => {
+    const dry = await integrationsApi.previewAmazonFeeRepair('affected');
+    if (dry.orders === 0) {
+      toast.info('No Amazon order has a SKU spread over more than one line — nothing to repair.');
+      return;
+    }
+    const minutes = Math.max(1, Math.round((dry.orders * 2.1) / 60));
+    const ok = await confirmDialog({
+      title: `Re-fetch Amazon fees for ${dry.orders} order(s)?`,
+      message:
+        `These orders record roughly ${dry.overstatedSalesFee.toFixed(2)} too much in selling fees and `
+        + `${dry.overstatedFbaFee.toFixed(2)} too much in FBA fees (native currency, across marketplaces). `
+        + `Each order's fees are read back from Amazon and rewritten, using each company's own credentials. `
+        + `About ${minutes} minute(s) at Amazon's rate limit. Profit figures will change — upwards.`,
+      confirmLabel: 'Repair fees',
+    });
+    if (!ok) return;
+    feeRepairJob.start(() => integrationsApi.repairAmazonFees('affected') as any);
+  };
+
   /** Sequential sync of a set — never hits a channel's API in parallel. Used by
    *  "Sync all", "Sync group" and "Sync selected". */
   const bulkSync = useMutation({
@@ -239,8 +276,9 @@ export function IntegrationsPage() {
         info="Connected marketplace accounts syncing orders, fees & refunds into the platform. API keys are encrypted and never leave it."
         summary={`${stats.total} connection${stats.total === 1 ? '' : 's'} · ${stats.healthy} healthy${stats.attention ? ` · ${stats.attention} attention` : ''}`}
         actions={
-          /* The bar is the count this page already kept: channels sync one at a time, so
-             done/total is exact rather than an estimate. */
+          <>
+          {/* The bar is the count this page already kept: channels sync one at a time, so
+              done/total is exact rather than an estimate. */}
           <ProgressButton
             running={bulkSync.isPending}
             value={bulkProgress && bulkProgress.total ? bulkProgress.done / bulkProgress.total : null}
@@ -253,6 +291,18 @@ export function IntegrationsPage() {
             <RefreshCw size={15} />
             <span className="max-[767px]:hidden">Sync all{syncableCount ? ` (${syncableCount})` : ''}</span>
           </ProgressButton>
+          <ProgressButton
+            running={feeRepairJob.running}
+            value={feeRepairJob.value}
+            detail={feeRepairJob.detail}
+            onClick={runFeeRepair}
+            title="Re-read Amazon's fees for orders where one SKU sits on several lines, and rewrite them"
+            runningLabel={<><Coins size={15} /><span className="max-[767px]:hidden">Repairing fees</span></>}
+          >
+            <Coins size={15} />
+            <span className="max-[767px]:hidden">Repair Amazon fees</span>
+          </ProgressButton>
+          </>
         }
         primary={<button className="hbtn-primary" onClick={() => setModal(null)}><Plus size={16} /> Add<span className="max-[767px]:hidden"> connection</span></button>}
       />

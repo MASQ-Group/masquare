@@ -1,10 +1,12 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { StorageService } from '../storage/storage.service';
 import { SalesTransactionsService } from '../sales-transactions/sales-transactions.service';
+import type { ProgressSink } from '../jobs/jobs.service';
 import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFieldKeys, type ConnectorDef } from './connectors';
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
 import { mapOnBuyOrder } from './mappings/onbuy-mapping';
@@ -2086,31 +2088,252 @@ export class IntegrationsService implements OnModuleInit {
     return out;
   }
 
-  /** Overlay one fee bucket onto the mapped order's items (per SellerSKU; any order-level
-   *  remainder to line 1), writing `field` in both the importer payload and the review row. */
-  private applyFeeBucket(mapped: MappedOrder, bucket: FeeBucket, field: 'salesChannelSalesFeeAmount' | 'fbaFulfilmentFeeAmount'): void {
-    if (mapped.items.length === 0) return;
+  /**
+   * Split one SKU's fee across the lines that carry that SKU.
+   *
+   * Amazon reports fees per shipment item, which we bucket by SKU. When a SKU sits on exactly one
+   * line that bucket IS the line's fee — the case this code was written for. But Amazon splits an
+   * order across shipments, and then the same SKU appears on several lines: writing the bucket to
+   * each of them multiplied the fee by the number of lines, and every downstream figure with it.
+   *
+   * The weight differs by fee: the referral fee is a percentage of price, so it follows net sales;
+   * the FBA fulfilment fee is flat per unit, so it follows quantity. Where a weight is unavailable
+   * the split is even, which is still far closer than repeating the whole amount.
+   *
+   * The remainder from rounding goes to the heaviest line, so the parts always add back to exactly
+   * what Amazon charged.
+   */
+  private static splitFee(total: number, weights: number[]): number[] {
+    const n = weights.length;
+    if (n === 0) return [];
+    if (n === 1) return [round2(total)];
+    const sum = weights.reduce((s, w) => s + w, 0);
+    const basis = sum > 0 ? weights : weights.map(() => 1);
+    const basisSum = sum > 0 ? sum : n;
+    const parts = basis.map((w) => round2((total * w) / basisSum));
+    const drift = round2(total - parts.reduce((s, v) => s + v, 0));
+    if (drift !== 0) {
+      let heaviest = 0;
+      for (let i = 1; i < basis.length; i++) if (basis[i] > basis[heaviest]) heaviest = i;
+      parts[heaviest] = round2(parts[heaviest] + drift);
+    }
+    return parts;
+  }
+
+  /**
+   * Per-item fee amounts for one bucket: each SKU's total split across its own lines.
+   *
+   * Any fee for a SKU that matches no line is a remainder — Amazon charged it against this order,
+   * so it must not be dropped, and it goes to the first line.
+   */
+  private static attributeFees<T>(
+    items: T[],
+    bucket: FeeBucket,
+    skuOf: (it: T) => string | null,
+    weightOf: (it: T) => number,
+  ): number[] {
+    const out = new Array<number>(items.length).fill(0);
+    const linesBySku = new Map<string, number[]>();
+    items.forEach((it, i) => {
+      const sku = skuOf(it) ?? '';
+      const list = linesBySku.get(sku) ?? [];
+      list.push(i);
+      linesBySku.set(sku, list);
+    });
     let attributed = 0;
-    for (const it of mapped.items) {
-      const fee = bucket.bySku.get(it.sku ?? '') ?? 0;
-      it.payload[field] = fee;
-      const f = it.fields.find((x) => x.target === field);
-      if (f) f.value = fee;
-      attributed = round2(attributed + fee);
+    for (const [sku, idxs] of linesBySku) {
+      const total = bucket.bySku.get(sku) ?? 0;
+      if (total === 0) continue;
+      const parts = IntegrationsService.splitFee(total, idxs.map((i) => weightOf(items[i])));
+      idxs.forEach((i, k) => { out[i] = parts[k]; attributed = round2(attributed + parts[k]); });
     }
     const remainder = round2(bucket.total - attributed);
-    if (remainder > 0) {
-      const first = mapped.items[0];
-      first.payload[field] = round2(first.payload[field] + remainder);
-      const f = first.fields.find((x) => x.target === field);
-      if (f) f.value = first.payload[field];
-    }
+    if (remainder > 0 && out.length) out[0] = round2(out[0] + remainder);
+    return out;
+  }
+
+  /** Overlay one fee bucket onto the mapped order's items, writing `field` in both the importer
+   *  payload and the review row. */
+  private applyFeeBucket(mapped: MappedOrder, bucket: FeeBucket, field: 'salesChannelSalesFeeAmount' | 'fbaFulfilmentFeeAmount'): void {
+    if (mapped.items.length === 0) return;
+    const amounts = IntegrationsService.attributeFees(
+      mapped.items,
+      bucket,
+      (it) => it.sku,
+      (it) => (field === 'fbaFulfilmentFeeAmount' ? it.payload.quantity : it.payload.netSalesAmount),
+    );
+    mapped.items.forEach((it, i) => {
+      it.payload[field] = amounts[i];
+      const f = it.fields.find((x) => x.target === field);
+      if (f) f.value = amounts[i];
+    });
   }
 
   /** Overlay Finances-API fees (referral + FBA) onto a mapped Amazon order. */
   private applyAmazonFees(mapped: MappedOrder, fees: AmazonFees): void {
     this.applyFeeBucket(mapped, fees.sales, 'salesChannelSalesFeeAmount');
     this.applyFeeBucket(mapped, fees.fba, 'fbaFulfilmentFeeAmount');
+  }
+
+  /**
+   * Re-fetch Amazon fees for orders whose fees were recorded wrong, and rewrite them.
+   *
+   * Until the apportionment fix, a SKU's whole order fee was written to EVERY line carrying that
+   * SKU. An order with the same SKU on three lines therefore recorded three times the referral and
+   * FBA fees Amazon charged, and read as a loss when it was profitable. The damage spreads: those
+   * stored fees also train the per-SKU estimate used to price orders whose fees have not posted yet.
+   *
+   * Fees come from Amazon rather than being recalculated from what we stored, so the repair rests on
+   * Amazon's own figures rather than on the assumption that the stored total was ever right.
+   *
+   * Scope 'affected' visits only orders where one SKU sits on more than one line — the only orders
+   * this bug could touch. Scope 'all' re-fetches every Amazon order with fees, which also picks up
+   * any unrelated drift, at the cost of an API call each.
+   *
+   * Idempotent: running it twice writes the same figures. Jobs are held in memory, so a deploy
+   * during a run ends it — restart it and the orders already repaired simply get the same values.
+   */
+  async repairAmazonFees(
+    opts: { confirm?: boolean; scope?: 'affected' | 'all'; companyIds?: string[] },
+    ctx?: ProgressSink,
+  ) {
+    const scope = opts.scope === 'all' ? 'all' : 'affected';
+
+    // Orders where one SKU spans several lines: the set the bug could have damaged.
+    const damaged = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT DISTINCT t.id
+      FROM sales_transaction_item i
+      JOIN sales_transaction t ON t.id = i.transaction_id
+      WHERE i.deleted_at IS NULL AND t.deleted_at IS NULL
+        AND t.source = 'amazon' AND t.integration_id IS NOT NULL
+        AND (i.sales_channel_sales_fee_amount > 0 OR i.fba_fulfilment_fee_amount > 0)
+      GROUP BY t.id, lower(trim(i.sku))
+      HAVING COUNT(*) > 1`;
+    const damagedIds = [...new Set(damaged.map((r) => r.id))];
+
+    const where: Prisma.SalesTransactionWhereInput = {
+      deletedAt: null,
+      source: 'amazon',
+      integrationId: { not: null },
+      ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : {}),
+      ...(scope === 'affected'
+        ? { id: { in: damagedIds } }
+        : { items: { some: { deletedAt: null, OR: [{ salesChannelSalesFeeAmount: { gt: 0 } }, { fbaFulfilmentFeeAmount: { gt: 0 } }] } } }),
+    };
+
+    const txs = await this.prisma.salesTransaction.findMany({
+      where,
+      select: {
+        id: true, transactionRef: true, integrationId: true, date: true,
+        company: { select: { officialName: true } },
+        items: {
+          where: { deletedAt: null },
+          select: { id: true, sku: true, quantity: true, netSalesAmount: true, salesChannelSalesFeeAmount: true, fbaFulfilmentFeeAmount: true },
+        },
+      },
+      orderBy: { date: 'desc' },
+    });
+
+    if (!opts.confirm) {
+      // Reports the damage arithmetically — no Amazon calls, so previewing costs nothing. Each
+      // line holds the SKU's whole fee, so n lines store n x the truth and the excess is (n-1)/n.
+      let excessSales = 0;
+      let excessFba = 0;
+      for (const t of txs) {
+        const bySku = new Map<string, { sales: number; fba: number; lines: number }>();
+        for (const it of t.items) {
+          const k = (it.sku ?? '').trim().toLowerCase();
+          const cur = bySku.get(k) ?? { sales: 0, fba: 0, lines: 0 };
+          cur.sales += num(it.salesChannelSalesFeeAmount);
+          cur.fba += num(it.fbaFulfilmentFeeAmount);
+          cur.lines += 1;
+          bySku.set(k, cur);
+        }
+        for (const v of bySku.values()) {
+          if (v.lines < 2) continue;
+          excessSales += (v.sales * (v.lines - 1)) / v.lines;
+          excessFba += (v.fba * (v.lines - 1)) / v.lines;
+        }
+      }
+      return {
+        dryRun: true,
+        scope,
+        orders: txs.length,
+        damagedOrders: damagedIds.length,
+        /** Native currency, summed across marketplaces — indicative of size, not a single total. */
+        overstatedSalesFee: round2(excessSales),
+        overstatedFbaFee: round2(excessFba),
+        companies: [...new Set(txs.map((t) => t.company?.officialName ?? 'Unknown'))],
+      };
+    }
+
+    // Grouped by integration so each order is fetched with ITS OWN company's Amazon credentials.
+    // The two companies have separate developer accounts; a call must never cross between them.
+    const byIntegration = new Map<string, typeof txs>();
+    for (const t of txs) {
+      const k = t.integrationId as string;
+      byIntegration.set(k, [...(byIntegration.get(k) ?? []), t]);
+    }
+
+    ctx?.setTotal(txs.length);
+    let repaired = 0;
+    let unchanged = 0;
+    let noFees = 0;
+    let failed = 0;
+    const changes: Array<{ ref: string; salesBefore: number; salesAfter: number; fbaBefore: number; fbaAfter: number }> = [];
+
+    for (const [integrationId, orders] of byIntegration) {
+      const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+      if (!row) { failed += orders.length; ctx?.note(`Integration ${integrationId} is gone — skipped ${orders.length} order(s)`); continue; }
+      const config = (row.config ?? {}) as Record<string, string>;
+      const endpoint = this.amazonMarketMeta(row).endpoint;
+      let token: string;
+      try {
+        token = await this.amazonAccessToken(config, await this.decryptedSecrets(row.id));
+      } catch (e: any) {
+        failed += orders.length;
+        ctx?.note(`Could not authenticate ${row.name}: ${e?.message ?? e}`);
+        continue;
+      }
+      ctx?.note(`${row.name}: ${orders.length} order(s)`);
+
+      for (const t of orders) {
+        try {
+          const fees = await this.fetchAmazonOrderFees(endpoint, token, t.transactionRef);
+          // listFinancialEventsByOrderId allows ~0.5 requests/second. Staying under it keeps a long
+          // repair from being throttled into a crawl of retries.
+          await sleep(2100);
+          if (fees.sales.total <= 0 && fees.fba.total <= 0) { noFees++; ctx?.tick(); continue; }
+
+          const salesAmounts = IntegrationsService.attributeFees(t.items, fees.sales, (it) => it.sku, (it) => num(it.netSalesAmount));
+          const fbaAmounts = IntegrationsService.attributeFees(t.items, fees.fba, (it) => it.sku, (it) => num(it.quantity));
+
+          const salesBefore = round2(t.items.reduce((s, it) => s + num(it.salesChannelSalesFeeAmount), 0));
+          const fbaBefore = round2(t.items.reduce((s, it) => s + num(it.fbaFulfilmentFeeAmount), 0));
+          const salesAfter = round2(salesAmounts.reduce((s, v) => s + v, 0));
+          const fbaAfter = round2(fbaAmounts.reduce((s, v) => s + v, 0));
+
+          const moved = t.items.some((it, i) =>
+            round2(num(it.salesChannelSalesFeeAmount)) !== salesAmounts[i] || round2(num(it.fbaFulfilmentFeeAmount)) !== fbaAmounts[i]);
+          if (!moved) { unchanged++; ctx?.tick(); continue; }
+
+          await this.prisma.$transaction(t.items.map((it, i) =>
+            this.prisma.salesTransactionItem.update({
+              where: { id: it.id },
+              data: { salesChannelSalesFeeAmount: salesAmounts[i], fbaFulfilmentFeeAmount: fbaAmounts[i] },
+            }),
+          ));
+          repaired++;
+          if (changes.length < 200) changes.push({ ref: t.transactionRef, salesBefore, salesAfter, fbaBefore, fbaAfter });
+        } catch (e: any) {
+          failed++;
+          ctx?.note(`${t.transactionRef}: ${e?.message ?? e}`);
+        }
+        ctx?.tick();
+      }
+    }
+
+    return { dryRun: false, scope, orders: txs.length, repaired, unchanged, noFees, failed, changes };
   }
 
   /** Refresh fees for recently-imported Amazon drafts whose fees hadn't posted at
@@ -2126,16 +2349,19 @@ export class IntegrationsService implements OnModuleInit {
     // bypasses the submitted-edit lock, so this safely refreshes submitted orders too.
     const txs = await this.prisma.salesTransaction.findMany({
       where: { integrationId: row.id, deletedAt: null, date: { gte: since } },
-      select: { id: true, transactionRef: true, items: { where: { deletedAt: null }, select: { id: true, sku: true, salesChannelSalesFeeAmount: true, fbaFulfilmentFeeAmount: true } } },
+      select: { id: true, transactionRef: true, items: { where: { deletedAt: null }, select: { id: true, sku: true, quantity: true, netSalesAmount: true, salesChannelSalesFeeAmount: true, fbaFulfilmentFeeAmount: true } } },
       take: 1000,
     });
-    // Attribute a bucket across the tx's items (per SKU; remainder to line 1), returning per-item amounts.
-    const spread = (items: { id: string; sku: string }[], bucket: FeeBucket) => {
-      let attributed = 0;
-      const out = items.map((it) => { const v = bucket.bySku.get(it.sku ?? '') ?? 0; attributed = round2(attributed + v); return { id: it.id, value: v }; });
-      const remainder = round2(bucket.total - attributed);
-      if (remainder > 0 && out.length) out[0].value = round2(out[0].value + remainder);
-      return out;
+    // Attribute a bucket across the tx's items, splitting each SKU's fee across the lines that
+    // carry it — the same rule the import path uses, so a backfilled order matches an imported one.
+    const spread = (items: any[], bucket: FeeBucket, field: 'sales' | 'fba') => {
+      const amounts = IntegrationsService.attributeFees(
+        items,
+        bucket,
+        (it) => it.sku,
+        (it) => (field === 'fba' ? num(it.quantity) : num(it.netSalesAmount)),
+      );
+      return items.map((it, i) => ({ id: it.id as string, value: amounts[i] }));
     };
     let updated = 0;
     for (const tx of txs) {
@@ -2144,8 +2370,8 @@ export class IntegrationsService implements OnModuleInit {
       const fees = await this.fetchAmazonOrderFees(endpoint, token, tx.transactionRef);
       await sleep(300);
       if (fees.sales.total <= 0 && fees.fba.total <= 0) continue; // still not posted at Amazon
-      const salesUps = new Map(spread(tx.items, fees.sales).map((u) => [u.id, u.value]));
-      const fbaUps = new Map(spread(tx.items, fees.fba).map((u) => [u.id, u.value]));
+      const salesUps = new Map(spread(tx.items, fees.sales, 'sales').map((u) => [u.id, u.value]));
+      const fbaUps = new Map(spread(tx.items, fees.fba, 'fba').map((u) => [u.id, u.value]));
       await this.prisma.$transaction(tx.items.map((it) =>
         this.prisma.salesTransactionItem.update({ where: { id: it.id }, data: { salesChannelSalesFeeAmount: salesUps.get(it.id) ?? 0, fbaFulfilmentFeeAmount: fbaUps.get(it.id) ?? 0 } }),
       ));
