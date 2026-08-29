@@ -2708,13 +2708,18 @@ export interface VendorMatchRow {
   matchedBy: VendorMatchedBy | null;
   reason: 'no-identifiers' | 'not-found' | null;
   ambiguous: { by: VendorMatchedBy; products: { id: string; mainSku: string; title: string }[] } | null;
+  /**
+   * The row matched on its SKU, but the barcode on the same line belongs to a different product.
+   * The match stands; one of the two facts is wrong and a person decides which.
+   */
+  barcodeConflict: { barcode: string; products: { id: string; mainSku: string; title: string }[] } | null;
 }
 
 export interface VendorMatchResult {
   vendor: { id: string; name: string };
   sheet: string;
   summary: {
-    total: number; matched: number; unmatched: number; ambiguous: number;
+    total: number; matched: number; unmatched: number; ambiguous: number; barcodeConflicts: number;
     byMethod: Record<VendorMatchedBy, number>;
     duplicateSkus: string[];
   };

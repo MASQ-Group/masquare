@@ -218,6 +218,17 @@ export class VendorImportService {
                   .map((x) => ({ id: x!.id, mainSku: x!.mainSku, title: x!.title })),
               }
             : null,
+          // The row matched, but its barcode belongs to a different product. Named so the reviewer
+          // can see WHICH product it collides with rather than just that something is wrong.
+          barcodeConflict: m.barcodeConflict
+            ? {
+                barcode: m.barcodeConflict.barcode,
+                products: m.barcodeConflict.productIds
+                  .map((id) => byId.get(id))
+                  .filter(Boolean)
+                  .map((x) => ({ id: x!.id, mainSku: x!.mainSku, title: x!.title })),
+              }
+            : null,
         };
       }),
     };
