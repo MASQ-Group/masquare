@@ -87,3 +87,48 @@ describe('what refusing means', () => {
     expect(outcome).toBe('left alone');
   });
 });
+
+/**
+ * The dashboard identifies an eBay column as `${integrationId}:${marketplace}` — one eBay connection
+ * spans many marketplaces and each gets its own column. Those ids reach the sync when an operator
+ * picks specific channels, and a composite id against a uuid column fails inside Prisma with a
+ * parse error about a character at position 37, which tells an operator nothing.
+ *
+ * The integration is the unit that can be synced: eBay's pull is account-wide and returns every
+ * marketplace at once. So the suffix is dropped and the ids deduped.
+ */
+const toIntegrationIds = (ids: string[]) =>
+  [...new Set(ids.map((id) => id.split(':')[0]).filter(Boolean))];
+
+describe('channel ids arriving from the dashboard', () => {
+  const INT = '2f1c9b7e-1111-4a2b-8c3d-4e5f60718293';
+
+  it('reduces an eBay marketplace column to its integration', () => {
+    expect(toIntegrationIds([`${INT}:GB`])).toEqual([INT]);
+  });
+
+  it('collapses several marketplaces of one connection into one sync', () => {
+    // Syncing eBay GB, DE and IT is syncing the eBay account once.
+    expect(toIntegrationIds([`${INT}:GB`, `${INT}:DE`, `${INT}:IT`])).toEqual([INT]);
+  });
+
+  it('leaves a plain integration id alone', () => {
+    // Amazon and OnBuy have one marketplace per connection and pass a bare id.
+    expect(toIntegrationIds([INT])).toEqual([INT]);
+  });
+
+  it('handles a mixed selection', () => {
+    const AMZ = '9a8b7c6d-2222-4e3f-9a1b-2c3d4e5f6071';
+    expect(toIntegrationIds([`${INT}:GB`, AMZ, `${INT}:DE`])).toEqual([INT, AMZ]);
+  });
+
+  it('drops empty entries rather than matching everything', () => {
+    // An empty id in the list must not widen the query to every integration.
+    expect(toIntegrationIds(['', ':GB'])).toEqual([]);
+  });
+
+  it('treats an empty selection as no selection', () => {
+    // Which the caller reads as "sync all", the same as passing nothing.
+    expect(toIntegrationIds([])).toEqual([]);
+  });
+});
