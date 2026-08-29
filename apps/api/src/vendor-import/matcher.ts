@@ -34,6 +34,16 @@ export interface RowMatch {
   ambiguous?: { by: MatchedBy; productIds: string[] };
   /** Why no match, for the report: 'no-identifiers' | 'not-found'. */
   reason?: 'no-identifiers' | 'not-found';
+  /**
+   * The row's SKU and its barcode point at DIFFERENT products.
+   *
+   * The match still stands — the SKU is the more deliberate identifier — but one of the two facts
+   * is wrong, and both readings are damaging. Either the vendor has put the wrong barcode on the
+   * line, or our catalogue carries that barcode on the wrong product, in which case a later file
+   * matching by barcode alone writes the cost onto the wrong article and nobody sees it until a
+   * margin looks strange. Reported at review so a person decides which.
+   */
+  barcodeConflict?: { barcode: string; productIds: string[] };
 }
 
 /** Trim and lowercase for comparison. Vendor files are inconsistent about both. */
@@ -94,11 +104,20 @@ export function matchRow(row: VendorRow, idx: MatchCandidateIndex, index = 0): R
 
   if (!sku && !bc && !mfr) return { index, productId: null, matchedBy: null, reason: 'no-identifiers' };
 
+  // Where the SKU settled the row, check the barcode agrees. It cannot change the match — the SKU
+  // is the more deliberate identifier — but a disagreement means one of the two is wrong.
+  const conflict = (productId: string): { barcode: string; productIds: string[] } | undefined => {
+    if (!bc) return undefined;
+    const owners = idx.ean.get(bc);
+    if (!owners?.length || owners.includes(productId)) return undefined;
+    return { barcode: bc, productIds: owners };
+  };
+
   const aliasHit = sku ? idx.alias.get(sku) : undefined;
-  if (aliasHit) return { index, productId: aliasHit, matchedBy: 'alias' };
+  if (aliasHit) return { index, productId: aliasHit, matchedBy: 'alias', ...(conflict(aliasHit) ? { barcodeConflict: conflict(aliasHit) } : {}) };
 
   const mainHit = sku ? idx.mainSku.get(sku) : undefined;
-  if (mainHit) return { index, productId: mainHit, matchedBy: 'mainSku' };
+  if (mainHit) return { index, productId: mainHit, matchedBy: 'mainSku', ...(conflict(mainHit) ? { barcodeConflict: conflict(mainHit) } : {}) };
 
   const steps: Array<{ by: MatchedBy; ids: string[] | undefined }> = [
     { by: 'ean', ids: bc ? idx.ean.get(bc) : undefined },
@@ -120,6 +139,8 @@ export interface MatchSummary {
   unmatched: number;
   ambiguous: number;
   byMethod: Record<MatchedBy, number>;
+  /** Rows matched by SKU whose barcode belongs to a different product. Needs a person. */
+  barcodeConflicts: number;
   /** Rows whose SKU appears more than once in the file — the vendor's own duplication. */
   duplicateSkus: string[];
 }
@@ -147,6 +168,7 @@ export function matchRows(rows: VendorRow[], idx: MatchCandidateIndex): { matche
       unmatched: matches.filter((m) => !m.productId && !m.ambiguous).length,
       ambiguous: matches.filter((m) => m.ambiguous).length,
       byMethod,
+      barcodeConflicts: matches.filter((m) => m.barcodeConflict).length,
       duplicateSkus,
     },
   };

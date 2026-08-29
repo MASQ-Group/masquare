@@ -362,12 +362,23 @@ export function VendorImportPage() {
                       {match.summary.duplicateSkus.length} SKU{match.summary.duplicateSkus.length > 1 ? 's' : ''} appear more than once in this file
                     </span>
                   )}
+                  {match.summary.barcodeConflicts > 0 && (
+                    <span className="ml-2 font-semibold text-amber-700">
+                      {match.summary.barcodeConflicts} row{match.summary.barcodeConflicts > 1 ? 's' : ''} carry a barcode we hold against another product
+                    </span>
+                  )}
                 </div>
 
-                {match.summary.unmatched + match.summary.ambiguous > 0 && (
+                {match.summary.unmatched + match.summary.ambiguous + match.summary.barcodeConflicts > 0 && (
                   <div className="px-4 py-2 text-[11.5px] text-n-500">
-                    Rows below are not applied. A vendor&rsquo;s list usually covers more than we stock, so most of
-                    these are simply products we do not carry — link only the ones that are ours.
+                    Unmatched rows are not applied. A vendor&rsquo;s list usually covers more than we stock, so most
+                    of these are simply products we do not carry — link only the ones that are ours.
+                    {match.summary.barcodeConflicts > 0 && (
+                      <> Rows marked in amber <b>are</b> applied: the SKU identified the product, but the barcode
+                      on the same line is one we hold against a different product. Either the vendor&rsquo;s line is
+                      wrong or our catalogue is — worth settling, because a later file matching on barcode alone
+                      would write to the other product.</>
+                    )}
                   </div>
                 )}
 
@@ -383,7 +394,7 @@ export function VendorImportPage() {
                     </thead>
                     <tbody className="divide-y divide-n-100">
                       {match.rows
-                        .filter((r) => showAll || !r.productId)
+                        .filter((r) => showAll || !r.productId || r.barcodeConflict)
                         .slice(0, 300)
                         .map((r) => (
                           <tr key={r.index} className="align-top">
@@ -391,7 +402,18 @@ export function VendorImportPage() {
                             <td className="px-2 py-1.5 text-n-500"><span className="mono">{r.ean || '—'}</span></td>
                             <td className="px-2 py-1.5">
                               {r.productId ? (
-                                <span className="text-teal-700">matched · {r.matchedBy}</span>
+                                <>
+                                  <span className="text-teal-700">matched · {r.matchedBy}</span>
+                                  {/* Applied — the SKU decided it. But the barcode on the same line
+                                      belongs elsewhere, so one of the two facts is wrong and the
+                                      row is named rather than quietly written. */}
+                                  {r.barcodeConflict && (
+                                    <span className="mt-0.5 block text-amber-700">
+                                      barcode {r.barcodeConflict.barcode} is on{' '}
+                                      {r.barcodeConflict.products.map((p) => p.mainSku).join(', ') || 'another product'}
+                                    </span>
+                                  )}
+                                </>
                               ) : r.ambiguous ? (
                                 <span className="text-danger">ambiguous on {r.ambiguous.by} ({r.ambiguous.products.length})</span>
                               ) : (

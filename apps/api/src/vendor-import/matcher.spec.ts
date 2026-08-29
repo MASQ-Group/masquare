@@ -108,3 +108,79 @@ describe('summarising a file', () => {
     expect(summary.duplicateSkus).toEqual(['it67017']);
   });
 });
+
+/**
+ * A row whose SKU and barcode point at different products.
+ *
+ * The match still stands, because the SKU is the more deliberate identifier. But one of the two
+ * facts is wrong and both readings hurt: either the vendor put the wrong barcode on the line, or we
+ * hold that barcode against the wrong product — and in the second case a later file matching by
+ * barcode alone writes a cost onto the wrong article, invisible until a margin looks strange.
+ */
+describe('a SKU and a barcode that disagree', () => {
+  const idx = buildIndex(
+    [
+      { id: 'p1', mainSku: 'AAA-1', ean: '5011234567890' },
+      { id: 'p2', mainSku: 'BBB-2', ean: '5019876543210' },
+    ],
+    [],
+  );
+
+  it('matches on the SKU and flags the barcode', () => {
+    // The file says AAA-1, but quotes the barcode we hold against BBB-2.
+    const m = matchRow({ sku: 'AAA-1', ean: '5019876543210' }, idx);
+    expect(m.productId).toBe('p1');
+    expect(m.matchedBy).toBe('mainSku');
+    expect(m.barcodeConflict).toEqual({ barcode: '5019876543210', productIds: ['p2'] });
+  });
+
+  it('says nothing when the two agree', () => {
+    expect(matchRow({ sku: 'AAA-1', ean: '5011234567890' }, idx).barcodeConflict).toBeUndefined();
+  });
+
+  it('says nothing when the barcode is unknown to us', () => {
+    // A barcode we have never seen is not a conflict — it is simply new information.
+    expect(matchRow({ sku: 'AAA-1', ean: '5559999999999' }, idx).barcodeConflict).toBeUndefined();
+  });
+
+  it('says nothing when the row carries no barcode', () => {
+    expect(matchRow({ sku: 'AAA-1' }, idx).barcodeConflict).toBeUndefined();
+  });
+
+  it('compares a 12-digit UPC against the 13-digit EAN of the same article', () => {
+    // Zero-padded, so the two forms meet rather than reading as a conflict.
+    expect(matchRow({ sku: 'AAA-1', ean: '011234567890' }, idx).barcodeConflict).toBeUndefined();
+  });
+
+  it('flags an alias match too', () => {
+    // An alias is a human decision about the SKU. It still cannot vouch for the barcode.
+    const withAlias = buildIndex(
+      [{ id: 'p1', mainSku: 'AAA-1', ean: '5011234567890' }, { id: 'p2', mainSku: 'BBB-2', ean: '5019876543210' }],
+      [{ vendorSku: 'V-99', productId: 'p1' }],
+    );
+    const m = matchRow({ sku: 'V-99', ean: '5019876543210' }, withAlias);
+    expect(m.productId).toBe('p1');
+    expect(m.barcodeConflict?.productIds).toEqual(['p2']);
+  });
+
+  it('does not flag a row that matched BY barcode', () => {
+    // Nothing disagrees: the barcode chose the product, so it cannot contradict itself. The row's
+    // SKU being the vendor's own code rather than ours is the ordinary case.
+    const m = matchRow({ sku: 'VENDOR-CODE-X', ean: '5011234567890' }, idx);
+    expect(m.matchedBy).toBe('ean');
+    expect(m.barcodeConflict).toBeUndefined();
+  });
+
+  it('counts the conflicts in the summary', () => {
+    const { summary } = matchRows(
+      [
+        { sku: 'AAA-1', ean: '5019876543210' }, // conflict
+        { sku: 'BBB-2', ean: '5019876543210' }, // agrees
+        { sku: 'AAA-1', ean: '5011234567890' }, // agrees
+      ],
+      idx,
+    );
+    expect(summary.barcodeConflicts).toBe(1);
+    expect(summary.matched).toBe(3);
+  });
+});
