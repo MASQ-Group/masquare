@@ -21,6 +21,14 @@ export interface ListingsQuery {
   pageSize?: number;
 }
 
+/**
+ * A channel with fewer than this on record is too small to reason about — a genuine small catalogue
+ * can legitimately halve between pulls, and refusing there would be noise.
+ */
+const MIN_LISTINGS_TO_GUARD = 50;
+/** A pull holding less than this share of what we already have is treated as partial, not as truth. */
+const KEEP_FRACTION = 0.5;
+
 @Injectable()
 export class ChannelListingsService {
   constructor(
@@ -198,6 +206,26 @@ export class ChannelListingsService {
             asin: l.asin, externalListingId: l.externalId ?? null, title: l.title, listedQuantity: l.quantity, listedPrice: l.price,
             currency: l.currency, fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now,
           });
+        }
+        // A pull that collapses is not evidence the listings are gone.
+        //
+        // The sync replaces a channel's rows wholesale, which is right when the pull is complete and
+        // catastrophic when it is not. On 29 Aug eBay's Inventory API returned one SKU where we held
+        // 4,710, a partial answer was taken as the whole truth, and 4,709 listing records were
+        // deleted. Marketplaces go quiet for their own reasons — a scope change, a partial outage, a
+        // call that only ever saw a subset — and none of them mean the seller has stopped selling.
+        //
+        // So a replace that would remove most of what we hold refuses and leaves the records alone.
+        // Going stale is recoverable by running it again; deleting is not.
+        const held = await this.prisma.channelListing.count({ where: { integrationId: intg.id } });
+        if (held >= MIN_LISTINGS_TO_GUARD && data.length < held * KEEP_FRACTION) {
+          results.push({
+            integrationId: intg.id, name: intg.name, ok: false, pulled: data.length,
+            message: `Refused: the pull returned ${data.length} listing(s) against ${held} on record. `
+              + 'Nothing was changed — check the channel, then re-run.',
+          });
+          progress?.tick(false);
+          continue;
         }
         const ops: Prisma.PrismaPromise<unknown>[] = [this.prisma.channelListing.deleteMany({ where: { integrationId: intg.id } })];
         for (let i = 0; i < data.length; i += 1000) ops.push(this.prisma.channelListing.createMany({ data: data.slice(i, i + 1000), skipDuplicates: true }));

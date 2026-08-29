@@ -1762,11 +1762,16 @@ export class IntegrationsService implements OnModuleInit {
       if (!json?.inventoryItems?.length || offset + limit >= total) break;
     }
 
-    // Classic listings (created via the Trading API / the normal Sell flow) don't appear in the
-    // Inventory API. If it returned nothing, fall back to GetMyeBaySelling which covers them all.
-    if (items.length === 0) {
-      return this.ebayTradingListings(base, token, config, maxItems);
-    }
+    // Classic listings (created via the Trading API or the normal Sell flow) do not appear in the
+    // Inventory API, and inventory-managed ones are the only thing it does show. Neither call sees
+    // the whole account, so BOTH are pulled and merged.
+    //
+    // This used to fall back to GetMyeBaySelling only when the Inventory API returned nothing. That
+    // held while the account had no inventory items at all — and stopped holding the moment we
+    // published one. On 29 Aug the Inventory API returned exactly one SKU, the fallback did not
+    // fire, and the caller's full replace deleted 4,709 classic listings from our records.
+    const classic = await this.ebayTradingListings(base, token, config, maxItems);
+    if (items.length === 0) return classic;
 
     // 2) Each SKU's offer → price, currency, listing status (getOffers is per-SKU).
     const out: any[] = [];
@@ -1786,6 +1791,14 @@ export class IntegrationsService implements OnModuleInit {
         }
       } catch { /* leave price null on a per-SKU error */ }
       out.push({ sku: it.sku, asin: null, externalId, title: it.title, quantity: it.quantity, price, currency, fulfilmentChannel: null, status, marketplace });
+    }
+
+    // Merge, letting the Inventory API win a collision: it carries the offer detail, and a SKU it
+    // knows about is one we manage there.
+    const seen = new Set(out.map((o) => `${String(o.sku).trim().toLowerCase()}|${o.marketplace ?? ''}`));
+    for (const c of classic) {
+      const key = `${String(c.sku).trim().toLowerCase()}|${c.marketplace ?? ''}`;
+      if (!seen.has(key)) { seen.add(key); out.push(c); }
     }
     return out;
   }
