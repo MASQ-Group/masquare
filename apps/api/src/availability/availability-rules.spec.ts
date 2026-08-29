@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 /**
  * What may put a product into availability, and what may move its quantity.
  *
- * A product enters availability deliberately — from a vendor file or by a person. Trade never adds
+ * A product enters availability one way only: a person adds it. Neither trade nor a vendor file adds
  * one. `adjust` used to upsert, so an order for a product nobody had stocked created a row: the
  * sale clamped it at zero, and every later cancellation added one to nothing. Production ended up
  * with 664 such rows, 324 of them advertising 1,096 units that never existed — and availability is

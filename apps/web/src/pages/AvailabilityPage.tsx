@@ -90,7 +90,7 @@ export function AvailabilityPage() {
       <PageHeader
         module="Catalogue & Inventory"
         title="Availability"
-        info="The sellable quantity broadcast to your sales channels — the single source of truth for how much of each SKU is available. A product is here because a vendor file or a person put it here; nothing else can add one."
+        info="The sellable quantity broadcast to your sales channels — the single source of truth for how much of each SKU is available. A product is here because someone added it. A vendor file can update a quantity but never add a product; nothing else can either."
         tabs={[
           { key: 'in', label: 'In availability' },
           { key: 'missing', label: 'Missing from availability' },

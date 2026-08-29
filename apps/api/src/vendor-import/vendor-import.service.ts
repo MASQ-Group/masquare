@@ -425,24 +425,32 @@ export class VendorImportService {
           } else if (c.field === 'ean' || c.field === 'upc') {
             await tx.product.update({ where: { id: c.productId }, data: { [c.field]: c.newValue } });
           } else if (c.field === 'availability') {
+            // A vendor file updates the quantity of a product ALREADY in availability. It never
+            // adds one: entering availability is a deliberate act by a person, and a vendor's list
+            // covers far more than we stock. Upserting here would let a supplier's catalogue decide
+            // what we offer, which is the same class of mistake as trade creating rows on its own.
             const qty = Number(c.newValue);
             const prev = Number(c.oldValue ?? 0);
-            await tx.productAvailability.upsert({
-              where: { productId: c.productId },
-              create: { productId: c.productId, quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null },
-              update: { quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null },
+            const existing = await tx.productAvailability.findUnique({
+              where: { productId: c.productId }, select: { quantity: true },
             });
-            await tx.availabilityLedger.create({
-              data: {
-                productId: c.productId,
-                delta: qty - prev,
-                newQuantity: qty,
-                reason: 'vendor_import',
-                refType: 'vendor_import_run',
-                refId: run.id,
-                createdById: actorId ?? null,
-              },
-            });
+            if (existing) {
+              await tx.productAvailability.update({
+                where: { productId: c.productId },
+                data: { quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null },
+              });
+              await tx.availabilityLedger.create({
+                data: {
+                  productId: c.productId,
+                  delta: qty - prev,
+                  newQuantity: qty,
+                  reason: 'vendor_import',
+                  refType: 'vendor_import_run',
+                  refId: run.id,
+                  createdById: actorId ?? null,
+                },
+              });
+            }
           }
         }
         return { runId: run.id, applied: plan.changes.length };
@@ -502,15 +510,18 @@ export class VendorImportService {
           } else if (c.field === 'ean' || c.field === 'upc') {
             await tx.product.update({ where: { id: c.productId }, data: { [c.field]: c.oldValue } });
           } else if (c.field === 'availability') {
+            // Same rule undoing as doing. If the row has since been removed there is nothing to
+            // restore, and recreating it here would put a product back into availability that
+            // somebody deliberately took out.
             const qty = Number(c.oldValue ?? 0);
             const current = await tx.productAvailability.findUnique({
               where: { productId: c.productId },
               select: { quantity: true },
             });
-            await tx.productAvailability.upsert({
+            if (current) {
+            await tx.productAvailability.update({
               where: { productId: c.productId },
-              create: { productId: c.productId, quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null },
-              update: { quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null },
+              data: { quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null },
             });
             await tx.availabilityLedger.create({
               data: {
@@ -524,6 +535,7 @@ export class VendorImportService {
                 createdById: actorId ?? null,
               },
             });
+            }
           }
           await tx.vendorImportChange.update({ where: { id: c.id }, data: { revertedAt: new Date() } });
         }

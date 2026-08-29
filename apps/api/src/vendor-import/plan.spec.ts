@@ -161,3 +161,52 @@ describe('brand discounts', () => {
     expect(plan.changes[0].newValue).toBe('100 EUR');
   });
 });
+
+/**
+ * A vendor file updates the availability of products we already track. It never adds one.
+ *
+ * A supplier's list runs to thousands of articles and we stock a fraction of them; letting the file
+ * create rows would hand the decision of what we offer to the vendor. Entering availability is a
+ * deliberate act by a person — the same rule that stops trade creating rows on its own.
+ */
+describe('availability from a vendor file', () => {
+  const product = (availability: number | null): PlanProduct => ({
+    id: 'p1', mainSku: 'AAA-1', title: 'Thing',
+    purchaseCostAmount: null, purchaseCostCurrency: 'EUR',
+    mapAmount: null, mapCurrency: 'EUR',
+    ean: null, upc: null, availability,
+    vatRatePct: null, brandId: null, brandName: null,
+  });
+  const opts = { currency: 'EUR', mapIncludesVat: false, anomalyPct: 50, brandDiscounts: {} };
+  const run = (availability: number | null, cell: string) =>
+    buildPlan([{ productId: 'p1', purchaseCost: '', map: '', availability: cell, ean: '' }],
+      new Map([['p1', product(availability)]]), opts);
+
+  it('updates a product already in availability', () => {
+    const plan = run(4, '9');
+    expect(plan.changes).toHaveLength(1);
+    expect(plan.changes[0]).toMatchObject({ field: 'availability', oldValue: '4', newValue: '9' });
+  });
+
+  it('refuses to add a product that is not in availability', () => {
+    const plan = run(null, '9');
+    expect(plan.changes).toHaveLength(0);
+    expect(plan.skipped[0]).toMatchObject({ field: 'availability', why: expect.stringContaining('not in availability') });
+  });
+
+  it('does not mistake a genuine zero for an absent row', () => {
+    // Zero means we track it and hold none — a real figure, and the file may move it.
+    const plan = run(0, '5');
+    expect(plan.changes).toHaveLength(1);
+    expect(plan.changes[0]).toMatchObject({ oldValue: '0', newValue: '5' });
+  });
+
+  it('proposes nothing when the figure already agrees', () => {
+    expect(run(7, '7').changes).toHaveLength(0);
+  });
+
+  it('can take a tracked product down to zero', () => {
+    const plan = run(6, '0');
+    expect(plan.changes[0]).toMatchObject({ oldValue: '6', newValue: '0' });
+  });
+});
