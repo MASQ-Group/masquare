@@ -182,3 +182,64 @@ describe('matching a product listing to its channel column', () => {
     expect(byColumn.get(`${EBAY}:US`)).toBeUndefined();
   });
 });
+
+/**
+ * Restoring the listings our pushes emptied, using the origin marketplace's figure.
+ *
+ * eBaymag fans a UK listing out to seven other markets and syncs on change. Our pushes zeroed the
+ * fanned-out copies and never touched UK, and eBaymag has not re-pushed in the nine days since — so
+ * the origin still holds the right number while its children sit at zero. It has no force-sync, so
+ * the only route is to write the children ourselves.
+ *
+ * The origin figure beats the push audit's on both counts: it is today's rather than the 20th's, and
+ * it is what eBaymag itself would publish.
+ *
+ * Mirroring decides the VALUE. It must never decide eligibility — of the 1,135 eBay listings at zero
+ * only 696 were emptied by us; 390 were already at zero and 47 were never ours, and refilling those
+ * from a sibling would put stock on sale that nobody said was there.
+ */
+type Row = { stored: number; recovered: number; mirrored: number };
+
+function planRow(r: Row, mirroring: boolean, onlyDamaged: boolean) {
+  const damaged = r.recovered > 0;
+  const target = mirroring && r.mirrored > 0
+    ? r.mirrored
+    : r.stored > 0 ? r.stored : r.recovered > 0 ? r.recovered : 0;
+  const source = mirroring && r.mirrored > 0 ? 'origin marketplace'
+    : target === 0 ? 'none' : r.stored > 0 ? 'last sync' : 'push audit';
+  const included = onlyDamaged ? damaged && target > 0 : target > 0;
+  return { target, source, included };
+}
+
+describe('restoring from the origin marketplace', () => {
+  it('uses the origin figure over the nine-day-old audit', () => {
+    const p = planRow({ stored: 0, recovered: 2, mirrored: 5 }, true, true);
+    expect(p).toMatchObject({ target: 5, source: 'origin marketplace', included: true });
+  });
+
+  it('falls back to the audit where the origin holds nothing', () => {
+    // UK itself out of stock teaches us nothing new, so the audit stands in.
+    expect(planRow({ stored: 0, recovered: 2, mirrored: 0 }, true, true))
+      .toMatchObject({ target: 2, source: 'push audit', included: true });
+  });
+
+  it('leaves a listing we never emptied alone, however healthy the origin', () => {
+    // The 390 already at zero and the 47 never ours. A sibling's stock is not permission to refill.
+    expect(planRow({ stored: 0, recovered: 0, mirrored: 5 }, true, true).included).toBe(false);
+  });
+
+  it('still restores nothing when neither origin nor audit can speak', () => {
+    expect(planRow({ stored: 0, recovered: 0, mirrored: 0 }, true, true))
+      .toMatchObject({ target: 0, included: false });
+  });
+
+  it('behaves as before when mirroring is off', () => {
+    expect(planRow({ stored: 0, recovered: 2, mirrored: 5 }, false, true))
+      .toMatchObject({ target: 2, source: 'push audit' });
+  });
+
+  it('prefers the origin even over a figure we still hold', () => {
+    // A stale non-zero of our own is still the 20th's; the origin is today's.
+    expect(planRow({ stored: 3, recovered: 2, mirrored: 5 }, true, false).target).toBe(5);
+  });
+});

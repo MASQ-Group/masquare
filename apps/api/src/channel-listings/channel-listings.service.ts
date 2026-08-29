@@ -497,7 +497,7 @@ export class ChannelListingsService {
    * Dry run by default. Nothing is sent without `confirm`.
    */
   async restoreQuantities(
-    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number; onlyMissing?: boolean; onlyDamaged?: boolean; excludeSkus?: string[]; integrationId?: string } = {},
+    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number; onlyMissing?: boolean; onlyDamaged?: boolean; excludeSkus?: string[]; integrationId?: string; mirrorMarketplace?: string } = {},
     companyIds?: string[],
     actorId?: string,
     ctx?: ProgressSink,
@@ -562,6 +562,30 @@ export class ChannelListingsService {
     const excluded = new Set((opts.excludeSkus ?? []).map((x) => x.trim().toLowerCase()).filter(Boolean));
     const excludedMatched = new Set<string>();
 
+    // `mirrorMarketplace` restores each listing to what the SAME SKU currently holds on another
+    // marketplace, instead of to whatever the audit remembers.
+    //
+    // It exists for eBaymag, which fans a UK listing out to seven other markets and syncs on change.
+    // Our pushes zeroed the fanned-out copies and never touched UK, and eBaymag has not re-pushed in
+    // the nine days since — so the origin still holds the right figure while its children sit at
+    // zero. That figure is better than the audit's on both counts: it is today's rather than the
+    // 20th's, and it is the number eBaymag itself would publish.
+    //
+    // Only positive figures are mirrored. Where the origin is itself at zero we have learnt nothing
+    // and the listing is left alone.
+    const mirror = new Map<string, number>();
+    if (opts.mirrorMarketplace) {
+      const rows = await this.prisma.channelListing.findMany({
+        where: {
+          marketplace: opts.mirrorMarketplace,
+          listedQuantity: { gt: 0 },
+          ...(companyIds ? { companyId: { in: companyIds } } : {}),
+        },
+        select: { channelSku: true, listedQuantity: true },
+      });
+      for (const r of rows) mirror.set(r.channelSku.trim().toLowerCase(), r.listedQuantity as number);
+    }
+
     const plan = listings
       .map((l) => {
         const stored = l.listedQuantity ?? 0;
@@ -573,13 +597,21 @@ export class ChannelListingsService {
         // construction: too LOW only costs a sale, too high oversells, and only one of those is
         // recoverable. Never applied on top of a figure we actually hold.
         const key = l.channelSku.trim().toLowerCase();
-        if (excluded.has(key)) { excludedMatched.add(key); return { l, target: 0, source: 'excluded' as const }; }
+        if (excluded.has(key)) { excludedMatched.add(key); return { l, target: 0, source: 'excluded' as const, damaged: false }; }
         // onlyMissing restricts the run to listings no record can speak for, so anything already
         // put back keeps the figure it was given rather than being pushed again.
-        if (opts.onlyMissing && (stored > 0 || recovered > 0)) return { l, target: 0, source: 'already restored' as const };
+        if (opts.onlyMissing && (stored > 0 || recovered > 0)) return { l, target: 0, source: 'already restored' as const, damaged: false };
+        // Whether WE emptied this listing. It decides eligibility under onlyDamaged and is kept
+        // separate from where the replacement figure comes from — mirroring must not widen the run
+        // to listings that were already at zero for their own reasons.
+        const damaged = recovered > 0;
+        // The origin marketplace outranks the rest as a VALUE: it is today's figure, and the one
+        // the fan-out tool would publish itself.
+        const mirrored = opts.mirrorMarketplace ? mirror.get(key) ?? 0 : 0;
+        if (mirrored > 0) return { l, target: mirrored, source: 'origin marketplace' as const, damaged };
         const target = stored > 0 ? stored : recovered > 0 ? recovered : (opts.fallbackQuantity ?? 0);
         const source = target === 0 ? 'none' : stored > 0 ? 'last sync' : recovered > 0 ? 'push audit' : 'fallback';
-        return { l, target, source };
+        return { l, target, source, damaged };
       })
       // Nothing to restore for a listing we have no positive figure for. Pushing 0 is what caused
       // this; the restore will not repeat it under another name.
@@ -587,7 +619,7 @@ export class ChannelListingsService {
       // the push audit because our own copy was flattened. Everything else already holds the right
       // quantity, and re-sending it is thousands of pointless marketplace calls: ~10,000 to repair
       // 2,345 listings. Fewer writes is not only quicker, it is less to go wrong.
-      .filter((p) => (opts.onlyDamaged ? p.source === 'push audit' : p.target > 0));
+      .filter((p) => (opts.onlyDamaged ? p.damaged && p.target > 0 : p.target > 0));
 
     // The ones we can do nothing for. Reported rather than silently dropped: after a restore they
     // are the listings still sitting at zero, and "they were not restored" reads as a failure when
