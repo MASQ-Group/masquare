@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: postgres:16
+    # Matches production. pg_dump refuses to read a newer server, and a dump cannot be
+    # restored into an older major version, so local has to track production to be loadable.
+    image: postgres:18
     container_name: masquare-postgres
     restart: unless-stopped
     environment:
@@ -10,7 +12,10 @@ services:
     ports:
       - "5434:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # 18+ stores data in a major-version subdirectory (/var/lib/postgresql/18/docker) so that
+      # pg_upgrade --link can work without crossing a mount boundary. Mounting at .../data instead
+      # makes the image refuse to start.
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U masquare -d masquare"]
       interval: 5s

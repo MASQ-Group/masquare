@@ -321,10 +321,11 @@ export interface AvailabilityLedgerRow {
 }
 export interface AvailabilityListResponse { items: AvailabilityRow[]; total: number; page: number; pageSize: number }
 export const availabilityApi = {
-  list: (params: { q?: string; brandId?: string; vendorId?: string; productTypeId?: string; unset?: boolean; page?: number; pageSize?: number } = {}) =>
+  /** Products that are IN availability. A product absent from it is not listed here at all. */
+  list: (params: { q?: string; brandId?: string; vendorId?: string; productTypeId?: string; page?: number; pageSize?: number } = {}) =>
     api.get<AvailabilityListResponse>('/availability', { params }).then((r) => r.data),
   // Every product id matching the filter — backs "select all N across pages".
-  ids: (params: { q?: string; brandId?: string; vendorId?: string; productTypeId?: string; unset?: boolean } = {}) =>
+  ids: (params: { q?: string; brandId?: string; vendorId?: string; productTypeId?: string } = {}) =>
     api.get<string[]>('/availability/ids', { params }).then((r) => r.data),
   get: (productId: string) =>
     api.get<AvailabilityRow & { ledger: AvailabilityLedgerRow[] }>(`/availability/${productId}`).then((r) => r.data),

@@ -1918,12 +1918,16 @@ export class SalesTransactionsService {
     const tx = await this.prisma.salesTransaction.findFirst({
       where: { id: txId },
       select: {
-        id: true, status: true, transactionRef: true, resolution: true,
+        id: true, status: true, transactionRef: true, resolution: true, channelShipmentStatus: true,
         items: { where: { deletedAt: null }, select: { id: true, sku: true, productId: true, quantity: true, availabilityDeductedQty: true } },
       },
     });
     if (!tx) return [];
-    const cancelled = tx.resolution === 'cancelled';
+    // Only a cancellation BEFORE shipment gives the units back — the goods never left. Cancelled
+    // after shipment, they did leave, so the deduction stands. A return is not a cancellation and
+    // never moves availability at all: the resolution stays 'returned' and nothing here fires.
+    const shipped = tx.channelShipmentStatus === 'shipped';
+    const cancelled = tx.resolution === 'cancelled' && !shipped;
     const affected = new Set<string>();
 
     await this.prisma.$transaction(async (db) => {
@@ -1934,10 +1938,14 @@ export class SalesTransactionsService {
           : this.wholeUnitsForStock(it.quantity, it.sku, 'channel availability');
         const move = desired - it.availabilityDeductedQty; // >0 = sell more, <0 = give back
         if (move === 0) continue;
-        await this.availability.adjust(
+        const applied = await this.availability.adjust(
           it.productId, -move, move > 0 ? 'sale' : 'cancellation',
           { refType: 'sales_tx', refId: it.id, note: tx.transactionRef ?? undefined }, actorId, db,
         );
+        // Null means the product is not in availability, so nothing was moved. Recording a
+        // deduction anyway would leave a debt against a row that does not exist, and the day
+        // someone added the product it would silently start short.
+        if (applied === null) continue;
         await db.salesTransactionItem.update({ where: { id: it.id }, data: { availabilityDeductedQty: desired } });
         affected.add(it.productId);
       }
