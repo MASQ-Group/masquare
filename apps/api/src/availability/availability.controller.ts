@@ -1,11 +1,10 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { AvailabilityService, type AvailabilityQuery } from './availability.service';
 import { SetAvailabilityDto } from './dto/availability.dto';
-
-const isTrue = (v?: string) => v === 'true' || v === '1';
 
 @ApiTags('availability')
 @ApiBearerAuth()
@@ -20,13 +19,11 @@ export class AvailabilityController {
     @Query('brandId') brandId?: string,
     @Query('vendorId') vendorId?: string,
     @Query('productTypeId') productTypeId?: string,
-    @Query('unset') unset?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
     const query: AvailabilityQuery = {
       q, brandId, vendorId, productTypeId,
-      unset: unset == null ? undefined : isTrue(unset),
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     };
@@ -40,10 +37,21 @@ export class AvailabilityController {
     @Query('brandId') brandId?: string,
     @Query('vendorId') vendorId?: string,
     @Query('productTypeId') productTypeId?: string,
-    @Query('unset') unset?: string,
   ) {
-    const query: AvailabilityQuery = { q, brandId, vendorId, productTypeId, unset: unset == null ? undefined : isTrue(unset) };
+    const query: AvailabilityQuery = { q, brandId, vendorId, productTypeId };
     return this.svc.listIds(query);
+  }
+
+  /**
+   * Empty availability so it can be rebuilt from figures someone vouches for. Admin only.
+   *
+   * Declared before ':productId' so 'purge' is not read as a product id. Without confirm it reports
+   * what it would remove and changes nothing.
+   */
+  @Post('purge')
+  @UseGuards(AdminGuard)
+  purge(@Body() dto: { confirm?: boolean }, @CurrentUser() user: AuthUser) {
+    return this.svc.purgeAll({ confirm: dto?.confirm }, user.sub);
   }
 
   @Get(':productId')

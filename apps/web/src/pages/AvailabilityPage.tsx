@@ -8,7 +8,10 @@ import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
 import { CHANNEL_GROUPS, channelGroupOf, channelPlatform, type ChannelPlatform } from '../lib/channelGroups';
 
-const SOURCE_LABEL: Record<string, string> = { manual: 'Manual', vendor_import: 'Vendor import', sale: 'Sale', return: 'Return' };
+// The three ways a quantity can move: a person, a vendor file, or a sale. There is no Return —
+// a return never changes availability, and a cancellation before shipment is the sale reversing
+// itself, so it reads as Sale. Legacy rows may still carry the old value until they are cleared.
+const SOURCE_LABEL: Record<string, string> = { manual: 'Manual', vendor_import: 'Vendor file', sale: 'Sale' };
 const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-IE', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 
 export function AvailabilityPage() {
@@ -18,7 +21,6 @@ export function AvailabilityPage() {
   const [brandId, setBrandId] = usePersistentState('availability.brand', '');
   const [vendorId, setVendorId] = usePersistentState('availability.vendor', '');
   const [productTypeId, setProductTypeId] = usePersistentState('availability.type', '');
-  const [onlyUnset, setOnlyUnset] = usePersistentState('availability.unset', false);
   const [page, setPage] = useState(1);
   const pageSize = 50;
   // Per-row edit buffer (productId -> typed string), so several rows can be edited before saving.
@@ -28,13 +30,13 @@ export function AvailabilityPage() {
   const [pushOpen, setPushOpen] = useState(false);
 
   useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
-  useEffect(() => { setPage(1); }, [brandId, vendorId, productTypeId, onlyUnset]);
+  useEffect(() => { setPage(1); }, [brandId, vendorId, productTypeId]);
 
   const { data: brands = [] } = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
   const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
   const { data: types = [] } = useQuery({ queryKey: ['product-types'], queryFn: () => productTypesApi.list() });
 
-  const params = { q: q || undefined, brandId: brandId || undefined, vendorId: vendorId || undefined, productTypeId: productTypeId || undefined, unset: onlyUnset || undefined, page, pageSize };
+  const params = { q: q || undefined, brandId: brandId || undefined, vendorId: vendorId || undefined, productTypeId: productTypeId || undefined, page, pageSize };
   const { data, isLoading } = useQuery({ queryKey: ['availability', params], queryFn: () => availabilityApi.list(params) });
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -49,8 +51,8 @@ export function AvailabilityPage() {
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save quantity'),
   });
 
-  const hasFilters = !!(q || brandId || vendorId || productTypeId || onlyUnset);
-  const resetFilters = () => { setQInput(''); setQ(''); setBrandId(''); setVendorId(''); setProductTypeId(''); setOnlyUnset(false); };
+  const hasFilters = !!(q || brandId || vendorId || productTypeId);
+  const resetFilters = () => { setQInput(''); setQ(''); setBrandId(''); setVendorId(''); setProductTypeId(''); };
 
   const edited = (r: AvailabilityRow) => edits[r.productId] !== undefined && edits[r.productId] !== String(r.quantity ?? '');
   const commit = (r: AvailabilityRow) => {
@@ -75,7 +77,7 @@ export function AvailabilityPage() {
   const selectAllMatching = async () => {
     setSelectingAll(true);
     try {
-      const ids = await availabilityApi.ids({ q: q || undefined, brandId: brandId || undefined, vendorId: vendorId || undefined, productTypeId: productTypeId || undefined, unset: onlyUnset || undefined });
+      const ids = await availabilityApi.ids({ q: q || undefined, brandId: brandId || undefined, vendorId: vendorId || undefined, productTypeId: productTypeId || undefined });
       setSelected(new Set(ids));
     } catch { toast.error('Could not select all products'); } finally { setSelectingAll(false); }
   };
@@ -105,9 +107,7 @@ export function AvailabilityPage() {
             <Select dense className="w-40" value={brandId} onChange={setBrandId} options={opts(brands, 'All brands')} />
             <Select dense className="w-40" value={vendorId} onChange={setVendorId} options={opts(vendors, 'All vendors')} />
             <Select dense className="w-40" value={productTypeId} onChange={setProductTypeId} options={opts(types, 'All types')} />
-            <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-n-600">
-              <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={onlyUnset} onChange={(e) => setOnlyUnset(e.target.checked)} /> Not set yet
-            </label>
+            
             {hasFilters && <button onClick={resetFilters} className="text-[12.5px] font-semibold text-n-500 hover:text-n-700">Reset</button>}
           </>
         }

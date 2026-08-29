@@ -8,7 +8,6 @@ export interface AvailabilityQuery {
   vendorId?: string;
   productTypeId?: string;
   /** Only rows whose availability has (or hasn't) been set yet. */
-  unset?: boolean;
   page?: number;
   pageSize?: number;
 }
@@ -34,14 +33,23 @@ export class AvailabilityService {
   }
 
   /** The product filter shared by list() and listIds() so "select all matching" uses the same set. */
+  /**
+   * The availability list is the availability table, not the catalogue.
+   *
+   * A product is here because someone put it here — a vendor file or a person. Listing every
+   * product instead and leaving a blank where there was no row made the two indistinguishable:
+   * "we hold none of this" looked the same as "nobody has ever assessed this", and there was
+   * nothing for an operator to add because everything was already on screen. Products that are
+   * listed on a channel but absent from here are work to do, and they have their own tab.
+   */
   private buildWhere(query: AvailabilityQuery): Prisma.ProductWhereInput {
     const q = query.q?.trim();
     return {
       ...ACTIVE,
+      availability: { isNot: null },
       ...(query.brandId ? { brandId: query.brandId } : {}),
       ...(query.vendorId ? { vendorId: query.vendorId } : {}),
       ...(query.productTypeId ? { productTypeId: query.productTypeId } : {}),
-      ...(query.unset != null ? { availability: query.unset ? { is: null } : { isNot: null } } : {}),
       ...(q
         ? {
             OR: [
@@ -100,6 +108,87 @@ export class AvailabilityService {
     return { ...this.serialize(p), ledger };
   }
 
+  /**
+   * Clear availability entirely, so it can be rebuilt from figures someone vouches for.
+   *
+   * Almost every row arrived by a route that is no longer allowed: `adjust` used to upsert, so an
+   * order for a product nobody had stocked created a row, sales clamped it at zero, and each
+   * cancellation added one to nothing. 664 of 690 rows came from trade rather than from a vendor
+   * file or a person, and 324 advertised units that never existed. A row at zero would still claim
+   * "we know this product and hold none", which nobody ever established — so the table is emptied
+   * rather than zeroed, and each product re-enters deliberately.
+   *
+   * The lines' recorded deductions go with it. Leaving 5,473 units of debt against rows that no
+   * longer exist would reinvent the bug: re-add a product, cancel an old order, and the difference
+   * between "deducted" and "desired" hands back units that were never taken.
+   *
+   * The ledger is kept. It is the record of what the system did, mistakes included, and deleting it
+   * would erase the evidence of why the table was emptied.
+   */
+  async purgeAll(opts: { confirm?: boolean } = {}, actorId?: string) {
+    const rows = await this.prisma.productAvailability.findMany({
+      select: { productId: true, quantity: true, lastSource: true },
+    });
+    const lines = await this.prisma.salesTransactionItem.aggregate({
+      where: { deletedAt: null, availabilityDeductedQty: { not: 0 } },
+      _count: true,
+      _sum: { availabilityDeductedQty: true },
+    });
+
+    const bySource = new Map<string, { rows: number; units: number }>();
+    for (const r of rows) {
+      const k = r.lastSource ?? '(none)';
+      const cur = bySource.get(k) ?? { rows: 0, units: 0 };
+      cur.rows += 1;
+      cur.units += r.quantity;
+      bySource.set(k, cur);
+    }
+
+    // Rows never set by a person or a vendor file: the ones trade created on its own.
+    const deliberate = await this.prisma.availabilityLedger.findMany({
+      where: { reason: { in: ['manual_set', 'manual_adjust', 'vendor_import'] } },
+      select: { productId: true },
+      distinct: ['productId'],
+    });
+    const deliberateIds = new Set(deliberate.map((d) => d.productId));
+
+    const summary = {
+      rows: rows.length,
+      unitsAdvertised: rows.reduce((s, r) => s + r.quantity, 0),
+      rowsFromTradeOnly: rows.filter((r) => !deliberateIds.has(r.productId)).length,
+      bySource: [...bySource].map(([source, v]) => ({ source, ...v })).sort((a, b) => b.rows - a.rows),
+      linesHoldingADeduction: lines._count,
+      unitsHeldOnLines: lines._sum.availabilityDeductedQty ?? 0,
+    };
+
+    if (!opts.confirm) return { dryRun: true as const, ...summary };
+
+    await this.prisma.$transaction(async (tx) => {
+      // One ledger line per product saying where its quantity went, so a product that reappears
+      // later has an explanation rather than an unaccountable gap.
+      for (const r of rows) {
+        if (r.quantity === 0) continue;
+        await tx.availabilityLedger.create({
+          data: {
+            productId: r.productId,
+            delta: -r.quantity,
+            newQuantity: 0,
+            reason: 'purge',
+            note: 'Availability cleared — rebuilt from vendor files and manual entry',
+            createdById: actorId ?? null,
+          },
+        });
+      }
+      await tx.productAvailability.deleteMany({});
+      await tx.salesTransactionItem.updateMany({
+        where: { availabilityDeductedQty: { not: 0 } },
+        data: { availabilityDeductedQty: 0 },
+      });
+    });
+
+    return { dryRun: false as const, ...summary };
+  }
+
   /** Set the absolute available quantity (manual). Records the change in the ledger. */
   async setQuantity(productId: string, quantity: number, note: string | null, actorId?: string) {
     const product = await this.prisma.product.findFirst({ where: { id: productId, ...ACTIVE }, select: { id: true } });
@@ -121,26 +210,39 @@ export class AvailabilityService {
   }
 
   /**
-   * Move availability by a delta (never below zero), for the sell-through / return flows.
-   * Composable in an outer transaction. Returns the new quantity. Used by later phases —
-   * a sale calls `adjust(productId, -qty, 'sale', …)`, a cancellation the positive inverse.
+   * Move an EXISTING availability row by a delta (never below zero). Returns the new quantity, or
+   * null when the product is not in availability.
+   *
+   * It will not create a row. A product enters availability deliberately — from a vendor file or by
+   * a person — and never as a side effect of trade. This used to upsert, so an order for a product
+   * nobody had ever stocked created a row: sales clamped it at zero, then each cancellation added
+   * one to nothing. 664 rows arrived that way, 324 of them showing 1,096 units that never existed,
+   * and every one of those was a candidate to be broadcast to the marketplaces as sellable.
+   *
+   * A product outside availability is simply not our concern: no row, no ledger entry, nothing
+   * recorded against the line. If it is added later it starts from the figure the operator or the
+   * vendor file gives it, which is the only number anyone can vouch for.
    */
   async adjust(
     productId: string,
     delta: number,
-    reason: 'sale' | 'cancellation' | 'return' | 'vendor_import' | 'manual_adjust',
+    // No 'return': a return never moves availability. A cancellation does, but only before shipment,
+    // which the caller decides.
+    reason: 'sale' | 'cancellation' | 'vendor_import' | 'manual_adjust',
     ref: { refType?: string; refId?: string; note?: string } = {},
     actorId?: string,
     db: Prisma.TransactionClient | PrismaService = this.prisma,
-  ): Promise<number> {
+  ): Promise<number | null> {
     const current = await db.productAvailability.findUnique({ where: { productId }, select: { quantity: true } });
-    const prev = current?.quantity ?? 0;
+    if (!current) return null;
+    const prev = current.quantity;
     const next = Math.max(0, prev + Math.trunc(delta));
-    const source = reason === 'vendor_import' ? 'vendor_import' : reason === 'return' || reason === 'cancellation' ? 'return' : reason === 'sale' ? 'sale' : 'manual';
-    await db.productAvailability.upsert({
+    // A cancellation is the sale reversing itself, so it reads as the sale did. There is no
+    // 'return' source: a return never moves availability.
+    const source = reason === 'vendor_import' ? 'vendor_import' : reason === 'manual_adjust' ? 'manual' : 'sale';
+    await db.productAvailability.update({
       where: { productId },
-      create: { productId, quantity: next, lastSource: source, updatedById: actorId ?? null },
-      update: { quantity: next, lastSource: source, updatedById: actorId ?? null },
+      data: { quantity: next, lastSource: source, updatedById: actorId ?? null },
     });
     await db.availabilityLedger.create({
       data: { productId, delta: next - prev, newQuantity: next, reason, refType: ref.refType ?? null, refId: ref.refId ?? null, note: ref.note ?? null, createdById: actorId ?? null },
