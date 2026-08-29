@@ -100,6 +100,7 @@ export class ChannelListingsController {
    *  without applying; dryRun=false commits and records a ChannelPush audit per listing. */
   @Post('push')
   push(@VisibleCompanies() companyIds: string[], @CurrentUser() user: AuthUser, @Body() body: { productIds: string[]; dryRun?: boolean; channels?: string[] }) {
-    return this.svc.pushAvailability(body?.productIds ?? [], { dryRun: body?.dryRun !== false, channelKeys: body?.channels }, companyIds, user.sub);
+    // The one path allowed to raise a live quantity: a person pressing Push to channels.
+    return this.svc.pushAvailability(body?.productIds ?? [], { dryRun: body?.dryRun !== false, channelKeys: body?.channels, allowIncrease: true }, companyIds, user.sub);
   }
 }

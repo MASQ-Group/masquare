@@ -216,8 +216,24 @@ export class ChannelListingsService {
    *  eBay later). `dryRun` validates without applying — Amazon uses VALIDATION_PREVIEW, a real
    *  call that confirms the write would succeed. A real run updates listedQuantity and writes a
    *  ChannelPush audit row per listing. Excludes Amazon FBA (Amazon owns that quantity). */
-  async pushAvailability(productIds: string[], opts: { dryRun?: boolean; channelKeys?: string[] } = {}, companyIds?: string[], actorId?: string) {
+  /**
+   * `allowIncrease` is the red line: a quantity may only be RAISED on a marketplace by a person
+   * pressing Push to channels. Every automatic path leaves it false, so sell-through can lower a
+   * figure but nothing can silently offer more.
+   *
+   * The asymmetry is deliberate. Pushing a number down too eagerly costs a sale; pushing one up
+   * wrongly sells goods that do not exist, and a cancellation restoring units is exactly the case
+   * that would otherwise do it automatically. The guard sits here rather than at the callers so a
+   * future one cannot forget it.
+   */
+  async pushAvailability(
+    productIds: string[],
+    opts: { dryRun?: boolean; channelKeys?: string[]; allowIncrease?: boolean } = {},
+    companyIds?: string[],
+    actorId?: string,
+  ) {
     const dryRun = opts.dryRun ?? false;
+    const allowIncrease = opts.allowIncrease === true;
     // Optional channel restriction: keys are the dashboard column ids — `${integrationId}:${marketplace}`
     // for a per-marketplace (eBay) column, or the bare integrationId otherwise. Empty/undefined = all.
     const channelKeys = opts.channelKeys && opts.channelKeys.length ? new Set(opts.channelKeys) : null;
@@ -311,6 +327,17 @@ export class ChannelListingsService {
         continue;
       }
       const target = qtyByProduct.get(l.productId as string) as number;
+      // Raising a live quantity is a person's decision. An automatic run may lower a figure or
+      // leave it alone; anything that would offer more waits for a deliberate push.
+      if (!allowIncrease && l.listedQuantity != null && target > l.listedQuantity) {
+        results.push({
+          productId: l.productId, channelKey, channel: l.integration.name, channelType: l.integration.channelType,
+          marketplace: l.marketplace, countryIso: isoOf(l), channelSku: l.channelSku,
+          currentQty: l.listedQuantity, targetQty: target, ok: false, skipped: true,
+          message: `Would raise ${l.listedQuantity} → ${target}. Increases are only sent from Push to channels.`,
+        });
+        continue;
+      }
       const r =
         l.integration.channelType === 'amazon' ? await this.integrations.pushAmazonQuantity(l.integrationId, l.channelSku, target, dryRun)
         : l.integration.channelType === 'onbuy' ? await this.integrations.pushOnBuyQuantity(l.integrationId, l.channelSku, target, dryRun)
