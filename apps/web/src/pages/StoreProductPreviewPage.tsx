@@ -126,17 +126,11 @@ export function StoreProductPreviewPage() {
             <PriceCard price={data.price} availability={data.availability} qty={qty} onQty={setQty} />
 
             {data.shortDescription && (
-              <div className="rte border-b border-n-100 pb-[18px] text-[14px] leading-[1.65] text-n-600">
-                {/* HTML now, like the full description: both are authored in the same editor. */}
+              /* The price card's quieter sibling: same corner and padding so they read as a pair,
+                 but translucent over the page rather than white on it, and no shadow — the shadow is
+                 what lifts the price card, and two lifted cards compete for the same attention. */
+              <div className="rte rounded-lg border border-n-100 bg-n-0/60 px-6 py-4 text-[14px] leading-[1.65] text-n-600">
                 <span dangerouslySetInnerHTML={{ __html: data.shortDescription }} />
-                {tabs.includes('Product description') && (
-                  <>
-                    {' '}
-                    <a href="#detail" onClick={() => setTab(tabs.indexOf('Product description'))} className="text-teal-600 hover:text-teal-700">
-                      Full description ↓
-                    </a>
-                  </>
-                )}
               </div>
             )}
 
@@ -145,7 +139,7 @@ export function StoreProductPreviewPage() {
 
         {/* --- Tabs --------------------------------------------------------- */}
         {tabs.length > 0 ? (
-          <div id="detail" className="flex flex-col gap-5 pt-2">
+          <div className="flex flex-col gap-5 pt-2">
             <div className="flex gap-7 border-b border-n-200">
               {tabs.map((label, i) => (
                 <button
