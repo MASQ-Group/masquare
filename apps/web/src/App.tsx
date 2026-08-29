@@ -38,6 +38,7 @@ const InventoryPage = lazyPage(() => import('./pages/InventoryPage'), 'Inventory
 const AvailabilityPage = lazyPage(() => import('./pages/AvailabilityPage'), 'AvailabilityPage');
 const ChannelListingsPage = lazyPage(() => import('./pages/ChannelListingsPage'), 'ChannelListingsPage');
 const ChannelListingDetailPage = lazyPage(() => import('./pages/ChannelListingDetailPage'), 'ChannelListingDetailPage');
+const StoreProductPreviewPage = lazyPage(() => import('./pages/StoreProductPreviewPage'), 'StoreProductPreviewPage');
 const StockOwedPage = lazyPage(() => import('./pages/StockOwedPage'), 'StockOwedPage');
 const AnalyticsLayout = lazyPage(() => import('./components/analytics/AnalyticsLayout'), 'AnalyticsLayout');
 const AnalyticsOverviewPage = lazyPage(() => import('./pages/analytics/AnalyticsOverviewPage'), 'AnalyticsOverviewPage');
@@ -113,6 +114,9 @@ export function App() {
         <Route path="/availability" element={<RequireTradingCompany><AvailabilityPage /></RequireTradingCompany>} />
         <Route path="/channel-listings" element={<RequireTradingCompany><ChannelListingsPage /></RequireTradingCompany>} />
         <Route path="/channel-listings/:productId" element={<RequireTradingCompany><ChannelListingDetailPage /></RequireTradingCompany>} />
+        {/* The B2B storefront product page, previewed inside the platform while the store itself
+            — customers, entitlements, agreed prices — is still to be built. */}
+        <Route path="/store-preview/product/:productId" element={<StoreProductPreviewPage />} />
         <Route path="/repricing" element={<RequireAdmin><RequireTradingCompany><RepricingPage /></RequireTradingCompany></RequireAdmin>} />
         <Route path="/stock-owed" element={<StockOwedPage />} />
         <Route path="/warehouses" element={<WarehousesPage />} />

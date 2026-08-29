@@ -681,6 +681,102 @@ export class ProductsService {
     return { created, updated, skipped, errors };
   }
 
+  /**
+   * One product as the B2B store shows it.
+   *
+   * Assembled here rather than in the page so the rules live once: which fields a buyer may see,
+   * what counts as a machine value, and how stock becomes a state rather than a number. The page's
+   * job is layout.
+   *
+   * Every field is omitted when empty. Only 12% of the catalogue has an image and 3% a description,
+   * so a page that renders dashes and empty rows would look broken on nine products in ten — the
+   * layout closes up instead.
+   *
+   * Behind the platform's own login for now. The store's customers, their entitlements and their
+   * agreed prices do not exist yet, so this shows what a buyer WOULD see, to staff who can already
+   * see all of it.
+   */
+  async storefront(id: string) {
+    const p = await this.prisma.product.findFirst({
+      where: { id, deletedAt: null },
+      include: {
+        brand: { select: { name: true } },
+        category: { select: { name: true } },
+        productType: { select: { name: true } },
+        voltageRating: { select: { label: true } },
+        frequency: { select: { label: true } },
+        plugTypeRef: { select: { label: true } },
+        batteryTypeRef: { select: { label: true } },
+        media: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' }, select: { id: true, url: true } },
+        documents: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' }, select: { id: true, name: true, sizeBytes: true } },
+        attributes: {
+          where: { deletedAt: null },
+          select: { value: true, attribute: { select: { name: true } } },
+        },
+        availability: { select: { quantity: true } },
+      },
+    });
+    if (!p) throw new NotFoundException('Product not found');
+
+    const n = (v: unknown) => (v == null ? null : Number(v));
+    /** A row only exists when it has a value. `mono` marks a machine-assigned value. */
+    const rows: { label: string; value: string; mono?: boolean }[] = [];
+    const row = (label: string, value: unknown, mono = false) => {
+      const v = value == null || value === '' ? null : String(value);
+      if (v) rows.push({ label, value: v, ...(mono ? { mono: true } : {}) });
+    };
+
+    const dims = [n(p.packageLengthCm), n(p.packageWidthCm), n(p.packageHeightCm)];
+    row('Brand', p.brand?.name);
+    row('Manufacturer SKU', p.manufacturerSku, true);
+    row('EAN', p.ean, true);
+    row('Product type', p.productType?.name);
+    // Attributes are the product's own specifications, and free-form, so they are shown as written.
+    for (const a of p.attributes) row(a.attribute?.name ?? '', a.value);
+    row('Voltage', p.voltageRating?.label, true);
+    row('Frequency', p.frequency?.label, true);
+    row('Plug type', p.plugTypeRef?.label);
+    row('Battery', p.batteryTypeRef?.label ?? (p.batteryRequired ? 'Required' : null));
+    row('Product weight', n(p.productWeightKg) != null ? `${n(p.productWeightKg)!.toFixed(2)} kg` : null, true);
+    row('Package weight', n(p.packageWeightKg) != null ? `${n(p.packageWeightKg)!.toFixed(2)} kg` : null, true);
+    row('Package dimensions', dims.every((d) => d != null) ? `${dims.map((d) => d!.toFixed(1)).join(' × ')} cm` : null, true);
+    row('Country of origin', p.countryOfOrigin);
+    row('Warranty', p.warrantyText);
+
+    /**
+     * Stock as a state, never a count: exact stock is commercially sensitive, and a buyer only needs
+     * to know whether they can have it. No availability record means we do not know, which is not
+     * the same as none — so the page shows nothing at all rather than guessing.
+     */
+    const qty = p.availability?.quantity ?? null;
+    const availability = qty == null ? null : qty === 0 ? 'unavailable' : qty <= 3 ? 'limited' : 'in_stock';
+
+    return {
+      id: p.id,
+      sku: p.mainSku,
+      title: p.title,
+      brand: p.brand?.name ?? null,
+      category: p.category?.name ?? null,
+      ean: p.ean ?? null,
+      shortDescription: p.shortDescription ?? null,
+      descriptionHtml: p.descriptionHtml ?? null,
+      keyFeatures: p.keyFeatures ?? [],
+      images: p.media.map((m) => m.url),
+      documents: p.documents,
+      /** The quick-facts ledger beside the price: the few a buyer checks first. */
+      quickFacts: rows.filter((r) => ['Manufacturer SKU', 'Product weight', 'Country of origin'].includes(r.label)),
+      /** Everything on record, for the Specifications tab. */
+      specifications: rows,
+      /**
+       * A stand-in until customer pricing exists. MAP is the only price the platform holds for most
+       * products, and it is labelled as a placeholder in the page rather than passed off as a
+       * customer's agreed price.
+       */
+      price: n(p.mapAmount) != null ? { amount: n(p.mapAmount)!, currency: p.mapCurrency ?? 'EUR' } : null,
+      availability,
+    };
+  }
+
   // --- Media ---------------------------------------------------------------
   async addMedia(id: string, file: { buffer: Buffer; originalname: string; mimetype: string }) {
     await this.get(id);

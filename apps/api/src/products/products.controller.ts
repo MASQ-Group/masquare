@@ -112,6 +112,12 @@ export class ProductsController {
     return this.products.remove(id);
   }
 
+  /** One product as the B2B store would show it. Behind the platform login while the store has none. */
+  @Get(':id/storefront')
+  storefront(@Param('id') id: string) {
+    return this.products.storefront(id);
+  }
+
   @Post(':id/media')
   @UseInterceptors(FileInterceptor('file'))
   addMedia(@Param('id') id: string, @UploadedFile() file: any) {
