@@ -123,7 +123,11 @@
     @apply inline-flex overflow-hidden rounded-lg border border-n-200;
   }
   .hseg > button {
-    @apply h-8 border-l border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-500 transition-colors first:border-l-0 hover:text-n-800;
+    @apply inline-flex h-8 items-center justify-center gap-1.5 border-l border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-500 transition-colors first:border-l-0 hover:text-n-800;
+  }
+  /* An icon-only segment is square rather than a wide button with a small mark adrift in it. */
+  .hseg > button:has(> svg:only-child) {
+    @apply w-9 px-0;
   }
   .hseg > button.hseg-on {
     @apply bg-n-100 font-semibold text-n-900;
