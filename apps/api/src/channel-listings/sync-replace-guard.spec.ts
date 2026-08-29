@@ -132,3 +132,53 @@ describe('channel ids arriving from the dashboard', () => {
     expect(toIntegrationIds([])).toEqual([]);
   });
 });
+
+/**
+ * The product page asks "is this listed on each channel?" by looking each channel's column up
+ * among the product's listings. The lookup has to be keyed the way a column is identified.
+ *
+ * It was keyed by integration id, which names a column only where a connection serves one
+ * marketplace. One eBay connection serves eight, so every eBay lookup missed and the page reported
+ * "Not listed" on all of them while the dashboard — which keys correctly — showed them listed. Even
+ * a matching key would have been wrong: eight rows sharing one integration id collapse into a Map
+ * as whichever came last.
+ */
+const columnKey = (l: { integrationId: string; marketplace: string | null }) =>
+  (l.marketplace ? `${l.integrationId}:${l.marketplace}` : l.integrationId);
+
+describe('matching a product listing to its channel column', () => {
+  const EBAY = 'aaaaaaaa-1111-4a2b-8c3d-4e5f60718293';
+  const AMZ = 'bbbbbbbb-2222-4e3f-9a1b-2c3d4e5f6071';
+
+  const listings = [
+    { integrationId: EBAY, marketplace: 'GB', listedQuantity: 1 },
+    { integrationId: EBAY, marketplace: 'DE', listedQuantity: 0 },
+    { integrationId: EBAY, marketplace: 'IT', listedQuantity: 0 },
+    { integrationId: AMZ, marketplace: '', listedQuantity: 4 },
+  ];
+  const byColumn = new Map(listings.map((l) => [columnKey(l), l]));
+
+  it('keeps every eBay marketplace distinct', () => {
+    // The bug: one key for eight markets meant seven rows vanished.
+    expect(byColumn.size).toBe(4);
+  });
+
+  it('finds the marketplace the column names', () => {
+    expect(byColumn.get(`${EBAY}:GB`)?.listedQuantity).toBe(1);
+    expect(byColumn.get(`${EBAY}:DE`)?.listedQuantity).toBe(0);
+  });
+
+  it('reports listed for a marketplace holding no stock', () => {
+    // Out of stock is still listed. Conflating the two is what made 2E-KDM120-PBL read as absent
+    // from markets it is live on.
+    expect(!!byColumn.get(`${EBAY}:IT`)).toBe(true);
+  });
+
+  it('still matches a single-marketplace channel by its bare id', () => {
+    expect(byColumn.get(AMZ)?.listedQuantity).toBe(4);
+  });
+
+  it('reports not listed only when there is genuinely no row', () => {
+    expect(byColumn.get(`${EBAY}:US`)).toBeUndefined();
+  });
+});
