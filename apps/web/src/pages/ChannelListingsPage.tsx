@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, ChevronDown, Edit3, ExternalLink, Eye, Grid2x2, LayoutGrid, Layers, Package, Pause, RefreshCw, Search, SlidersHorizontal, TrendingDown, TrendingUp } from 'lucide-react';
@@ -9,6 +9,7 @@ import { useJobProgress } from '../lib/useJobProgress';
 import { formatAmount } from '../lib/format';
 import { Flag } from '../components/common/Flag';
 import { PageHeader } from '../components/common/PageHeader';
+import { AnchoredPanel } from '../components/common/AnchoredPanel';
 import { usePersistentState } from '../lib/usePersistentState';
 import { CHANNEL_GROUPS, channelGroupOf, sortChannelsCanonical, type ChannelGroup } from '../lib/channelGroups';
 
@@ -172,29 +173,24 @@ function FilterMenu({
   icon, label, summary, active, children, width = 300,
 }: { icon: ReactNode; label: string; summary: string; active?: boolean; children: ReactNode; width?: number }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [open]);
+  const ref = useRef<HTMLButtonElement>(null);
+  // Portalled rather than positioned inside the toolbar: the table below has a sticky header at the
+  // same stacking level and its own overflow, so an absolutely-placed panel opened behind it.
   return (
-    <div ref={ref} className="relative">
-      <button onClick={() => setOpen((o) => !o)}
+    <>
+      <button ref={ref} onClick={() => setOpen((o) => !o)}
         className={`flex h-[42px] items-center gap-2 rounded-md border px-3.5 text-[13px] font-semibold ${active ? 'border-teal-300 bg-teal-50 text-teal-700' : 'border-n-200 bg-n-0 text-n-700 hover:bg-n-25'}`}>
         {icon}<span>{label}</span>
         <span className={`text-[12px] font-normal ${active ? 'text-teal-600' : 'text-n-400'}`}>{summary}</span>
         <ChevronDown size={15} className={active ? 'text-teal-500' : 'text-n-400'} />
       </button>
       {open && (
-        <div className="absolute left-0 z-40 mt-1.5 max-h-[70vh] overflow-y-auto rounded-xl border border-n-200 bg-n-0 p-1.5 shadow-lg" style={{ width }}>
-          {children}
-        </div>
+        <AnchoredPanel anchorRef={ref} onClose={() => setOpen(false)} className="p-1.5">
+          {/* Width is a prop, so it cannot be a Tailwind class — the panel sizes to this. */}
+          <div style={{ width }}>{children}</div>
+        </AnchoredPanel>
       )}
-    </div>
+    </>
   );
 }
 
@@ -225,26 +221,18 @@ function SyncMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [open]);
+  const ref = useRef<HTMLButtonElement>(null);
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const setMany = (ids: string[], on: boolean) => setSel((s) => { const n = new Set(s); ids.forEach((id) => (on ? n.add(id) : n.delete(id))); return n; });
   const count = sel.size;
   return (
-    <div ref={ref} className="relative">
-      <button onClick={() => setOpen((o) => !o)} disabled={busy} aria-label="Choose channels to sync"
+    <>
+      <button ref={ref} onClick={() => setOpen((o) => !o)} disabled={busy} aria-label="Choose channels to sync"
         className="inline-flex h-8 items-center rounded-r-lg border-l border-teal-600/40 bg-teal-500 px-2 text-white hover:bg-teal-600 disabled:opacity-60">
         <ChevronDown size={16} />
       </button>
       {open && (
-        <div className="absolute right-0 z-40 mt-1.5 w-[330px] rounded-xl border border-n-200 bg-n-0 shadow-lg">
+        <AnchoredPanel anchorRef={ref} onClose={() => setOpen(false)} align="right" className="w-[330px]">
           <div className="flex items-center justify-between border-b border-n-100 px-3 py-2.5">
             <span className="text-[12.5px] font-semibold text-n-800">Sync specific channels</span>
             {count > 0 && <button onClick={() => setSel(new Set())} className="text-[11.5px] font-semibold text-n-500 hover:text-n-700">Clear</button>}
@@ -279,9 +267,9 @@ function SyncMenu({
               <RefreshCw size={15} className={busy ? 'animate-spin' : ''} /> Sync selected{count ? ` (${count})` : ''}
             </button>
           </div>
-        </div>
+        </AnchoredPanel>
       )}
-    </div>
+    </>
   );
 }
 
