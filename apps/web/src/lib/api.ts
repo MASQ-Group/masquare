@@ -327,7 +327,8 @@ export interface AvailabilityGapRow {
   productId: string | null;
   mainSku: string | null;
   title: string | null;
-  channels: string[];
+  /** One entry per platform; `markets` names the individual marketplaces behind it. */
+  channels: { platform: string; markets: string[] }[];
   /** What the marketplaces currently advertise. A starting figure, not one the platform vouches for. */
   listedQuantity: number;
 }
