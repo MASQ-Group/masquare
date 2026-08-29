@@ -718,6 +718,9 @@ model Product {
    * /** eBay's title, capped at 80 characters by eBay itself. Written for search, not for us.
    */
   ebayTitle       String?  @map("ebay_title")
+  /// One or two sentences: what this is, for a buyer deciding in seconds. Sits above the full
+  /// description on the B2B store, which most products will never have — 37 of 1,174 carry one.
+  shortDescription String? @map("short_description")
   descriptionHtml String?  @map("description_html")
   /**
    * Ordered selling points. Rendered as bullets by every channel that takes them.
@@ -766,6 +769,7 @@ model Product {
 
   aliases               ProductSkuAlias[]
   media                 ProductMedia[]
+  documents             ProductDocument[]
   attributes            ProductAttribute[]
   companies             ProductCompany[]
   salesTransactionItems SalesTransactionItem[]
@@ -1637,6 +1641,34 @@ model ProductMedia {
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("product_media")
+}
+
+/// A document a buyer may need before ordering — a datasheet, a certificate, a manual.
+///
+/// PDF only, at most three per product. Named by the person uploading it, because "DS-4471-rev-C.pdf"
+/// tells a buyer nothing and "Datasheet" tells them everything.
+///
+/// Never public. These are served to a signed-in customer entitled to the product, so the store hands
+/// out a short-lived link rather than a bucket URL anyone could pass on.
+model ProductDocument {
+  id        String @id @default(uuid()) @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  /// What the buyer sees. The stored object's name is an implementation detail.
+  name      String
+  url       String
+  /// Bytes, so the store can show a size without fetching the file.
+  sizeBytes Int?   @map("size_bytes")
+  sortOrder Int    @default(0) @map("sort_order")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@map("product_document")
 }
 
 // The real product↔attribute assignment (distinct from the M2 `attribute` library).

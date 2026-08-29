@@ -6,12 +6,13 @@ import { CostHistory } from './CostHistory';
 import { ProductStockSection } from './ProductStockSection';
 import { ProductChannelIdentifiers } from './ProductChannelIdentifiers';
 import { ProductChannelsTab } from './ProductChannelsTab';
+import { ProductDocuments } from './ProductDocuments';
 import { FeatureList } from './FeatureList';
 import { FileDrop, ModalShell, Select } from '@masquare/ui';
 import {
   attributesApi, brandsApi, categoriesApi, complianceOptionsApi, fulfilmentTypesApi, productClassesApi, productsApi,
   productTypesApi, vatClassesApi, vendorsApi,
-  type Attribute, type Product, type ProductAlias, type ProductMediaItem, type RefLite,
+  type Attribute, type Product, type ProductAlias, type ProductDocumentItem, type ProductMediaItem, type RefLite,
 } from '../../lib/api';
 import { RefField } from './RefField';
 import { CountrySelect } from '../common/CountrySelect';
@@ -85,11 +86,13 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
     packageHeightCm: product?.packageHeightCm?.toString() ?? '',
   });
   const [media, setMedia] = useState<ProductMediaItem[]>(product?.media ?? []);
+  const [documents, setDocuments] = useState<ProductDocumentItem[]>(product?.documents ?? []);
 
   // Listing copy. Amazon and OnBuy never display any of it — they carry our offer against their
   // own catalogue entry — so this is eBay and Shopify only.
   const [content, setContent] = useState({
     ebayTitle: product?.ebayTitle ?? '',
+    shortDescription: product?.shortDescription ?? '',
     descriptionHtml: product?.descriptionHtml ?? '',
     searchKeywords: product?.searchKeywords ?? '',
   });
@@ -150,6 +153,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
         packageWidthCm: numOrNull(dims.packageWidthCm),
         packageHeightCm: numOrNull(dims.packageHeightCm),
         ebayTitle: content.ebayTitle.trim() || null,
+        shortDescription: content.shortDescription.trim() || null,
         descriptionHtml: content.descriptionHtml.trim() || null,
         keyFeatures: features.map((f) => f.trim()).filter(Boolean),
         searchKeywords: content.searchKeywords.trim() || null,
@@ -463,6 +467,19 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
             <p className="mt-1 text-[12px] text-n-400">{content.ebayTitle.length}/80 characters</p>
           </div>
           <div>
+            <label className="label">Short description</label>
+            {/* Deliberately short and plain: it sits under the price on the B2B store, where a buyer
+                is deciding in seconds. Two sentences, no markup. */}
+            <textarea
+              className="input min-h-[64px] py-2"
+              maxLength={280}
+              value={content.shortDescription}
+              onChange={(e) => { setContent((s) => ({ ...s, shortDescription: e.target.value })); touch(); }}
+              placeholder="One or two sentences — what this is, for a buyer deciding in seconds."
+            />
+            <p className="mt-1 text-[12px] text-n-400">{content.shortDescription.length}/280 characters</p>
+          </div>
+          <div>
             <label className="label">Description</label>
             <textarea
               className="input min-h-[140px] py-2"
@@ -472,6 +489,9 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
             />
           </div>
           <FeatureList value={features} onChange={(next) => { setFeatures(next); touch(); }} />
+          {/* Documents hang off a saved product, like images: there is no id to attach them to
+              until the product exists, and they upload immediately rather than on save. */}
+          {product && <ProductDocuments productId={product.id} value={documents} onChange={setDocuments} />}
           <div>
             <label className="label">Search keywords</label>
             <input className="input" value={content.searchKeywords} onChange={(e) => { setContent((s) => ({ ...s, searchKeywords: e.target.value })); touch(); }} placeholder="Comma separated" />
