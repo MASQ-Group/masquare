@@ -128,6 +128,7 @@ export class ProductsService {
 
       // Listing content. Only eBay and Shopify ever display any of it.
       ebayTitle: p.ebayTitle ?? null,
+      shortDescription: p.shortDescription ?? null,
       descriptionHtml: p.descriptionHtml ?? null,
       keyFeatures: p.keyFeatures ?? [],
       searchKeywords: p.searchKeywords ?? null,
@@ -330,6 +331,7 @@ export class ProductsService {
       msrpAmount: msrp.amount,
       msrpCurrency: msrp.currency,
       ebayTitle: dto.ebayTitle ?? null,
+      shortDescription: dto.shortDescription ?? null,
       descriptionHtml: dto.descriptionHtml ?? null,
       keyFeatures: dto.keyFeatures ?? [],
       searchKeywords: dto.searchKeywords ?? null,
