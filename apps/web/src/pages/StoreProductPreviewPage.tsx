@@ -184,7 +184,12 @@ export function StoreProductPreviewPage() {
               <div className="grid grid-cols-2 items-start gap-x-12 gap-y-7 max-[900px]:grid-cols-1">
                 {data.specifications.map((g) => (
                   <div key={g.group} className="flex flex-col">
-                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[.09em] text-n-400">{g.group}</div>
+                    {/* Darker and ruled rather than coloured. The accent is already carrying the
+                        brand eyebrow, the price, the active tab and the feature ticks — a fifth use
+                        would spend it on structure, which is what weight and a rule are for. */}
+                    <div className="mb-1 border-b-2 border-n-200 pb-1.5 text-[11.5px] font-semibold uppercase tracking-[.09em] text-n-800">
+                      {g.group}
+                    </div>
                     {g.rows.map((sRow) => (
                       <div key={sRow.label} className="grid grid-cols-[200px_1fr] border-b border-n-100 px-0.5 py-[11px] text-[13.5px]">
                         <span className="text-n-500">{sRow.label}</span>
