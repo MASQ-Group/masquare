@@ -243,3 +243,48 @@ describe('restoring from the origin marketplace', () => {
     expect(planRow({ stored: 3, recovered: 2, mirrored: 5 }, true, false).target).toBe(5);
   });
 });
+
+/**
+ * A restore has to be repeatable.
+ *
+ * A deploy took the US run at 80 of 116, and repeating it rewrote all 116 — nothing checked whether
+ * a listing already held the figure being sent. Every one of those is a marketplace call that
+ * changes nothing, and across the seven markets a second pass would have been roughly 900 of them.
+ *
+ * Skipping what already agrees makes a re-run resumable rather than merely harmless.
+ */
+const needsWriting = (listed: number, target: number) => target > 0 && listed !== target;
+
+describe('re-running a restore', () => {
+  it('writes a listing that is still at zero', () => {
+    expect(needsWriting(0, 5)).toBe(true);
+  });
+
+  it('skips one already restored to the same figure', () => {
+    expect(needsWriting(5, 5)).toBe(false);
+  });
+
+  it('writes one holding a different figure', () => {
+    // Sold down since, or restored to a stale value — either way the target is what should stand.
+    expect(needsWriting(3, 5)).toBe(true);
+  });
+
+  it('never writes when there is no figure to send', () => {
+    // The rule the whole incident turned on: no target means leave it alone, never push zero.
+    expect(needsWriting(0, 0)).toBe(false);
+    expect(needsWriting(4, 0)).toBe(false);
+  });
+
+  it('leaves nothing to do on a completed run', () => {
+    const listings = [[0, 5], [0, 2], [0, 1]] as const;
+    const afterFirstPass = listings.map(([, t]) => [t, t] as const);
+    expect(afterFirstPass.filter(([l, t]) => needsWriting(l, t))).toHaveLength(0);
+  });
+
+  it('leaves only the remainder after an interrupted run', () => {
+    // 80 of 116 done: the second pass is the 36 that were missed.
+    const done = Array.from({ length: 80 }, () => [5, 5] as const);
+    const missed = Array.from({ length: 36 }, () => [0, 5] as const);
+    expect([...done, ...missed].filter(([l, t]) => needsWriting(l, t))).toHaveLength(36);
+  });
+});

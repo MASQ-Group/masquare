@@ -620,7 +620,25 @@ export class ChannelListingsService {
       // the push audit because our own copy was flattened. Everything else already holds the right
       // quantity, and re-sending it is thousands of pointless marketplace calls: ~10,000 to repair
       // 2,345 listings. Fewer writes is not only quicker, it is less to go wrong.
-      .filter((p) => (opts.onlyDamaged ? p.damaged && p.target > 0 : p.target > 0));
+      .filter((p) => (opts.onlyDamaged ? p.damaged && p.target > 0 : p.target > 0))
+      // Never send a quantity the listing already holds.
+      //
+      // A run that is interrupted — a deploy took one at 80 of 116 — has to be repeatable, and
+      // repeating it rewrote all 116 because nothing checked. Every one of those is a marketplace
+      // call that changes nothing, and across seven markets a second pass would have been ~900 of
+      // them. Skipping what already agrees makes a re-run resumable rather than merely harmless.
+      .filter((p) => (p.l.listedQuantity ?? 0) !== p.target);
+
+    // Listings that already agree with what we would have sent. Counted so a re-run can say "these
+    // are done" rather than appearing to have found less work than last time.
+    const alreadyAtTarget = listings.filter((l) => {
+      const key = l.channelSku.trim().toLowerCase();
+      const mirrored = opts.mirrorMarketplace ? mirror.get(key) ?? 0 : 0;
+      const recovered = fromAudit.get(l.integrationId + '|' + l.channelSku) ?? 0;
+      const stored = l.listedQuantity ?? 0;
+      const target = mirrored > 0 ? mirrored : stored > 0 ? stored : recovered;
+      return target > 0 && stored === target;
+    }).length;
 
     // The ones we can do nothing for. Reported rather than silently dropped: after a restore they
     // are the listings still sitting at zero, and "they were not restored" reads as a failure when
@@ -635,6 +653,8 @@ export class ChannelListingsService {
         dryRun: true,
         marketplace: marketplace ?? opts.integrationId,
         candidates: plan.length,
+        /** Already holding the figure we would send — nothing to do, and not an error. */
+        alreadyAtTarget: alreadyAtTarget,
         // The window the audit was read over, and a plain reason when it explains an empty result.
         //
         // `since` defaults to 24 hours, which is right for repairing a push that has just gone
