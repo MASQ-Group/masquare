@@ -164,10 +164,18 @@ export class ChannelListingsService {
     // "Sync all" (no explicit ids) syncs every channel type with a listings connector.
     // A selective sync may target any connected channel; types without a listings connector
     // yet are reported, not silently dropped.
-    const selective = !!integrationIds?.length;
+    // The dashboard identifies an eBay column as `${integrationId}:${marketplace}`, because one eBay
+    // connection spans many marketplaces and each gets its own column. Those ids reach here when the
+    // operator syncs selected channels, and Prisma rejected them against a uuid column with a parse
+    // error rather than anything an operator could act on.
+    //
+    // The integration is the unit that can actually be synced — eBay's pull is account-wide and
+    // returns every marketplace at once — so the marketplace suffix is dropped and the ids deduped.
+    const ids = [...new Set((integrationIds ?? []).map((id) => id.split(':')[0]).filter(Boolean))];
+    const selective = ids.length > 0;
     const where: Prisma.ChannelIntegrationWhereInput = {
       ...ACTIVE, status: 'active',
-      ...(selective ? { id: { in: integrationIds } } : { channelType: { in: ChannelListingsService.LISTING_CHANNELS } }),
+      ...(selective ? { id: { in: ids } } : { channelType: { in: ChannelListingsService.LISTING_CHANNELS } }),
       ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
     };
     const ints = await this.prisma.channelIntegration.findMany({ where, select: { id: true, name: true, channelType: true, targetCompanyId: true } });
