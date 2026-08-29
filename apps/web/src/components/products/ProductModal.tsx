@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ImagePlus, Plus, Star, Trash2, X } from 'lucide-react';
+import { ImagePlus, Plus, Star, Trash2, X, Store } from 'lucide-react';
 import { toast } from 'sonner';
 import { CostHistory } from './CostHistory';
 import { ProductStockSection } from './ProductStockSection';
@@ -467,6 +467,19 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
             {/* eBay rejects anything longer, so the limit is shown rather than discovered. */}
             <p className="mt-1 text-[12px] text-n-400">{content.ebayTitle.length}/80 characters</p>
           </div>
+          {/* The copy on this tab is what the store page shows, so the preview belongs beside it
+              rather than only back on the list. Edit mode only — there is nothing to preview until
+              the product exists. */}
+          {product && (
+            <a
+              href={`/store-preview/product/${product.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex w-fit items-center gap-1.5 text-[12.5px] font-semibold text-teal-600 hover:text-teal-700"
+            >
+              <Store size={14} /> Preview the store page
+            </a>
+          )}
           <div>
             <label className="label">Short description</label>
             {/* Deliberately short and plain: it sits under the price on the B2B store, where a buyer
