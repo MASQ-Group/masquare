@@ -154,7 +154,15 @@ export function buildPlan(rows: PlanRowInput[], products: Map<string, PlanProduc
       const n = toNumber(row.availability);
       if (n == null || n < 0 || !Number.isInteger(n)) {
         skipped.push({ productId: p.id, field: 'availability', raw: String(row.availability), why: 'not a whole quantity' });
-      } else if ((p.availability ?? 0) !== n) {
+      } else if (p.availability == null) {
+        // Null means the product is not in availability at all, which is different from holding
+        // none. A vendor file updates what we already track; it does not decide what we offer, so
+        // this is reported rather than quietly creating a row a supplier's list asked for.
+        skipped.push({
+          productId: p.id, field: 'availability', raw: String(row.availability),
+          why: 'not in availability — add the product there first',
+        });
+      } else if (p.availability !== n) {
         changes.push({
           productId: p.id, mainSku: p.mainSku, title: p.title, field: 'availability',
           oldValue: p.availability != null ? String(p.availability) : null,

@@ -36,7 +36,7 @@ export class AvailabilityService {
   /**
    * The availability list is the availability table, not the catalogue.
    *
-   * A product is here because someone put it here — a vendor file or a person. Listing every
+   * A product is here because a person put it here. Listing every
    * product instead and leaving a blank where there was no row made the two indistinguishable:
    * "we hold none of this" looked the same as "nobody has ever assessed this", and there was
    * nothing for an operator to add because everything was already on screen. Products that are
@@ -301,8 +301,8 @@ export class AvailabilityService {
    * Move an EXISTING availability row by a delta (never below zero). Returns the new quantity, or
    * null when the product is not in availability.
    *
-   * It will not create a row. A product enters availability deliberately — from a vendor file or by
-   * a person — and never as a side effect of trade. This used to upsert, so an order for a product
+   * It will not create a row. A product enters availability when a person adds it, and never as a
+   * side effect of trade. This used to upsert, so an order for a product
    * nobody had ever stocked created a row: sales clamped it at zero, then each cancellation added
    * one to nothing. 664 rows arrived that way, 324 of them showing 1,096 units that never existed,
    * and every one of those was a candidate to be broadcast to the marketplaces as sellable.
