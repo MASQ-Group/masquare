@@ -698,35 +698,7 @@ export interface SpApiNotificationSetup {
   message?: string;
 }
 
-export interface AmazonFeeRepairDryRun {
-  dryRun: true;
-  scope: 'affected' | 'all';
-  orders: number;
-  damagedOrders: number;
-  /** Native currency, summed across marketplaces — a sense of size, not one comparable total. */
-  overstatedSalesFee: number;
-  overstatedFbaFee: number;
-  companies: string[];
-}
-export interface AmazonFeeRepairResult {
-  dryRun: false;
-  orders: number;
-  repaired: number;
-  unchanged: number;
-  noFees: number;
-  failed: number;
-}
-
 export const integrationsApi = {
-  /** What the repair would cover, and by how much fees are overstated. Calls no Amazon API. */
-  previewAmazonFeeRepair: (scope: 'affected' | 'all' = 'affected') =>
-    api.post<AmazonFeeRepairDryRun>('/integrations/repair-amazon-fees', { confirm: false, scope }).then((r) => r.data),
-  /**
-   * Re-fetch Amazon fees and rewrite them, repairing orders where one SKU's fee was repeated on
-   * every line carrying it. Returns a job — one Amazon call per order, paced under the rate limit.
-   */
-  repairAmazonFees: (scope: 'affected' | 'all' = 'affected') =>
-    api.post<{ id: string }>('/integrations/repair-amazon-fees', { confirm: true, scope }).then((r) => r.data),
   /** Create the keypair eBay requires to sign Finances requests. */
   createEbaySigningKey: (integrationId: string) =>
     api.post<{ ok: boolean; created: boolean; signingKeyId: string | null; message?: string }>(`/integrations/${integrationId}/ebay/signing-key`).then((r) => r.data),

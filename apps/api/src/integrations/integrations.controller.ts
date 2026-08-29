@@ -152,6 +152,11 @@ export class IntegrationsController {
    * Re-fetch Amazon fees and rewrite them, repairing orders where a SKU's fee was repeated across
    * every line carrying that SKU.
    *
+   * A one-off repair, kept without a button. The fee apportionment that caused it is fixed on both
+   * the import and backfill paths, so nothing can reintroduce it and there is nothing left to
+   * repair — but a tool that rewrites financial data and spends SP-API budget should not sit one
+   * click away on an admin page. Call it deliberately if the need ever returns.
+   *
    * Without confirm it reports the scope and the overstatement arithmetically and calls nothing.
    * With confirm it returns a job: one Amazon call per order, paced under the rate limit, so a
    * full history takes a while.
