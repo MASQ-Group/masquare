@@ -48,8 +48,11 @@ export function StoreProductPreviewPage() {
   return (
     <div className="min-h-screen bg-n-50">
       {/* A shell for the store's own header — not part of this scope, but the page is designed to
-          sit under one, and without it the spacing reads wrongly. */}
-      <div className="sticky top-0 z-10 flex h-14 items-center gap-4 border-b border-n-200 bg-n-0 px-8">
+          sit under one and the spacing reads wrongly without it.
+
+          Not sticky here: previewed inside the platform it pins to the app's scrolling main and
+          floats over the chrome above. In the real store it will be the top of the window. */}
+      <div className="flex h-14 items-center gap-4 border-b border-n-200 bg-n-0 px-8">
         <span className="text-[15px] font-bold tracking-[-.01em]">
           ma<span className="text-teal-500">Square</span> <span className="font-medium text-n-500">Store</span>
         </span>
@@ -120,8 +123,9 @@ export function StoreProductPreviewPage() {
             <PriceCard price={data.price} availability={data.availability} qty={qty} onQty={setQty} />
 
             {data.shortDescription && (
-              <div className="border-b border-n-100 pb-[18px] text-[14px] leading-[1.65] text-n-600">
-                {data.shortDescription}
+              <div className="rte border-b border-n-100 pb-[18px] text-[14px] leading-[1.65] text-n-600">
+                {/* HTML now, like the full description: both are authored in the same editor. */}
+                <span dangerouslySetInnerHTML={{ __html: data.shortDescription }} />
                 {tabs.includes('Product description') && (
                   <>
                     {' '}
@@ -133,19 +137,6 @@ export function StoreProductPreviewPage() {
               </div>
             )}
 
-            {data.quickFacts.length > 0 && (
-              <div className="flex flex-col">
-                {data.quickFacts.map((f, i) => (
-                  <div
-                    key={f.label}
-                    className={`grid grid-cols-[180px_1fr] px-0.5 py-2.5 text-[13.5px] ${i < data.quickFacts.length - 1 ? 'border-b border-n-100' : ''}`}
-                  >
-                    <span className="text-n-500">{f.label}</span>
-                    <span className={f.mono ? 'mono text-[13px]' : ''}>{f.value}</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
@@ -187,11 +178,19 @@ export function StoreProductPreviewPage() {
             )}
 
             {tabs[tab] === 'Specifications' && (
-              <div className="grid grid-cols-2 gap-x-12 max-[900px]:grid-cols-1">
-                {data.specifications.map((sRow) => (
-                  <div key={sRow.label} className="grid grid-cols-[200px_1fr] border-b border-n-100 px-0.5 py-[11px] text-[13.5px]">
-                    <span className="text-n-500">{sRow.label}</span>
-                    <span className={sRow.mono ? 'mono text-[13px]' : ''}>{sRow.value}</span>
+              /* Grouped rather than one long run: twelve flat rows make a buyer read all of them to
+                 find the one they came for. Groups stay in a fixed order across products, so the
+                 same fact is always in the same place. */
+              <div className="grid grid-cols-2 items-start gap-x-12 gap-y-7 max-[900px]:grid-cols-1">
+                {data.specifications.map((g) => (
+                  <div key={g.group} className="flex flex-col">
+                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[.09em] text-n-400">{g.group}</div>
+                    {g.rows.map((sRow) => (
+                      <div key={sRow.label} className="grid grid-cols-[200px_1fr] border-b border-n-100 px-0.5 py-[11px] text-[13.5px]">
+                        <span className="text-n-500">{sRow.label}</span>
+                        <span className={sRow.mono ? 'mono text-[13px]' : ''}>{sRow.value}</span>
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>

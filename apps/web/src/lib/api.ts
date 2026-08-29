@@ -369,8 +369,8 @@ export interface StorefrontProduct {
   keyFeatures: string[];
   images: string[];
   documents: { id: string; name: string; sizeBytes: number | null }[];
-  quickFacts: { label: string; value: string; mono?: boolean }[];
-  specifications: { label: string; value: string; mono?: boolean }[];
+  /** Grouped and ordered server-side; a group with no rows never appears. */
+  specifications: { group: string; rows: { label: string; value: string; mono?: boolean }[] }[];
   /** Null when no price is held. A placeholder until customer price lists exist. */
   price: { amount: number; currency: string } | null;
   /** Null means no availability record — not the same as none in stock, so the page shows nothing. */

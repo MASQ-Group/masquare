@@ -118,6 +118,18 @@
   .hbtn-primary {
     @apply inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-3.5 text-[13px] font-semibold text-white transition-colors hover:bg-primary-hover disabled:opacity-50;
   }
+  /* Rich text editor surface. The stored value is HTML, so the editing view has to render the same
+     tags the store and the marketplaces will — an editor that shows unstyled lists teaches the
+     author the wrong thing about what they are writing. */
+  .rte:empty::before {
+    content: attr(data-placeholder);
+    @apply text-n-400;
+  }
+  .rte ul { @apply my-1 list-disc pl-5; }
+  .rte ol { @apply my-1 list-decimal pl-5; }
+  .rte p { @apply my-1.5; }
+  .rte a { @apply text-teal-600 underline; }
+
   /* Segmented view-toggle group: wrap buttons in .hseg; active button gets .hseg-on. */
   .hseg {
     @apply inline-flex overflow-hidden rounded-lg border border-n-200;

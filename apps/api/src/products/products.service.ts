@@ -719,29 +719,46 @@ export class ProductsService {
     if (!p) throw new NotFoundException('Product not found');
 
     const n = (v: unknown) => (v == null ? null : Number(v));
-    /** A row only exists when it has a value. `mono` marks a machine-assigned value. */
-    const rows: { label: string; value: string; mono?: boolean }[] = [];
-    const row = (label: string, value: unknown, mono = false) => {
+    /**
+     * Specifications are grouped, because a flat run of twelve rows makes a buyer read all of them
+     * to find the one they came for. The groups are fixed and ordered — identity, then what it
+     * needs to run, then what it weighs, then what it is bound by — so the same fact sits in the
+     * same place on every product.
+     *
+     * A row only exists when it has a value, and a group only exists when it has a row. `mono`
+     * marks a machine-assigned value, which the page renders in the mono face.
+     */
+    const rows: { group: string; label: string; value: string; mono?: boolean }[] = [];
+    const row = (group: string, label: string, value: unknown, mono = false) => {
       const v = value == null || value === '' ? null : String(value);
-      if (v) rows.push({ label, value: v, ...(mono ? { mono: true } : {}) });
+      if (v) rows.push({ group, label, value: v, ...(mono ? { mono: true } : {}) });
     };
 
     const dims = [n(p.packageLengthCm), n(p.packageWidthCm), n(p.packageHeightCm)];
-    row('Brand', p.brand?.name);
-    row('Manufacturer SKU', p.manufacturerSku, true);
-    row('EAN', p.ean, true);
-    row('Product type', p.productType?.name);
-    // Attributes are the product's own specifications, and free-form, so they are shown as written.
-    for (const a of p.attributes) row(a.attribute?.name ?? '', a.value);
-    row('Voltage', p.voltageRating?.label, true);
-    row('Frequency', p.frequency?.label, true);
-    row('Plug type', p.plugTypeRef?.label);
-    row('Battery', p.batteryTypeRef?.label ?? (p.batteryRequired ? 'Required' : null));
-    row('Product weight', n(p.productWeightKg) != null ? `${n(p.productWeightKg)!.toFixed(2)} kg` : null, true);
-    row('Package weight', n(p.packageWeightKg) != null ? `${n(p.packageWeightKg)!.toFixed(2)} kg` : null, true);
-    row('Package dimensions', dims.every((d) => d != null) ? `${dims.map((d) => d!.toFixed(1)).join(' × ')} cm` : null, true);
-    row('Country of origin', p.countryOfOrigin);
-    row('Warranty', p.warrantyText);
+    const IDENTITY = 'Product', DETAILS = 'Product details', POWER = 'Power', PHYSICAL = 'Physical', LEGAL = 'Origin & warranty';
+
+    row(IDENTITY, 'Brand', p.brand?.name);
+    row(IDENTITY, 'Product type', p.productType?.name);
+    row(IDENTITY, 'Manufacturer SKU', p.manufacturerSku, true);
+    row(IDENTITY, 'EAN', p.ean, true);
+    // The product's own specifications — free-form, so they are shown as written and kept together
+    // rather than guessed into a group they may not belong to.
+    for (const a of p.attributes) row(DETAILS, a.attribute?.name ?? '', a.value);
+    row(POWER, 'Voltage', p.voltageRating?.label, true);
+    row(POWER, 'Frequency', p.frequency?.label, true);
+    row(POWER, 'Plug type', p.plugTypeRef?.label);
+    row(POWER, 'Battery', p.batteryTypeRef?.label ?? (p.batteryRequired ? 'Required' : null));
+    row(PHYSICAL, 'Product weight', n(p.productWeightKg) != null ? `${n(p.productWeightKg)!.toFixed(2)} kg` : null, true);
+    row(PHYSICAL, 'Package weight', n(p.packageWeightKg) != null ? `${n(p.packageWeightKg)!.toFixed(2)} kg` : null, true);
+    row(PHYSICAL, 'Package dimensions', dims.every((d) => d != null) ? `${dims.map((d) => d!.toFixed(1)).join(' × ')} cm` : null, true);
+    row(LEGAL, 'Country of origin', p.countryOfOrigin);
+    row(LEGAL, 'Warranty', p.warrantyText);
+
+    // Grouped in this fixed order, and a group with no rows never appears.
+    const ORDER = [IDENTITY, DETAILS, POWER, PHYSICAL, LEGAL];
+    const specifications = ORDER
+      .map((group) => ({ group, rows: rows.filter((r) => r.group === group).map(({ group: _g, ...rest }) => rest) }))
+      .filter((g) => g.rows.length > 0);
 
     /**
      * Stock as a state, never a count: exact stock is commercially sensitive, and a buyer only needs
@@ -763,10 +780,8 @@ export class ProductsService {
       keyFeatures: p.keyFeatures ?? [],
       images: p.media.map((m) => m.url),
       documents: p.documents,
-      /** The quick-facts ledger beside the price: the few a buyer checks first. */
-      quickFacts: rows.filter((r) => ['Manufacturer SKU', 'Product weight', 'Country of origin'].includes(r.label)),
-      /** Everything on record, for the Specifications tab. */
-      specifications: rows,
+      /** Everything on record, grouped for the Specifications tab. */
+      specifications,
       /**
        * A stand-in until customer pricing exists. MAP is the only price the platform holds for most
        * products, and it is labelled as a placeholder in the page rather than passed off as a

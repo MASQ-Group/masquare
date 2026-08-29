@@ -7,6 +7,7 @@ import { ProductStockSection } from './ProductStockSection';
 import { ProductChannelIdentifiers } from './ProductChannelIdentifiers';
 import { ProductChannelsTab } from './ProductChannelsTab';
 import { ProductDocuments } from './ProductDocuments';
+import { RichTextEditor } from '../common/RichTextEditor';
 import { FeatureList } from './FeatureList';
 import { FileDrop, ModalShell, Select } from '@masquare/ui';
 import {
@@ -470,22 +471,19 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
             <label className="label">Short description</label>
             {/* Deliberately short and plain: it sits under the price on the B2B store, where a buyer
                 is deciding in seconds. Two sentences, no markup. */}
-            <textarea
-              className="input min-h-[64px] py-2"
-              maxLength={280}
+            <RichTextEditor
+              minHeight={72}
               value={content.shortDescription}
-              onChange={(e) => { setContent((s) => ({ ...s, shortDescription: e.target.value })); touch(); }}
+              onChange={(html) => { setContent((s) => ({ ...s, shortDescription: html })); touch(); }}
               placeholder="One or two sentences — what this is, for a buyer deciding in seconds."
             />
-            <p className="mt-1 text-[12px] text-n-400">{content.shortDescription.length}/280 characters</p>
           </div>
           <div>
             <label className="label">Description</label>
-            <textarea
-              className="input min-h-[140px] py-2"
+            <RichTextEditor
               value={content.descriptionHtml}
-              onChange={(e) => { setContent((s) => ({ ...s, descriptionHtml: e.target.value })); touch(); }}
-              placeholder="Full description shown on the listing page. Basic HTML is accepted."
+              onChange={(html) => { setContent((s) => ({ ...s, descriptionHtml: html })); touch(); }}
+              placeholder="Full description shown on the listing page."
             />
           </div>
           <FeatureList value={features} onChange={(next) => { setFeatures(next); touch(); }} />
