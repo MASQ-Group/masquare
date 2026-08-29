@@ -7,6 +7,7 @@ import { availabilityApi, brandsApi, channelListingsApi, productTypesApi, vendor
 import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
 import { CHANNEL_GROUPS, channelGroupOf, channelPlatform, type ChannelPlatform } from '../lib/channelGroups';
+import { MissingFromAvailability } from '../components/availability/MissingFromAvailability';
 
 // The three ways a quantity can move: a person, a vendor file, or a sale. There is no Return —
 // a return never changes availability, and a cancellation before shipment is the sale reversing
@@ -28,6 +29,8 @@ export function AvailabilityPage() {
   // Selected products for a channel quantity push.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pushOpen, setPushOpen] = useState(false);
+  // 'missing' is the onboarding worklist: listed on a channel, absent from availability.
+  const [tab, setTab] = usePersistentState<'in' | 'missing'>('availability.tab', 'in');
 
   useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
   useEffect(() => { setPage(1); }, [brandId, vendorId, productTypeId]);
@@ -87,18 +90,24 @@ export function AvailabilityPage() {
       <PageHeader
         module="Catalogue & Inventory"
         title="Availability"
-        info="The sellable quantity broadcast to your sales channels — the single source of truth for how much of each SKU is available. Separate from warehouse stock; set it from your vendors' availability."
-        actions={selected.size > 0 ? (
+        info="The sellable quantity broadcast to your sales channels — the single source of truth for how much of each SKU is available. A product is here because a vendor file or a person put it here; nothing else can add one."
+        tabs={[
+          { key: 'in', label: 'In availability' },
+          { key: 'missing', label: 'Missing from availability' },
+        ]}
+        activeTab={tab}
+        onTabChange={(k) => setTab(k as 'in' | 'missing')}
+        actions={tab === 'in' && selected.size > 0 ? (
           <button onClick={() => setSelected(new Set())} className="hbtn">Clear ({selected.size})</button>
         ) : undefined}
-        primary={
+        primary={tab === 'missing' ? undefined : (
           <button disabled={selected.size === 0} onClick={() => setPushOpen(true)}
             className="hbtn-primary"
             title={selected.size === 0 ? 'Select products to push their availability to the channels' : 'Push the selected products’ availability to all their channel listings'}>
             <Send size={15} /> Push to channels{selected.size > 0 ? ` (${selected.size})` : ''}
           </button>
-        }
-        toolbar={
+        )}
+        toolbar={tab === 'missing' ? undefined : (
           <>
             <div className="flex h-8 min-w-[220px] max-w-[300px] flex-1 items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-3">
               <Search size={15} className="text-n-400" />
@@ -110,9 +119,12 @@ export function AvailabilityPage() {
             
             {hasFilters && <button onClick={resetFilters} className="text-[12.5px] font-semibold text-n-500 hover:text-n-700">Reset</button>}
           </>
-        }
+        )}
       />
 
+      {tab === 'missing' && <MissingFromAvailability />}
+
+      {tab === 'in' && (<>
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-n-100 px-4 py-2.5 text-[12px] text-n-500">
           <span>{total} product{total === 1 ? '' : 's'}</span>
@@ -231,6 +243,7 @@ export function AvailabilityPage() {
           <Pagination page={page} pageCount={pageCount} onPageChange={setPage} />
         </div>
       )}
+      </>)}
 
       {pushOpen && (
         <PushModal
