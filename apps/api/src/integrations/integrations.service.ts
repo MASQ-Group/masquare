@@ -849,6 +849,22 @@ export class IntegrationsService implements OnModuleInit {
     };
   }
 
+  /**
+   * ISO country code -> what that destination charges, for the eBay VAT split.
+   *
+   * eBay hands over the gross on any sale it does not collect VAT for, so the mapper needs the
+   * DESTINATION country's rate to pull our VAT back out — a sale on eBay DE shipped to Greece is
+   * 24%, not Germany's 19%. Loaded once per sync; the table is tiny and never changes mid-run.
+   */
+  private async destinationVatLookup(): Promise<(iso: string) => { euVatZone: boolean; vatRate: number } | null> {
+    const rows = await this.prisma.country.findMany({
+      where: { deletedAt: null },
+      select: { isoCode: true, euVatZone: true, vatRate: true },
+    });
+    const byIso = new Map(rows.map((c) => [c.isoCode.toUpperCase(), { euVatZone: c.euVatZone, vatRate: Number(c.vatRate) }]));
+    return (iso: string) => byIso.get(String(iso ?? '').toUpperCase()) ?? null;
+  }
+
   /** Read-only: fetch + map recent eBay orders for connection + mapping validation. */
   private async fetchEbayOrders(row: any, limit: number): Promise<{ ok: boolean; status?: number; message?: string; total: number; mapped: MappedOrder[] }> {
     const config = (row.config ?? {}) as Record<string, string>;
@@ -858,7 +874,8 @@ export class IntegrationsService implements OnModuleInit {
     const from = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString().replace(/\.\d+Z$/, '.000Z');
     const page = await this.ebayGetOrdersPage(base, token, { filter: `creationdate:[${from}..]`, limit });
     if (!page.ok) return { ok: false, status: page.status, message: page.message, total: 0, mapped: [] };
-    return { ok: true, total: page.total, mapped: page.orders.slice(0, limit).map((o) => mapEbayOrder(o)) };
+    const vatForCountry = await this.destinationVatLookup();
+    return { ok: true, total: page.total, mapped: page.orders.slice(0, limit).map((o) => mapEbayOrder(o, vatForCountry)) };
   }
 
   private async testOnBuy(config: Record<string, string>, secrets: Record<string, string>, mode: 'live' | 'test'): Promise<{ ok: boolean; message: string }> {
@@ -2739,6 +2756,7 @@ export class IntegrationsService implements OnModuleInit {
           : [];
         const ebayChannelByIso = new Map<string, string>();
         for (const c of companyChannels) if (/ebay/i.test(c.name) && c.nativeCountry?.isoCode) ebayChannelByIso.set(c.nativeCountry.isoCode, c.id);
+        const vatForCountry = await this.destinationVatLookup();
 
         for (let pageNo = 0; pageNo < MAX_PAGES; pageNo++) {
           const page = await this.ebayGetOrdersPage(base, token, { filter, limit: LIMIT, offset: pageNo * LIMIT });
@@ -2748,7 +2766,7 @@ export class IntegrationsService implements OnModuleInit {
             counts.scanned++;
             const orderDate = new Date(String(order.creationDate ?? ''));
             if (isNaN(orderDate.getTime()) || orderDate < cutoff || (upper && orderDate > upper)) { counts.skipped++; continue; }
-            const mapped = mapEbayOrder(order);
+            const mapped = mapEbayOrder(order, vatForCountry);
             // Fully cancelled orders are not net sales — skip (mirrors OnBuy).
             if (mapped.payload.resolution === 'cancelled') { counts.cancelled++; continue; }
             const iso = mapped.payload.marketplaceCountryCode;
