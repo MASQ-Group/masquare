@@ -359,7 +359,11 @@ export interface ProductDocumentItem {
  */
 export interface StorefrontProduct {
   id: string;
-  sku: string;
+  /**
+   * The MANUFACTURER's code. Our main SKU is internal and never reaches this payload — a customer
+   * has no use for it and a competitor would. Null where none is recorded.
+   */
+  sku: string | null;
   title: string;
   brand: string | null;
   category: string | null;

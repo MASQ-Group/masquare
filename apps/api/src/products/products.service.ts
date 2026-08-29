@@ -739,8 +739,8 @@ export class ProductsService {
 
     row(IDENTITY, 'Brand', p.brand?.name);
     row(IDENTITY, 'Product type', p.productType?.name);
-    row(IDENTITY, 'Manufacturer SKU', p.manufacturerSku, true);
-    row(IDENTITY, 'EAN', p.ean, true);
+    // The manufacturer SKU and EAN head the page as the product's identifiers, so repeating them
+    // here would say the same thing twice on a page a buyer scans.
     // The product's own specifications — free-form, so they are shown as written and kept together
     // rather than guessed into a group they may not belong to.
     for (const a of p.attributes) row(DETAILS, a.attribute?.name ?? '', a.value);
@@ -770,7 +770,18 @@ export class ProductsService {
 
     return {
       id: p.id,
-      sku: p.mainSku,
+      /**
+       * The MANUFACTURER's code, never ours.
+       *
+       * Our main SKU is internal — it encodes vendor and cost structure, it is what a competitor
+       * would use to trace our supply, and a customer has no use for it. The manufacturer's is the
+       * one they can quote to anyone. Our SKU is not merely hidden by the page: it never leaves the
+       * server, so no future caller can display it by accident.
+       *
+       * Null where none is recorded, which is a third of the catalogue once EAN is absent too. The
+       * page then shows no identifier rather than falling back to ours.
+       */
+      sku: p.manufacturerSku || null,
       title: p.title,
       brand: p.brand?.name ?? null,
       category: p.category?.name ?? null,

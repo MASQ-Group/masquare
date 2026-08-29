@@ -42,6 +42,7 @@ export function StoreProductPreviewPage() {
   if (!data) return <div className="py-24 text-center text-[13px] text-n-500">Product not found.</div>;
 
   const copySku = () => {
+    if (!data.sku) return;
     navigator.clipboard.writeText(data.sku).then(() => toast.success('SKU copied'));
   };
 
@@ -102,22 +103,24 @@ export function StoreProductPreviewPage() {
                 <div className="text-[12px] font-semibold uppercase tracking-[.09em] text-teal-600">{data.brand}</div>
               )}
               <h1 className="text-[28px] font-semibold leading-[1.3] tracking-[-.02em] text-n-900">{data.title}</h1>
-              <div className="flex flex-wrap items-center gap-3.5 text-[13px] text-n-500">
-                <span>SKU <span className="mono font-medium text-n-800">{data.sku}</span></span>
-                {data.ean && (
-                  <>
-                    <span className="text-n-200">|</span>
-                    <span>EAN <span className="mono font-medium text-n-800">{data.ean}</span></span>
-                  </>
-                )}
-                <button
-                  onClick={copySku}
-                  title="Copy SKU"
-                  className="grid h-[26px] w-[26px] place-items-center rounded-sm border border-n-200 bg-n-0 text-n-500 hover:text-n-800"
-                >
-                  <Copy size={13} />
-                </button>
-              </div>
+              {/* The manufacturer's code, never ours. A third of the catalogue has neither this nor
+                  an EAN, and then the row is omitted rather than falling back to our own SKU. */}
+              {(data.sku || data.ean) && (
+                <div className="flex flex-wrap items-center gap-3.5 text-[13px] text-n-500">
+                  {data.sku && <span>SKU <span className="mono font-medium text-n-800">{data.sku}</span></span>}
+                  {data.sku && data.ean && <span className="text-n-200">|</span>}
+                  {data.ean && <span>EAN <span className="mono font-medium text-n-800">{data.ean}</span></span>}
+                  {data.sku && (
+                    <button
+                      onClick={copySku}
+                      title="Copy SKU"
+                      className="grid h-[26px] w-[26px] place-items-center rounded-sm border border-n-200 bg-n-0 text-n-500 hover:text-n-800"
+                    >
+                      <Copy size={13} />
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             <PriceCard price={data.price} availability={data.availability} qty={qty} onQty={setQty} />
@@ -244,13 +247,17 @@ const fileSize = (bytes: number) =>
  * never empty and never a broken-image box. Deterministic: the same product always draws the same
  * plate, so it reads as this product's mark rather than as a placeholder.
  */
-function IdentityPlate({ brand, title, sku }: { brand: string | null; title: string; sku: string }) {
+function IdentityPlate({ brand, title, sku }: { brand: string | null; title: string; sku: string | null }) {
   // The model fragment: the first token carrying a digit is almost always the model number, which
   // is what a trade buyer recognises. Falling back to the opening word beats showing nothing.
+  //
+  // Never falls back to a SKU. The only one that could stand in is ours, and this page does not
+  // show it — the plate is the most prominent thing on a sparse page, which is the worst place for
+  // an internal code to surface.
   const model = useMemo(() => {
     const tokens = title.split(/[\s,]+/).filter(Boolean);
-    return (tokens.find((t) => /\d/.test(t) && t.length <= 14) ?? tokens[0] ?? sku).toUpperCase();
-  }, [title, sku]);
+    return (tokens.find((t) => /\d/.test(t) && t.length <= 14) ?? tokens[0] ?? '').toUpperCase();
+  }, [title]);
 
   return (
     <div className="relative flex aspect-square items-center justify-center overflow-hidden rounded-lg border border-n-200 bg-[linear-gradient(160deg,var(--teal-50),var(--n-50)_55%,var(--n-100))]">
@@ -260,7 +267,7 @@ function IdentityPlate({ brand, title, sku }: { brand: string | null; title: str
       <span className="mono px-6 text-center text-[46px] font-semibold leading-none tracking-[-.02em] text-teal-800 opacity-[.85] max-[520px]:text-[32px]">
         {model}
       </span>
-      <span className="mono absolute bottom-[18px] left-5 text-[12.5px] text-teal-300">{sku}</span>
+      {sku && <span className="mono absolute bottom-[18px] left-5 text-[12.5px] text-teal-300">{sku}</span>}
       <FileText className="absolute -bottom-8 -right-8 text-teal-800 opacity-10" size={220} strokeWidth={1} />
     </div>
   );
