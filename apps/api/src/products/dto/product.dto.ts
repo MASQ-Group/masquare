@@ -60,6 +60,8 @@ export class CreateProductDto {
   // ---- Listing content --------------------------------------------------
   // Only eBay and Shopify ever show any of this; Amazon and OnBuy display their own catalogue copy.
   @IsOptional() @IsString() ebayTitle?: string | null;
+  /** One or two sentences for a buyer deciding in seconds — shown above the full description. */
+  @IsOptional() @IsString() shortDescription?: string | null;
   @IsOptional() @IsString() descriptionHtml?: string | null;
   @IsOptional() @IsArray() @IsString({ each: true }) keyFeatures?: string[];
   @IsOptional() @IsString() searchKeywords?: string | null;

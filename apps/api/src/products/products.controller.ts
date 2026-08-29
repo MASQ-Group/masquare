@@ -118,6 +118,26 @@ export class ProductsController {
     return this.products.addMedia(id, file);
   }
 
+  /**
+   * Attach a PDF a buyer may need before ordering. The name is sent alongside the file: it is what
+   * the buyer sees, and the stored object's filename is an implementation detail.
+   */
+  @Post(':id/documents')
+  @UseInterceptors(FileInterceptor('file'))
+  addDocument(@Param('id') id: string, @UploadedFile() file: any, @Body('name') name: string) {
+    return this.products.addDocument(id, file, name);
+  }
+
+  @Patch(':id/documents/:documentId')
+  renameDocument(@Param('id') id: string, @Param('documentId') documentId: string, @Body('name') name: string) {
+    return this.products.renameDocument(id, documentId, name);
+  }
+
+  @Delete(':id/documents/:documentId')
+  deleteDocument(@Param('id') id: string, @Param('documentId') documentId: string) {
+    return this.products.deleteDocument(id, documentId);
+  }
+
   @Put(':id/media/order')
   reorderMedia(@Param('id') id: string, @Body() dto: ReorderMediaDto) {
     return this.products.reorderMedia(id, dto.orderedIds);

@@ -341,6 +341,18 @@ export interface AvailabilityGapResponse {
   pageSize: number;
 }
 
+/**
+ * A PDF a buyer may need before ordering — datasheet, certificate, manual.
+ * Named by the person who uploaded it, because the filename tells a buyer nothing.
+ */
+export interface ProductDocumentItem {
+  id: string;
+  name: string;
+  url: string;
+  sizeBytes: number | null;
+  sortOrder: number;
+}
+
 export const availabilityApi = {
   /**
    * Put many products into availability at zero. Without confirm it reports what it would add.
@@ -465,6 +477,8 @@ export interface Product {
 
   // Listing content. Only eBay and Shopify ever display any of it.
   ebayTitle: string | null;
+  /** One or two sentences for a buyer deciding in seconds — above the full description. */
+  shortDescription: string | null;
   descriptionHtml: string | null;
   keyFeatures: string[];
   searchKeywords: string | null;
@@ -503,6 +517,7 @@ export interface Product {
   volumetricWeightKg: number | null;
   aliases: ProductAlias[];
   media: ProductMediaItem[];
+  documents: ProductDocumentItem[];
   attributes: ProductAttr[];
   companyIds: string[];
   aliasCount: number;
@@ -556,6 +571,17 @@ export const productsApi = {
     api.delete<Product>(`/products/${id}/media/${mediaId}`).then((r) => r.data),
   reorderMedia: (id: string, orderedIds: string[]) =>
     api.put<Product>(`/products/${id}/media/order`, { orderedIds }).then((r) => r.data),
+  /** PDFs a buyer may need before ordering. The name is what they see, so it is sent with the file. */
+  uploadDocument: (id: string, file: File, name: string) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('name', name);
+    return api.post<Product>(`/products/${id}/documents`, fd).then((r) => r.data);
+  },
+  renameDocument: (id: string, documentId: string, name: string) =>
+    api.patch<Product>(`/products/${id}/documents/${documentId}`, { name }).then((r) => r.data),
+  deleteDocument: (id: string, documentId: string) =>
+    api.delete<Product>(`/products/${id}/documents/${documentId}`).then((r) => r.data),
   byIds: (ids: string[]) => api.post<Product[]>('/products/by-ids', { ids }).then((r) => r.data),
   ids: (params: Omit<ProductListParams, 'page' | 'pageSize'>) => api.get<string[]>('/products/ids', { params }).then((r) => r.data),
   bulkDelete: (ids: string[]) => api.post('/products/bulk/delete', { ids }).then((r) => r.data),

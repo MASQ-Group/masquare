@@ -18,6 +18,8 @@ export interface ProductQuery {
 }
 
 const MAX_MEDIA = 8;
+/** Datasheet, certificate, manual. Three is a shelf, not an archive — more and nobody reads them. */
+const MAX_DOCUMENTS = 3;
 
 const listInclude = {
   brand: { select: { id: true, name: true } },
@@ -58,6 +60,7 @@ const fullInclude = {
     include: { fulfilmentType: { select: { id: true, name: true, code: true } } },
   },
   media: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' as const } },
+  documents: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' as const } },
   attributes: {
     where: { deletedAt: null },
     include: { attribute: { select: { id: true, name: true, inputType: true } } },
@@ -691,6 +694,53 @@ export class ProductsService {
     const key = `products/${id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
     const url = await this.storage.putObject(key, file.buffer, file.mimetype);
     await this.prisma.productMedia.create({ data: { productId: id, url, sortOrder: count } });
+    return this.get(id);
+  }
+
+  // --- Documents -----------------------------------------------------------
+  /**
+   * Attach a PDF a buyer may need before ordering.
+   *
+   * PDF only: a datasheet a customer cannot open is worse than none, and every certificate and
+   * manual worth publishing is already one. The name is the buyer's, not the file's — "DS-4471-rev-C"
+   * tells them nothing and "Datasheet" tells them everything — so it is required rather than
+   * defaulted from the upload.
+   */
+  async addDocument(id: string, file: { buffer: Buffer; originalname: string; mimetype: string }, name: string) {
+    await this.get(id);
+    const label = (name ?? '').trim();
+    if (!label) throw new BadRequestException('Give the document a name a buyer will recognise, e.g. "Datasheet"');
+
+    const count = await this.prisma.productDocument.count({ where: { productId: id, deletedAt: null } });
+    if (count >= MAX_DOCUMENTS) throw new BadRequestException(`A product can have at most ${MAX_DOCUMENTS} documents`);
+
+    const ext = (file.originalname.split('.').pop() || '').toLowerCase();
+    if (ext !== 'pdf' || file.mimetype !== 'application/pdf') {
+      throw new BadRequestException('Only PDF documents are allowed');
+    }
+    const key = `products/${id}/docs/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.pdf`;
+    const url = await this.storage.putObject(key, file.buffer, 'application/pdf');
+    await this.prisma.productDocument.create({
+      data: { productId: id, name: label, url, sizeBytes: file.buffer.length, sortOrder: count },
+    });
+    return this.get(id);
+  }
+
+  async renameDocument(id: string, documentId: string, name: string) {
+    const label = (name ?? '').trim();
+    if (!label) throw new BadRequestException('A document needs a name');
+    await this.prisma.productDocument.updateMany({
+      where: { id: documentId, productId: id, deletedAt: null },
+      data: { name: label },
+    });
+    return this.get(id);
+  }
+
+  async deleteDocument(id: string, documentId: string) {
+    await this.prisma.productDocument.updateMany({
+      where: { id: documentId, productId: id },
+      data: { deletedAt: new Date() },
+    });
     return this.get(id);
   }
 
