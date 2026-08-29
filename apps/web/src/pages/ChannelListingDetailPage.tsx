@@ -110,7 +110,9 @@ export function ChannelListingDetailPage() {
   ];
 
   return (
-    <div className="mx-auto w-full max-w-[1320px]">
+    // Full width, like every other page. Centring at 1320px left the header — breadcrumb, title
+    // and actions — floating in a narrower column than the chrome around it.
+    <div className="w-full">
       <PageHeader
         module="Sales channels"
         moduleHref="/channel-listings"

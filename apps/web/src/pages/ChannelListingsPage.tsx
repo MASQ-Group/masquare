@@ -465,9 +465,11 @@ export function ChannelListingsPage() {
               { value: 'oos', label: 'Out of stock' }, { value: 'low', label: 'Low stock' }, { value: 'error', label: 'Errors' }, { value: 'paused', label: 'Paused' },
             ]} />
             <div className="flex-1" />
+            {/* Icon-only: the labels were the first thing the toolbar clipped once the filters
+                filled it, leaving "By produc". The name is on hover and for screen readers. */}
             <div className="hseg">
-              <button className={view === 'matrix' ? 'hseg-on' : ''} onClick={() => setView('matrix')}><Grid2x2 size={14} className="mr-1 inline align-[-2px]" />Matrix</button>
-              <button className={view === 'product' ? 'hseg-on' : ''} onClick={() => setView('product')}><LayoutGrid size={14} className="mr-1 inline align-[-2px]" />By product</button>
+              <button className={view === 'matrix' ? 'hseg-on' : ''} onClick={() => setView('matrix')} title="Matrix" aria-label="Matrix view"><Grid2x2 size={15} /></button>
+              <button className={view === 'product' ? 'hseg-on' : ''} onClick={() => setView('product')} title="By product" aria-label="By product view"><LayoutGrid size={15} /></button>
             </div>
           </>
         ) : undefined}
