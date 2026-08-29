@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PackagePlus, PackageX, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { Pagination, Select } from '@masquare/ui';
 import { availabilityApi, type AvailabilityGapRow } from '../../lib/api';
+import { AnchoredPanel } from '../common/AnchoredPanel';
 
 /**
  * SKUs live on a sales channel with no availability row — the onboarding worklist.
@@ -108,7 +109,11 @@ export function MissingFromAvailability() {
                         <PackageX size={14} /> No product on the platform
                       </span>}
                 </td>
-                <td className={`${td} text-[12px] text-n-500`}>{r.channels.join(', ')}</td>
+                <td className={td}>
+                  <div className="flex flex-wrap gap-1">
+                    {r.channels.map((c) => <PlatformChip key={c.platform} platform={c.platform} markets={c.markets} />)}
+                  </div>
+                </td>
                 <td className={`${td} mono text-right text-n-600`}>{r.listedQuantity || '—'}</td>
                 <td className="border-b border-n-100 px-4 py-2.5 text-right">
                   {r.productId ? (
@@ -131,6 +136,42 @@ export function MissingFromAvailability() {
       </div>
 
       <Pagination page={page} pageCount={pageCount} onPageChange={setPage} pageSize={pageSize} />
+    </>
+  );
+}
+
+const PLATFORM_LABEL: Record<string, string> = { amazon: 'Amazon', ebay: 'eBay', onbuy: 'OnBuy' };
+
+/**
+ * One chip per platform, with the individual marketplaces behind it on hover.
+ *
+ * A SKU can sit on eleven Amazon marketplaces; listing them inline turns a scannable column into a
+ * wall of text, and the fact worth seeing at a glance is simply "Amazon". The detail is a hover
+ * away, in a portalled panel so it is never clipped by the table's own overflow.
+ */
+function PlatformChip({ platform, markets }: { platform: string; markets: string[] }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  const label = PLATFORM_LABEL[platform] ?? platform;
+  return (
+    <>
+      <span
+        ref={ref}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        className="inline-flex cursor-default items-center gap-1 rounded border border-n-200 bg-n-50 px-1.5 py-0.5 text-[12px] text-n-700"
+      >
+        {label}
+        <span className="text-[11px] text-n-400">{markets.length}</span>
+      </span>
+      {open && (
+        <AnchoredPanel anchorRef={ref} onClose={() => setOpen(false)} className="w-max max-w-[260px] p-2">
+          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-n-400">Listed on</div>
+          <ul className="space-y-0.5">
+            {markets.map((m) => <li key={m} className="text-[12.5px] text-n-700">{m}</li>)}
+          </ul>
+        </AnchoredPanel>
+      )}
     </>
   );
 }

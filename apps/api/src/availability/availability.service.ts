@@ -129,12 +129,15 @@ export class AvailabilityService {
     });
 
     // One row per SKU: the same product listed on five marketplaces is one job, not five.
+    // Grouped by platform, because "listed on Amazon" is the fact that matters at a glance and the
+    // eleven marketplaces behind it are the detail. eBay runs one integration across many markets,
+    // so its market comes from the listing; Amazon and OnBuy carry theirs on the integration.
     const bySku = new Map<string, {
       channelSku: string;
       productId: string | null;
       mainSku: string | null;
       title: string | null;
-      channels: string[];
+      channels: { platform: string; markets: string[] }[];
       listedQuantity: number;
     }>();
     for (const r of rows) {
@@ -147,10 +150,13 @@ export class AvailabilityService {
         channels: [],
         listedQuantity: 0,
       };
-      const label = r.integration?.channelType
-        ? `${r.integration.channelType}${r.marketplace ? ` ${r.marketplace}` : ''}`
-        : 'unknown';
-      if (!cur.channels.includes(label)) cur.channels.push(label);
+      const platform = r.integration?.channelType ?? 'unknown';
+      const market = platform === 'ebay' && r.marketplace
+        ? `eBay ${r.marketplace.toUpperCase()}`
+        : r.integration?.name ?? platform;
+      let group = cur.channels.find((c) => c.platform === platform);
+      if (!group) { group = { platform, markets: [] }; cur.channels.push(group); }
+      if (!group.markets.includes(market)) group.markets.push(market);
       // What the marketplaces currently advertise, which is a useful starting figure but not a
       // number the platform vouches for — the operator still decides what goes into availability.
       cur.listedQuantity = Math.max(cur.listedQuantity, r.listedQuantity ?? 0);
