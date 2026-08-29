@@ -8,6 +8,7 @@ import {
   brandsApi, categoriesApi, fulfilmentTypesApi, productsApi, productTypesApi, vatClassesApi, vendorsApi,
   type Product, type ProductListParams,
 } from '../lib/api';
+import { categoryOptions, categoryPath } from '../lib/categoryPaths';
 import { useAuth } from '../lib/auth';
 import { usePersistentState } from '../lib/usePersistentState';
 import { formatMoney } from '../lib/format';
@@ -148,7 +149,7 @@ export function ProductsPage() {
     filters.brandId.forEach((id) => chips.push({ label: `Brand: ${nameOf(brands.data, id)}`, onRemove: () => toggle('brandId', id) }));
     filters.fulfilmentTypeId.forEach((id) => chips.push({ label: `Fulfilment: ${nameOf(ftypes.data, id)}`, onRemove: () => toggle('fulfilmentTypeId', id) }));
     filters.productTypeId.forEach((id) => chips.push({ label: `Type: ${nameOf(ptypes.data, id)}`, onRemove: () => toggle('productTypeId', id) }));
-    filters.categoryId.forEach((id) => chips.push({ label: `Category: ${nameOf(categories.data, id)}`, onRemove: () => toggle('categoryId', id) }));
+    filters.categoryId.forEach((id) => chips.push({ label: `Category: ${categoryPath(categories.data, id)}`, onRemove: () => toggle('categoryId', id) }));
     if (filters.country) chips.push({ label: `Country: ${filters.country}`, onRemove: () => setFilters((f) => ({ ...f, country: '' })) });
     return chips;
   }, [filters, vendors.data, brands.data, ftypes.data, ptypes.data, categories.data]);
@@ -268,7 +269,7 @@ export function ProductsPage() {
                     { key: 'brandId', label: 'Brand', options: brands.data ?? [] },
                     { key: 'fulfilmentTypeId', label: 'Fulfilment', options: ftypes.data ?? [] },
                     { key: 'productTypeId', label: 'Product type', options: ptypes.data ?? [] },
-                    { key: 'categoryId', label: 'Category', options: (categories.data ?? []).map((c) => ({ id: c.id, name: c.name })) },
+                    { key: 'categoryId', label: 'Category', options: categoryOptions(categories.data ?? []).map((c) => ({ id: c.id, name: c.name })) },
                   ]}
                   filters={filters}
                   onToggle={toggle}

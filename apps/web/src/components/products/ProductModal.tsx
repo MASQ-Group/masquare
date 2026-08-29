@@ -15,6 +15,7 @@ import {
   productTypesApi, vatClassesApi, vendorsApi,
   type Attribute, type Product, type ProductAlias, type ProductDocumentItem, type ProductMediaItem, type RefLite,
 } from '../../lib/api';
+import { categoryOptions } from '../../lib/categoryPaths';
 import { RefField } from './RefField';
 import { CountrySelect } from '../common/CountrySelect';
 
@@ -304,7 +305,9 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
           </div>
           <div>
             <label className="label">Category</label>
-            <RefField value={category} placeholder="Category…" list={async (q) => (await categoriesApi.list()).filter((c) => !q || c.name.toLowerCase().includes(q.toLowerCase())).map((c) => ({ id: c.id, name: c.name }))} create={(name) => categoriesApi.create({ name })} createNoun="category" onChange={(v) => { setCategory(v); touch(); }} />
+            {/* Full paths, not bare names: leaf names repeat across the tree ("Filters", "Sets"),
+                so a list of names alone offers the same label several times. */}
+            <RefField value={category} placeholder="Category…" list={async (q) => categoryOptions(await categoriesApi.list()).filter((c) => !q || c.name.toLowerCase().includes(q.toLowerCase())).map((c) => ({ id: c.id, name: c.name }))} create={(name) => categoriesApi.create({ name })} createNoun="category" onChange={(v) => { setCategory(v); touch(); }} />
           </div>
           <div>
             <label className="label">Attributes <span className="font-normal text-n-400">(assigned manually)</span></label>
