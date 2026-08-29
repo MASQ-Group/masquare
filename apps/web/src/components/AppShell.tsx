@@ -92,7 +92,6 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
     items: [
       { to: '/pricing/individual', label: 'Individual Pricing', icon: CircleDollarSign },
       { to: '/pricing/bulk', label: 'Bulk Pricing', icon: SlidersHorizontal },
-      { to: '/pricing/vendor-files', label: 'Vendor Price Files', icon: UploadCloud },
     ],
   },
   {
@@ -128,6 +127,9 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
       { to: '/products', label: 'Products', icon: Package },
       { to: '/inventory', label: 'Inventory', icon: Boxes },
       { to: '/availability', label: 'Availability', icon: Store, ordersOnlyHidden: true },
+      // A vendor file carries quantities as well as costs, so it belongs beside the stock it
+      // feeds rather than under Pricing.
+      { to: '/pricing/vendor-files', label: 'Vendor Files', icon: UploadCloud, ordersOnlyHidden: true },
       { to: '/stock-owed', label: 'Stock Owed', icon: PackageX },
       { to: '/warehouses', label: 'Warehouses', icon: Warehouse },
       { to: '/serials', label: 'Serial Numbers', icon: ScanBarcode },

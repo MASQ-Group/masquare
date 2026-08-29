@@ -54,6 +54,21 @@ export class AvailabilityController {
     return this.svc.purgeAll({ confirm: dto?.confirm }, user.sub);
   }
 
+  /** The onboarding worklist: SKUs listed on a channel with no availability row. */
+  @Get('missing')
+  missing(
+    @Query('q') q?: string,
+    @Query('channelType') channelType?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.svc.missingFromAvailability({
+      q, channelType,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  }
+
   @Get(':productId')
   get(@Param('productId') productId: string) {
     return this.svc.get(productId);

@@ -92,6 +92,88 @@ export class AvailabilityService {
     return { items: rows.map((r) => this.serialize(r)), total, page, pageSize };
   }
 
+  /**
+   * SKUs live on a sales channel but absent from availability — the onboarding worklist.
+   *
+   * A listing whose SKU is not in availability is deliberately ignored by every quantity path: it is
+   * never pushed, and never set to zero. That silence is correct, but it made the gap invisible, so
+   * a product could sit listed and unmanaged indefinitely with nothing to say so. This is that gap,
+   * named.
+   *
+   * Two kinds appear, and the difference decides what to do about them:
+   *   • linked to a product — add it to availability and it is ready to sell
+   *   • linked to nothing — the channel SKU matches no product at all, so the product must be
+   *     created first. Grouped by SKU so one row means one thing to fix, not one per marketplace.
+   */
+  async missingFromAvailability(query: { q?: string; channelType?: string; page?: number; pageSize?: number } = {}) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
+    const q = query.q?.trim()?.toLowerCase();
+
+    const rows = await this.prisma.channelListing.findMany({
+      where: {
+        // Absent from availability. A listing whose product IS in availability is already handled.
+        OR: [{ productId: null }, { product: { availability: { is: null } } }],
+        ...(query.channelType ? { integration: { channelType: query.channelType } } : {}),
+        ...(q ? { channelSku: { contains: q, mode: 'insensitive' } } : {}),
+      },
+      select: {
+        channelSku: true,
+        marketplace: true,
+        listedQuantity: true,
+        listingStatus: true,
+        productId: true,
+        product: { select: { id: true, mainSku: true, title: true } },
+        integration: { select: { channelType: true, name: true } },
+      },
+    });
+
+    // One row per SKU: the same product listed on five marketplaces is one job, not five.
+    const bySku = new Map<string, {
+      channelSku: string;
+      productId: string | null;
+      mainSku: string | null;
+      title: string | null;
+      channels: string[];
+      listedQuantity: number;
+    }>();
+    for (const r of rows) {
+      const key = (r.product?.mainSku ?? r.channelSku).trim().toLowerCase();
+      const cur = bySku.get(key) ?? {
+        channelSku: r.channelSku,
+        productId: r.productId,
+        mainSku: r.product?.mainSku ?? null,
+        title: r.product?.title ?? null,
+        channels: [],
+        listedQuantity: 0,
+      };
+      const label = r.integration?.channelType
+        ? `${r.integration.channelType}${r.marketplace ? ` ${r.marketplace}` : ''}`
+        : 'unknown';
+      if (!cur.channels.includes(label)) cur.channels.push(label);
+      // What the marketplaces currently advertise, which is a useful starting figure but not a
+      // number the platform vouches for — the operator still decides what goes into availability.
+      cur.listedQuantity = Math.max(cur.listedQuantity, r.listedQuantity ?? 0);
+      bySku.set(key, cur);
+    }
+
+    const all = [...bySku.values()].sort((a, b) => {
+      // Products we already know come first: they are one click from being onboarded.
+      if (!!a.productId !== !!b.productId) return a.productId ? -1 : 1;
+      return (a.mainSku ?? a.channelSku).localeCompare(b.mainSku ?? b.channelSku);
+    });
+
+    return {
+      items: all.slice((page - 1) * pageSize, page * pageSize),
+      total: all.length,
+      /** Split so the UI can say how much is "add to availability" and how much is "create first". */
+      withProduct: all.filter((r) => r.productId).length,
+      withoutProduct: all.filter((r) => !r.productId).length,
+      page,
+      pageSize,
+    };
+  }
+
   async get(productId: string) {
     const p = await this.prisma.product.findFirst({
       where: { id: productId, ...ACTIVE },

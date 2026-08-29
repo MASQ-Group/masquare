@@ -115,9 +115,9 @@ export function VendorImportPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        module="Pricing"
-        title="Vendor Price Files"
-        info="Upload a vendor's price or stock file, confirm what each column means, and save the mapping for next time."
+        module="Catalogue & Inventory"
+        title="Vendor Files"
+        info="Upload a vendor file, confirm what each column means, and save the mapping for next time. Only SKUs that already exist as products are touched; costs, prices and available quantities update together."
       />
 
       <div className="card p-5">
