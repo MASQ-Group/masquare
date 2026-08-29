@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import type { ProgressSink } from '../jobs/jobs.service';
 
 export interface AvailabilityQuery {
   q?: string;
@@ -275,6 +276,72 @@ export class AvailabilityService {
     });
 
     return { dryRun: false as const, ...summary };
+  }
+
+  /**
+   * Put products into availability at zero, so they can be counted.
+   *
+   * Adding one at a time is the honest unit — a person decides a product is ours to track — but 660
+   * listed products need adding after the purge, and 660 clicks is not a process anyone completes.
+   * This is the same decision taken once for many.
+   *
+   * Zero is the opening figure, not a guess at stock: the product is now watched and nobody has
+   * counted it. It is also the only safe opening figure, because a quantity we invented would be
+   * publishable the moment someone pressed Push to channels.
+   *
+   * `listedOnly` restricts it to products that actually sell somewhere, which is the set worth
+   * onboarding first — a product listed nowhere gains nothing from being tracked.
+   */
+  async bulkAdd(
+    opts: { productIds?: string[]; listedOnly?: boolean; confirm?: boolean } = {},
+    actorId?: string,
+    ctx?: ProgressSink,
+  ) {
+    const explicit = (opts.productIds ?? []).filter(Boolean);
+
+    const candidates = await this.prisma.product.findMany({
+      where: {
+        ...ACTIVE,
+        // Never touch a product already in availability: it has a figure someone stands behind, and
+        // resetting it to zero would empty the shelves by another name.
+        availability: { is: null },
+        ...(explicit.length ? { id: { in: explicit } } : {}),
+        ...(opts.listedOnly !== false ? { channelListings: { some: {} } } : {}),
+      },
+      select: { id: true, mainSku: true, title: true },
+      orderBy: { mainSku: 'asc' },
+    });
+
+    if (!opts.confirm) {
+      return {
+        dryRun: true as const,
+        wouldAdd: candidates.length,
+        /** Asked for by id but already in availability, or not found — neither is an error. */
+        skipped: explicit.length ? explicit.length - candidates.length : 0,
+        sample: candidates.slice(0, 40).map((p) => ({ productId: p.id, mainSku: p.mainSku, title: p.title })),
+      };
+    }
+
+    ctx?.setTotal(candidates.length);
+    let added = 0;
+    for (const p of candidates) {
+      // One transaction each: a failure part-way leaves the products already added in availability
+      // rather than rolling back work an operator can see has happened.
+      await this.prisma.$transaction(async (tx) => {
+        await tx.productAvailability.create({
+          data: { productId: p.id, quantity: 0, lastSource: 'manual', updatedById: actorId ?? null },
+        });
+        await tx.availabilityLedger.create({
+          data: {
+            productId: p.id, delta: 0, newQuantity: 0, reason: 'manual_set',
+            note: 'Added to availability — quantity not yet counted', createdById: actorId ?? null,
+          },
+        });
+      });
+      added += 1;
+      ctx?.tick();
+    }
+    return { dryRun: false as const, added };
   }
 
   /** Set the absolute available quantity (manual). Records the change in the ledger. */

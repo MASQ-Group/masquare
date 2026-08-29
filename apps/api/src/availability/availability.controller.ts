@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/co
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
+import { JobsService } from '../jobs/jobs.service';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { AvailabilityService, type AvailabilityQuery } from './availability.service';
 import { SetAvailabilityDto } from './dto/availability.dto';
@@ -11,7 +12,10 @@ import { SetAvailabilityDto } from './dto/availability.dto';
 @UseGuards(JwtAuthGuard)
 @Controller('availability')
 export class AvailabilityController {
-  constructor(private readonly svc: AvailabilityService) {}
+  constructor(
+    private readonly svc: AvailabilityService,
+    private readonly jobs: JobsService,
+  ) {}
 
   @Get()
   list(
@@ -67,6 +71,22 @@ export class AvailabilityController {
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });
+  }
+
+  /**
+   * Put many products into availability at zero, so they can be counted.
+   *
+   * Declared before ':productId'. Without confirm it reports what it would add and writes nothing;
+   * with confirm it returns a job, since onboarding a whole catalogue outlives a request.
+   */
+  @Post('bulk-add')
+  bulkAdd(@Body() dto: { productIds?: string[]; listedOnly?: boolean; confirm?: boolean }, @CurrentUser() user: AuthUser) {
+    if (!dto?.confirm) return this.svc.bulkAdd({ ...dto, confirm: false }, user.sub);
+    return this.jobs.start(
+      'availability.bulk-add',
+      'Adding products to availability',
+      (ctx) => this.svc.bulkAdd({ ...dto, confirm: true }, user.sub, ctx),
+    );
   }
 
   @Get(':productId')

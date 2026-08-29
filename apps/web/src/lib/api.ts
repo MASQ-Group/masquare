@@ -342,6 +342,15 @@ export interface AvailabilityGapResponse {
 }
 
 export const availabilityApi = {
+  /**
+   * Put many products into availability at zero. Without confirm it reports what it would add.
+   * Zero is the opening figure — tracked, not yet counted — and nothing is publishable from it.
+   */
+  bulkAddPreview: (productIds?: string[]) =>
+    api.post<{ dryRun: true; wouldAdd: number; skipped: number; sample: { productId: string; mainSku: string; title: string | null }[] }>(
+      '/availability/bulk-add', { productIds, confirm: false }).then((r) => r.data),
+  bulkAdd: (productIds?: string[]) =>
+    api.post<{ id: string }>('/availability/bulk-add', { productIds, confirm: true }).then((r) => r.data),
   /** SKUs live on a channel but absent from availability — the onboarding worklist. */
   missing: (params: { q?: string; channelType?: string; page?: number; pageSize?: number } = {}) =>
     api.get<AvailabilityGapResponse>('/availability/missing', { params }).then((r) => r.data),

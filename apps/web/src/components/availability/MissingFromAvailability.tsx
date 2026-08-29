@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PackagePlus, PackageX, Search } from 'lucide-react';
 import { toast } from 'sonner';
-import { Pagination, Select } from '@masquare/ui';
+import { Pagination, ProgressButton, Select } from '@masquare/ui';
 import { availabilityApi, type AvailabilityGapRow } from '../../lib/api';
+import { useConfirm } from '../ConfirmProvider';
+import { useJobProgress } from '../../lib/useJobProgress';
 import { AnchoredPanel } from '../common/AnchoredPanel';
 import { CHANNEL_TONE } from '../products/ChannelGroup';
 
@@ -30,6 +32,35 @@ export function MissingFromAvailability() {
     queryKey: ['availability-missing', { q, channelType, page }],
     queryFn: () => availabilityApi.missing({ q: q || undefined, channelType: channelType || undefined, page, pageSize }),
   });
+
+  const confirmDialog = useConfirm();
+  const bulk = useJobProgress('availability.bulk-add', () => {
+    toast.success('Products added to availability — set their quantities next');
+    qc.invalidateQueries({ queryKey: ['availability-missing'] });
+    qc.invalidateQueries({ queryKey: ['availability'] });
+  });
+
+  /**
+   * Adding one at a time is the honest unit, but 660 listed products need it after the purge.
+   * Dry run first: the count is the whole decision, and it is worth seeing before it happens.
+   */
+  const addAll = async () => {
+    const dry = await availabilityApi.bulkAddPreview();
+    if (dry.wouldAdd === 0) {
+      toast.info('Every listed product is already in availability.');
+      return;
+    }
+    const ok = await confirmDialog({
+      title: `Add ${dry.wouldAdd} product${dry.wouldAdd === 1 ? '' : 's'} to availability?`,
+      message:
+        'Each goes in at zero — tracked, but not yet counted. Nothing is sent to any marketplace: a '
+        + 'push can only ever lower a live quantity, so these stay invisible to the channels until '
+        + 'someone sets a real number. Products already in availability are left alone.',
+      confirmLabel: 'Add them',
+    });
+    if (!ok) return;
+    bulk.start(() => availabilityApi.bulkAdd() as any);
+  };
 
   const add = useMutation({
     // Zero is the honest opening figure: the product is now tracked, and nobody has counted it yet.
@@ -64,6 +95,20 @@ export function MissingFromAvailability() {
           onChange={(v) => { setChannelType(v); setPage(1); }}
           options={[{ value: '', label: 'All channels' }, { value: 'amazon', label: 'Amazon' }, { value: 'ebay', label: 'eBay' }, { value: 'onbuy', label: 'OnBuy' }]}
         />
+        <div className="flex-1" />
+        {/* Adds every listed product that has one — not just this page, and not just this filter,
+            because the job is the whole backlog rather than whatever is on screen. */}
+        <ProgressButton
+          running={bulk.running}
+          value={bulk.value}
+          detail={bulk.detail}
+          onClick={addAll}
+          title="Put every listed product that has one into availability, at zero"
+          runningLabel={<><PackagePlus size={15} /> Adding</>}
+          className="!h-8 !text-[13px]"
+        >
+          <PackagePlus size={15} /> Add all ready
+        </ProgressButton>
       </div>
 
       <div className="card overflow-hidden">
