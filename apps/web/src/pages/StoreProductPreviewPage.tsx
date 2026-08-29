@@ -128,8 +128,12 @@ export function StoreProductPreviewPage() {
             {data.shortDescription && (
               /* The price card's quieter sibling: same corner and padding so they read as a pair,
                  but translucent over the page rather than white on it, and no shadow — the shadow is
-                 what lifts the price card, and two lifted cards compete for the same attention. */
-              <div className="rte rounded-lg border border-n-100 bg-n-0/60 px-6 py-4 text-[14px] leading-[1.65] text-n-600">
+                 what lifts the price card, and two lifted cards compete for the same attention.
+
+                 Written as rgba rather than bg-n-0/60: the palette maps each token to a bare CSS
+                 variable, so Tailwind has nowhere to substitute an alpha and silently generates no
+                 class at all. n-0 is #FFFFFF, so this is that token at 60%. */
+              <div className="rte rounded-lg border border-n-100 bg-[rgba(255,255,255,0.6)] px-6 py-4 text-[14px] leading-[1.65] text-n-600">
                 <span dangerouslySetInnerHTML={{ __html: data.shortDescription }} />
               </div>
             )}
