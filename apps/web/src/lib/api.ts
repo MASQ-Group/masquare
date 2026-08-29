@@ -320,7 +320,30 @@ export interface AvailabilityLedgerRow {
   id: string; delta: number; newQuantity: number; reason: string; note: string | null; refType: string | null; createdAt: string;
 }
 export interface AvailabilityListResponse { items: AvailabilityRow[]; total: number; page: number; pageSize: number }
+/** A SKU listed on a channel with no availability row — onboarding work, not an error. */
+export interface AvailabilityGapRow {
+  channelSku: string;
+  /** Null when the channel SKU matches no product: that must be created before it can be added. */
+  productId: string | null;
+  mainSku: string | null;
+  title: string | null;
+  channels: string[];
+  /** What the marketplaces currently advertise. A starting figure, not one the platform vouches for. */
+  listedQuantity: number;
+}
+export interface AvailabilityGapResponse {
+  items: AvailabilityGapRow[];
+  total: number;
+  withProduct: number;
+  withoutProduct: number;
+  page: number;
+  pageSize: number;
+}
+
 export const availabilityApi = {
+  /** SKUs live on a channel but absent from availability — the onboarding worklist. */
+  missing: (params: { q?: string; channelType?: string; page?: number; pageSize?: number } = {}) =>
+    api.get<AvailabilityGapResponse>('/availability/missing', { params }).then((r) => r.data),
   /** Products that are IN availability. A product absent from it is not listed here at all. */
   list: (params: { q?: string; brandId?: string; vendorId?: string; productTypeId?: string; page?: number; pageSize?: number } = {}) =>
     api.get<AvailabilityListResponse>('/availability', { params }).then((r) => r.data),
