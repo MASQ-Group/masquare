@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Pagination, Select } from '@masquare/ui';
 import { availabilityApi, type AvailabilityGapRow } from '../../lib/api';
 import { AnchoredPanel } from '../common/AnchoredPanel';
+import { CHANNEL_TONE } from '../products/ChannelGroup';
 
 /**
  * SKUs live on a sales channel with no availability row — the onboarding worklist.
@@ -141,6 +142,10 @@ export function MissingFromAvailability() {
 }
 
 const PLATFORM_LABEL: Record<string, string> = { amazon: 'Amazon', ebay: 'eBay', onbuy: 'OnBuy' };
+// Channel identity comes from CHANNEL_TONE, the same palette the product card uses, so Amazon is
+// amber everywhere rather than amber in one place and something else here. Deliberately clear of
+// the semantic colours: a channel chip must never be mistaken for a status.
+const UNKNOWN_TONE = 'bg-n-50 text-n-700 border-n-200';
 
 /**
  * One chip per platform, with the individual marketplaces behind it on hover.
@@ -159,10 +164,10 @@ function PlatformChip({ platform, markets }: { platform: string; markets: string
         ref={ref}
         onMouseEnter={() => setOpen(true)}
         onMouseLeave={() => setOpen(false)}
-        className="inline-flex cursor-default items-center gap-1 rounded border border-n-200 bg-n-50 px-1.5 py-0.5 text-[12px] text-n-700"
+        className={`inline-flex cursor-default items-center gap-1 rounded border px-1.5 py-0.5 text-[12px] ${CHANNEL_TONE[platform] ?? UNKNOWN_TONE}`}
       >
         {label}
-        <span className="text-[11px] text-n-400">{markets.length}</span>
+        <span className="text-[11px] opacity-60">{markets.length}</span>
       </span>
       {open && (
         <AnchoredPanel anchorRef={ref} onClose={() => setOpen(false)} className="w-max max-w-[260px] p-2">
