@@ -794,14 +794,20 @@ export class ChannelListingsService {
         availability: { select: { quantity: true, updatedAt: true } },
         channelListings: {
           where: companyIds ? { companyId: { in: companyIds } } : undefined,
-          select: { integrationId: true, channelSku: true, asin: true, listedPrice: true, currency: true, listedQuantity: true, fulfilmentChannel: true, listingStatus: true, lastPulledAt: true },
+          select: { integrationId: true, marketplace: true, channelSku: true, asin: true, listedPrice: true, currency: true, listedQuantity: true, fulfilmentChannel: true, listingStatus: true, lastPulledAt: true },
           orderBy: { integration: { name: 'asc' } },
         },
       },
     });
     if (!p) throw new NotFoundException('Product not found');
     const channels = await this.channels(companyIds);
-    const byInt = new Map(p.channelListings.map((l) => [l.integrationId, l]));
+    // Keyed the way channels() identifies a column, not by integration.
+    //
+    // One eBay connection serves eight marketplaces, so an integration id names a column only for
+    // Amazon and OnBuy. Keying by it meant every eBay lookup missed and the product page reported
+    // "Not listed" on all eight — and even had it matched, eight rows sharing one integration id
+    // would have collapsed to whichever came last.
+    const byInt = new Map(p.channelListings.map((l) => [l.marketplace ? `${l.integrationId}:${l.marketplace}` : l.integrationId, l]));
     const econInputs = channels
       .filter((ch) => ch.salesChannelId && byInt.get(ch.id)?.listedPrice != null)
       .map((ch) => ({ key: ch.id, productId: p.id, salesChannelId: ch.salesChannelId!, grossNative: byInt.get(ch.id)!.listedPrice, currency: byInt.get(ch.id)!.currency }));
