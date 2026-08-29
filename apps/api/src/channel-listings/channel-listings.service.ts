@@ -549,6 +549,7 @@ export class ChannelListingsService {
       orderBy: { createdAt: 'asc' },
       select: { channelSku: true, integrationId: true, previousValue: true },
     });
+    const auditEmpty = audit.length === 0;
     const fromAudit = new Map<string, number>();
     for (const a of audit) {
       const key = a.integrationId + '|' + a.channelSku;
@@ -634,9 +635,23 @@ export class ChannelListingsService {
         dryRun: true,
         marketplace: marketplace ?? opts.integrationId,
         candidates: plan.length,
+        // The window the audit was read over, and a plain reason when it explains an empty result.
+        //
+        // `since` defaults to 24 hours, which is right for repairing a push that has just gone
+        // wrong and useless for one from three weeks ago. Asked to restore the August zeroing
+        // without it, this returned zero candidates and said nothing about why — indistinguishable
+        // from "there is nothing to fix", which is the worst thing a repair tool can imply.
+        auditSince: since.toISOString(),
+        ...(plan.length === 0 && auditEmpty
+          ? { reason: `No quantity pushes recorded since ${since.toISOString().slice(0, 10)}. Pass "since" to reach further back.` }
+          : {}),
         noFigure: noFigure.length,
         noFigureSample: noFigure.slice(0, 40),
         totalUnits: plan.reduce((s, p) => s + p.target, 0),
+        // Every source is counted. A dry run that reports 116 candidates and accounts for 2 of them
+        // invites the reader to work the rest out by subtraction, which is how a wrong figure gets
+        // approved — the number that matters most here is how many came from the origin.
+        fromOriginMarketplace: plan.filter((p) => p.source === 'origin marketplace').length,
         fromLastSync: plan.filter((p) => p.source === 'last sync').length,
         fromPushAudit: plan.filter((p) => p.source === 'push audit').length,
         fromFallback: plan.filter((p) => p.source === 'fallback').length,
