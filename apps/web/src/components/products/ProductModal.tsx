@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ImagePlus, Plus, Star, Trash2, X } from 'lucide-react';
+import { ImagePlus, Plus, Star, Trash2, X, Store } from 'lucide-react';
 import { toast } from 'sonner';
 import { CostHistory } from './CostHistory';
 import { ProductStockSection } from './ProductStockSection';
 import { ProductChannelIdentifiers } from './ProductChannelIdentifiers';
 import { ProductChannelsTab } from './ProductChannelsTab';
 import { ProductDocuments } from './ProductDocuments';
+import { RichTextEditor } from '../common/RichTextEditor';
 import { FeatureList } from './FeatureList';
 import { FileDrop, ModalShell, Select } from '@masquare/ui';
 import {
@@ -14,6 +15,7 @@ import {
   productTypesApi, vatClassesApi, vendorsApi,
   type Attribute, type Product, type ProductAlias, type ProductDocumentItem, type ProductMediaItem, type RefLite,
 } from '../../lib/api';
+import { categoryOptions } from '../../lib/categoryPaths';
 import { RefField } from './RefField';
 import { CountrySelect } from '../common/CountrySelect';
 
@@ -303,7 +305,9 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
           </div>
           <div>
             <label className="label">Category</label>
-            <RefField value={category} placeholder="Category…" list={async (q) => (await categoriesApi.list()).filter((c) => !q || c.name.toLowerCase().includes(q.toLowerCase())).map((c) => ({ id: c.id, name: c.name }))} create={(name) => categoriesApi.create({ name })} createNoun="category" onChange={(v) => { setCategory(v); touch(); }} />
+            {/* Full paths, not bare names: leaf names repeat across the tree ("Filters", "Sets"),
+                so a list of names alone offers the same label several times. */}
+            <RefField value={category} placeholder="Category…" list={async (q) => categoryOptions(await categoriesApi.list()).filter((c) => !q || c.name.toLowerCase().includes(q.toLowerCase())).map((c) => ({ id: c.id, name: c.name }))} create={(name) => categoriesApi.create({ name })} createNoun="category" onChange={(v) => { setCategory(v); touch(); }} />
           </div>
           <div>
             <label className="label">Attributes <span className="font-normal text-n-400">(assigned manually)</span></label>
@@ -466,26 +470,36 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
             {/* eBay rejects anything longer, so the limit is shown rather than discovered. */}
             <p className="mt-1 text-[12px] text-n-400">{content.ebayTitle.length}/80 characters</p>
           </div>
+          {/* The copy on this tab is what the store page shows, so the preview belongs beside it
+              rather than only back on the list. Edit mode only — there is nothing to preview until
+              the product exists. */}
+          {product && (
+            <a
+              href={`/store-preview/product/${product.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex w-fit items-center gap-1.5 text-[12.5px] font-semibold text-teal-600 hover:text-teal-700"
+            >
+              <Store size={14} /> Preview the store page
+            </a>
+          )}
           <div>
             <label className="label">Short description</label>
             {/* Deliberately short and plain: it sits under the price on the B2B store, where a buyer
                 is deciding in seconds. Two sentences, no markup. */}
-            <textarea
-              className="input min-h-[64px] py-2"
-              maxLength={280}
+            <RichTextEditor
+              minHeight={72}
               value={content.shortDescription}
-              onChange={(e) => { setContent((s) => ({ ...s, shortDescription: e.target.value })); touch(); }}
+              onChange={(html) => { setContent((s) => ({ ...s, shortDescription: html })); touch(); }}
               placeholder="One or two sentences — what this is, for a buyer deciding in seconds."
             />
-            <p className="mt-1 text-[12px] text-n-400">{content.shortDescription.length}/280 characters</p>
           </div>
           <div>
             <label className="label">Description</label>
-            <textarea
-              className="input min-h-[140px] py-2"
+            <RichTextEditor
               value={content.descriptionHtml}
-              onChange={(e) => { setContent((s) => ({ ...s, descriptionHtml: e.target.value })); touch(); }}
-              placeholder="Full description shown on the listing page. Basic HTML is accepted."
+              onChange={(html) => { setContent((s) => ({ ...s, descriptionHtml: html })); touch(); }}
+              placeholder="Full description shown on the listing page."
             />
           </div>
           <FeatureList value={features} onChange={(next) => { setFeatures(next); touch(); }} />

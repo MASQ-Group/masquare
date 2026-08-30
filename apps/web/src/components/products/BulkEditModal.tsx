@@ -4,6 +4,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell, Select } from '@masquare/ui';
 import { attributesApi, brandsApi, categoriesApi, fulfilmentTypesApi, productClassesApi, productsApi, productTypesApi, vatClassesApi, vendorsApi } from '../../lib/api';
+import { categoryOptions } from '../../lib/categoryPaths';
 
 interface Props {
   ids: string[];
@@ -87,7 +88,7 @@ export function BulkEditModal({ ids, onClose, onDone }: Props) {
         <div>
           <label className="label">Category</label>
           <Select value={categoryId} onChange={setCategoryId} placeholder="— leave unchanged —"
-            options={categories.map((c) => ({ value: c.id, label: c.name }))} />
+            options={categoryOptions(categories).map((c) => ({ value: c.id, label: c.name }))} />
         </div>
         <div>
           <label className="label">Product class</label>

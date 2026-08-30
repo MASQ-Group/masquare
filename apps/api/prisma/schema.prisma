@@ -472,6 +472,10 @@ model ProductClass {
 model ProductType {
   id   String @id @default(uuid()) @db.Uuid
   name String
+  /// Stable handle from the catalogue taxonomy (kebab-case). Used as the filter/URL handle on
+  /// the storefront and as the match key when the taxonomy is re-imported, so a re-run updates
+  /// the existing row instead of creating a second one with the same name.
+  slug String? @unique
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -532,6 +536,16 @@ model ProductCategory {
   name      String
   parentId  String? @map("parent_id") @db.Uuid
   sortOrder Int     @default(0) @map("sort_order")
+  /// The leaf segment of the URL ("ovens"). Unique only within a parent, like the name.
+  slug      String?
+  /// The full path from the root ("home-appliances/large-kitchen-appliances/ovens"). This is the
+  /// taxonomy's stable identity: names get edited and rows get moved, so re-importing matches on
+  /// this rather than on name + parent.
+  path      String? @unique
+  /// False hides a branch from the customer-facing menu without deleting it — the Services & Fees
+  /// branch holds shipping charges, repairs and internal placeholder SKUs, which are real products
+  /// but must never appear in the storefront navigation.
+  showInNavigation Boolean @default(true) @map("show_in_navigation")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")

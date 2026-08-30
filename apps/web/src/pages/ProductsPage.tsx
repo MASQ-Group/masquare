@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Columns3, ChevronsUpDown, Download, Filter, Grid, List, Package, Pencil, Plus, Search, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
+import { Columns3, ChevronsUpDown, Download, Filter, Grid, List, Package, Pencil, Plus, Search, SlidersHorizontal, Store, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadTemplate, Pagination } from '@masquare/ui';
 import {
   brandsApi, categoriesApi, fulfilmentTypesApi, productsApi, productTypesApi, vatClassesApi, vendorsApi,
   type Product, type ProductListParams,
 } from '../lib/api';
+import { categoryOptions, categoryPath } from '../lib/categoryPaths';
 import { useAuth } from '../lib/auth';
 import { usePersistentState } from '../lib/usePersistentState';
 import { formatMoney } from '../lib/format';
@@ -148,7 +149,7 @@ export function ProductsPage() {
     filters.brandId.forEach((id) => chips.push({ label: `Brand: ${nameOf(brands.data, id)}`, onRemove: () => toggle('brandId', id) }));
     filters.fulfilmentTypeId.forEach((id) => chips.push({ label: `Fulfilment: ${nameOf(ftypes.data, id)}`, onRemove: () => toggle('fulfilmentTypeId', id) }));
     filters.productTypeId.forEach((id) => chips.push({ label: `Type: ${nameOf(ptypes.data, id)}`, onRemove: () => toggle('productTypeId', id) }));
-    filters.categoryId.forEach((id) => chips.push({ label: `Category: ${nameOf(categories.data, id)}`, onRemove: () => toggle('categoryId', id) }));
+    filters.categoryId.forEach((id) => chips.push({ label: `Category: ${categoryPath(categories.data, id)}`, onRemove: () => toggle('categoryId', id) }));
     if (filters.country) chips.push({ label: `Country: ${filters.country}`, onRemove: () => setFilters((f) => ({ ...f, country: '' })) });
     return chips;
   }, [filters, vendors.data, brands.data, ftypes.data, ptypes.data, categories.data]);
@@ -268,7 +269,7 @@ export function ProductsPage() {
                     { key: 'brandId', label: 'Brand', options: brands.data ?? [] },
                     { key: 'fulfilmentTypeId', label: 'Fulfilment', options: ftypes.data ?? [] },
                     { key: 'productTypeId', label: 'Product type', options: ptypes.data ?? [] },
-                    { key: 'categoryId', label: 'Category', options: (categories.data ?? []).map((c) => ({ id: c.id, name: c.name })) },
+                    { key: 'categoryId', label: 'Category', options: categoryOptions(categories.data ?? []).map((c) => ({ id: c.id, name: c.name })) },
                   ]}
                   filters={filters}
                   onToggle={toggle}
@@ -452,6 +453,17 @@ function ListView({ items, loading, cols, selected, allSelected, onToggleAll, on
                 <td className="border-b border-n-100 px-4 py-2.5 text-right"><span className="mono font-medium text-n-800">{formatMoney(p.purchaseCost)}</span></td>
                 <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
                   <div className="flex justify-end gap-1">
+                    {/* Opens in a new tab: it is the customer's view of this product, not a step
+                        in the work being done here, and coming back should not cost the list. */}
+                    <a
+                      href={`/store-preview/product/${p.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="See this product as a customer would"
+                      className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800"
+                    >
+                      <Store size={15} />
+                    </a>
                     <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" onClick={() => onEdit(p)}><Pencil size={15} /></button>
                     <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger" onClick={() => onDelete(p)}><Trash2 size={15} /></button>
                   </div>

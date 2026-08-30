@@ -7,6 +7,11 @@
  *  - `ebayCollectAndRemitTaxes` is VAT eBay collected from the buyer and REMITS on the seller's
  *    behalf (UK marketplace facilitator / IOSS). The seller owes nothing on it → seller VAT = 0,
  *    and the collected amount is reporting-only (salesTaxAmount). Mirrors Amazon's collected VAT.
+ *  - Where eBay does NOT collect and the destination is in the EU VAT zone, the seller owes the
+ *    VAT. eBay hands over the whole amount the buyer paid, so `lineItem.total` is GROSS there,
+ *    not net — verified against live eBay DE orders, where the recorded total matches the listed
+ *    (tax-inclusive) price to the cent. The VAT is extracted here, at the DESTINATION country's
+ *    rate: a sale on eBay DE shipped to Greece is 24%, not Germany's 19%.
  *  - `totalMarketplaceFee` is eBay's selling fee for the whole order (present on the order itself,
  *    unlike Amazon where fees need the Finances API) — allocated across lines by net.
  *  - `deliveryCost.shippingCost` is buyer-paid shipping.
@@ -29,7 +34,14 @@ export function ebayMarketplaceToIso(mp?: string | null): string | null {
   return /^[A-Z]{2}$/.test(s) ? s : (/^[A-Z]{2}/.test(s) ? s.slice(0, 2) : null); // e.g. CA_FR → CA
 }
 
-export function mapEbayOrder(o: any): MappedOrder {
+/** What the destination country charges. Supplied by the caller — the mapper has no database. */
+export interface DestinationVat {
+  euVatZone: boolean;
+  /** Percent, e.g. 19 for Germany. */
+  vatRate: number;
+}
+
+export function mapEbayOrder(o: any, vatForCountry?: (iso: string) => DestinationVat | null): MappedOrder {
   const orderId = String(o.orderId ?? o.legacyOrderId ?? '');
   const currency = o?.pricingSummary?.total?.currency ?? o?.pricingSummary?.priceSubtotal?.currency ?? null;
   const destCode = o?.fulfillmentStartInstructions?.[0]?.shippingStep?.shipTo?.contactAddress?.countryCode ?? null;
@@ -39,6 +51,12 @@ export function mapEbayOrder(o: any): MappedOrder {
   // The marketplace the order was placed on (per line item; an order is single-marketplace).
   const marketplaceId = (o.lineItems ?? [])[0]?.listingMarketplaceId ?? (o.lineItems ?? [])[0]?.purchaseMarketplaceId ?? null;
   const marketplaceCountryCode = ebayMarketplaceToIso(marketplaceId);
+
+  // The rate we owe, if any. Null when the destination is outside the EU VAT zone, unknown, or
+  // the caller supplied no lookup — in every one of those cases nothing is extracted, because a
+  // guessed VAT rate is worse than a visible zero.
+  const destVat = destCode ? vatForCountry?.(destCode) ?? null : null;
+  const owedVatPct = destVat && destVat.euVatZone && destVat.vatRate > 0 ? destVat.vatRate : null;
 
   const lines = (o.lineItems ?? []) as any[];
   const nets = lines.map((li) => money(li.total));
@@ -65,29 +83,53 @@ export function mapEbayOrder(o: any): MappedOrder {
   ];
 
   const items: MappedItem[] = lines.map((li, i) => {
-    const net = round2(money(li.total));
-    const shipping = round2(money(li?.deliveryCost?.shippingCost));
+    const lineTotal = round2(money(li.total));
+    const shippingTotal = round2(money(li?.deliveryCost?.shippingCost));
     const collectedVat = round2(((li.ebayCollectAndRemitTaxes ?? []) as any[]).reduce((s, t) => s + money(t.amount), 0));
+
+    // Who owes the VAT decides whether the line total is net or gross.
+    //
+    // eBay collected it (UK facilitator, IOSS): eBay added the tax ON TOP of our price and remits
+    // it, so the total is already net and we owe nothing. This branch wins even for an EU
+    // destination — an IOSS-collected import is settled by eBay, not by us.
+    //
+    // eBay did not collect and the destination is in the EU VAT zone: eBay passes on everything
+    // the buyer paid, so the total is gross and the VAT inside it is ours to remit.
+    const extractPct = collectedVat > 0 ? null : owedVatPct;
+    const split = (gross: number) => {
+      if (extractPct == null) return { net: gross, vat: 0 };
+      const netPart = round2(gross / (1 + extractPct / 100));
+      // Derive the VAT by subtraction so net + vat always reconciles to what the buyer paid;
+      // computing both independently leaves a cent adrift on some amounts.
+      return { net: netPart, vat: round2(gross - netPart) };
+    };
+    const goods = split(lineTotal);
+    const ship = split(shippingTotal);
+
     const fee = feeFor(i);
     const qty = n(li.quantity);
+    const vatSource = extractPct == null
+      ? 'eBay remits the VAT → 0'
+      : `extracted at the destination rate (${extractPct}%)`;
     return {
       sku: li.sku ?? null,
       fields: [
         { target: 'sku', label: 'SKU', source: 'lineItem.sku', value: li.sku ?? null },
         { target: 'quantity', label: 'Quantity', source: 'lineItem.quantity', value: qty },
-        { target: 'netSalesAmount', label: 'Net sales', source: 'lineItem.total (ex marketplace VAT)', value: net },
-        { target: 'vatAmount', label: 'VAT (seller-owed)', source: 'eBay remits the VAT → 0', value: 0 },
+        { target: 'netSalesAmount', label: 'Net sales', source: extractPct == null ? 'lineItem.total (ex marketplace VAT)' : 'lineItem.total − VAT (total is gross)', value: goods.net },
+        { target: 'vatAmount', label: 'VAT (seller-owed)', source: vatSource, value: goods.vat },
         { target: 'salesChannelSalesFeeAmount', label: 'eBay fee', source: 'totalMarketplaceFee (allocated)', value: fee },
-        { target: 'shippingAmount', label: 'Buyer-paid shipping', source: 'lineItem.deliveryCost.shippingCost', value: shipping },
+        { target: 'shippingAmount', label: 'Buyer-paid shipping', source: 'lineItem.deliveryCost.shippingCost', value: ship.net },
+        { target: 'shippingAmountVat', label: 'Shipping VAT (seller-owed)', source: vatSource, value: ship.vat },
         { target: 'salesTaxAmount', label: 'VAT collected by eBay', source: 'ebayCollectAndRemitTaxes (reporting)', value: collectedVat },
       ],
       payload: {
         sku: li.sku ?? null,
         quantity: qty,
-        netSalesAmount: net,
-        vatAmount: 0,
-        shippingAmount: shipping,
-        shippingAmountVat: 0,
+        netSalesAmount: goods.net,
+        vatAmount: goods.vat,
+        shippingAmount: ship.net,
+        shippingAmountVat: ship.vat,
         salesChannelSalesFeeAmount: fee,
         fbaFulfilmentFeeAmount: 0,
         amazonPointsAmount: 0,

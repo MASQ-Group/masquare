@@ -128,6 +128,7 @@ export class ProductsService {
 
       // Listing content. Only eBay and Shopify ever display any of it.
       ebayTitle: p.ebayTitle ?? null,
+      shortDescription: p.shortDescription ?? null,
       descriptionHtml: p.descriptionHtml ?? null,
       keyFeatures: p.keyFeatures ?? [],
       searchKeywords: p.searchKeywords ?? null,
@@ -330,6 +331,7 @@ export class ProductsService {
       msrpAmount: msrp.amount,
       msrpCurrency: msrp.currency,
       ebayTitle: dto.ebayTitle ?? null,
+      shortDescription: dto.shortDescription ?? null,
       descriptionHtml: dto.descriptionHtml ?? null,
       keyFeatures: dto.keyFeatures ?? [],
       searchKeywords: dto.searchKeywords ?? null,
@@ -679,6 +681,128 @@ export class ProductsService {
       }
     }
     return { created, updated, skipped, errors };
+  }
+
+  /**
+   * One product as the B2B store shows it.
+   *
+   * Assembled here rather than in the page so the rules live once: which fields a buyer may see,
+   * what counts as a machine value, and how stock becomes a state rather than a number. The page's
+   * job is layout.
+   *
+   * Every field is omitted when empty. Only 12% of the catalogue has an image and 3% a description,
+   * so a page that renders dashes and empty rows would look broken on nine products in ten — the
+   * layout closes up instead.
+   *
+   * Behind the platform's own login for now. The store's customers, their entitlements and their
+   * agreed prices do not exist yet, so this shows what a buyer WOULD see, to staff who can already
+   * see all of it.
+   */
+  async storefront(id: string) {
+    const p = await this.prisma.product.findFirst({
+      where: { id, deletedAt: null },
+      include: {
+        brand: { select: { name: true } },
+        category: { select: { name: true } },
+        productType: { select: { name: true } },
+        voltageRating: { select: { label: true } },
+        frequency: { select: { label: true } },
+        plugTypeRef: { select: { label: true } },
+        batteryTypeRef: { select: { label: true } },
+        media: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' }, select: { id: true, url: true } },
+        documents: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' }, select: { id: true, name: true, sizeBytes: true } },
+        attributes: {
+          where: { deletedAt: null },
+          select: { value: true, attribute: { select: { name: true } } },
+        },
+        availability: { select: { quantity: true } },
+      },
+    });
+    if (!p) throw new NotFoundException('Product not found');
+
+    const n = (v: unknown) => (v == null ? null : Number(v));
+    /**
+     * Specifications are grouped, because a flat run of twelve rows makes a buyer read all of them
+     * to find the one they came for. The groups are fixed and ordered — identity, then what it
+     * needs to run, then what it weighs, then what it is bound by — so the same fact sits in the
+     * same place on every product.
+     *
+     * A row only exists when it has a value, and a group only exists when it has a row. `mono`
+     * marks a machine-assigned value, which the page renders in the mono face.
+     */
+    const rows: { group: string; label: string; value: string; mono?: boolean }[] = [];
+    const row = (group: string, label: string, value: unknown, mono = false) => {
+      const v = value == null || value === '' ? null : String(value);
+      if (v) rows.push({ group, label, value: v, ...(mono ? { mono: true } : {}) });
+    };
+
+    const dims = [n(p.packageLengthCm), n(p.packageWidthCm), n(p.packageHeightCm)];
+    const IDENTITY = 'Product', DETAILS = 'Product details', POWER = 'Power', PHYSICAL = 'Physical', LEGAL = 'Origin & warranty';
+
+    row(IDENTITY, 'Brand', p.brand?.name);
+    row(IDENTITY, 'Product type', p.productType?.name);
+    // The manufacturer SKU and EAN head the page as the product's identifiers, so repeating them
+    // here would say the same thing twice on a page a buyer scans.
+    // The product's own specifications — free-form, so they are shown as written and kept together
+    // rather than guessed into a group they may not belong to.
+    for (const a of p.attributes) row(DETAILS, a.attribute?.name ?? '', a.value);
+    row(POWER, 'Voltage', p.voltageRating?.label, true);
+    row(POWER, 'Frequency', p.frequency?.label, true);
+    row(POWER, 'Plug type', p.plugTypeRef?.label);
+    row(POWER, 'Battery', p.batteryTypeRef?.label ?? (p.batteryRequired ? 'Required' : null));
+    row(PHYSICAL, 'Product weight', n(p.productWeightKg) != null ? `${n(p.productWeightKg)!.toFixed(2)} kg` : null, true);
+    row(PHYSICAL, 'Package weight', n(p.packageWeightKg) != null ? `${n(p.packageWeightKg)!.toFixed(2)} kg` : null, true);
+    row(PHYSICAL, 'Package dimensions', dims.every((d) => d != null) ? `${dims.map((d) => d!.toFixed(1)).join(' × ')} cm` : null, true);
+    row(LEGAL, 'Country of origin', p.countryOfOrigin);
+    row(LEGAL, 'Warranty', p.warrantyText);
+
+    // Grouped in this fixed order, and a group with no rows never appears.
+    const ORDER = [IDENTITY, DETAILS, POWER, PHYSICAL, LEGAL];
+    const specifications = ORDER
+      .map((group) => ({ group, rows: rows.filter((r) => r.group === group).map(({ group: _g, ...rest }) => rest) }))
+      .filter((g) => g.rows.length > 0);
+
+    /**
+     * Stock as a state, never a count: exact stock is commercially sensitive, and a buyer only needs
+     * to know whether they can have it. No availability record means we do not know, which is not
+     * the same as none — so the page shows nothing at all rather than guessing.
+     */
+    const qty = p.availability?.quantity ?? null;
+    const availability = qty == null ? null : qty === 0 ? 'unavailable' : qty <= 3 ? 'limited' : 'in_stock';
+
+    return {
+      id: p.id,
+      /**
+       * The MANUFACTURER's code, never ours.
+       *
+       * Our main SKU is internal — it encodes vendor and cost structure, it is what a competitor
+       * would use to trace our supply, and a customer has no use for it. The manufacturer's is the
+       * one they can quote to anyone. Our SKU is not merely hidden by the page: it never leaves the
+       * server, so no future caller can display it by accident.
+       *
+       * Null where none is recorded, which is a third of the catalogue once EAN is absent too. The
+       * page then shows no identifier rather than falling back to ours.
+       */
+      sku: p.manufacturerSku || null,
+      title: p.title,
+      brand: p.brand?.name ?? null,
+      category: p.category?.name ?? null,
+      ean: p.ean ?? null,
+      shortDescription: p.shortDescription ?? null,
+      descriptionHtml: p.descriptionHtml ?? null,
+      keyFeatures: p.keyFeatures ?? [],
+      images: p.media.map((m) => m.url),
+      documents: p.documents,
+      /** Everything on record, grouped for the Specifications tab. */
+      specifications,
+      /**
+       * A stand-in until customer pricing exists. MAP is the only price the platform holds for most
+       * products, and it is labelled as a placeholder in the page rather than passed off as a
+       * customer's agreed price.
+       */
+      price: n(p.mapAmount) != null ? { amount: n(p.mapAmount)!, currency: p.mapCurrency ?? 'EUR' } : null,
+      availability,
+    };
   }
 
   // --- Media ---------------------------------------------------------------

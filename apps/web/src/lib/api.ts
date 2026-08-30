@@ -353,6 +353,34 @@ export interface ProductDocumentItem {
   sortOrder: number;
 }
 
+/**
+ * One product as the B2B store shows it. Assembled server-side so the page never re-derives which
+ * fields a buyer may see, what is a machine value, or how stock becomes a state.
+ */
+export interface StorefrontProduct {
+  id: string;
+  /**
+   * The MANUFACTURER's code. Our main SKU is internal and never reaches this payload — a customer
+   * has no use for it and a competitor would. Null where none is recorded.
+   */
+  sku: string | null;
+  title: string;
+  brand: string | null;
+  category: string | null;
+  ean: string | null;
+  shortDescription: string | null;
+  descriptionHtml: string | null;
+  keyFeatures: string[];
+  images: string[];
+  documents: { id: string; name: string; sizeBytes: number | null }[];
+  /** Grouped and ordered server-side; a group with no rows never appears. */
+  specifications: { group: string; rows: { label: string; value: string; mono?: boolean }[] }[];
+  /** Null when no price is held. A placeholder until customer price lists exist. */
+  price: { amount: number; currency: string } | null;
+  /** Null means no availability record — not the same as none in stock, so the page shows nothing. */
+  availability: 'in_stock' | 'limited' | 'made_to_order' | 'unavailable' | null;
+}
+
 export const availabilityApi = {
   /**
    * Put many products into availability at zero. Without confirm it reports what it would add.
@@ -582,6 +610,7 @@ export const productsApi = {
     api.patch<Product>(`/products/${id}/documents/${documentId}`, { name }).then((r) => r.data),
   deleteDocument: (id: string, documentId: string) =>
     api.delete<Product>(`/products/${id}/documents/${documentId}`).then((r) => r.data),
+  storefront: (id: string) => api.get<StorefrontProduct>(`/products/${id}/storefront`).then((r) => r.data),
   byIds: (ids: string[]) => api.post<Product[]>('/products/by-ids', { ids }).then((r) => r.data),
   ids: (params: Omit<ProductListParams, 'page' | 'pageSize'>) => api.get<string[]>('/products/ids', { params }).then((r) => r.data),
   bulkDelete: (ids: string[]) => api.post('/products/bulk/delete', { ids }).then((r) => r.data),

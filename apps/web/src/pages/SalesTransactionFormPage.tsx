@@ -760,6 +760,24 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                   <span className="text-[15px] font-bold text-n-900">Gross</span>
                   <span className="code text-[24px] font-bold tracking-tight text-teal-600">{money(totals.gross, nativeCcy)}</span>
                 </div>
+
+                {/* Tax the marketplace collected from the buyer and remits itself (eBay UK under
+                    the £135 threshold, Amazon's collected VAT, IOSS). Deliberately BELOW the gross
+                    and visually detached: the buyer paid it on top of our price and we never
+                    received it, so folding it into the total would overstate the sale. It is here
+                    because a VAT return still has to account for it. Read-only — the channel owns
+                    this number, not us. */}
+                {!isLocal && (transaction?.salesTax ?? 0) > 0 && (
+                  <div className="mt-4 border-t border-dashed border-n-200 pt-3">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[13.5px] text-n-500">{taxShortLabel(transaction?.taxType)} collected by the marketplace</span>
+                      <span className="mono text-[13.5px] font-semibold text-n-600">{money(transaction!.salesTax, nativeCcy)}</span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-n-400">
+                      Charged to the buyer on top of the gross and remitted by the channel — not ours to pay, and not part of the total above. Recorded for VAT reporting.
+                    </p>
+                  </div>
+                )}
                 {totals.missingClass && (
                   <p className="mt-3 text-[11px] text-warning">
                     A line has no VAT class and no product to inherit one from — choose a class, or the save will be rejected.

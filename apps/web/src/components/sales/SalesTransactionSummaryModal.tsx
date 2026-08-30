@@ -206,6 +206,14 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
           <div className="grid grid-cols-4 gap-3 max-[760px]:grid-cols-2">
             <Fact label="Sales fee %" value={t.salesFeePct != null ? `${t.salesFeePct}%` : '—'} mono />
             <Fact label={`Destination VAT %${t.vatOverridden ? ' (overridden)' : ''}`} value={t.destinationCountryVatPct != null ? `${t.destinationCountryVatPct}%` : '—'} mono />
+            {/* VAT the marketplace collected from the buyer and remits itself (eBay UK under the
+                £135 consignment threshold, Amazon's collected VAT, IOSS). We owe nothing on it, so
+                it is deliberately outside the VAT total above — but it is real money that moved
+                through the order, and a VAT return has to be able to account for it. Shown only
+                where there is some, so it never adds an empty row to a domestic sale. */}
+            {t.salesTax > 0 && (
+              <Fact label={`${t.taxLabel} collected by the marketplace`} value={money(t.salesTax, ccy)} mono />
+            )}
             <Fact label="Package weight (kg)" value={t.overallPackageWeight != null ? String(t.overallPackageWeight) : '—'} mono />
             <div className="min-w-0">
               <div className="text-[11px] text-n-500">
