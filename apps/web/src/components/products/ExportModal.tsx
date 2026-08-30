@@ -1,7 +1,12 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ModalShell, downloadSheet } from '@masquare/ui';
-import type { Product } from '../../lib/api';
+import { ModalShell, downloadSheet, downloadTemplate } from '@masquare/ui';
+import {
+  brandsApi, categoriesApi, fulfilmentTypesApi, productClassesApi, productTypesApi, vatClassesApi, vendorsApi,
+  type Product,
+} from '../../lib/api';
+import { categoryOptions } from '../../lib/categoryPaths';
 import { EXPORT_COLUMNS } from './columns';
 
 interface Props {
@@ -26,14 +31,62 @@ export function ExportModal({ products, onClose }: Props) {
   const toggle = (key: string) =>
     setSelected((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
 
-  const doExport = () => {
+  // Cached by the products page, so opening this modal costs nothing extra.
+  const brands = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
+  const vendors = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
+  const ptypes = useQuery({ queryKey: ['product-types'], queryFn: () => productTypesApi.list() });
+  const ftypes = useQuery({ queryKey: ['fulfilment-types'], queryFn: () => fulfilmentTypesApi.list() });
+  const categories = useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list() });
+  const pclasses = useQuery({ queryKey: ['product-classes'], queryFn: () => productClassesApi.list() });
+  const vatClasses = useQuery({ queryKey: ['vat-classes'], queryFn: () => vatClassesApi.list() });
+
+  const doExport = async () => {
     const cols = EXPORT_COLUMNS.filter((c) => selected.has(c.key));
     if (cols.length === 0) { toast.error('Select at least one column'); return; }
     // Main SKU is the identity key — always include it so the file can be re-imported.
     if (!selected.has('mainSku')) cols.unshift(EXPORT_COLUMNS.find((c) => c.key === 'mainSku')!);
     const header = cols.map((c) => c.label);
-    const rows = products.map((p) => cols.map((c) => c.get(p)));
-    downloadSheet(`masquare-products-${purpose}-${products.length}`, [header, ...rows], format);
+    // The category is written as its full path, matching what the dropdown offers, so an exported
+    // value is one of the listed ones rather than a leaf name that merely resembles it. The import
+    // takes either form, but a cell that disagrees with its own dropdown invites someone to
+    // "correct" a value that was already right.
+    const paths = categoryOptions(categories.data ?? []);
+    const rows = products.map((p) => cols.map((c) => (
+      c.key === 'category' && p.category?.id
+        ? paths.find((x) => x.id === p.category!.id)?.name ?? c.get(p)
+        : c.get(p)
+    )));
+    const name = `masquare-products-${purpose}-${products.length}`;
+
+    if (format === 'csv') {
+      // CSV carries no validation — it is a flat text format. Worth saying so, because the xlsx
+      // now does, and silently losing the dropdowns would look like a bug rather than a choice.
+      downloadSheet(name, [header, ...rows], 'csv');
+      toast.success(`Exported ${products.length} products — CSV has no dropdowns; use .xlsx for those`);
+      onClose();
+      return;
+    }
+
+    // The exported rows are exactly the ones about to be edited, so they get the same dropdowns a
+    // blank template does. Every reference column is a closed list on import; without them here,
+    // editing a category by hand means guessing at a value the import will then refuse.
+    const col = (key: string) => cols.findIndex((c) => c.key === key);
+    await downloadTemplate(name, {
+      sheetName: 'Products',
+      headers: header,
+      sampleRows: rows,
+      lists: [
+        { column: col('brand'), values: (brands.data ?? []).map((b: any) => b.name) },
+        { column: col('vendor'), values: (vendors.data ?? []).map((v: any) => v.name) },
+        { column: col('productType'), values: (ptypes.data ?? []).map((t: any) => t.name) },
+        { column: col('fulfilmentType'), values: (ftypes.data ?? []).map((f: any) => f.code ?? f.name) },
+        { column: col('category'), values: categoryOptions(categories.data ?? []).map((c) => c.name) },
+        { column: col('productClass'), values: (pclasses.data ?? []).map((c: any) => c.name) },
+        { column: col('vatClass'), values: (vatClasses.data ?? []).map((v: any) => v.name) },
+      // A column the user chose not to export has no index here, so it is dropped rather than
+      // pointing a dropdown at whatever column happens to sit at -1.
+      ].filter((l) => l.column >= 0),
+    });
     toast.success(`Exported ${products.length} products`);
     onClose();
   };

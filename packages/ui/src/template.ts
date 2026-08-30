@@ -18,7 +18,13 @@ export interface TemplateList {
 export interface TemplateOptions {
   /** Header row. */
   headers: string[];
-  /** Example rows shown under the header, so the shape is obvious before anyone reads a doc. */
+  /**
+   * Rows written under the header — an illustrative sample in a blank template, or the exported
+   * products themselves when a filled file is downloaded to edit.
+   *
+   * Either way the validation covers them. An exported row is the one most likely to be edited,
+   * so leaving it as free text would put the dropdowns everywhere except where the work happens.
+   */
   sampleRows?: Cell[][];
   /** Columns that get a dropdown. */
   lists?: TemplateList[];
@@ -26,6 +32,20 @@ export interface TemplateOptions {
   sheetName?: string;
   /** How many rows below the samples to arm with validation. */
   validationRows?: number;
+}
+
+/**
+ * Which sheet rows get the dropdown, 1-based, header excluded.
+ *
+ * Starts at row 2 so rows ALREADY in the sheet are armed, not just the blank ones beneath them.
+ * A file exported to be edited is nothing but pre-filled rows; validating only below them would
+ * put the dropdowns everywhere except where the editing happens — which was the bug this fixes.
+ *
+ * Excel validates on entry, never retroactively, so arming a filled cell does not reject what is
+ * already in it. It only has to satisfy the list once someone changes it.
+ */
+export function validationRange(sampleRowCount: number, validationRows = 500): { first: number; last: number } {
+  return { first: 2, last: 1 + sampleRowCount + validationRows };
 }
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -86,8 +106,7 @@ export async function downloadTemplate(
     // content for a validation source to live on a hidden sheet.
     listSheet.state = 'veryHidden';
 
-    const firstDataRow = 2 + (opts.sampleRows?.length ?? 0);
-    const lastDataRow = firstDataRow + (opts.validationRows ?? 500);
+    const { first: firstDataRow, last: lastDataRow } = validationRange(opts.sampleRows?.length ?? 0, opts.validationRows);
 
     lists.forEach((list, li) => {
       const col = li + 1;

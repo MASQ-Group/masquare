@@ -18,7 +18,9 @@ export const EXPORT_COLUMNS: ExportColumn[] = [
   { key: 'vendor', label: 'Vendor', sample: 'THETACO Traders Ltd', editDefault: true, get: (p) => p.vendor?.name ?? '' },
   { key: 'productType', label: 'Product Type', sample: 'Hair Straightener', editDefault: true, get: (p) => p.productType?.name ?? '' },
   { key: 'fulfilmentType', label: 'Fulfilment Type', sample: 'FBA', editDefault: true, get: (p) => p.fulfilmentType?.code ?? p.fulfilmentType?.name ?? '' },
-  { key: 'category', label: 'Category', sample: 'Straighteners', editDefault: true, get: (p) => p.category?.name ?? '' },
+  // The sample must be a value the dropdown actually offers, or the first row of a fresh template
+  // contradicts its own list. Categories are written as the full path for the same reason.
+  { key: 'category', label: 'Category', sample: 'Personal Care & Health › Hair Styling › Hair Straighteners', editDefault: true, get: (p) => p.category?.name ?? '' },
   { key: 'productClass', label: 'Product Class', sample: 'Equipment', editDefault: true, get: (p) => p.productClass?.name ?? '' },
   // Unlike the reference columns above, an unknown VAT class is never created on import — the
   // server reports it and leaves the product's class empty.

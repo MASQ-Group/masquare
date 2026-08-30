@@ -6,7 +6,7 @@ export type { SmartReferenceInputProps, ReferenceOption } from './SmartReference
 export { BulkImport } from './BulkImport';
 export type { BulkImportProps, ImportField } from './BulkImport';
 export { downloadSheet, parseSheetFile } from './sheet';
-export { downloadTemplate, columnLetter, type TemplateList, type TemplateOptions } from './template';
+export { downloadTemplate, columnLetter, validationRange, type TemplateList, type TemplateOptions } from './template';
 export { DatePicker } from './DatePicker';
 export type { DatePickerProps } from './DatePicker';
 export { MonthPicker } from './MonthPicker';
