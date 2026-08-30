@@ -25,6 +25,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import { readFileSync } from 'fs';
+import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { announceDatabase } from './db-target.mjs';
@@ -42,6 +43,21 @@ const prisma = new PrismaClient();
 
 const read = (f) => JSON.parse(readFileSync(join(DIR, f), 'utf8'));
 const norm = (s) => String(s ?? '').trim().toLowerCase();
+
+/**
+ * Send prepared Prisma operations as batched transactions rather than one round trip each.
+ *
+ * Chunked rather than sent as a single transaction: a few hundred statements at once keeps the
+ * payload and the lock window sane, while still collapsing ~1,700 round trips into a handful. Each
+ * chunk is atomic, so a failure part-way leaves whole chunks applied and the rest untouched — which
+ * a re-run then reconciles, because every step matches on the stable handles.
+ */
+const BATCH = 200;
+async function runBatched(ops) {
+  for (let i = 0; i < ops.length; i += BATCH) {
+    await prisma.$transaction(ops.slice(i, i + BATCH));
+  }
+}
 
 /**
  * Refuse to write anything until the file is internally consistent AND matches the catalogue.
@@ -124,66 +140,93 @@ async function main() {
 
   const stats = { catCreated: 0, catAdopted: 0, catUpdated: 0, typeCreated: 0, typeAdopted: 0, typeUpdated: 0, productsChanged: 0, productsAlready: 0 };
 
-  // --- Categories, in file order so a parent always has a database id --------
+  // --- Categories, ids resolved before anything is written -------------------
+  //
+  // Every id is decided up front — reused for a row that already exists, freshly generated for one
+  // that does not — so a child's parent id is known without having waited for the parent's INSERT
+  // to come back. That is what lets the writes go out in batches instead of one round trip per row.
+  //
+  // It matters over a remote connection: one-row-at-a-time meant ~1,750 sequential round trips
+  // against production, which took minutes and dropped the connection partway through, leaving the
+  // categories written and the product types half done.
   const catIdByPath = new Map();
+  const catCreates = [];
+  const catUpdates = [];
   for (const c of taxonomy.categories) {
-    const parentDbId = c.parent_id ? catIdByPath.get(c.parent_id) : null;
-    const data = {
-      name: c.name,
-      parentId: parentDbId,
-      sortOrder: c.position ?? 0,
-      slug: c.slug,
-      path: c.id,
-      showInNavigation: c.show_in_navigation !== false,
-    };
-
     const byPath = catByPath.get(c.id);
     // Adoption only makes sense at the root: a pre-existing ad-hoc category is flat, so it can
     // only correspond to a level-1 entry. Matching deeper would need a parent that does not exist
     // yet in the old data.
     const byName = !byPath && c.level === 1 ? catByParentName.get(`ROOT::${norm(c.name)}`) : null;
     const existing = byPath ?? byName;
+    const id = existing?.id ?? randomUUID();
+    catIdByPath.set(c.id, id);
+
+    const data = {
+      name: c.name,
+      parentId: c.parent_id ? catIdByPath.get(c.parent_id) : null,
+      sortOrder: c.position ?? 0,
+      slug: c.slug,
+      path: c.id,
+      showInNavigation: c.show_in_navigation !== false,
+    };
 
     if (existing) {
       if (byName) stats.catAdopted++; else stats.catUpdated++;
-      catIdByPath.set(c.id, existing.id);
-      if (APPLY) await prisma.productCategory.update({ where: { id: existing.id }, data });
+      catUpdates.push(prisma.productCategory.update({ where: { id }, data }));
     } else {
       stats.catCreated++;
-      if (APPLY) {
-        const row = await prisma.productCategory.create({ data });
-        catIdByPath.set(c.id, row.id);
-      } else {
-        catIdByPath.set(c.id, `dry-run:${c.id}`);
-      }
+      catCreates.push({ id, ...data });
     }
+  }
+
+  if (APPLY) {
+    // Creates go level by level: a row's parent must exist before the foreign key can point at it,
+    // and taxonomy.categories is already ordered parents-first, so grouping by level preserves that.
+    const byLevel = new Map();
+    for (const row of catCreates) {
+      const level = row.path.split('/').length;
+      if (!byLevel.has(level)) byLevel.set(level, []);
+      byLevel.get(level).push(row);
+    }
+    for (const level of [...byLevel.keys()].sort((a, b) => a - b)) {
+      await prisma.productCategory.createMany({ data: byLevel.get(level) });
+    }
+    await runBatched(catUpdates);
   }
 
   // --- Product types --------------------------------------------------------
   const typeIdBySlug = new Map();
+  const typeCreates = [];
+  const typeUpdates = [];
   for (const p of taxonomy.product_types) {
     const data = { name: p.name, slug: p.id };
     const bySlug = typeBySlug.get(p.id);
     const byName = !bySlug ? typeByName.get(norm(p.name)) : null;
     const existing = bySlug ?? byName;
+    const id = existing?.id ?? randomUUID();
+    typeIdBySlug.set(p.id, id);
 
     if (existing) {
       if (byName) stats.typeAdopted++; else stats.typeUpdated++;
-      typeIdBySlug.set(p.id, existing.id);
-      if (APPLY) await prisma.productType.update({ where: { id: existing.id }, data });
+      typeUpdates.push(prisma.productType.update({ where: { id }, data }));
     } else {
       stats.typeCreated++;
-      if (APPLY) {
-        const row = await prisma.productType.create({ data });
-        typeIdBySlug.set(p.id, row.id);
-      } else {
-        typeIdBySlug.set(p.id, `dry-run:${p.id}`);
-      }
+      typeCreates.push({ id, ...data });
     }
   }
 
+  if (APPLY) {
+    if (typeCreates.length) await prisma.productType.createMany({ data: typeCreates });
+    await runBatched(typeUpdates);
+  }
+
   // --- Assignments ----------------------------------------------------------
+  //
+  // Grouped by the (category, type) pair they land on, so one statement moves every product headed
+  // to the same place — around 240 groups for 1,174 products, and far fewer statements than rows.
   const productBySku = new Map(products.map((p) => [p.mainSku, p]));
+  const groups = new Map();
   for (const a of assignments) {
     const product = productBySku.get(a.sku);
     const categoryId = catIdByPath.get(a.category_id);
@@ -193,7 +236,14 @@ async function main() {
       continue;
     }
     stats.productsChanged++;
-    if (APPLY) await prisma.product.update({ where: { id: product.id }, data: { categoryId, productTypeId } });
+    const key = `${categoryId}::${productTypeId}`;
+    if (!groups.has(key)) groups.set(key, { categoryId, productTypeId, ids: [] });
+    groups.get(key).ids.push(product.id);
+  }
+
+  if (APPLY) {
+    await runBatched([...groups.values()].map((g) =>
+      prisma.product.updateMany({ where: { id: { in: g.ids } }, data: { categoryId: g.categoryId, productTypeId: g.productTypeId } })));
   }
 
   // --- Report ---------------------------------------------------------------
