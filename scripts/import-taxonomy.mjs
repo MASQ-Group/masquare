@@ -18,23 +18,22 @@
 //   node scripts/import-taxonomy.mjs --apply                  # writes
 //   node scripts/import-taxonomy.mjs --apply --clear-legacy   # also soft-deletes the leftovers
 //
-// DATABASE_URL is read from the environment, falling back to the repo-root .env.
+// DATABASE_URL is read from the environment. Against production:
+//   DATABASE_URL="$PROD_URL" node scripts/...
+// It falls back to the repo-root .env (localhost) ONLY when DATABASE_URL is absent entirely —
+// supplying it as an empty string is a hard error, not a silent redirect to the wrong database.
 
 import { PrismaClient } from '@prisma/client';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { announceDatabase } from './db-target.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-if (!process.env.DATABASE_URL) {
-  try {
-    for (const line of readFileSync(join(ROOT, '.env'), 'utf8').split(/\r?\n/)) {
-      const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-      if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
-    }
-  } catch { /* env already provided */ }
-}
+// Resolves DATABASE_URL and prints the host it landed on. An explicitly-supplied-but-empty value
+// is a hard error rather than a silent fall back to the local .env — see scripts/db-target.mjs.
+announceDatabase(ROOT);
 
 const APPLY = process.argv.includes('--apply');
 const CLEAR_LEGACY = process.argv.includes('--clear-legacy');
