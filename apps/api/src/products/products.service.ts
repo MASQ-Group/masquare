@@ -534,18 +534,19 @@ export class ProductsService {
       }
 
       try {
-        // Surface an unrecognised VAT class instead of silently importing the product without one.
-        const vatClassName = get('vatClass');
-        if (vatClassName) {
-          const vc = await this.prisma.vatClass.findFirst({
-            where: { name: { equals: vatClassName, mode: 'insensitive' }, deletedAt: null },
-            select: { id: true },
-          });
-          if (!vc) {
+        // Every reference column is a closed list. An unrecognised value blocks the row here rather
+        // than creating the record on the operator's behalf — see CLOSED_REFS for why. Reported as
+        // an error, not a warning: a warning would let the row through with the field blank, which
+        // is how a product ends up in no category and nobody notices.
+        for (const ref of ProductsService.CLOSED_REFS) {
+          const value = get(ref.column);
+          if (!value) continue;
+          const { unknown } = await this.lookupRef(ref.kind, value);
+          if (unknown) {
             issues.push({
-              field: 'vatClass',
-              message: `Unknown VAT class "${vatClassName}" — create it in Global settings first, or the product will import without a VAT class`,
-              severity: 'warning',
+              field: ref.column,
+              message: `${ref.label} "${value}" does not exist. Pick one from the dropdown, or create it in ${ref.where} first.`,
+              severity: 'error',
             });
           }
         }
@@ -583,47 +584,111 @@ export class ProductsService {
     return { rows: out };
   }
 
-  private async resolveNamed(kind: string, name?: string): Promise<string | null> {
+  /**
+   * The reference columns a spreadsheet may only choose from, never invent.
+   *
+   * These used to be created on the fly when an import carried a name we did not hold. That was
+   * tolerable while the lists were ad-hoc, and became untenable once the catalogue gained a curated
+   * taxonomy: a trailing space or a plural in one cell would mint a 310th category with no `path`,
+   * sitting outside the navigation tree and belonging to no branch, and nobody would see it happen.
+   * The same argument applies to every list here — a misspelt brand splits a brand's products in
+   * two, silently, and the damage only shows up much later in a report.
+   *
+   * So an unrecognised value is now an error the operator resolves by creating the record
+   * deliberately, in the place built for it. The template ships the permitted values as Excel
+   * dropdowns, so the ordinary path never involves typing one of these at all.
+   */
+  static readonly CLOSED_REFS = [
+    { kind: 'brand', column: 'brand', label: 'Brand', where: 'Global settings → Brands' },
+    { kind: 'vendor', column: 'vendor', label: 'Vendor', where: 'Global settings → Vendors' },
+    { kind: 'productType', column: 'productType', label: 'Product type', where: 'Global settings → Product Types' },
+    { kind: 'fulfilmentType', column: 'fulfilmentType', label: 'Fulfilment type', where: 'Global settings → Fulfilment Types' },
+    { kind: 'category', column: 'category', label: 'Category', where: 'Global settings → Categories' },
+    { kind: 'vatClass', column: 'vatClass', label: 'VAT class', where: 'Global settings → VAT Classes' },
+    { kind: 'productClass', column: 'productClass', label: 'Product class', where: 'Global settings → Product Classes' },
+  ] as const;
+
+  /**
+   * Look a reference value up. `unknown` distinguishes "the cell was blank" from "the cell named
+   * something we do not hold" — nulling both would turn a typo into a quietly empty field.
+   */
+  private async lookupRef(kind: string, name?: string): Promise<{ id: string | null; unknown: boolean }> {
     const n = (name ?? '').trim();
-    if (!n) return null;
+    if (!n) return { id: null, unknown: false };
     const insensitive = { equals: n, mode: 'insensitive' as const };
+    const found = (row: { id: string } | null) => ({ id: row?.id ?? null, unknown: !row });
+
     switch (kind) {
-      case 'brand': {
-        const e = await this.prisma.brand.findFirst({ where: { name: insensitive, deletedAt: null } });
-        return e?.id ?? (await this.prisma.brand.create({ data: { name: n } })).id;
-      }
-      case 'vendor': {
-        const e = await this.prisma.vendor.findFirst({ where: { name: insensitive, deletedAt: null } });
-        return e?.id ?? (await this.prisma.vendor.create({ data: { name: n } })).id;
-      }
-      case 'productType': {
-        const e = await this.prisma.productType.findFirst({ where: { name: insensitive, deletedAt: null } });
-        return e?.id ?? (await this.prisma.productType.create({ data: { name: n } })).id;
-      }
-      case 'fulfilmentType': {
-        const e = await this.prisma.fulfilmentType.findFirst({
-          where: { deletedAt: null, OR: [{ name: insensitive }, { code: insensitive }] },
-        });
-        return e?.id ?? (await this.prisma.fulfilmentType.create({ data: { name: n } })).id;
-      }
-      case 'category': {
-        const e = await this.prisma.productCategory.findFirst({ where: { name: insensitive, deletedAt: null } });
-        return e?.id ?? (await this.prisma.productCategory.create({ data: { name: n } })).id;
-      }
-      case 'vatClass': {
-        // Deliberately never auto-created, unlike the refs above: a VAT class carries a rate
-        // and a tax treatment that cannot be inferred from a name. An unknown name resolves
-        // to null and is reported as an import issue rather than inventing a tax rate.
-        const e = await this.prisma.vatClass.findFirst({ where: { name: insensitive, deletedAt: null } });
-        return e?.id ?? null;
-      }
-      case 'productClass': {
-        const e = await this.prisma.productClass.findFirst({ where: { name: insensitive, deletedAt: null } });
-        return e?.id ?? (await this.prisma.productClass.create({ data: { name: n } })).id;
-      }
+      case 'brand':
+        return found(await this.prisma.brand.findFirst({ where: { name: insensitive, deletedAt: null }, select: { id: true } }));
+      case 'vendor':
+        return found(await this.prisma.vendor.findFirst({ where: { name: insensitive, deletedAt: null }, select: { id: true } }));
+      case 'productType':
+        return found(await this.prisma.productType.findFirst({ where: { name: insensitive, deletedAt: null }, select: { id: true } }));
+      case 'fulfilmentType':
+        // Matched on the code too, because that is what the export writes ("FBA", not "Fulfilled by Amazon").
+        return found(await this.prisma.fulfilmentType.findFirst({ where: { deletedAt: null, OR: [{ name: insensitive }, { code: insensitive }] }, select: { id: true } }));
+      case 'vatClass':
+        return found(await this.prisma.vatClass.findFirst({ where: { name: insensitive, deletedAt: null }, select: { id: true } }));
+      case 'productClass':
+        return found(await this.prisma.productClass.findFirst({ where: { name: insensitive, deletedAt: null }, select: { id: true } }));
+      case 'category':
+        return found(await this.findCategoryByPathOrName(n));
       default:
-        return null;
+        return { id: null, unknown: false };
     }
+  }
+
+  /**
+   * A category cell may hold either the full path the template offers
+   * ("Kitchen & Dining › Cookware & Bakeware › Frying Pans & Grill Pans") or a bare leaf name, which
+   * is what older exports wrote and what someone typing by hand will reach for.
+   *
+   * The path is tried first and is the unambiguous form. Leaf names are only guaranteed unique
+   * within their parent — the tree happens to have no global collisions today, but that is a
+   * property of the current data, not a rule — so a bare name is accepted only when exactly one
+   * category answers to it. Two matches is a genuine ambiguity, and picking one at random would
+   * file products under a category nobody chose.
+   */
+  private async findCategoryByPathOrName(value: string): Promise<{ id: string } | null> {
+    const wanted = value.replace(/\s*[›>]\s*/g, ' › ').trim();
+    const all = await this.prisma.productCategory.findMany({
+      where: { deletedAt: null },
+      select: { id: true, name: true, parentId: true },
+    });
+    const byId = new Map(all.map((c) => [c.id, c]));
+    const pathOf = (c: (typeof all)[number]): string => {
+      const parts = [c.name];
+      let cur = c.parentId ? byId.get(c.parentId) : null;
+      // `guard` stops a cycle in the parent chain from hanging the import.
+      for (let guard = 0; cur && guard < 10; guard++) { parts.unshift(cur.name); cur = cur.parentId ? byId.get(cur.parentId) ?? null : null; }
+      return parts.join(' › ');
+    };
+
+    const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+    const byPath = all.find((c) => eq(pathOf(c), wanted));
+    if (byPath) return { id: byPath.id };
+
+    const byName = all.filter((c) => eq(c.name, value.trim()));
+    return byName.length === 1 ? { id: byName[0].id } : null;
+  }
+
+  /**
+   * Resolve a reference for the write path. Throws on an unrecognised value rather than nulling it.
+   *
+   * The import review reports these as errors first, so this should never fire in the normal flow —
+   * it is the backstop that keeps a row which slipped past the review from being written with the
+   * field silently blank.
+   */
+  private async resolveNamed(kind: string, name?: string): Promise<string | null> {
+    const { id, unknown } = await this.lookupRef(kind, name);
+    if (unknown) {
+      const ref = ProductsService.CLOSED_REFS.find((r) => r.kind === kind);
+      throw new BadRequestException(
+        `${ref?.label ?? kind} "${String(name).trim()}" does not exist. Create it in ${ref?.where ?? 'Global settings'} first, then import again.`,
+      );
+    }
+    return id;
   }
 
   private async rowToBody(row: Record<string, unknown>): Promise<CreateProductDto> {

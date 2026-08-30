@@ -5,7 +5,7 @@ import { Columns3, ChevronsUpDown, Download, Filter, Grid, List, Package, Pencil
 import { toast } from 'sonner';
 import { downloadTemplate, Pagination } from '@masquare/ui';
 import {
-  brandsApi, categoriesApi, fulfilmentTypesApi, productsApi, productTypesApi, vatClassesApi, vendorsApi,
+  brandsApi, categoriesApi, fulfilmentTypesApi, productClassesApi, productsApi, productTypesApi, vatClassesApi, vendorsApi,
   type Product, type ProductListParams,
 } from '../lib/api';
 import { categoryOptions, categoryPath } from '../lib/categoryPaths';
@@ -116,10 +116,12 @@ export function ProductsPage() {
   const vendors = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
   const brands = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
   const ftypes = useQuery({ queryKey: ['fulfilment-types'], queryFn: () => fulfilmentTypesApi.list() });
-  // For the template dropdown: a VAT class that does not exist is never created on import.
+  // These feed the template's dropdowns. Every one is a closed list on import: an unrecognised
+  // value is refused, never created, so the dropdown is how a filled-in sheet stays importable.
   const vatClasses = useQuery({ queryKey: ['vat-classes'], queryFn: () => vatClassesApi.list() });
   const ptypes = useQuery({ queryKey: ['product-types'], queryFn: () => productTypesApi.list() });
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => categoriesApi.list() });
+  const pclasses = useQuery({ queryKey: ['product-classes'], queryFn: () => productClassesApi.list() });
 
   const del = useMutation({
     mutationFn: (id: string) => productsApi.remove(id),
@@ -173,21 +175,35 @@ export function ProductsPage() {
 
   const onExport = async () => {
     if (selected.size === 0) {
-      // Dropdowns only where a value MUST already exist. Brand, vendor, category, product type and
-      // product class are created on import when they are new, so locking them to today's list
-      // would refuse a legitimate new brand — the opposite of helpful. VAT class is never
-      // auto-created (the server reports it and leaves the field empty), and fulfilment type is a
-      // closed set, so those two are exactly the columns a typo ruins.
-      await downloadTemplate('masquare-products-template', {
+      // Every reference column is a closed list, matching what the import enforces: an unrecognised
+      // value is refused, never created. The dropdown is the humane half of that rule — nobody has
+      // to type a category name exactly right, or find out at import time that they didn't.
+      //
+      // Categories carry their full path rather than the leaf alone. Leaf names are only unique
+      // within a parent, so "Accessories" on its own would be a guess. The server accepts either
+      // form, but the template should offer the one that cannot be misread.
+      const col = (key: string) => EXPORT_COLUMNS.findIndex((c) => c.key === key);
+      const { emptyLists } = await downloadTemplate('masquare-products-template', {
         sheetName: 'Products',
         headers: EXPORT_COLUMNS.map((c) => c.label),
         sampleRows: [EXPORT_COLUMNS.map((c) => c.sample)],
         lists: [
-          { column: EXPORT_COLUMNS.findIndex((c) => c.key === 'vatClass'), values: (vatClasses.data ?? []).map((v: any) => v.name) },
-          { column: EXPORT_COLUMNS.findIndex((c) => c.key === 'fulfilmentType'), values: (ftypes.data ?? []).map((f: any) => f.code ?? f.name) },
-        ].filter((l) => l.column >= 0 && l.values.length > 0),
+          { column: col('brand'), values: (brands.data ?? []).map((b: any) => b.name) },
+          { column: col('vendor'), values: (vendors.data ?? []).map((v: any) => v.name) },
+          { column: col('productType'), values: (ptypes.data ?? []).map((t: any) => t.name) },
+          { column: col('fulfilmentType'), values: (ftypes.data ?? []).map((f: any) => f.code ?? f.name) },
+          { column: col('category'), values: categoryOptions(categories.data ?? []).map((c) => c.name) },
+          { column: col('productClass'), values: (pclasses.data ?? []).map((c: any) => c.name) },
+          { column: col('vatClass'), values: (vatClasses.data ?? []).map((v: any) => v.name) },
+        ].filter((l) => l.column >= 0),
       });
-      toast.success('Template downloaded — fill it in, then Import');
+      // A list with no values leaves its column as free text, and the import will then refuse
+      // whatever gets typed there. Name them, rather than letting that be discovered at import.
+      if (emptyLists.length) {
+        toast.warning(`Template downloaded — but ${emptyLists.join(', ')} had nothing to offer. Create those first, or leave the columns empty.`);
+      } else {
+        toast.success('Template downloaded — fill it in, then Import');
+      }
       return;
     }
     try {
