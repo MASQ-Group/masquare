@@ -7,6 +7,7 @@ import { ServeStaticModule } from '@nestjs/serve-static';
 import { CompanyScopeService } from './common/company-scope';
 import { CompanyScopeInterceptor } from './common/company-scope.interceptor';
 import { PrismaModule } from './prisma/prisma.module';
+import { ActivityModule } from './activity/activity.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { JobsModule } from './jobs/jobs.module';
 import { ListingModule } from './listing/listing.module';
@@ -62,6 +63,7 @@ import { HealthController } from './health.controller';
       },
     }),
     PrismaModule,
+    ActivityModule,
     CryptoModule,
     JobsModule,
     StorageModule,

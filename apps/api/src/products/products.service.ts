@@ -1,6 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ActivityService } from '../activity/activity.service';
+import { diffRecords } from '../activity/diff';
+import { PRODUCT_FIELD_LABELS, PRODUCT_REF_FIELDS } from '../activity/product-fields';
 import { StorageService } from '../storage/storage.service';
 import { BulkUpdateDto, CreateProductDto, MoneyDto, UpdateProductDto } from './dto/product.dto';
 
@@ -81,10 +84,8 @@ function volumetric(l: Prisma.Decimal | null, w: Prisma.Decimal | null, h: Prism
 
 @Injectable()
 export class ProductsService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly storage: StorageService,
-  ) {}
+  constructor(private readonly prisma: PrismaService,
+    private readonly storage: StorageService, private readonly activity: ActivityService) {}
 
   private serialize(p: any) {
     return {
@@ -171,6 +172,55 @@ export class ProductsService {
       aliasCount: p._count?.aliases ?? p.aliases?.length ?? 0,
       featuredImage: p.media?.[0]?.url ?? null,
     };
+  }
+
+
+  // --- Activity -------------------------------------------------------------
+
+  /**
+   * Turn the uuids in a diff into names, one query per table rather than one per change.
+   *
+   * "Brand changed from 3f2a…-… to 9c14…-…" is a true statement nobody can act on, which for a
+   * log aimed at spotting mistakes is the same as saying nothing.
+   */
+  private async nameRefsInDiff(changes: { field: string; label: string; from: string | null; to: string | null }[]) {
+    const wantedByModel = new Map<string, Set<string>>();
+    for (const c of changes) {
+      const model = (PRODUCT_REF_FIELDS as Record<string, string>)[c.field];
+      if (!model) continue;
+      if (!wantedByModel.has(model)) wantedByModel.set(model, new Set());
+      for (const id of [c.from, c.to]) if (id) wantedByModel.get(model)!.add(id);
+    }
+    if (wantedByModel.size === 0) return changes;
+
+    const names = new Map<string, string>();
+    for (const [model, ids] of wantedByModel) {
+      const rows: { id: string; name: string }[] = await (this.prisma as any)[model].findMany({
+        where: { id: { in: [...ids] } },
+        select: { id: true, name: true },
+      });
+      for (const r of rows) names.set(r.id, r.name);
+    }
+    // A reference whose record has since been deleted keeps its id — dropping the change would
+    // hide a real edit, which is worse than showing a uuid.
+    return changes.map((c) => (PRODUCT_REF_FIELDS as Record<string, string>)[c.field]
+      ? { ...c, from: c.from ? names.get(c.from) ?? c.from : null, to: c.to ? names.get(c.to) ?? c.to : null }
+      : c);
+  }
+
+  /** Record an edit, with the reference ids resolved. Never throws — see ActivityService.record. */
+  private async logProductUpdate(
+    id: string,
+    label: string | null,
+    before: Record<string, unknown> | null,
+    after: Record<string, unknown> | null,
+    actorId?: string,
+    source: 'user' | 'import' | 'sync' | 'system' = 'user',
+  ) {
+    const raw = diffRecords(before, after, { labels: PRODUCT_FIELD_LABELS });
+    if (raw.length === 0) return; // Saving without changing anything is not an event.
+    const changes = await this.nameRefsInDiff(raw);
+    await this.activity.record({ entityType: 'product', entityId: id, entityLabel: label, action: 'update', source, actorId, changes });
   }
 
   /** SKU namespace = union of every main SKU + every alias, unique platform-wide. */
@@ -377,11 +427,17 @@ export class ProductsService {
       },
       include: fullInclude,
     });
+    await this.activity.record({
+      entityType: 'product', entityId: product.id, entityLabel: product.mainSku,
+      action: 'create', actorId, summary: product.title,
+    });
     return this.serialize(product);
   }
 
   async update(id: string, dto: UpdateProductDto, actorId?: string) {
     await this.get(id);
+    // Read the scalars BEFORE the write. Reading after would diff the new row against itself.
+    const before = await this.prisma.product.findUnique({ where: { id } });
     const skuValues = [dto.mainSku, ...(dto.aliases?.map((a) => a.skuValue) ?? [])].filter(Boolean) as string[];
     if (skuValues.length) await this.assertSkuNamespace(skuValues, id);
 
@@ -413,14 +469,24 @@ export class ProductsService {
         include: fullInclude,
       });
     });
+    // Only the fields this update actually carried — partialScalarData is already that set, so a
+    // patch cannot report the columns it left alone as cleared.
+    await this.logProductUpdate(id, product.mainSku, before as any, this.partialScalarData(dto), actorId);
     return this.serialize(product);
   }
 
-  async remove(id: string) {
+  async remove(id: string, actorId?: string) {
+    const doomed = await this.prisma.product.findUnique({ where: { id }, select: { mainSku: true, title: true } });
     await this.get(id);
     // Hard delete: aliases/attributes/media/company links cascade; linked sales-transaction
     // items keep their history with productId set to NULL. This frees the SKU for re-use.
     await this.prisma.product.delete({ where: { id } });
+    // Recorded after the fact and keyed by the id that no longer exists: a hard delete leaves
+    // nothing else to show that the product was ever here, or who removed it.
+    await this.activity.record({
+      entityType: 'product', entityId: id, entityLabel: doomed?.mainSku ?? null,
+      action: 'delete', actorId, summary: doomed?.title ?? null,
+    });
     return { ok: true };
   }
 
@@ -433,9 +499,16 @@ export class ProductsService {
     return rows.map((r) => this.serialize(r));
   }
 
-  async bulkDelete(ids: string[]) {
+  async bulkDelete(ids: string[], actorId?: string) {
     // Hard delete (see remove): frees the SKUs for re-use and can't leave orphaned soft-deleted rows.
+    const doomed = await this.prisma.product.findMany({ where: { id: { in: ids } }, select: { id: true, mainSku: true, title: true } });
     const res = await this.prisma.product.deleteMany({ where: { id: { in: ids } } });
+    for (const d of doomed) {
+      await this.activity.record({
+        entityType: 'product', entityId: d.id, entityLabel: d.mainSku,
+        action: 'delete', actorId, summary: d.title,
+      });
+    }
     return { ok: true, count: res.count };
   }
 
@@ -451,7 +524,15 @@ export class ProductsService {
     if (dto.productClassId !== undefined) { (data as any).productClassId = dto.productClassId; touched = true; }
     if (dto.serialTracked !== undefined) { (data as any).serialTracked = dto.serialTracked; touched = true; }
     if (touched) {
+      // Read the before-images first: updateMany reports a count, not what each row held, and a
+      // bulk edit that goes wrong is exactly the case where per-product history earns its keep.
+      const before = await this.prisma.product.findMany({ where: { id: { in: dto.ids }, deletedAt: null } });
       await this.prisma.product.updateMany({ where: { id: { in: dto.ids }, deletedAt: null }, data });
+      const applied = { ...data } as Record<string, unknown>;
+      delete applied.updatedById;
+      for (const row of before) {
+        await this.logProductUpdate(row.id, row.mainSku, row as any, applied, actorId);
+      }
     }
     if (dto.attributes?.length) {
       // Group incoming values per attribute, then replace that attribute's values on each
