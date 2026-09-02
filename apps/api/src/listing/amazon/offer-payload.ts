@@ -144,3 +144,58 @@ export function buildOfferAttributes(input: OfferInput): OfferPayload {
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+/** What a merge over a live listing kept that our plan knows nothing about. */
+export interface MergedAttributes {
+  attributes: Record<string, unknown>;
+  /** Live attribute keys our plan does not set, carried through untouched. */
+  carriedForward: string[];
+  /** Fulfilment channel codes Amazon holds that our plan does not manage. */
+  carriedFulfilmentChannels: string[];
+}
+
+/**
+ * Our plan's attributes laid over the ones Amazon already holds for this SKU.
+ *
+ * The submission is a PUT, and PUT REPLACES the whole listing item — so on a SKU Amazon already
+ * holds, sending the plan alone deletes every attribute the plan has no opinion about. On a live
+ * UK listing that meant dropping `merchant_shipping_group` (the seller's shipping template) and
+ * cutting `fulfillment_availability` from seven entries to one, wiping the six remote-fulfilment
+ * channels serving SA, JP, NA, AU, AE and SG. Nothing in the response would have said so.
+ *
+ * So the plan overrides key by key rather than replacing the item, with one exception:
+ * `fulfillment_availability` is a list of independent channels, not one value. Ours replaces the
+ * channels it names — DEFAULT, the stock we publish — and leaves the rest of Amazon's as they are.
+ *
+ * `purchasable_offer` is deliberately NOT merged per currency: it is replaced wholesale, because
+ * replacing it is the only way to clear a stale offer in the wrong currency. PATCH merges by
+ * currency and so can never remove one; a EUR price left on a GBP listing is exactly the fault
+ * this replacement exists to fix.
+ */
+export function mergeOverLiveAttributes(
+  live: Record<string, unknown>,
+  ours: Record<string, unknown>,
+): MergedAttributes {
+  const attributes: Record<string, unknown> = { ...live, ...ours };
+  const carriedForward = Object.keys(live).filter((k) => !(k in ours)).sort();
+
+  const merged = mergeFulfilmentAvailability(live.fulfillment_availability, ours.fulfillment_availability);
+  if (merged) attributes.fulfillment_availability = merged.entries;
+
+  return { attributes, carriedForward, carriedFulfilmentChannels: merged?.carried ?? [] };
+}
+
+/** Channel by channel: ours wins where the codes match, Amazon's survive where they do not. */
+function mergeFulfilmentAvailability(
+  live: unknown,
+  ours: unknown,
+): { entries: unknown[]; carried: string[] } | null {
+  if (!Array.isArray(live) || !Array.isArray(ours) || ours.length === 0) return null;
+
+  const channelOf = (entry: unknown): string =>
+    String((entry as { fulfillment_channel_code?: unknown } | null)?.fulfillment_channel_code ?? '');
+  const oursCodes = new Set(ours.map(channelOf));
+  const kept = live.filter((entry) => !oursCodes.has(channelOf(entry)));
+
+  return { entries: [...ours, ...kept], carried: kept.map(channelOf) };
+}

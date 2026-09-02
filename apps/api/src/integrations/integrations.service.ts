@@ -1026,7 +1026,8 @@ export class IntegrationsService implements OnModuleInit {
    * PUT, not PATCH, because this creates the listing — and PUT REPLACES, so every later edit must
    * go through the PATCH writers. Amazon's own guide warns that attributes omitted from a PUT may
    * be dropped, which on a live listing means silently stripping it back to whatever this payload
-   * happened to contain.
+   * happened to contain. Callers writing to a SKU that may already exist must therefore hand in
+   * attributes merged over the live ones — see AmazonListingService.payloadForPut.
    *
    * `dryRun` sends mode=VALIDATION_PREVIEW: the same validation, nothing created.
    */
@@ -1075,6 +1076,8 @@ export class IntegrationsService implements OnModuleInit {
     ok: boolean; status?: number; message?: string;
     exists: boolean; listingStatus: string | null; asin: string | null;
     issues: Array<{ code: string; message: string; severity: string }>;
+    /** The product type Amazon has this SKU filed under, which decides which attributes are valid. */
+    productType?: string | null;
     /** The attributes Amazon holds for this SKU — not necessarily the ones we sent. */
     attributes?: Record<string, unknown>;
     offers?: Array<Record<string, unknown>>;
@@ -1102,6 +1105,7 @@ export class IntegrationsService implements OnModuleInit {
     return {
       ok: true,
       status: res.status,
+      productType: summary?.productType ?? null,
       attributes,
       offers,
       storedPrice: offers[0]?.price ?? null,
