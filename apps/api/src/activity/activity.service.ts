@@ -118,6 +118,86 @@ export class ActivityService {
     };
   }
 
+  /**
+   * The whole log, filtered — "what happened today", rather than "what happened to this record".
+   *
+   * `source` defaults to people. Machines outnumber them by orders of magnitude, and a feed that
+   * opens on the sync's output buries the one human action anybody came looking for. Machine
+   * entries are a filter away, not hidden.
+   */
+  async list(q: {
+    page?: number; pageSize?: number;
+    entityType?: string; action?: string; actorId?: string;
+    /** 'people' (default) | 'machines' | 'all' */
+    who?: string;
+    from?: string; to?: string;
+    /** Matches the entity's label — a SKU or an order reference. */
+    search?: string;
+  } = {}) {
+    const page = Math.max(1, q.page ?? 1);
+    const pageSize = Math.min(200, Math.max(1, q.pageSize ?? 50));
+
+    const sources = q.who === 'machines' ? MACHINE_SOURCES : q.who === 'all' ? undefined : HUMAN_SOURCES;
+    const where: any = {
+      ...(sources ? { source: { in: sources } } : {}),
+      ...(q.entityType ? { entityType: q.entityType } : {}),
+      ...(q.action ? { action: q.action } : {}),
+      ...(q.actorId ? { actorId: q.actorId } : {}),
+      ...(q.search ? { entityLabel: { contains: q.search, mode: 'insensitive' } } : {}),
+      ...(q.from || q.to
+        ? { createdAt: { ...(q.from ? { gte: new Date(q.from) } : {}), ...(q.to ? { lte: new Date(`${q.to}T23:59:59.999Z`) } : {}) } }
+        : {}),
+    };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.activity.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true, entityType: true, entityId: true, entityLabel: true,
+          action: true, source: true, summary: true, changes: true, createdAt: true,
+          actor: { select: { id: true, fullName: true, email: true } },
+        },
+      }),
+      this.prisma.activity.count({ where }),
+    ]);
+
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        entityType: r.entityType,
+        entityId: r.entityId,
+        entityLabel: r.entityLabel,
+        action: r.action,
+        source: r.source,
+        summary: r.summary,
+        changes: (r.changes as unknown as FieldChange[] | null) ?? [],
+        createdAt: r.createdAt,
+        actor: r.actor ? { id: r.actor.id, name: r.actor.fullName, email: r.actor.email } : null,
+      })),
+      total, page, pageSize,
+    };
+  }
+
+  /** Who and what appear in the log, for the filter dropdowns — derived, never a hardcoded list. */
+  async listFacets() {
+    const [actors, types] = await Promise.all([
+      this.prisma.activity.findMany({
+        where: { actorId: { not: null } },
+        distinct: ['actorId'],
+        select: { actor: { select: { id: true, fullName: true } } },
+        take: 200,
+      }),
+      this.prisma.activity.findMany({ distinct: ['entityType'], select: { entityType: true }, take: 50 }),
+    ]);
+    return {
+      actors: actors.map((a) => a.actor).filter(Boolean).sort((a, b) => a!.fullName.localeCompare(b!.fullName)),
+      entityTypes: types.map((t) => t.entityType).sort(),
+    };
+  }
+
   // --- Retention ------------------------------------------------------------
 
   /** The configured windows, creating the settings row on first read. */
