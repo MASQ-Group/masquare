@@ -43,8 +43,7 @@ import {
   Users,
   Warehouse,
   UploadCloud,
-  type LucideIcon,
-} from 'lucide-react';
+  type LucideIcon, History} from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { initials } from '../lib/format';
 import { settingsApi } from '../lib/api';
@@ -148,6 +147,7 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
     label: 'Setup',
     items: [
       { to: '/integrations', label: 'Integrations', icon: Plug, adminOnly: true },
+      { to: '/activity', label: 'Activity', icon: History },
       { to: '/settings', label: 'Global settings', icon: SlidersHorizontal },
       { to: '/companies', label: 'Companies', icon: Building2, adminOnly: true },
       { to: '/users', label: 'Users & roles', icon: Users, adminOnly: true },

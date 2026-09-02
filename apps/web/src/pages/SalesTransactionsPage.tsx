@@ -153,7 +153,7 @@ export function SalesTransactionsPage() {
   const navigate = useNavigate();
   const { activeCompanyId, user } = useAuth();
   const isAdmin = !!user?.isAdmin;
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const urlQ = searchParams.get('q') ?? '';
   const [qInput, setQInput] = useState(urlQ);
   const [q, setQ] = useState(urlQ);
@@ -162,6 +162,20 @@ export function SalesTransactionsPage() {
   // Deep link from the global search: /sales-transactions?q=… applies (and re-applies) the search.
   useEffect(() => { if (urlQ) { setQInput(urlQ); setQ(urlQ); setPage(1); } }, [urlQ]);
   const [viewing, setViewing] = useState<SalesTransaction | undefined>(undefined);
+
+  // Deep link from the Activity feed: /sales-transactions?open=<id> opens that order's summary.
+  // Mirrors ?edit= on Products; without it the feed's links would navigate and do nothing.
+  const openId = searchParams.get('open');
+  const openedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!openId) { openedRef.current = null; return; }
+    if (openedRef.current === openId) return;
+    openedRef.current = openId;
+    salesTransactionsApi.get(openId)
+      .then((t) => setViewing(t))
+      .catch(() => toast.error('Transaction not found'))
+      .finally(() => setSearchParams((sp) => { sp.delete('open'); return sp; }, { replace: true }));
+  }, [openId, setSearchParams]);
   const [resolving, setResolving] = useState<SalesTransaction | undefined>(undefined);
   const [reqOpen, setReqOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());

@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ActivityService } from './activity.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,6 +11,28 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 @Controller('activity')
 export class ActivityController {
   constructor(private readonly activity: ActivityService, private readonly prisma: PrismaService) {}
+
+  /** The whole log, filtered. Defaults to people — see ActivityService.list. */
+  @Get()
+  list(@Query() q: Record<string, string>) {
+    return this.activity.list({
+      page: q.page ? Number(q.page) : undefined,
+      pageSize: q.pageSize ? Number(q.pageSize) : undefined,
+      entityType: q.entityType || undefined,
+      action: q.action || undefined,
+      actorId: q.actorId || undefined,
+      who: q.who || undefined,
+      from: q.from || undefined,
+      to: q.to || undefined,
+      search: q.search || undefined,
+    });
+  }
+
+  /** Who and what actually appear in the log, for the filter dropdowns. */
+  @Get('facets')
+  facets() {
+    return this.activity.listFacets();
+  }
 
   /** Current windows plus what the log holds and what a purge would remove. */
   @Get('retention')

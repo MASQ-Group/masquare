@@ -18,6 +18,7 @@ const CompaniesPage = lazyPage(() => import('./pages/CompaniesPage'), 'Companies
 const UsersPage = lazyPage(() => import('./pages/UsersPage'), 'UsersPage');
 const ModulesPage = lazyPage(() => import('./pages/ModulesPage'), 'ModulesPage');
 const SettingsPage = lazyPage(() => import('./pages/SettingsPage'), 'SettingsPage');
+const ActivityPage = lazyPage(() => import('./pages/ActivityPage'), 'ActivityPage');
 const ProductsPage = lazyPage(() => import('./pages/ProductsPage'), 'ProductsPage');
 const SalesTransactionsPage = lazyPage(() => import('./pages/SalesTransactionsPage'), 'SalesTransactionsPage');
 const SalesTransactionFormPage = lazyPage(() => import('./pages/SalesTransactionFormPage'), 'SalesTransactionFormPage');
@@ -149,6 +150,7 @@ export function App() {
         <Route path="/companies" element={<RequireAdmin><CompaniesPage /></RequireAdmin>} />
         <Route path="/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
         <Route path="/modules" element={<RequireAdmin><ModulesPage /></RequireAdmin>} />
+        <Route path="/activity" element={<ActivityPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

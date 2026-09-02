@@ -2015,7 +2015,18 @@ export interface ActivityRetention {
   dueForPurge: number; humanDue: number; machineDue: number;
 }
 
+/** A log entry as the global feed sees it — carries the entity so a row can link to it. */
+export interface ActivityListEntry extends ActivityEntry {
+  entityType: string;
+  entityId: string;
+  entityLabel: string | null;
+}
+
 export const activityApi = {
+  list: (params: Record<string, unknown>) =>
+    api.get<{ items: ActivityListEntry[]; total: number; page: number; pageSize: number }>('/activity', { params }).then((r) => r.data),
+  facets: () =>
+    api.get<{ actors: { id: string; fullName: string }[]; entityTypes: string[] }>('/activity/facets').then((r) => r.data),
   retention: () => api.get<ActivityRetention>('/activity/retention').then((r) => r.data),
   setRetention: (body: { userDays?: number; systemDays?: number }) =>
     api.patch<ActivityRetention>('/activity/retention', body).then((r) => r.data),
