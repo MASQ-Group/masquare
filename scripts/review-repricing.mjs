@@ -129,6 +129,68 @@ async function main() {
     }
   }
 
+  // --- Is the floor a wall, or a choice? ------------------------------------
+  //
+  // The single question the shadow period has to answer. Two floors exist per SKU: `breakeven`,
+  // below which we lose money, and `strategyFloor`, which is breakeven plus the margin we have
+  // decided to insist on. They are very different things wearing the same word.
+  //
+  // When a price is held at the strategy floor, either the market is below our COST — refusing is
+  // correct and there is nothing to fix — or the market is between cost and our target margin, in
+  // which case we are declining business we could profitably take, and that is a policy dial rather
+  // than an economic wall.
+  //
+  // `rawTarget` is what the engine wanted before clamping, so comparing it to breakeven separates
+  // the two directly.
+  if (atFloor.length) {
+    const keys = [...new Set(atFloor.map((d) => `${d.sku}|${d.marketplaceId}`))];
+    const rows = await prisma.repricingSkuPricing.findMany({
+      where: { OR: keys.map((k) => ({ sku: k.split('|')[0], marketplaceId: k.split('|')[1] })) },
+      select: { sku: true, marketplaceId: true, breakevenCents: true, strategyFloorCents: true },
+    });
+    const byKey = new Map(rows.map((r) => [`${r.sku}|${r.marketplaceId}`, r]));
+
+    let couldHaveTaken = 0;   // wanted price still above cost — a choice
+    let genuinelyBelowCost = 0; // wanted price below cost — a wall
+    let unknown = 0;
+    let forgoneCents = 0;
+    const examples = [];
+
+    for (const d of atFloor) {
+      const p = byKey.get(`${d.sku}|${d.marketplaceId}`);
+      if (!p || p.breakevenCents == null || d.rawTargetCents == null) { unknown++; continue; }
+      if (d.rawTargetCents >= p.breakevenCents) {
+        couldHaveTaken++;
+        forgoneCents += (d.finalPriceCents ?? 0) - d.rawTargetCents;
+        examples.push({ sku: d.sku, mk: d.marketplaceId, want: d.rawTargetCents, floor: d.finalPriceCents, be: p.breakevenCents });
+      } else {
+        genuinelyBelowCost++;
+      }
+    }
+
+    const known = couldHaveTaken + genuinelyBelowCost;
+    console.log('');
+    console.log('='.repeat(64));
+    console.log('IS THE FLOOR A WALL, OR A CHOICE?');
+    console.log('='.repeat(64));
+    console.log(`  Of ${atFloor.length.toLocaleString()} prices held at the floor:`);
+    console.log(`    market below our COST      ${String(genuinelyBelowCost).padStart(6)}  ${pct(genuinelyBelowCost, known)}   <- correct to refuse, nothing to fix`);
+    console.log(`    above cost, below target   ${String(couldHaveTaken).padStart(6)}  ${pct(couldHaveTaken, known)}   <- a margin choice, not a wall`);
+    if (unknown) console.log(`    (no breakeven on record)   ${String(unknown).padStart(6)}`);
+
+    if (couldHaveTaken) {
+      // Per decision rather than a total: the same SKU is reconsidered many times, so summing
+      // across them would invent a revenue figure nobody could ever have earned.
+      console.log(`\n  Where it is a choice, we hold on average ${(forgoneCents / couldHaveTaken / 100).toFixed(2)} above what it wanted.`);
+      const seen = new Set();
+      const uniq = examples.filter((e) => !seen.has(e.sku + e.mk) && seen.add(e.sku + e.mk)).slice(0, 6);
+      console.log('  Examples (wanted -> held at, cost):');
+      for (const e of uniq) {
+        console.log(`    ${e.sku.slice(0, 26).padEnd(26)} ${e.mk.padEnd(14)} ${eur(e.want)} -> ${eur(e.floor)}   cost ${eur(e.be)}`);
+      }
+    }
+  }
+
   // --- Coverage -------------------------------------------------------------
   const [onboarded, withFloor] = await Promise.all([
     prisma.repricingSkuPricing.count(),
