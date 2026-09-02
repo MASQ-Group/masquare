@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
-import { buildOfferAttributes, CONDITION_CODES, type OfferInput } from './offer-payload';
+import { buildOfferAttributes, CONDITION_CODES, mergeOverLiveAttributes, type OfferInput } from './offer-payload';
 import { evaluateEligibility, type MarketProfile } from '../eligibility';
 import { FloorService } from '../../amazon-repricing/floor/floor.service';
 import { fullScopeIntegrationWhere, isOrdersOnlyCompany } from '../../common/amazon-scope';
@@ -465,22 +465,109 @@ export class AmazonListingService {
     await this.assertListingAllowed(integrationId);
     const built = await this.buildFromPlan(productId, integrationId);
     if (built.missing.length > 0) {
-      return { ...built, validated: false, submissionStatus: null, issues: [], message: 'Fill in what is missing before validating.' };
+      return {
+        ...built,
+        existingListing: false,
+        carriedForward: [] as string[],
+        carriedFulfilmentChannels: [] as string[],
+        validated: false,
+        submissionStatus: null,
+        issues: [],
+        message: 'Fill in what is missing before validating.',
+      };
+    }
+
+    // The payload is resolved against the live listing here too, not only on submit: a dry run of a
+    // payload the submit would not send proves nothing about the submit.
+    const payload = await this.payloadForPut(integrationId, built);
+    if (!payload.ok) {
+      return {
+        ...built,
+        existingListing: false,
+        carriedForward: [] as string[],
+        carriedFulfilmentChannels: [] as string[],
+        validated: false,
+        submissionStatus: null,
+        issues: [],
+        message: payload.message,
+      };
     }
 
     const result = await this.integrations.putAmazonOffer(
       integrationId,
       built.sku,
-      { productType: built.productType, attributes: built.attributes },
+      { productType: payload.productType, attributes: payload.attributes },
       true,
     );
     return {
       ...built,
+      // The merged payload, because that is the one that would go — the preview showing a different
+      // payload from the one submit sends is the failure a dry run exists to prevent.
+      productType: payload.productType,
+      attributes: payload.attributes,
+      existingListing: payload.existing,
+      carriedForward: payload.carriedForward,
+      carriedFulfilmentChannels: payload.carriedFulfilmentChannels,
       validated: result.ok,
       submissionStatus: result.submissionStatus,
       issues: result.issues,
       message: result.message ?? null,
     };
+  }
+
+  /**
+   * The whole body to PUT for this SKU — which is not the same question as what our plan holds.
+   *
+   * For a brand-new listing they are the same thing. For a SKU Amazon already holds — a re-list to
+   * repair an existing listing, the common case — the plan alone would delete every attribute the
+   * plan has no opinion about, because PUT replaces the whole item. So the live attributes are read
+   * first and the plan laid over them.
+   *
+   * The product type comes from the live listing too, for the same reason: it decides which
+   * attributes are even valid, and a plan filed under a different one would re-categorise the item
+   * and invalidate the very attributes being carried forward. Our plan's product type only decides
+   * where a listing that does not exist yet should go.
+   *
+   * Fails closed when the listing cannot be read: writing a replacement without knowing what is
+   * being replaced is the whole fault, and a network blip is not a reason to risk it.
+   */
+  private async payloadForPut(
+    integrationId: string,
+    built: { sku: string; productType: string; attributes: Record<string, unknown> },
+  ): Promise<
+    | {
+        ok: true;
+        productType: string;
+        attributes: Record<string, unknown>;
+        existing: boolean;
+        carriedForward: string[];
+        carriedFulfilmentChannels: string[];
+      }
+    | { ok: false; message: string }
+  > {
+    const live = await this.integrations.getAmazonListingState(integrationId, built.sku);
+    if (!live.ok) {
+      return {
+        ok: false,
+        message: `Could not read the current Amazon listing for ${built.sku}, so it cannot be safely replaced: ${live.message ?? 'unknown reason'}. Nothing was sent to Amazon.`,
+      };
+    }
+    if (!live.exists) {
+      // A first listing has nothing to preserve; the plan is the whole item, as it always was.
+      return {
+        ok: true,
+        productType: built.productType,
+        attributes: built.attributes,
+        existing: false,
+        carriedForward: [],
+        carriedFulfilmentChannels: [],
+      };
+    }
+
+    const merged = mergeOverLiveAttributes(live.attributes ?? {}, built.attributes);
+    // Amazon's summary is the authority on where the item is filed. Falling back to the plan only
+    // covers a listing that somehow reports no product type at all.
+    return { ok: true, existing: true, productType: live.productType || built.productType, ...merged };
   }
 
   /**
@@ -510,12 +597,29 @@ export class AmazonListingService {
       throw new BadRequestException(`This product may not be sold on ${built.marketplace}: ${built.eligibilityReasons.join('; ')}`);
     }
 
+    // What Amazon already holds for this SKU decides the payload: our plan replaces the whole item,
+    // so anything the plan does not know about has to be carried forward or it is deleted.
+    const payload = await this.payloadForPut(integrationId, built);
+    if (!payload.ok) throw new BadRequestException(payload.message);
+    if (payload.existing) {
+      if (payload.productType !== built.productType) {
+        this.logger.log(
+          `Re-listing existing SKU ${built.sku} under Amazon's own product type ${payload.productType}, not the plan's ${built.productType}`,
+        );
+      }
+      this.logger.log(
+        `Re-listing existing SKU ${built.sku}: carrying forward ${payload.carriedForward.length} attribute(s)` +
+          `${payload.carriedForward.length ? ` (${payload.carriedForward.join(', ')})` : ''}` +
+          `${payload.carriedFulfilmentChannels.length ? ` and fulfilment channels ${payload.carriedFulfilmentChannels.join(', ')}` : ''}`,
+      );
+    }
+
     // Validate immediately before submitting rather than trusting an earlier preview: prices,
     // stock and the catalogue all move, and a preview from ten minutes ago proves nothing now.
     const check = await this.integrations.putAmazonOffer(
       integrationId,
       built.sku,
-      { productType: built.productType, attributes: built.attributes },
+      { productType: payload.productType, attributes: payload.attributes },
       true,
     );
     if (!check.ok) {
@@ -525,7 +629,7 @@ export class AmazonListingService {
     const result = await this.integrations.putAmazonOffer(
       integrationId,
       built.sku,
-      { productType: built.productType, attributes: built.attributes },
+      { productType: payload.productType, attributes: payload.attributes },
       false,
     );
 
@@ -543,6 +647,10 @@ export class AmazonListingService {
       ok: result.ok,
       sku: built.sku,
       asin: built.asin,
+      existingListing: payload.existing,
+      productType: payload.productType,
+      carriedForward: payload.carriedForward,
+      carriedFulfilmentChannels: payload.carriedFulfilmentChannels,
       submissionStatus: result.submissionStatus,
       issues: result.issues,
       message: result.message ?? null,
