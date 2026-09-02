@@ -665,6 +665,18 @@ model PlatformSettings {
   // dynamically-scheduled cron (integrations.service) — editable from the Integrations page.
   channelSyncTime String @default("05:00") @map("channel_sync_time")
 
+  /// What the last daily auto-sync did.
+  ///
+  /// Without this, a run that found nothing to do is indistinguishable from one that never
+  /// happened: the job logs "0 connection(s)" to the server and exits, and the only way to tell
+  /// the two apart is to read production logs. Recording the outcome makes "did it run?" a
+  /// question the page can answer — which is the whole reason it is here.
+  lastAutoSyncAt       DateTime? @map("last_auto_sync_at")
+  /// How many connections were eligible. Zero is the interesting case: the schedule fired and
+  /// nothing had auto-sync switched on.
+  lastAutoSyncEligible Int?      @map("last_auto_sync_eligible")
+  lastAutoSyncFailed   Int?      @map("last_auto_sync_failed")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

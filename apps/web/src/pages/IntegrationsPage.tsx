@@ -21,6 +21,26 @@ import { Flag } from '../components/common/Flag';
 const fmtDateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
 
+/**
+ * "06:30" UTC shown in the reader's own clock.
+ *
+ * The field is UTC because the server is, and the label says so — but a Cyprus operator reading
+ * "06:30" reasonably expects 06:30 their time, and gets 09:30. Stating both removes a trap that
+ * otherwise only shows up as "the sync did not run this morning".
+ */
+function localEquivalent(hhmm: string): string | null {
+  const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec((hhmm ?? '').trim());
+  if (!m) return null;
+  const now = new Date();
+  const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), Number(m[1]), Number(m[2])));
+  // 24-hour to match the field itself, and so the comparison below is against the same shape:
+  // the locale default renders "06:30 am", which would never equal "06:30" and would leave the
+  // hint showing redundantly on a machine already running UTC.
+  const local = utc.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+  // Same clock as UTC — saying "also 06:30 your time" would be noise.
+  return local === `${m[1].padStart(2, '0')}:${m[2]}` ? null : local;
+}
+
 /** Relative "time ago" for the last-sync cell. */
 function relTime(iso: string | null): string {
   if (!iso) return 'Never synced';
@@ -306,7 +326,10 @@ export function IntegrationsPage() {
                   <Clock size={16} className="text-n-400" />
                   <span className="text-[13px] font-semibold text-n-800">Daily auto-sync at</span>
                   <input type="time" value={syncTime} onChange={(e) => setSyncTime(e.target.value)} className="h-9 rounded-md border border-n-200 bg-n-0 px-2.5 font-mono text-[13px] text-n-900 outline-none focus:border-teal-400" />
-                  <span className="text-[12px] text-n-400">UTC</span>
+                  <span className="text-[12px] text-n-400">
+                    UTC
+                    {localEquivalent(syncTime) && <> · {localEquivalent(syncTime)} your time</>}
+                  </span>
                   <button
                     className="btn btn-ghost h-9"
                     disabled={saveSyncTime.isPending || syncTime === syncSettings?.channelSyncTime}
@@ -331,6 +354,26 @@ export function IntegrationsPage() {
                   <span className="text-[12px] text-n-500">{autoOn} of {integrations.length} on</span>
                 </div>
                 <div className="flex-1" />
+                {/* What the schedule last did. A run that found nothing eligible is the case worth
+                    surfacing: it logs "0 connection(s)" on the server and is otherwise
+                    indistinguishable from never having run, which reads as a broken feature. */}
+                {(() => {
+                  const at = syncSettings?.lastAutoSyncAt ?? null;
+                  const eligible = syncSettings?.lastAutoSyncEligible ?? null;
+                  const failed = syncSettings?.lastAutoSyncFailed ?? 0;
+                  if (!at) {
+                    return <span className="text-[12px] text-n-400">Has not run yet</span>;
+                  }
+                  const nothingToDo = eligible === 0;
+                  return (
+                    <span className={`text-[12px] ${failed > 0 ? 'text-danger' : nothingToDo ? 'text-warning' : 'text-n-500'}`}>
+                      Last run {fmtDateTime(at)} ·{' '}
+                      {nothingToDo
+                        ? 'no connections had auto-sync on'
+                        : `${eligible} connection${eligible === 1 ? '' : 's'}${failed > 0 ? `, ${failed} failed` : ''}`}
+                    </span>
+                  );
+                })()}
                 <button className="btn btn-ghost h-9" onClick={() => setGroupBackfill({ label: 'all connections', list: integrations })}>
                   <CalendarRange size={15} /> Pull older orders…
                 </button>
