@@ -2895,16 +2895,35 @@ export class IntegrationsService implements OnModuleInit {
     }
   }
 
-  /** Daily automatic pull for integrations that opted in — runs at the configured channelSyncTime. */
+  /**
+   * Daily automatic pull for integrations that opted in — runs at the configured channelSyncTime.
+   *
+   * The outcome is recorded even when nothing was eligible, and ESPECIALLY then: a run that finds
+   * no connections logs "0 connection(s)" and exits, which from the outside is identical to a run
+   * that never happened. Setting the time is global while opting in is per connection, so "I set
+   * the time and nothing synced" is the expected confusion, and the honest answer is to show that
+   * the schedule fired and had nothing to do.
+   */
   async runScheduledSync() {
     const rows = await this.prisma.channelIntegration.findMany({
       where: { deletedAt: null, status: 'active', autoSyncEnabled: true, mappingVerifiedAt: { not: null }, channelType: { in: ['onbuy', 'amazon', 'ebay'] } },
       select: { id: true, name: true },
     });
     this.logger.log(`Daily auto-sync: ${rows.length} connection(s).`);
+
+    let failed = 0;
     for (const r of rows) {
-      await this.syncOrders(r.id, 'schedule').catch((e) => this.logger.error(`Auto-sync failed for ${r.name}: ${e?.message ?? e}`));
+      await this.syncOrders(r.id, 'schedule').catch((e) => {
+        failed++;
+        this.logger.error(`Auto-sync failed for ${r.name}: ${e?.message ?? e}`);
+      });
     }
+
+    // Recorded last so the timestamp is the run's END, and never allowed to throw: losing the
+    // record of a run is not a reason to fail the run itself.
+    await this.prisma.platformSettings
+      .updateMany({ data: { lastAutoSyncAt: new Date(), lastAutoSyncEligible: rows.length, lastAutoSyncFailed: failed } })
+      .catch((e) => this.logger.error(`Could not record the auto-sync result: ${e?.message ?? e}`));
   }
 
   // ---- Sync automation: configurable daily time (server time = UTC) + scope toggles ----------
@@ -2937,10 +2956,16 @@ export class IntegrationsService implements OnModuleInit {
   }
 
   /** Get the platform sync-automation settings, creating the singleton row on first read. */
-  async getSyncSettings(): Promise<{ channelSyncTime: string }> {
-    let s = await this.prisma.platformSettings.findFirst({ select: { channelSyncTime: true } });
-    if (!s) s = await this.prisma.platformSettings.create({ data: {}, select: { channelSyncTime: true } });
-    return { channelSyncTime: s.channelSyncTime };
+  async getSyncSettings(): Promise<{
+    channelSyncTime: string;
+    lastAutoSyncAt: Date | null;
+    lastAutoSyncEligible: number | null;
+    lastAutoSyncFailed: number | null;
+  }> {
+    const select = { channelSyncTime: true, lastAutoSyncAt: true, lastAutoSyncEligible: true, lastAutoSyncFailed: true } as const;
+    let s = await this.prisma.platformSettings.findFirst({ select });
+    if (!s) s = await this.prisma.platformSettings.create({ data: {}, select });
+    return s;
   }
 
   /** Update the daily sync time and re-schedule the cron immediately. */

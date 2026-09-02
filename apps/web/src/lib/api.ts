@@ -835,7 +835,14 @@ export const integrationsApi = {
   removeChannelLogo: (channelType: string) =>
     api.delete<{ channelType: string; removed: boolean }>(`/integrations/channel-logos/${channelType}`).then((r) => r.data),
   /** Sync-automation settings: the daily auto-sync time (HH:MM, server/UTC). */
-  getSyncSettings: () => api.get<{ channelSyncTime: string }>('/integrations/sync-settings').then((r) => r.data),
+  getSyncSettings: () => api.get<{
+    channelSyncTime: string;
+    /** Null until the schedule has fired once. */
+    lastAutoSyncAt: string | null;
+    /** How many connections were eligible. Zero means the run happened and had nothing to do. */
+    lastAutoSyncEligible: number | null;
+    lastAutoSyncFailed: number | null;
+  }>('/integrations/sync-settings').then((r) => r.data),
   setSyncSettings: (channelSyncTime: string) =>
     api.patch<{ channelSyncTime: string }>('/integrations/sync-settings', { channelSyncTime }).then((r) => r.data),
   /** Enable/disable daily auto-sync across a scope (all, a channel family, or explicit ids). */
