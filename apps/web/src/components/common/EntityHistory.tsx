@@ -1,16 +1,19 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Bot, FileSpreadsheet, RefreshCw, User } from 'lucide-react';
-import { productsApi } from '../../lib/api';
+import type { ActivityEntry } from '../../lib/api';
 import { Pagination } from '@masquare/ui';
 
 /**
- * What happened to this product, and who did it.
+ * What happened to this record, and who did it.
  *
  * Reads as a timeline rather than a table because the question being asked is "when did this go
  * wrong", which is answered by scanning down dates. The field-level before/after is the point —
  * "someone edited this" locates nothing, while "Purchase cost 12.50 → 1250.00" is the mistake
  * itself, already found.
+ *
+ * Entity-agnostic: the caller supplies the fetch, so a product and a sales transaction share one
+ * component instead of two that drift apart.
  */
 
 /** Who or what was behind the change. A person and a nightly sync deserve different weight. */
@@ -33,12 +36,19 @@ const when = (iso: string) => new Date(iso).toLocaleString(undefined, {
   day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
 });
 
-export function ProductHistoryTab({ productId }: { productId: string }) {
+type Page = { items: ActivityEntry[]; total: number };
+
+export function EntityHistory({ entityKey, entityId, fetchPage }: {
+  /** Cache key prefix, e.g. 'product' or 'sales-transaction'. */
+  entityKey: string;
+  entityId: string;
+  fetchPage: (id: string, params: { page: number; pageSize: number }) => Promise<Page>;
+}) {
   const [page, setPage] = useState(1);
   const pageSize = 20;
   const { data, isLoading } = useQuery({
-    queryKey: ['product-activity', productId, page],
-    queryFn: () => productsApi.activity(productId, { page, pageSize }),
+    queryKey: [`${entityKey}-activity`, entityId, page],
+    queryFn: () => fetchPage(entityId, { page, pageSize }),
   });
 
   if (isLoading) return <div className="px-4 py-16 text-center text-[13px] text-n-500">Loading history…</div>;
@@ -48,7 +58,7 @@ export function ProductHistoryTab({ productId }: { productId: string }) {
     return (
       <div className="rounded-lg border border-dashed border-n-200 px-4 py-14 text-center">
         <div className="text-[13.5px] font-medium text-n-700">No history yet</div>
-        {/* Says why it is empty rather than implying nothing ever happened to this product. */}
+        {/* Says why it is empty rather than implying nothing ever happened to this record. */}
         <p className="mx-auto mt-1 max-w-md text-[12.5px] text-n-500">
           Changes are recorded from the point this feature went live. Edits made before then are not here.
         </p>

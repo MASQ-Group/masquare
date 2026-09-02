@@ -5,6 +5,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SerialsService } from '../warehouses/serials.service';
 import { StockService } from '../warehouses/stock.service';
 import { AvailabilityService } from '../availability/availability.service';
+import { ActivityService, type ActivitySource } from '../activity/activity.service';
+import { diffRecords } from '../activity/diff';
+import { SALES_TX_FIELD_LABELS, SALES_TX_REF_FIELDS, SALES_TX_REF_NAME_FIELD } from '../activity/sales-transaction-fields';
 // Type-only: importing the class value here would form a runtime ES-module cycle
 // (sales-transactions -> channel-listings -> integrations -> sales-transactions). Resolved at
 // call time via ModuleRef using the string token instead.
@@ -117,7 +120,53 @@ export class SalesTransactionsService {
     private readonly stock: StockService,
     private readonly availability: AvailabilityService,
     private readonly moduleRef: ModuleRef,
+    private readonly activity: ActivityService,
   ) {}
+
+  // --- Activity -------------------------------------------------------------
+
+  /**
+   * Record a change to an order, with the reference ids resolved to names.
+   *
+   * Sales transactions are written far more often by the importer than by a person — every sync
+   * re-saves every order in its window. That volume is survivable only because an update whose
+   * diff is empty is never recorded: a re-sync that finds the same figures leaves no trace, while
+   * one where Amazon has since posted a fee, or a refund has landed, shows up as exactly that.
+   */
+  private async logTxUpdate(
+    id: string,
+    ref: string | null,
+    before: Record<string, unknown> | null,
+    after: Record<string, unknown> | null,
+    actorId?: string,
+    source: ActivitySource = 'user',
+  ) {
+    const raw = diffRecords(before, after, { labels: SALES_TX_FIELD_LABELS });
+    if (raw.length === 0) return;
+
+    // One query per referenced table, not one per changed row.
+    const wanted = new Map<string, Set<string>>();
+    for (const c of raw) {
+      const model = (SALES_TX_REF_FIELDS as Record<string, string>)[c.field];
+      if (!model) continue;
+      if (!wanted.has(model)) wanted.set(model, new Set());
+      for (const v of [c.from, c.to]) if (v) wanted.get(model)!.add(v);
+    }
+    const names = new Map<string, string>();
+    for (const [model, ids] of wanted) {
+      const nameField = SALES_TX_REF_NAME_FIELD[model] ?? 'name';
+      const rows: any[] = await (this.prisma as any)[model].findMany({
+        where: { id: { in: [...ids] } },
+        select: { id: true, [nameField]: true },
+      }).catch(() => []);
+      for (const r of rows) names.set(r.id, r[nameField]);
+    }
+    const changes = raw.map((c) => (SALES_TX_REF_FIELDS as Record<string, string>)[c.field]
+      ? { ...c, from: c.from ? names.get(c.from) ?? c.from : null, to: c.to ? names.get(c.to) ?? c.to : null }
+      : c);
+
+    await this.activity.record({ entityType: 'salesTransaction', entityId: id, entityLabel: ref, action: 'update', source, actorId, changes });
+  }
 
   private readonly logger = new Logger(SalesTransactionsService.name);
 
@@ -1667,7 +1716,8 @@ export class SalesTransactionsService {
     return taxTypeForCountry(c);
   }
 
-  async create(dto: CreateSalesTransactionDto, actorId?: string) {
+  /** @param source 'sync' when the importer creates the order, 'user' when a person does. */
+  async create(dto: CreateSalesTransactionDto, actorId?: string, source: ActivitySource = 'user') {
     const { channel, currency, feeCurrency } = await this.channelInfo(dto.salesChannelId);
     // A local sale is invoiced by us in EUR: no FX, no marketplace fee, no carrier, and VAT
     // per line from the VAT class instead of a destination/threshold rule.
@@ -1735,6 +1785,10 @@ export class SalesTransactionsService {
     await this.consumeSerials(serialWork, t.id, dto.transactionRef, actorId);
     await this.reconcileSaleStock(t.id, actorId);
     await this.applyAvailabilitySellThrough(t.id, actorId);
+    await this.activity.record({
+      entityType: 'salesTransaction', entityId: t.id, entityLabel: dto.transactionRef ?? null,
+      action: 'create', actorId, source, summary: `${dto.source ?? 'manual'} · ${items.length} line${items.length === 1 ? '' : 's'}`,
+    });
     return this.get(t.id);
   }
 
@@ -2050,7 +2104,12 @@ export class SalesTransactionsService {
     }
   }
 
-  async update(id: string, dto: UpdateSalesTransactionDto, user: AuthUser, companyIds?: string[]) {
+  /**
+   * @param source who is doing this. The importer passes 'sync' so a nightly re-save is
+   * distinguishable from a person editing an order — they need very different retention, and a
+   * history that cannot tell them apart is unreadable.
+   */
+  async update(id: string, dto: UpdateSalesTransactionDto, user: AuthUser, companyIds?: string[], source: ActivitySource = 'user') {
     const existing = await this.prisma.salesTransaction.findFirst({ where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) }, include: { items: { where: { deletedAt: null } } } });
     if (!existing) throw new NotFoundException('Sales transaction not found');
     this.assertCanEdit(existing, user);
@@ -2162,6 +2221,12 @@ export class SalesTransactionsService {
     await this.consumeSerials(serialWork, id, existing.transactionRef, user.sub);
     await this.reconcileSaleStock(id, user.sub);
     await this.applyAvailabilitySellThrough(id, user.sub);
+
+    // Diffed against the row as it now stands rather than the update payload: much of what an
+    // update writes is derived (exchange rate, tax type, VAT percent), and only re-reading shows
+    // what actually landed.
+    const after = await this.prisma.salesTransaction.findUnique({ where: { id } });
+    await this.logTxUpdate(id, existing.transactionRef, existing as any, after as any, user.sub, source);
     return this.get(id);
   }
 
@@ -2474,10 +2539,9 @@ export class SalesTransactionsService {
     },
     actorId?: string,
   ): Promise<{ applied: boolean; reason?: string }> {
-    const existing = await this.prisma.salesTransaction.findFirst({
-      where: { id: txId, deletedAt: null },
-      select: { id: true, resolution: true, resolutionSource: true, refundAmount: true, feeRefunded: true, cancelStage: true },
-    });
+    // The whole row, not a select of the fields this method reads: the change log diffs before
+    // against after, and a partial before would report every unselected column as newly set.
+    const existing = await this.prisma.salesTransaction.findFirst({ where: { id: txId, deletedAt: null } });
     if (!existing) return { applied: false, reason: 'not_found' };
     // Never clobber a decision the operator made in the app.
     if (existing.resolutionSource === 'manual') return { applied: false, reason: 'manual' };
@@ -2517,6 +2581,12 @@ export class SalesTransactionsService {
       await this.reconcileSaleStock(txId, actorId);
       await this.applyAvailabilitySellThrough(txId, actorId); // give Availability back and push the new figure
     }
+    // Source 'sync': this path is only ever reached from the channel importer, never from a person
+    // — an operator's own decision goes through update() and is marked resolutionSource 'manual'.
+    // A cancellation or refund arriving from the marketplace is one of the few sync events anyone
+    // actually wants to read, since it reverses money.
+    const after = await this.prisma.salesTransaction.findUnique({ where: { id: txId } });
+    await this.logTxUpdate(txId, after?.transactionRef ?? null, existing as any, after as any, actorId, 'sync');
     return { applied: true };
   }
 
@@ -2528,6 +2598,11 @@ export class SalesTransactionsService {
     await this.reconcileSaleStock(id, user.sub, { forceRelease: true });
     await this.applyAvailabilitySellThrough(id, user.sub, { forceRelease: true }); // and any Availability it consumed
     await this.prisma.salesTransaction.update({ where: { id }, data: { deletedAt: new Date() } });
+    await this.activity.record({
+      entityType: 'salesTransaction', entityId: id, entityLabel: existing.transactionRef,
+      action: 'delete', actorId: user.sub,
+      summary: `${existing.source} order, ${existing.status}`,
+    });
     return { ok: true };
   }
 

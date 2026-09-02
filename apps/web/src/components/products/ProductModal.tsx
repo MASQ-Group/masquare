@@ -6,7 +6,7 @@ import { CostHistory } from './CostHistory';
 import { ProductStockSection } from './ProductStockSection';
 import { ProductChannelIdentifiers } from './ProductChannelIdentifiers';
 import { ProductChannelsTab } from './ProductChannelsTab';
-import { ProductHistoryTab } from './ProductHistoryTab';
+import { EntityHistory } from '../common/EntityHistory';
 import { ProductDocuments } from './ProductDocuments';
 import { RichTextEditor } from '../common/RichTextEditor';
 import { FeatureList } from './FeatureList';
@@ -585,7 +585,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
 
       {tab === 'stock' && product && <ProductStockSection productId={product.id} />}
       {tab === 'channels' && product && <ProductChannelsTab productId={product.id} />}
-      {tab === 'history' && product && <ProductHistoryTab productId={product.id} />}
+      {tab === 'history' && product && <EntityHistory entityKey="product" entityId={product.id} fetchPage={(id, p) => productsApi.activity(id, p)} />}
     </ModalShell>
   );
 }

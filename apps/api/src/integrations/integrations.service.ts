@@ -2594,8 +2594,12 @@ export class IntegrationsService implements OnModuleInit {
     };
     try {
       const existing = await this.prisma.salesTransaction.findFirst({ where: { integrationId: row.id, transactionRef: dto.transactionRef, deletedAt: null }, select: { id: true } });
-      if (existing) { await this.salesTx.update(existing.id, dto, sysUser); counts.updated++; }
-      else { await this.salesTx.create(dto, actorId); counts.created++; }
+      // Marked 'sync' so a nightly re-save is distinguishable from a person editing the order.
+      // Most of these write no history at all — an update whose figures are unchanged has an empty
+      // diff and is not recorded — so what survives is the part worth reading: a fee Amazon posted
+      // a fortnight late, a status that moved, a refund that landed.
+      if (existing) { await this.salesTx.update(existing.id, dto, sysUser, undefined, 'sync'); counts.updated++; }
+      else { await this.salesTx.create(dto, actorId, 'sync'); counts.created++; }
       return true;
     } catch (e: any) {
       counts.errors++;
