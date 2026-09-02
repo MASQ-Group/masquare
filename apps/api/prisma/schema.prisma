@@ -677,6 +677,22 @@ model PlatformSettings {
   lastAutoSyncEligible Int?      @map("last_auto_sync_eligible")
   lastAutoSyncFailed   Int?      @map("last_auto_sync_failed")
 
+  /// How long the activity log is kept, split by who caused the entry.
+  ///
+  /// One number cannot serve both halves. The volume comes almost entirely from machines — a
+  /// nightly sync touches thousands of orders — while the value comes from people, who produce a
+  /// handful of entries a day. Purging both on one clock forces a choice between a table that grows
+  /// without bound and discarding the human record the log exists for. On separate clocks the noisy
+  /// half can be cut hard while a year of people's actions costs almost nothing.
+  ///
+  /// The August channel-push incident was diagnosed weeks after the fact from surviving history. A
+  /// flat 30 days would have destroyed the evidence that explained it.
+  ///
+  /// A spreadsheet upload counts as a person: someone chose to do it. Only 'sync' and 'system'
+  /// are machine-made.
+  activityRetentionUserDays   Int @default(365) @map("activity_retention_user_days")
+  activityRetentionSystemDays Int @default(30) @map("activity_retention_system_days")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -1645,6 +1661,9 @@ model Activity {
   @@index([entityType, entityId, createdAt])
   @@index([createdAt])
   @@index([actorId])
+  // The nightly purge deletes by (source, createdAt); without this it scans the whole table, and
+  // gets slower exactly as the table it is meant to bound gets bigger.
+  @@index([source, createdAt])
   @@map("activity")
 }
 

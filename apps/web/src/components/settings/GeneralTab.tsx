@@ -6,6 +6,7 @@ import { settingsApi, type PlatformSettings } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { applyFonts, BODY_FONTS, DEFAULT_BODY_FONT, DEFAULT_MONO_FONT, MONO_FONTS } from '../../lib/fonts';
 import { SectionHeader } from './shared';
+import { ActivityRetentionCard } from './ActivityRetentionCard';
 
 const DATE_FORMATS: { value: PlatformSettings['dateFormat']; label: string }[] = [
   { value: 'ddmmyyyy', label: 'dd/mm/yyyy' },
@@ -323,6 +324,9 @@ export function GeneralTab() {
           </button>
         </div>
       )}
+      <div className="mt-6">
+        <ActivityRetentionCard />
+      </div>
     </div>
   );
 }
