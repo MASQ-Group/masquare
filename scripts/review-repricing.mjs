@@ -192,16 +192,23 @@ async function main() {
 
     // --- What would a different floor actually buy? -------------------------
     //
-    // Margin on price, not markup: (price - cost) / price. That is the convention the floors are
-    // built on, and mixing the two would make every figure here quietly wrong.
-    const marginOf = (price, cost) => (price > 0 ? (price - cost) / price : 0);
+    // Measured as the GAP above breakeven, (price - breakeven) / price — deliberately not called a
+    // margin, because it is not the number the engine is configured with.
+    //
+    // The engine targets margin on NET (ex-VAT) revenue. The referral fee is a percentage of GROSS,
+    // so it scales with price and the two measures diverge by a constant factor:
+    //   gap = margin / (1 - referral x (1 + vat))
+    // At a 15% referral and 19-20% VAT that is about 1.22, which is why a configured 12% margin
+    // shows up here as a 15% gap. Calling this figure a margin would invite someone to compare it
+    // against the preset values and conclude the settings were not being applied.
+    const gapOf = (price, cost) => (price > 0 ? (price - cost) / price : 0);
 
     // Derive the current policy from the data rather than assuming it. If the strategy floor is not
     // a uniform margin, the whole "lower the floor by N points" framing is the wrong question and
     // the spread below will say so.
     const policy = rows
       .filter((r) => r.breakevenCents != null && r.strategyFloorCents != null && r.strategyFloorCents > 0)
-      .map((r) => marginOf(r.strategyFloorCents, r.breakevenCents))
+      .map((r) => gapOf(r.strategyFloorCents, r.breakevenCents))
       .sort((a, b) => a - b);
     if (policy.length) {
       const at = (q) => policy[Math.min(policy.length - 1, Math.floor(q * policy.length))];
@@ -210,7 +217,8 @@ async function main() {
       console.log('='.repeat(64));
       console.log('WHAT A DIFFERENT FLOOR WOULD BUY');
       console.log('='.repeat(64));
-      console.log(`  Current floor is a ${(at(0.5) * 100).toFixed(1)}% margin (10th-90th percentile spread ${(spread * 100).toFixed(1)} points).`);
+      console.log(`  Floors sit ${(at(0.5) * 100).toFixed(1)}% above breakeven (spread ${(spread * 100).toFixed(1)} points across the catalogue).`);
+      console.log(`  That is the configured margin grossed up by the referral fee — a 12% target reads as ~15% here.`);
       if (spread > 0.02) {
         console.log('  ** Not a uniform rule — the table below is an approximation, and per-SKU floors');
         console.log('     would need looking at individually. **');
@@ -225,16 +233,17 @@ async function main() {
       const p = byKey.get(`${d.sku}|${d.marketplaceId}`);
       if (!p || p.breakevenCents == null || d.rawTargetCents == null) continue;
       if (d.rawTargetCents < p.breakevenCents) continue; // below cost — no floor setting recovers it
-      candidates.push({ key: `${d.sku}|${d.marketplaceId}`, margin: marginOf(d.rawTargetCents, p.breakevenCents) });
+      candidates.push({ key: `${d.sku}|${d.marketplaceId}`, gap: gapOf(d.rawTargetCents, p.breakevenCents) });
     }
 
     if (candidates.length) {
       console.log('');
-      console.log('  Lowering the floor to…   wins back        of which SKUs   at avg margin');
+      console.log('  If the floor sat at…     wins back        of which SKUs   at avg gap');
+      // Gap thresholds, so they are comparable with the figure printed above.
       for (const floor of [0.12, 0.10, 0.08, 0.05, 0.0]) {
-        const won = candidates.filter((c) => c.margin >= floor);
+        const won = candidates.filter((c) => c.gap >= floor);
         const skus = new Set(won.map((c) => c.key)).size;
-        const avg = won.length ? won.reduce((s, c) => s + c.margin, 0) / won.length : 0;
+        const avg = won.length ? won.reduce((s, c) => s + c.gap, 0) / won.length : 0;
         const label = floor === 0 ? 'breakeven' : `${(floor * 100).toFixed(0)}%`;
         console.log(
           `    ${label.padStart(10)}          ${String(won.length).padStart(5)} decisions   ${String(skus).padStart(5)}        ${(avg * 100).toFixed(1)}%`,
