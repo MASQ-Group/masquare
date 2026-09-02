@@ -189,6 +189,62 @@ async function main() {
         console.log(`    ${e.sku.slice(0, 26).padEnd(26)} ${e.mk.padEnd(14)} ${eur(e.want)} -> ${eur(e.floor)}   cost ${eur(e.be)}`);
       }
     }
+
+    // --- What would a different floor actually buy? -------------------------
+    //
+    // Margin on price, not markup: (price - cost) / price. That is the convention the floors are
+    // built on, and mixing the two would make every figure here quietly wrong.
+    const marginOf = (price, cost) => (price > 0 ? (price - cost) / price : 0);
+
+    // Derive the current policy from the data rather than assuming it. If the strategy floor is not
+    // a uniform margin, the whole "lower the floor by N points" framing is the wrong question and
+    // the spread below will say so.
+    const policy = rows
+      .filter((r) => r.breakevenCents != null && r.strategyFloorCents != null && r.strategyFloorCents > 0)
+      .map((r) => marginOf(r.strategyFloorCents, r.breakevenCents))
+      .sort((a, b) => a - b);
+    if (policy.length) {
+      const at = (q) => policy[Math.min(policy.length - 1, Math.floor(q * policy.length))];
+      const spread = at(0.9) - at(0.1);
+      console.log('');
+      console.log('='.repeat(64));
+      console.log('WHAT A DIFFERENT FLOOR WOULD BUY');
+      console.log('='.repeat(64));
+      console.log(`  Current floor is a ${(at(0.5) * 100).toFixed(1)}% margin (10th-90th percentile spread ${(spread * 100).toFixed(1)} points).`);
+      if (spread > 0.02) {
+        console.log('  ** Not a uniform rule — the table below is an approximation, and per-SKU floors');
+        console.log('     would need looking at individually. **');
+      }
+    }
+
+    // Each floor-bound decision the engine wanted at a price above cost is one it would have taken
+    // had the floor been lower. Count decisions AND distinct SKUs: a decision count flatters the
+    // opportunity, because one contested SKU is reconsidered dozens of times in a week.
+    const candidates = [];
+    for (const d of atFloor) {
+      const p = byKey.get(`${d.sku}|${d.marketplaceId}`);
+      if (!p || p.breakevenCents == null || d.rawTargetCents == null) continue;
+      if (d.rawTargetCents < p.breakevenCents) continue; // below cost — no floor setting recovers it
+      candidates.push({ key: `${d.sku}|${d.marketplaceId}`, margin: marginOf(d.rawTargetCents, p.breakevenCents) });
+    }
+
+    if (candidates.length) {
+      console.log('');
+      console.log('  Lowering the floor to…   wins back        of which SKUs   at avg margin');
+      for (const floor of [0.12, 0.10, 0.08, 0.05, 0.0]) {
+        const won = candidates.filter((c) => c.margin >= floor);
+        const skus = new Set(won.map((c) => c.key)).size;
+        const avg = won.length ? won.reduce((s, c) => s + c.margin, 0) / won.length : 0;
+        const label = floor === 0 ? 'breakeven' : `${(floor * 100).toFixed(0)}%`;
+        console.log(
+          `    ${label.padStart(10)}          ${String(won.length).padStart(5)} decisions   ${String(skus).padStart(5)}        ${(avg * 100).toFixed(1)}%`,
+        );
+      }
+      console.log('');
+      console.log('  "Wins back" = decisions where the price it wanted clears that floor, so the sale');
+      console.log('  would have been contested instead of conceded. It is an upper bound: winning the');
+      console.log('  buy box also depends on rating, fulfilment and stock, none of which this sees.');
+    }
   }
 
   // --- Coverage -------------------------------------------------------------
