@@ -1991,6 +1991,20 @@ export interface ProductSalesMetrics {
   byChannel: { name: string; units: number; revenueEur: number; profitEur: number }[];
 }
 
+export interface ActivityRetention {
+  total: number; human: number; machine: number;
+  oldest: string | null;
+  userDays: number; systemDays: number;
+  dueForPurge: number; humanDue: number; machineDue: number;
+}
+
+export const activityApi = {
+  retention: () => api.get<ActivityRetention>('/activity/retention').then((r) => r.data),
+  setRetention: (body: { userDays?: number; systemDays?: number }) =>
+    api.patch<ActivityRetention>('/activity/retention', body).then((r) => r.data),
+  purgeNow: () => api.post<{ human: number; machine: number; stats: ActivityRetention }>('/activity/retention/purge').then((r) => r.data),
+};
+
 export const salesTransactionsApi = {
   activity: (id: string, params: { page?: number; pageSize?: number } = {}) =>
     api.get<{ items: ActivityEntry[]; total: number; page: number; pageSize: number }>(`/sales-transactions/${id}/activity`, { params }).then((r) => r.data),
