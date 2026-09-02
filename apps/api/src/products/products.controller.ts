@@ -5,6 +5,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ProductsService, type ProductQuery } from './products.service';
+import { ActivityService } from '../activity/activity.service';
 import {
   BulkDeleteDto, BulkUpdateDto, ByIdsDto, CreateProductDto,
   ImportCommitDto, ImportValidateDto, ReorderMediaDto, UpdateProductDto,
@@ -19,7 +20,7 @@ const toArray = (v?: string | string[]) => (v == null ? undefined : Array.isArra
 @UseGuards(JwtAuthGuard)
 @Controller('products')
 export class ProductsController {
-  constructor(private readonly products: ProductsService) {}
+  constructor(private readonly products: ProductsService, private readonly activityLog: ActivityService) {}
 
   @Get()
   list(
@@ -83,8 +84,8 @@ export class ProductsController {
   }
 
   @Post('bulk/delete')
-  bulkDelete(@Body() dto: BulkDeleteDto) {
-    return this.products.bulkDelete(dto.ids);
+  bulkDelete(@Body() dto: BulkDeleteDto, @CurrentUser() user: AuthUser) {
+    return this.products.bulkDelete(dto.ids, user.sub);
   }
 
   @Post('bulk/update')
@@ -108,8 +109,17 @@ export class ProductsController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.products.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.products.remove(id, user.sub);
+  }
+
+  /** This product's change history, newest first. */
+  @Get(':id/activity')
+  activity(@Param('id') id: string, @Query('page') page?: string, @Query('pageSize') pageSize?: string) {
+    return this.activityLog.forEntity('product', id, {
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
   }
 
   /** One product as the B2B store would show it. Behind the platform login while the store has none. */

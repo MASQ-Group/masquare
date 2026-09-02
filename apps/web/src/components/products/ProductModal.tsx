@@ -6,6 +6,7 @@ import { CostHistory } from './CostHistory';
 import { ProductStockSection } from './ProductStockSection';
 import { ProductChannelIdentifiers } from './ProductChannelIdentifiers';
 import { ProductChannelsTab } from './ProductChannelsTab';
+import { ProductHistoryTab } from './ProductHistoryTab';
 import { ProductDocuments } from './ProductDocuments';
 import { RichTextEditor } from '../common/RichTextEditor';
 import { FeatureList } from './FeatureList';
@@ -40,6 +41,9 @@ const TABS = [
 // mode only — there is no product id to hang them on until then.
 const STOCK_TAB = { key: 'stock', label: 'Stock levels' };
 const CHANNELS_TAB = { key: 'channels', label: 'Channels' };
+// Last, and edit-only: a product being created has no history, and the tab is for looking back
+// rather than for filling anything in.
+const HISTORY_TAB = { key: 'history', label: 'History' };
 
 const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s));
 
@@ -209,7 +213,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   return (
     <ModalShell
       open title={product ? 'Edit product' : 'New product'} subtitle={product?.mainSku}
-      tabs={product ? [...TABS, STOCK_TAB, CHANNELS_TAB] : TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
+      tabs={product ? [...TABS, STOCK_TAB, CHANNELS_TAB, HISTORY_TAB] : TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
       primaryLabel={product ? 'Save changes' : 'Create product'} onPrimary={save} primaryDisabled={!canSave} busy={busy} onClose={onClose}
     >
       {tab === 'general' && (
@@ -581,6 +585,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
 
       {tab === 'stock' && product && <ProductStockSection productId={product.id} />}
       {tab === 'channels' && product && <ProductChannelsTab productId={product.id} />}
+      {tab === 'history' && product && <ProductHistoryTab productId={product.id} />}
     </ModalShell>
   );
 }

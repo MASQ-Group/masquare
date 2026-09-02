@@ -570,7 +570,21 @@ export interface ProductListParams {
   pageSize?: number;
 }
 
+/** One entry in a product's change history. */
+export interface ActivityEntry {
+  id: string;
+  action: 'create' | 'update' | 'delete' | 'restore';
+  source: 'user' | 'import' | 'sync' | 'system';
+  summary: string | null;
+  changes: { field: string; label: string; from: string | null; to: string | null }[];
+  createdAt: string;
+  /** Null when the platform acted without a person behind it — a sync, a repair. */
+  actor: { id: string; name: string; email: string } | null;
+}
+
 export const productsApi = {
+  activity: (id: string, params: { page?: number; pageSize?: number } = {}) =>
+    api.get<{ items: ActivityEntry[]; total: number; page: number; pageSize: number }>(`/products/${id}/activity`, { params }).then((r) => r.data),
   list: (params: ProductListParams) =>
     api
       .get<ProductListResponse>('/products', {

@@ -180,6 +180,7 @@ model User {
 
   companyAccess UserCompanyAccess[]
   moduleAccess  UserModuleAccess[]
+  activity      Activity[]         @relation("ActivityActor")
 
   @@map("user")
 }
@@ -1580,6 +1581,61 @@ model PurchaseOrderUnlockRequest {
  * the quantities and averages either side of it plus what caused it. Recomputing the
  * product's average from this table in order must reproduce Product.averageCostEur.
  */
+/**
+ * Who changed what, and when.
+ *
+ * The per-row `createdBy`/`updatedBy` stamps answer "who touched this last" and nothing more: the
+ * previous editor is overwritten on every save, and neither stamp says WHICH field moved. That is
+ * the question worth answering — "someone edited this product" locates nothing, while "the
+ * purchase cost went from 12.50 to 1250.00" is the mistake itself, already found.
+ *
+ * Deliberately generic in `entityType`/`entityId` rather than a products-only table. Products are
+ * wired first because that is where the editing happens, but sales transactions, availability,
+ * pricing and settings all want the same treatment, and a second table per entity would mean a
+ * second UI and a second retention rule each time.
+ *
+ * `source` separates a person from a machine, and it is the field that makes retention workable.
+ * A nightly sync writes thousands of rows; a person writes a handful. Purging both on one clock
+ * forces a choice between a table that grows without bound and losing the human record that the
+ * whole feature exists to keep — so they are kept on separate clocks instead.
+ */
+model Activity {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// What kind of thing changed — "product" today; sales transaction, availability and the rest
+  /// join later without a schema change.
+  entityType String @map("entity_type")
+  entityId   String @map("entity_id") @db.Uuid
+  /// How the row identified itself at the time (a product's main SKU). Denormalised on purpose:
+  /// the record has to stay readable after the thing it describes is renamed or deleted.
+  entityLabel String? @map("entity_label")
+
+  action String // create | update | delete | restore
+  /// user = a person acting in the UI; import = a spreadsheet they uploaded; sync = a scheduled
+  /// or channel-triggered job; system = the platform acting on its own (migrations, repairs).
+  source String @default("user")
+
+  /// Null for anything the platform did without a person behind it.
+  actorId String? @map("actor_id") @db.Uuid
+
+  /// One line for a list view, so rendering a feed needs no per-row interpretation.
+  summary String?
+
+  /// The field-level diff: [{ field, label, from, to }]. Null on a create, where every value is
+  /// new and a diff against nothing is noise rather than information.
+  changes Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  actor User? @relation("ActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  // The product card's History tab reads one entity newest-first; the global feed reads by date.
+  @@index([entityType, entityId, createdAt])
+  @@index([createdAt])
+  @@index([actorId])
+  @@map("activity")
+}
+
 model ProductCostEvent {
   id        String @id @default(uuid()) @db.Uuid
   productId String @map("product_id") @db.Uuid
