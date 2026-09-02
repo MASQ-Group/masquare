@@ -1297,11 +1297,18 @@ export interface AmazonIssue {
 export interface AmazonOfferPreview {
   sku: string;
   asin: string;
+  /** The product type the submission would use — Amazon's own where the listing already exists. */
   productType: string;
   marketplace: string;
   channelName: string;
   /** The attributes as they would be sent. Shown verbatim — this is the payload, not a summary. */
   attributes: Record<string, unknown>;
+  /** True when Amazon already holds this SKU, so the submission replaces a listing rather than creating one. */
+  existingListing: boolean;
+  /** Live attribute keys our plan does not set, carried through so the replacement does not delete them. */
+  carriedForward: string[];
+  /** Fulfilment channel codes Amazon holds that our plan does not manage, kept as they are. */
+  carriedFulfilmentChannels: string[];
   /** Our own gaps, found before Amazon is asked. */
   missing: { key: string; label: string }[];
   eligible: boolean;
@@ -1381,6 +1388,14 @@ export interface AmazonSubmitResult {
   ok: boolean;
   sku: string;
   asin: string;
+  /** True when the submission replaced a listing Amazon already held. */
+  existingListing: boolean;
+  /** The product type the submission used — Amazon's own where the listing already existed. */
+  productType: string;
+  /** Attributes carried over from the live listing rather than deleted by the replacement. */
+  carriedForward: string[];
+  /** Fulfilment channels left as Amazon holds them. */
+  carriedFulfilmentChannels: string[];
   /** ACCEPTED means Amazon took the submission, not that the listing is live. */
   submissionStatus: string | null;
   issues: AmazonIssue[];
@@ -1393,6 +1408,8 @@ export interface AmazonListingState {
   /** BUYABLE means a valid offer exists. DISCOVERABLE means the product is there but not sellable. */
   listingStatus: string | null;
   asin: string | null;
+  /** The product type Amazon has this SKU filed under, which decides which attributes are valid. */
+  productType?: string | null;
   issues: { code: string; message: string; severity: string }[];
   /** What Amazon actually holds for this SKU — not necessarily what we sent. */
   attributes?: Record<string, unknown>;
