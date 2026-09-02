@@ -7,6 +7,7 @@ import { formatDate, formatMoney } from '../../lib/format';
 import { ProductModal } from '../products/ProductModal';
 import { CountryTag } from '../common/Flag';
 import { ChannelChip, useChannelChips } from '../common/ChannelChip';
+import { EntityHistory } from '../common/EntityHistory';
 
 interface Props {
   transaction: SalesTransaction;
@@ -46,6 +47,7 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
 
   // Inline "jump to product editor" — open a linked product, edit, then return here (figures re-fetch on save).
   const [editProductId, setEditProductId] = useState<string | null>(null);
+  const [tab, setTab] = useState('summary');
   const { data: editProduct } = useQuery({ queryKey: ['product', editProductId], queryFn: () => productsApi.get(editProductId!), enabled: !!editProductId });
 
   const tier = t.profitPct != null ? profitTiers.find((x: ProfitTier) => t.profitPct! >= x.fromPct && t.profitPct! <= x.toPct) : undefined;
@@ -66,6 +68,11 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
       title="Sales Transaction Summary"
       subtitle={t.transactionRef}
       initialSize={{ w: 1040, h: 660 }}
+      // History sits behind a tab rather than under the figures: it is consulted when something
+      // looks wrong, which is rarely, and it would otherwise push the money off the first screen.
+      tabs={[{ key: 'summary', label: 'Summary' }, { key: 'history', label: 'History' }]}
+      activeTab={tab}
+      onTabChange={setTab}
       primaryLabel="Edit transaction"
       onPrimary={onEdit}
       secondaryLabel={nothingToResolve ? 'Nothing to resolve' : t.resolution === 'none' ? 'Resolve / return' : 'Edit resolution'}
@@ -73,7 +80,10 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
       onSecondary={onResolve}
       onClose={onClose}
     >
-      <div className="flex flex-col gap-5">
+      {tab === 'history' && (
+        <EntityHistory entityKey="sales-transaction" entityId={t.id} fetchPage={(id, p) => salesTransactionsApi.activity(id, p)} />
+      )}
+      <div className={`flex flex-col gap-5 ${tab === 'history' ? 'hidden' : ''}`}>
         {/* Header facts */}
         <div className="grid grid-cols-4 gap-x-4 gap-y-3 max-[760px]:grid-cols-2">
           <Fact label="Date" value={formatDate(t.date)} mono />

@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SalesTransactionsService, type TxQuery } from './sales-transactions.service';
+import { ActivityService } from '../activity/activity.service';
 import { CreateSalesTransactionDto, DecideUnlockDto, ResolveTransactionDto, UpdateSalesTransactionDto } from './dto/sales-transaction.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
@@ -11,7 +12,7 @@ import { VisibleCompanies } from '../common/active-company.decorator';
 @UseGuards(JwtAuthGuard)
 @Controller('sales-transactions')
 export class SalesTransactionsController {
-  constructor(private readonly svc: SalesTransactionsService) {}
+  constructor(private readonly svc: SalesTransactionsService, private readonly activityLog: ActivityService) {}
 
   @Get()
   list(
@@ -238,6 +239,15 @@ export class SalesTransactionsController {
   @Post(':id/unlock-request')
   requestUnlock(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.svc.requestUnlock(id, user.sub);
+  }
+
+  /** This order's change history, newest first. Declared before :id so the path is not swallowed. */
+  @Get(':id/activity')
+  activity(@Param('id') id: string, @Query('page') page?: string, @Query('pageSize') pageSize?: string) {
+    return this.activityLog.forEntity('salesTransaction', id, {
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
   }
 
   @Get(':id')

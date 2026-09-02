@@ -1992,6 +1992,8 @@ export interface ProductSalesMetrics {
 }
 
 export const salesTransactionsApi = {
+  activity: (id: string, params: { page?: number; pageSize?: number } = {}) =>
+    api.get<{ items: ActivityEntry[]; total: number; page: number; pageSize: number }>(`/sales-transactions/${id}/activity`, { params }).then((r) => r.data),
   productMetrics: (sku: string, range?: { from?: string | null; to?: string | null }) =>
     api
       .get<ProductSalesMetrics>('/sales-transactions/product-metrics', {
