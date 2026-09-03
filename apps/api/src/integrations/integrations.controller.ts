@@ -53,10 +53,19 @@ export class IntegrationsController {
     return this.svc.setSyncSettings(dto, user.sub);
   }
 
-  /** Enable/disable daily auto-sync across a scope (all, a channel family, or explicit ids). */
+  /**
+   * Enable/disable daily auto-sync across a scope (all, a channel family, or explicit ids).
+   *
+   * Scoped to the visible companies, exactly like the list above. Without that, "all" meant every
+   * connection on the platform, so switching auto-sync on while looking at one company switched it
+   * on for the other as well.
+   */
   @Post('bulk/auto-sync')
-  bulkSetAutoSync(@Body() dto: { ids?: string[]; channelType?: string; all?: boolean; enabled: boolean }) {
-    return this.svc.bulkSetAutoSync({ ids: dto.ids, channelType: dto.channelType, all: dto.all }, dto.enabled !== false);
+  bulkSetAutoSync(
+    @Body() dto: { ids?: string[]; channelType?: string; all?: boolean; enabled: boolean },
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    return this.svc.bulkSetAutoSync({ ids: dto.ids, channelType: dto.channelType, all: dto.all }, dto.enabled !== false, companyIds);
   }
 
   @Get()
