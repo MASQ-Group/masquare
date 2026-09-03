@@ -215,10 +215,24 @@ export class ShipmentsService {
       // Pending = not yet marked fully shipped. An order can go out in several shipments, so
       // recording one does NOT complete it — it stays here (as 'partial') until the operator
       // ticks "fully shipped", which is what lets you come back and add the next one.
-      // Cancelled orders need no fulfilment; FBA is fulfilled by the channel.
+      // FBA is fulfilled by the channel, so it never needs us.
       fulfilmentStatus: { notIn: ['shipped', 'cancelled'] },
-      resolution: { not: 'cancelled' },
       fulfilmentType: { not: 'FBA' },
+      // A resolution means the order's story has moved past dispatch: cancelled needs no
+      // shipment, returned already had one and came back. Neither can be shipped, and a worklist
+      // is only worth reading if everything on it can be acted on.
+      resolution: { notIn: ['cancelled', 'returned'] },
+      // The marketplace is the record of whether goods left. Where it says shipped and we hold no
+      // shipment of our own, what we have is a bookkeeping gap rather than work — listing it here
+      // invites someone to ship an order the buyer was already told had gone.
+      //
+      // Nested under AND for two reasons. `not: 'shipped'` alone is not null-safe, and local sales
+      // carry no channel status at all, so SQL would silently drop every one of them. And a second
+      // top-level OR would overwrite the search filter's, which is a collision the type system
+      // does not catch.
+      AND: [
+        { OR: [{ channelShipmentStatus: null }, { channelShipmentStatus: { not: 'shipped' } }] },
+      ],
       ...(query.companyIds ? { companyId: { in: query.companyIds } } : query.companyId ? { companyId: query.companyId } : {}),
       ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
       // Local = our own delivery/pickup (channel.kind 'local'); channel = everything else.
