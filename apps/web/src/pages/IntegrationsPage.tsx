@@ -17,6 +17,7 @@ import { BackfillModal } from '../components/integrations/BackfillModal';
 import { GroupBackfillModal } from '../components/integrations/GroupBackfillModal';
 import { ChannelLogoTile } from '../components/integrations/ChannelLogoTile';
 import { Flag } from '../components/common/Flag';
+import { useAuth } from '../lib/auth';
 
 const fmtDateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
@@ -112,6 +113,9 @@ function groupByFamily(rows: ChannelIntegration[]): [string, ChannelIntegration[
 }
 
 export function IntegrationsPage() {
+  // Names the company the toggle actually affects. The list is company-scoped, so "all"
+  // means all of THIS company's connections — worth saying, since it used to mean both.
+  const { activeCompany } = useAuth();
   const qc = useQueryClient();
   const [modal, setModal] = useState<ModalTarget>(undefined);
   const [mapVerify, setMapVerify] = useState<ChannelIntegration | undefined>();
@@ -340,7 +344,7 @@ export function IntegrationsPage() {
                 </div>
                 <div className="h-6 w-px bg-n-200 max-md:hidden" />
                 <div className="flex items-center gap-2.5">
-                  <span className="text-[13px] font-semibold text-n-800">Auto-sync all connections</span>
+                  <span className="text-[13px] font-semibold text-n-800">Auto-sync {activeCompany ? `all ${activeCompany.officialName} connections` : 'all connections'}</span>
                   <button
                     role="switch"
                     aria-checked={allOn}

@@ -2990,12 +2990,26 @@ export class IntegrationsService implements OnModuleInit {
     return { channelSyncTime: row.channelSyncTime };
   }
 
-  /** Enable/disable daily auto-sync across a scope (all, a channel family, or explicit ids). */
-  async bulkSetAutoSync(scope: { ids?: string[]; channelType?: string; all?: boolean }, enabled: boolean): Promise<{ updated: number }> {
+  /**
+   * Enable/disable daily auto-sync across a scope (all, a channel family, or explicit ids).
+   *
+   * `companyIds` is not optional in practice: every other read on this page is company-scoped, so a
+   * write that is not silently reaches the other company's connections. "All" has to mean all of
+   * the ones you are looking at — otherwise switching auto-sync on for maSquare quietly switches it
+   * on for Multitrade too, and the only clue is a counter that says 35 when the page shows 20.
+   */
+  async bulkSetAutoSync(
+    scope: { ids?: string[]; channelType?: string; all?: boolean },
+    enabled: boolean,
+    companyIds?: string[],
+  ): Promise<{ updated: number }> {
     const where: any = { deletedAt: null };
     if (scope.ids?.length) where.id = { in: scope.ids };
     else if (scope.channelType) where.channelType = scope.channelType;
     else if (!scope.all) throw new BadRequestException('Specify ids, channelType, or all.');
+    // An empty list means the caller can see no company, which must select nothing rather than
+    // fall through to everything — the difference between "no companies" and "no filter".
+    if (companyIds) where.targetCompanyId = { in: companyIds };
     const res = await this.prisma.channelIntegration.updateMany({ where, data: { autoSyncEnabled: enabled } });
     return { updated: res.count };
   }
