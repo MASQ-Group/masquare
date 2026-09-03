@@ -49,9 +49,9 @@ export class ShipmentsController {
     return this.svc.pending(query);
   }
 
-  /** Orders the marketplace despatched that we never recorded a shipment for. */
-  @Get('despatched-elsewhere')
-  despatchedElsewhere(
+  /** Orders the marketplace dispatched that we never recorded a shipment for. */
+  @Get('dispatched-elsewhere')
+  dispatchedElsewhere(
     @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('salesChannelId') salesChannelId?: string,
@@ -61,7 +61,7 @@ export class ShipmentsController {
     @Query('pageSize') pageSize?: string,
   ) {
     const query: ShipmentQuery = { q, companyIds, salesChannelId, channelKind, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
-    return this.svc.despatchedElsewhere(query);
+    return this.svc.dispatchedElsewhere(query);
   }
 
   /**
@@ -71,9 +71,9 @@ export class ShipmentsController {
    * Explicit ids rather than "everything matching the filter", so what gets closed is what the
    * operator had on screen when they decided.
    */
-  @Post('accept-channel-despatch')
-  acceptChannelDespatch(@Body() dto: { transactionIds: string[] }, @VisibleCompanies() companyIds: string[]) {
-    return this.svc.acceptChannelDespatch(dto?.transactionIds ?? [], companyIds);
+  @Post('accept-channel-dispatch')
+  acceptChannelDispatch(@Body() dto: { transactionIds: string[] }, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.acceptChannelDispatch(dto?.transactionIds ?? [], companyIds);
   }
 
   @Get('export')
