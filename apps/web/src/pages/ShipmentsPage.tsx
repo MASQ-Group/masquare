@@ -17,7 +17,7 @@ import { SHIPMENT_HEADER, shipmentRowToCells } from '../components/shipments/shi
 import { FbaActualCostModal } from '../components/fba-shipments/FbaActualCostModal';
 import { PageHeader } from '../components/common/PageHeader';
 
-type Tab = 'pending' | 'all' | 'fba';
+type Tab = 'pending' | 'despatched' | 'all' | 'fba';
 
 const eur = (v: number | null | undefined) => (v != null ? `€${v.toFixed(2)}` : '—');
 
@@ -90,6 +90,12 @@ export function ShipmentsPage() {
   const pendingQ = useQuery({
     queryKey: ['shipments-pending', pendingParams], queryFn: () => shipmentsApi.pending(pendingParams), enabled: tab === 'pending',
   });
+  // Same params and same row shape as pending — it is the same query with one clause flipped.
+  const despatchedQ = useQuery({
+    queryKey: ['shipments-despatched', pendingParams],
+    queryFn: () => shipmentsApi.despatchedElsewhere(pendingParams),
+    enabled: tab === 'despatched',
+  });
   const allParams = { ...commonParams, type: filterType || undefined, sortDir: allSort, includeFba: true };
   const allQ = useQuery({
     queryKey: ['shipments-all', allParams], queryFn: () => shipmentsApi.list(allParams), enabled: tab === 'all',
@@ -126,6 +132,20 @@ export function ShipmentsPage() {
     onSuccess: () => { toast.success('Marked fully shipped'); setSelected(new Set()); invalidate(); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not update'),
   });
+  // Closes the books on orders the channel shipped. Deliberately does NOT create a shipment:
+  // a fabricated carrier, date and cost would look authoritative while being nobody's
+  // measurement, and profit already falls back to the estimate honestly.
+  const acceptDespatch = useMutation({
+    mutationFn: (ids: string[]) => shipmentsApi.acceptChannelDespatch(ids),
+    onSuccess: (r) => {
+      toast.success(`${r.closed} order${r.closed === 1 ? '' : 's'} closed at the estimated cost${r.skipped ? `, ${r.skipped} skipped` : ''}`);
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ['shipments-despatched'] });
+      qc.invalidateQueries({ queryKey: ['shipments-pending'] });
+    },
+    onError: () => toast.error('Could not close those orders'),
+  });
+
   const bulkFulfil = useMutation({
     mutationFn: async (ids: string[]) => { for (const id of ids) await shipmentsApi.fulfilLocal(id); return ids.length; },
     onSuccess: (n) => { toast.success(`Marked ${n} as fulfilled`); setSelected(new Set()); invalidate(); },
@@ -139,8 +159,8 @@ export function ShipmentsPage() {
     qc.invalidateQueries({ queryKey: ['fba-shipments'] });
   };
 
-  const data = tab === 'pending' ? pendingQ.data : tab === 'all' ? allQ.data : fbaQ.data;
-  const isLoading = tab === 'pending' ? pendingQ.isLoading : tab === 'all' ? allQ.isLoading : fbaQ.isLoading;
+  const data = tab === 'pending' ? pendingQ.data : tab === 'despatched' ? despatchedQ.data : tab === 'all' ? allQ.data : fbaQ.data;
+  const isLoading = tab === 'pending' ? pendingQ.isLoading : tab === 'despatched' ? despatchedQ.isLoading : tab === 'all' ? allQ.isLoading : fbaQ.isLoading;
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
@@ -166,7 +186,13 @@ export function ShipmentsPage() {
   );
   const td = 'border-b border-n-100 px-4 py-2.5 text-[13px] text-n-700';
 
-  const pendingRows = useMemo(() => (tab === 'pending' ? (pendingQ.data?.items ?? []) : []), [tab, pendingQ.data]);
+  // Both tabs render through the same table: the rows are identical, and on the despatched tab
+  // clicking one still records a shipment — capturing the real cost is one of the two valid
+  // answers there, the other being to accept the estimate in bulk.
+  const pendingRows = useMemo(
+    () => (tab === 'pending' ? (pendingQ.data?.items ?? []) : tab === 'despatched' ? (despatchedQ.data?.items ?? []) : []),
+    [tab, pendingQ.data, despatchedQ.data],
+  );
   const fulfilLabel = (r: PendingShipment) => (r.deliveryMethod === 'pickup' ? 'Mark picked up' : 'Mark delivered');
   const localRows = useMemo(() => pendingRows.filter((r) => r.isLocal), [pendingRows]);
   const selectedLocalIds = useMemo(() => localRows.filter((r) => selected.has(r.id)).map((r) => r.id), [localRows, selected]);
@@ -185,6 +211,7 @@ export function ShipmentsPage() {
         info="Record actual shipping cost and duty per transaction. Actuals replace the calculated shipping estimate and update profit."
         tabs={[
           { key: 'pending', label: 'Pending fulfilment', count: (pendingQ.data?.total ?? 0) > 0 ? pendingQ.data?.total : undefined, attention: true },
+          { key: 'despatched', label: 'Despatched elsewhere', count: (despatchedQ.data?.total ?? 0) > 0 ? despatchedQ.data?.total : undefined },
           { key: 'fba', label: 'FBA shipments', count: (fbaQ.data?.total ?? 0) > 0 ? fbaQ.data?.total : undefined, attention: true },
           { key: 'all', label: 'All shipments' },
         ]}
@@ -206,8 +233,21 @@ export function ShipmentsPage() {
             {tab === 'all' && (
               <Select dense className="w-36" value={filterType} onChange={(v) => { setFilterType(v); setPage(1); }} options={[{ value: '', label: 'All types' }, { value: 'outbound', label: 'Outbound' }, { value: 'inbound', label: 'Inbound' }, { value: 'fba', label: 'FBA inbound' }]} />
             )}
-            {tab === 'pending' && (
+            {(tab === 'pending' || tab === 'despatched') && (
               <Select dense className="w-36" value={pendingKind} onChange={(v) => { setPendingKind(v as '' | 'local' | 'channel'); setPage(1); }} options={[{ value: '', label: 'All sources' }, { value: 'local', label: 'Local only' }, { value: 'channel', label: 'Channel only' }]} />
+            )}
+            {tab === 'despatched' && selected.size > 0 && (
+              <>
+                <button
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-semibold text-white hover:bg-primary-hover disabled:opacity-50"
+                  disabled={acceptDespatch.isPending}
+                  onClick={() => acceptDespatch.mutate([...selected])}
+                  title="Marks them fulfilled at the estimated shipping cost. No shipment is invented — there is no carrier, date or actual cost to record."
+                >
+                  <Truck size={15} /> Accept {selected.size} at estimated cost
+                </button>
+                <button className="text-[12.5px] font-medium text-teal-700 hover:underline" onClick={() => setSelected(new Set())}>Clear</button>
+              </>
             )}
             {tab === 'pending' && selected.size > 0 && (
               <>
@@ -462,6 +502,16 @@ export function ShipmentsPage() {
         onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
       />
 
+      {tab === 'despatched' && pendingRows.length > 0 && (
+        <p className="mt-3 inline-flex items-start gap-1.5 text-[12px] text-n-400">
+          <ArrowRight size={13} className="mt-[3px] shrink-0" />
+          <span>
+            The marketplace shipped these; we hold no shipment for them, so profit uses the estimated
+            shipping cost. Click a row to record what it actually cost, or select and accept the estimate
+            to close them out.
+          </span>
+        </p>
+      )}
       {tab === 'pending' && pendingRows.length > 0 && (
         <p className="mt-3 inline-flex items-center gap-1.5 text-[12px] text-n-400">
           <ArrowRight size={13} /> Channel orders: click a row to record a shipment — untick “fully shipped” if more will follow, and the order stays here so you can add the next one. Local sales: mark picked up / delivered in one click.

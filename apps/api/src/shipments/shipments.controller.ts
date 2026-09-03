@@ -49,6 +49,33 @@ export class ShipmentsController {
     return this.svc.pending(query);
   }
 
+  /** Orders the marketplace despatched that we never recorded a shipment for. */
+  @Get('despatched-elsewhere')
+  despatchedElsewhere(
+    @VisibleCompanies() companyIds: string[],
+    @Query('q') q?: string,
+    @Query('salesChannelId') salesChannelId?: string,
+    @Query('channelKind') channelKind?: 'local' | 'channel',
+    @Query('sortDir') sortDir?: 'asc' | 'desc',
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const query: ShipmentQuery = { q, companyIds, salesChannelId, channelKind, sortDir, page: page ? Number(page) : undefined, pageSize: pageSize ? Number(pageSize) : undefined };
+    return this.svc.despatchedElsewhere(query);
+  }
+
+  /**
+   * Close out orders the channel shipped, accepting the estimated shipping cost.
+   *
+   * Bulk, because there are years of them and a backlog cleared one row at a time stays a backlog.
+   * Explicit ids rather than "everything matching the filter", so what gets closed is what the
+   * operator had on screen when they decided.
+   */
+  @Post('accept-channel-despatch')
+  acceptChannelDespatch(@Body() dto: { transactionIds: string[] }, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.acceptChannelDespatch(dto?.transactionIds ?? [], companyIds);
+  }
+
   @Get('export')
   exportRows(
     @VisibleCompanies() companyIds: string[],

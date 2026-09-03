@@ -207,32 +207,35 @@ export class ShipmentsService {
   }
 
   /** Fulfilment worklist: transactions still awaiting an outbound shipment. */
-  async pending(query: ShipmentQuery) {
-    const page = Math.max(1, Number(query.page) || 1);
-    const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
-    const where: Prisma.SalesTransactionWhereInput = {
+  /**
+   * Orders awaiting despatch, and orders the channel despatched without us.
+   *
+   * One query with one clause flipped, rather than two that drift. Everything else — the company
+   * scope, the channel-kind filter, the search, the shape of a row — is identical, and the moment
+   * they are written twice they start disagreeing about what an order in flight looks like.
+   */
+  private pendingWhere(query: ShipmentQuery, mode: 'awaiting' | 'despatched-elsewhere'): Prisma.SalesTransactionWhereInput {
+    // The one difference: awaiting = the channel has NOT despatched it (or has no opinion, as with
+    // local sales); despatched-elsewhere = it has, and we hold no shipment of our own.
+    const channelClause: Prisma.SalesTransactionWhereInput =
+      mode === 'awaiting'
+        ? { OR: [{ channelShipmentStatus: null }, { channelShipmentStatus: { not: 'shipped' } }] }
+        : { channelShipmentStatus: 'shipped', shipments: { none: { deletedAt: null } } };
+    return {
       deletedAt: null,
-      // Pending = not yet marked fully shipped. An order can go out in several shipments, so
-      // recording one does NOT complete it — it stays here (as 'partial') until the operator
-      // ticks "fully shipped", which is what lets you come back and add the next one.
+      // Not yet marked fully shipped. An order can go out in several shipments, so recording one
+      // does NOT complete it — it stays here (as 'partial') until the operator ticks "fully
+      // shipped", which is what lets you come back and add the next one.
       // FBA is fulfilled by the channel, so it never needs us.
       fulfilmentStatus: { notIn: ['shipped', 'cancelled'] },
       fulfilmentType: { not: 'FBA' },
-      // A resolution means the order's story has moved past dispatch: cancelled needs no
-      // shipment, returned already had one and came back. Neither can be shipped, and a worklist
-      // is only worth reading if everything on it can be acted on.
+      // A resolution means the order's story has moved past despatch: cancelled needs no shipment,
+      // returned already had one and came back. Neither can be shipped, and a worklist is only
+      // worth reading if everything on it can be acted on.
       resolution: { notIn: ['cancelled', 'returned'] },
-      // The marketplace is the record of whether goods left. Where it says shipped and we hold no
-      // shipment of our own, what we have is a bookkeeping gap rather than work — listing it here
-      // invites someone to ship an order the buyer was already told had gone.
-      //
-      // Nested under AND for two reasons. `not: 'shipped'` alone is not null-safe, and local sales
-      // carry no channel status at all, so SQL would silently drop every one of them. And a second
-      // top-level OR would overwrite the search filter's, which is a collision the type system
-      // does not catch.
-      AND: [
-        { OR: [{ channelShipmentStatus: null }, { channelShipmentStatus: { not: 'shipped' } }] },
-      ],
+      // Nested under AND, not spread at the top level: the search filter below already uses OR,
+      // and a second top-level OR would overwrite it — a collision the type system does not catch.
+      AND: [channelClause],
       ...(query.companyIds ? { companyId: { in: query.companyIds } } : query.companyId ? { companyId: query.companyId } : {}),
       ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
       // Local = our own delivery/pickup (channel.kind 'local'); channel = everything else.
@@ -247,6 +250,59 @@ export class ShipmentsService {
           }
         : {}),
     };
+  }
+
+  async pending(query: ShipmentQuery) {
+    return this.pendingList(query, 'awaiting');
+  }
+
+  /**
+   * Orders the marketplace shipped that we never recorded.
+   *
+   * Not work in the despatch sense — the goods have gone — but a gap in the books: no carrier, no
+   * tracking, and no actual shipping cost, so profit falls back to an estimate with nothing on
+   * screen to say so. Kept as its own list rather than left in Pending fulfilment, where it read
+   * as "ship this" and made the real queue unusable.
+   */
+  async despatchedElsewhere(query: ShipmentQuery) {
+    return this.pendingList(query, 'despatched-elsewhere');
+  }
+
+  /**
+   * Accept that the channel shipped these, and stop asking about them.
+   *
+   * Marks them fulfilled without inventing a shipment. Recording one would put a made-up carrier,
+   * date and cost into the books, which is worse than an honest gap: profit already falls back to
+   * the estimated shipping cost, and a fabricated actual would look authoritative while being
+   * nobody's measurement.
+   *
+   * Re-scoped to the caller's companies and re-checked against the same conditions the list uses,
+   * so an id that has since been shipped, cancelled or refunded cannot be closed by a stale page.
+   */
+  async acceptChannelDespatch(transactionIds: string[], companyIds?: string[]): Promise<{ closed: number; skipped: number }> {
+    const ids = [...new Set((transactionIds ?? []).filter(Boolean))];
+    if (ids.length === 0) return { closed: 0, skipped: 0 };
+
+    const eligible = await this.prisma.salesTransaction.findMany({
+      where: {
+        ...this.pendingWhere({ companyIds }, 'despatched-elsewhere'),
+        id: { in: ids },
+      },
+      select: { id: true },
+    });
+    if (eligible.length === 0) return { closed: 0, skipped: ids.length };
+
+    const res = await this.prisma.salesTransaction.updateMany({
+      where: { id: { in: eligible.map((e) => e.id) } },
+      data: { fulfilmentStatus: 'shipped' },
+    });
+    return { closed: res.count, skipped: ids.length - res.count };
+  }
+
+  private async pendingList(query: ShipmentQuery, mode: 'awaiting' | 'despatched-elsewhere') {
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
+    const where = this.pendingWhere(query, mode);
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.salesTransaction.count({ where }),
       this.prisma.salesTransaction.findMany({
