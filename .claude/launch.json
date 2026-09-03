@@ -5,7 +5,7 @@
       "name": "api",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "start:dev", "--workspace", "apps/api"],
-      "port": 3000
+      "port": 3200
     },
     {
       "name": "web",
