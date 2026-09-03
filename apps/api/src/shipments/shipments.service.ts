@@ -208,15 +208,15 @@ export class ShipmentsService {
 
   /** Fulfilment worklist: transactions still awaiting an outbound shipment. */
   /**
-   * Orders awaiting despatch, and orders the channel despatched without us.
+   * Orders awaiting dispatch, and orders the channel dispatched without us.
    *
    * One query with one clause flipped, rather than two that drift. Everything else — the company
    * scope, the channel-kind filter, the search, the shape of a row — is identical, and the moment
    * they are written twice they start disagreeing about what an order in flight looks like.
    */
-  private pendingWhere(query: ShipmentQuery, mode: 'awaiting' | 'despatched-elsewhere'): Prisma.SalesTransactionWhereInput {
-    // The one difference: awaiting = the channel has NOT despatched it (or has no opinion, as with
-    // local sales); despatched-elsewhere = it has, and we hold no shipment of our own.
+  private pendingWhere(query: ShipmentQuery, mode: 'awaiting' | 'dispatched-elsewhere'): Prisma.SalesTransactionWhereInput {
+    // The one difference: awaiting = the channel has NOT dispatched it (or has no opinion, as with
+    // local sales); dispatched-elsewhere = it has, and we hold no shipment of our own.
     const channelClause: Prisma.SalesTransactionWhereInput =
       mode === 'awaiting'
         ? { OR: [{ channelShipmentStatus: null }, { channelShipmentStatus: { not: 'shipped' } }] }
@@ -229,7 +229,7 @@ export class ShipmentsService {
       // FBA is fulfilled by the channel, so it never needs us.
       fulfilmentStatus: { notIn: ['shipped', 'cancelled'] },
       fulfilmentType: { not: 'FBA' },
-      // A resolution means the order's story has moved past despatch: cancelled needs no shipment,
+      // A resolution means the order's story has moved past dispatch: cancelled needs no shipment,
       // returned already had one and came back. Neither can be shipped, and a worklist is only
       // worth reading if everything on it can be acted on.
       resolution: { notIn: ['cancelled', 'returned'] },
@@ -259,13 +259,13 @@ export class ShipmentsService {
   /**
    * Orders the marketplace shipped that we never recorded.
    *
-   * Not work in the despatch sense — the goods have gone — but a gap in the books: no carrier, no
+   * Not work in the dispatch sense — the goods have gone — but a gap in the books: no carrier, no
    * tracking, and no actual shipping cost, so profit falls back to an estimate with nothing on
    * screen to say so. Kept as its own list rather than left in Pending fulfilment, where it read
    * as "ship this" and made the real queue unusable.
    */
-  async despatchedElsewhere(query: ShipmentQuery) {
-    return this.pendingList(query, 'despatched-elsewhere');
+  async dispatchedElsewhere(query: ShipmentQuery) {
+    return this.pendingList(query, 'dispatched-elsewhere');
   }
 
   /**
@@ -279,13 +279,13 @@ export class ShipmentsService {
    * Re-scoped to the caller's companies and re-checked against the same conditions the list uses,
    * so an id that has since been shipped, cancelled or refunded cannot be closed by a stale page.
    */
-  async acceptChannelDespatch(transactionIds: string[], companyIds?: string[]): Promise<{ closed: number; skipped: number }> {
+  async acceptChannelDispatch(transactionIds: string[], companyIds?: string[]): Promise<{ closed: number; skipped: number }> {
     const ids = [...new Set((transactionIds ?? []).filter(Boolean))];
     if (ids.length === 0) return { closed: 0, skipped: 0 };
 
     const eligible = await this.prisma.salesTransaction.findMany({
       where: {
-        ...this.pendingWhere({ companyIds }, 'despatched-elsewhere'),
+        ...this.pendingWhere({ companyIds }, 'dispatched-elsewhere'),
         id: { in: ids },
       },
       select: { id: true },
@@ -299,7 +299,7 @@ export class ShipmentsService {
     return { closed: res.count, skipped: ids.length - res.count };
   }
 
-  private async pendingList(query: ShipmentQuery, mode: 'awaiting' | 'despatched-elsewhere') {
+  private async pendingList(query: ShipmentQuery, mode: 'awaiting' | 'dispatched-elsewhere') {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
     const where = this.pendingWhere(query, mode);

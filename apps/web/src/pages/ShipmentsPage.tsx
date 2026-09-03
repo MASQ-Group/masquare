@@ -17,7 +17,7 @@ import { SHIPMENT_HEADER, shipmentRowToCells } from '../components/shipments/shi
 import { FbaActualCostModal } from '../components/fba-shipments/FbaActualCostModal';
 import { PageHeader } from '../components/common/PageHeader';
 
-type Tab = 'pending' | 'despatched' | 'all' | 'fba';
+type Tab = 'pending' | 'dispatched' | 'all' | 'fba';
 
 const eur = (v: number | null | undefined) => (v != null ? `€${v.toFixed(2)}` : '—');
 
@@ -32,7 +32,11 @@ interface ModalCtx {
 export function ShipmentsPage() {
   const qc = useQueryClient();
   const { activeCompanyId } = useAuth();
-  const [tab, setTab] = usePersistentState<Tab>('shipments.tab', 'pending');
+  const [storedTab, setTab] = usePersistentState<Tab>('shipments.tab', 'pending');
+  // 'despatched' was persisted by an earlier build under the old spelling. Restoring a key no
+  // branch matches renders an empty page with no tab selected, so an unknown value falls back
+  // rather than being trusted.
+  const tab: Tab = (['pending', 'dispatched', 'all', 'fba'] as const).includes(storedTab as any) ? storedTab : 'pending';
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
   const [filterChannel, setFilterChannel] = usePersistentState('shipments.filterChannel', '');
@@ -91,10 +95,10 @@ export function ShipmentsPage() {
     queryKey: ['shipments-pending', pendingParams], queryFn: () => shipmentsApi.pending(pendingParams), enabled: tab === 'pending',
   });
   // Same params and same row shape as pending — it is the same query with one clause flipped.
-  const despatchedQ = useQuery({
-    queryKey: ['shipments-despatched', pendingParams],
-    queryFn: () => shipmentsApi.despatchedElsewhere(pendingParams),
-    enabled: tab === 'despatched',
+  const dispatchedQ = useQuery({
+    queryKey: ['shipments-dispatched', pendingParams],
+    queryFn: () => shipmentsApi.dispatchedElsewhere(pendingParams),
+    enabled: tab === 'dispatched',
   });
   const allParams = { ...commonParams, type: filterType || undefined, sortDir: allSort, includeFba: true };
   const allQ = useQuery({
@@ -135,12 +139,12 @@ export function ShipmentsPage() {
   // Closes the books on orders the channel shipped. Deliberately does NOT create a shipment:
   // a fabricated carrier, date and cost would look authoritative while being nobody's
   // measurement, and profit already falls back to the estimate honestly.
-  const acceptDespatch = useMutation({
-    mutationFn: (ids: string[]) => shipmentsApi.acceptChannelDespatch(ids),
+  const acceptDispatch = useMutation({
+    mutationFn: (ids: string[]) => shipmentsApi.acceptChannelDispatch(ids),
     onSuccess: (r) => {
       toast.success(`${r.closed} order${r.closed === 1 ? '' : 's'} closed at the estimated cost${r.skipped ? `, ${r.skipped} skipped` : ''}`);
       setSelected(new Set());
-      qc.invalidateQueries({ queryKey: ['shipments-despatched'] });
+      qc.invalidateQueries({ queryKey: ['shipments-dispatched'] });
       qc.invalidateQueries({ queryKey: ['shipments-pending'] });
     },
     onError: () => toast.error('Could not close those orders'),
@@ -159,8 +163,8 @@ export function ShipmentsPage() {
     qc.invalidateQueries({ queryKey: ['fba-shipments'] });
   };
 
-  const data = tab === 'pending' ? pendingQ.data : tab === 'despatched' ? despatchedQ.data : tab === 'all' ? allQ.data : fbaQ.data;
-  const isLoading = tab === 'pending' ? pendingQ.isLoading : tab === 'despatched' ? despatchedQ.isLoading : tab === 'all' ? allQ.isLoading : fbaQ.isLoading;
+  const data = tab === 'pending' ? pendingQ.data : tab === 'dispatched' ? dispatchedQ.data : tab === 'all' ? allQ.data : fbaQ.data;
+  const isLoading = tab === 'pending' ? pendingQ.isLoading : tab === 'dispatched' ? dispatchedQ.isLoading : tab === 'all' ? allQ.isLoading : fbaQ.isLoading;
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
@@ -186,12 +190,12 @@ export function ShipmentsPage() {
   );
   const td = 'border-b border-n-100 px-4 py-2.5 text-[13px] text-n-700';
 
-  // Both tabs render through the same table: the rows are identical, and on the despatched tab
+  // Both tabs render through the same table: the rows are identical, and on the dispatched tab
   // clicking one still records a shipment — capturing the real cost is one of the two valid
   // answers there, the other being to accept the estimate in bulk.
   const pendingRows = useMemo(
-    () => (tab === 'pending' ? (pendingQ.data?.items ?? []) : tab === 'despatched' ? (despatchedQ.data?.items ?? []) : []),
-    [tab, pendingQ.data, despatchedQ.data],
+    () => (tab === 'pending' ? (pendingQ.data?.items ?? []) : tab === 'dispatched' ? (dispatchedQ.data?.items ?? []) : []),
+    [tab, pendingQ.data, dispatchedQ.data],
   );
   const fulfilLabel = (r: PendingShipment) => (r.deliveryMethod === 'pickup' ? 'Mark picked up' : 'Mark delivered');
   const localRows = useMemo(() => pendingRows.filter((r) => r.isLocal), [pendingRows]);
@@ -211,13 +215,18 @@ export function ShipmentsPage() {
         info="Record actual shipping cost and duty per transaction. Actuals replace the calculated shipping estimate and update profit."
         tabs={[
           { key: 'pending', label: 'Pending fulfilment', count: (pendingQ.data?.total ?? 0) > 0 ? pendingQ.data?.total : undefined, attention: true },
-          { key: 'despatched', label: 'Despatched elsewhere', count: (despatchedQ.data?.total ?? 0) > 0 ? despatchedQ.data?.total : undefined },
+          { key: 'dispatched', label: 'Dispatched elsewhere', count: (dispatchedQ.data?.total ?? 0) > 0 ? dispatchedQ.data?.total : undefined },
           { key: 'fba', label: 'FBA shipments', count: (fbaQ.data?.total ?? 0) > 0 ? fbaQ.data?.total : undefined, attention: true },
           { key: 'all', label: 'All shipments' },
         ]}
         activeTab={tab}
-        onTabChange={(k) => setTab(k as Tab)}
-        actions={tab !== 'fba' ? (
+        // Paging already resets via the effect on `tab`; this clears the selection, which did not.
+        // The bulk actions differ per tab — accept-at-estimate on one, combine on another — so a
+        // selection carried across is a way to act on rows you are no longer looking at.
+        onTabChange={(k) => { setTab(k as Tab); setSelected(new Set()); }}
+        // Export is hidden on the dispatched tab: its only scopes are the shipments log and the
+        // pending template, and neither describes these orders. A wrong export is worse than none.
+        actions={tab !== 'fba' && tab !== 'dispatched' ? (
           <>
             <button className="hbtn" disabled={exporting} onClick={onExport}><Download size={15} className="text-n-500" /> {exporting ? 'Exporting…' : 'Export'}</button>
             <button className="hbtn" onClick={() => setImportOpen(true)}><Upload size={15} className="text-n-500" /> Import</button>
@@ -233,15 +242,15 @@ export function ShipmentsPage() {
             {tab === 'all' && (
               <Select dense className="w-36" value={filterType} onChange={(v) => { setFilterType(v); setPage(1); }} options={[{ value: '', label: 'All types' }, { value: 'outbound', label: 'Outbound' }, { value: 'inbound', label: 'Inbound' }, { value: 'fba', label: 'FBA inbound' }]} />
             )}
-            {(tab === 'pending' || tab === 'despatched') && (
+            {(tab === 'pending' || tab === 'dispatched') && (
               <Select dense className="w-36" value={pendingKind} onChange={(v) => { setPendingKind(v as '' | 'local' | 'channel'); setPage(1); }} options={[{ value: '', label: 'All sources' }, { value: 'local', label: 'Local only' }, { value: 'channel', label: 'Channel only' }]} />
             )}
-            {tab === 'despatched' && selected.size > 0 && (
+            {tab === 'dispatched' && selected.size > 0 && (
               <>
                 <button
                   className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-semibold text-white hover:bg-primary-hover disabled:opacity-50"
-                  disabled={acceptDespatch.isPending}
-                  onClick={() => acceptDespatch.mutate([...selected])}
+                  disabled={acceptDispatch.isPending}
+                  onClick={() => acceptDispatch.mutate([...selected])}
                   title="Marks them fulfilled at the estimated shipping cost. No shipment is invented — there is no carrier, date or actual cost to record."
                 >
                   <Truck size={15} /> Accept {selected.size} at estimated cost
@@ -269,7 +278,11 @@ export function ShipmentsPage() {
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
-          {tab === 'pending' ? (
+          {/* Both tabs are order worklists with identical rows, so both render this table. Gating
+              it on 'pending' alone left the dispatched tab falling through to the shipments table
+              below, which reads a different row set entirely — so the count came from the right
+              query while the table showed none of it. */}
+          {tab === 'pending' || tab === 'dispatched' ? (
             <table className="w-full min-w-[1000px] border-collapse">
               <thead>
                 <tr>
@@ -296,7 +309,13 @@ export function ShipmentsPage() {
               </thead>
               <tbody>
                 {isLoading && <tr><td colSpan={10} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
-                {!isLoading && pendingRows.length === 0 && <tr><td colSpan={10} className="px-4 py-12 text-center text-[13px] text-n-500">Nothing pending — every transaction has been shipped. 🎉</td></tr>}
+                {!isLoading && pendingRows.length === 0 && (
+                  <tr><td colSpan={10} className="px-4 py-12 text-center text-[13px] text-n-500">
+                    {tab === 'dispatched'
+                      ? 'Nothing here — every order the channels shipped has a shipment recorded against it.'
+                      : 'Nothing pending — every transaction has been shipped. 🎉'}
+                  </td></tr>
+                )}
                 {pendingRows.map((r) => (
                   <tr key={r.id} className={`hover:bg-teal-50 ${r.isLocal ? '' : 'cursor-pointer'}`} onClick={() => { if (!r.isLocal) openForPending(r); }}>
                     <td className="border-b border-n-100 px-4 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
@@ -466,7 +485,13 @@ export function ShipmentsPage() {
               </thead>
               <tbody>
                 {isLoading && <tr><td colSpan={9} className="px-4 py-10 text-center text-[13px] text-n-500">Loading…</td></tr>}
-                {!isLoading && fbaRows.length === 0 && <tr><td colSpan={9} className="px-4 py-12 text-center text-[13px] text-n-500">No FBA shipments. Create them in the FBA Shipments module.</td></tr>}
+                {!isLoading && fbaRows.length === 0 && (
+                  <tr><td colSpan={9} className="px-4 py-12 text-center text-[13px] text-n-500">
+                    {/* This tab is a worklist of shipments still needing a cost, so empty means settled,
+                        not missing. Saying only "no FBA shipments" reads as though they have gone. */}
+                    Nothing awaiting a cost. Confirmed FBA shipments live in <strong>All shipments</strong>; new ones are created in the FBA Shipments module.
+                  </td></tr>
+                )}
                 {fbaRows.map((s) => (
                   <tr key={s.id} className="cursor-pointer hover:bg-teal-50" onClick={() => setFbaActualFor(s)}>
                     <td className={`${td} mono`}>{formatDate(s.date)}</td>
@@ -502,7 +527,7 @@ export function ShipmentsPage() {
         onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
       />
 
-      {tab === 'despatched' && pendingRows.length > 0 && (
+      {tab === 'dispatched' && pendingRows.length > 0 && (
         <p className="mt-3 inline-flex items-start gap-1.5 text-[12px] text-n-400">
           <ArrowRight size={13} className="mt-[3px] shrink-0" />
           <span>
