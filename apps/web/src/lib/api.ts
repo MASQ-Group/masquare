@@ -1757,6 +1757,12 @@ export const shipmentsApi = {
     api.get<ShipmentListResponse>('/shipments', { params }).then((r) => r.data),
   pending: (params: { q?: string; companyId?: string; salesChannelId?: string; channelKind?: 'local' | 'channel'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<PendingListResponse>('/shipments/pending', { params }).then((r) => r.data),
+  /** Orders the marketplace despatched that we never recorded a shipment for. Same shape as pending. */
+  despatchedElsewhere: (params: { q?: string; companyId?: string; salesChannelId?: string; channelKind?: 'local' | 'channel'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
+    api.get<PendingListResponse>('/shipments/despatched-elsewhere', { params }).then((r) => r.data),
+  /** Close them out at the estimated cost, without inventing a shipment. */
+  acceptChannelDespatch: (transactionIds: string[]) =>
+    api.post<{ closed: number; skipped: number }>('/shipments/accept-channel-despatch', { transactionIds }).then((r) => r.data),
   forTransaction: (transactionId: string) => api.get<TransactionShipment[]>(`/shipments/transaction/${transactionId}`).then((r) => r.data),
   create: (body: any) => api.post<Shipment>('/shipments', body).then((r) => r.data),
   /** Several parcels sent together on one date — one row per parcel, each with its own
