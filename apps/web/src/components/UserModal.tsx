@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ModalShell, Select } from '@masquare/ui';
-import { companiesApi, modulesApi, usersApi, type User } from '../lib/api';
+import { accessApi, companiesApi, rolesApi, usersApi, type GrantSet, type User } from '../lib/api';
+import { AccessEditor } from './access/AccessEditor';
 
 interface Props {
   user: User | null; // null = create
@@ -21,7 +22,8 @@ export function UserModal({ user, onClose, onSaved }: Props) {
   const [busy, setBusy] = useState(false);
 
   const { data: companies = [] } = useQuery({ queryKey: ['companies'], queryFn: companiesApi.list });
-  const { data: modules = [] } = useQuery({ queryKey: ['modules'], queryFn: modulesApi.list });
+  const { data: catalogue } = useQuery({ queryKey: ['access', 'catalogue'], queryFn: accessApi.catalogue });
+  const { data: roles = [] } = useQuery({ queryKey: ['roles'], queryFn: rolesApi.list });
 
   const [form, setForm] = useState({
     fullName: user?.fullName ?? '',
@@ -32,8 +34,11 @@ export function UserModal({ user, onClose, onSaved }: Props) {
   });
   // On create, default to all-access (matches the API default).
   const [companyIds, setCompanyIds] = useState<string[]>(user?.companyIds ?? []);
-  const [moduleIds, setModuleIds] = useState<string[]>(user?.moduleIds ?? []);
   const [grantsTouched, setGrantsTouched] = useState(false);
+  const [roleId, setRoleId] = useState<string | null>(user?.role?.id ?? null);
+  const [overrides, setOverrides] = useState<GrantSet>(
+    user?.accessOverrides ?? { areas: {}, capabilities: {} },
+  );
 
   const set = (patch: Partial<typeof form>) => {
     setForm((f) => ({ ...f, ...patch }));
@@ -43,7 +48,9 @@ export function UserModal({ user, onClose, onSaved }: Props) {
   const isCreate = !user;
   // When creating, if the admin hasn't touched grants, leave them undefined => all-access.
   const effectiveCompanyIds = isCreate && !grantsTouched ? undefined : companyIds;
-  const effectiveModuleIds = isCreate && !grantsTouched ? undefined : moduleIds;
+  const role = roles.find((r) => r.id === roleId) ?? null;
+  const overrideCount =
+    Object.keys(overrides.areas ?? {}).length + Object.keys(overrides.capabilities ?? {}).length;
 
   const canSave = useMemo(() => {
     if (!form.fullName.trim() || !form.email.trim()) return false;
@@ -73,7 +80,8 @@ export function UserModal({ user, onClose, onSaved }: Props) {
       };
       if (form.password) body.password = form.password;
       if (effectiveCompanyIds !== undefined) body.companyIds = effectiveCompanyIds;
-      if (effectiveModuleIds !== undefined) body.moduleIds = effectiveModuleIds;
+      body.roleId = roleId;
+      body.accessOverrides = overrides;
 
       if (user) await usersApi.update(user.id, body);
       else await usersApi.create(body);
@@ -139,15 +147,11 @@ export function UserModal({ user, onClose, onSaved }: Props) {
         <div className="flex flex-col gap-5">
           {form.isAdmin ? (
             <p className="rounded-md border border-info-bd bg-info-bg px-3 py-2.5 text-[13px] text-info">
-              Admins implicitly hold every company and module grant. Toggle off “Platform admin” to set specific access.
+              A platform admin holds every area and every capability outright, whatever is set below.
+              Turn off “Platform admin” on the Details tab to give specific access instead.
             </p>
           ) : (
             <>
-              {isCreate && !grantsTouched && (
-                <p className="rounded-md border border-n-200 bg-n-50 px-3 py-2.5 text-[13px] text-n-600">
-                  New users default to <strong>all-access</strong>. Toggle any box to set access explicitly.
-                </p>
-              )}
               <Section title="Companies">
                 <div className="grid grid-cols-2 gap-2 max-[560px]:grid-cols-1">
                   {companies.map((c) => {
@@ -161,18 +165,40 @@ export function UserModal({ user, onClose, onSaved }: Props) {
                   })}
                 </div>
               </Section>
-              <Section title="Modules">
-                <div className="grid grid-cols-2 gap-2 max-[560px]:grid-cols-1">
-                  {modules.map((m) => {
-                    const on = isCreate && !grantsTouched ? true : moduleIds.includes(m.id);
-                    return (
-                      <label key={m.id} className="flex cursor-pointer items-center gap-2.5 rounded-md border border-n-200 px-3 py-2 hover:bg-n-50">
-                        <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={on} onChange={() => toggle(moduleIds.length || grantsTouched ? moduleIds : modules.map((x) => x.id), m.id, setModuleIds)} />
-                        <span className="truncate text-[13px] text-n-700">{m.name}</span>
-                      </label>
-                    );
-                  })}
-                </div>
+
+              <Section title="Role">
+                <Select
+                  value={roleId ?? ''}
+                  onChange={(v) => { setRoleId(v || null); setDirty(true); }}
+                  placeholder="— no role (only what is set below)"
+                  options={roles.map((r) => ({ value: r.id, label: r.name }))}
+                />
+                {role?.description && <p className="mt-1.5 text-[11.5px] text-n-500">{role.description}</p>}
+                {!role && (
+                  <p className="mt-1.5 rounded-md border border-warning-bd bg-warning-bg px-3 py-2 text-[12px] text-warning">
+                    With no role, this person holds only what is switched on below — which by default is nothing.
+                  </p>
+                )}
+              </Section>
+
+              <Section title="Access">
+                <p className="mb-2 text-[12px] text-n-500">
+                  {role
+                    ? <>Starts from <strong>{role.name}</strong>. Change any control to set it for this person only; a changed control shows a <strong>reset</strong> link that hands the decision back to the role.</>
+                    : <>Set directly, because no role is assigned.</>}
+                  {overrideCount > 0 && <> · <strong>{overrideCount}</strong> differ{overrideCount === 1 ? 's' : ''} from the role.</>}
+                </p>
+                {catalogue ? (
+                  <AccessEditor
+                    catalogue={catalogue}
+                    value={overrides}
+                    onChange={(next) => { setOverrides(next); setDirty(true); }}
+                    inherited={role?.grants ?? { areas: {}, capabilities: {} }}
+                    inheritedFrom={role?.name}
+                  />
+                ) : (
+                  <p className="text-[13px] text-n-500">Loading…</p>
+                )}
               </Section>
             </>
           )}

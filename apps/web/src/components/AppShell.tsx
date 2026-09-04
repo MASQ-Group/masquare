@@ -2,49 +2,53 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
+  Boxes,
   Building2,
-  CircleDollarSign,
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
+  CircleDollarSign,
+  ClipboardCheck,
+  ClipboardList,
   Coins,
   Container,
   FolderTree,
   Gauge,
   Globe,
   HelpCircle,
-  Tags,
-  Wallet,
-  LayoutGrid,
+  History,
   LayoutDashboard,
+  LayoutGrid,
   LineChart,
   Menu,
-  ScanBarcode,
-  Boxes,
-  PackageX,
-  RotateCcw,
-  Undo2,
-  ClipboardCheck,
-  ShoppingCart,
-  ClipboardList,
   Package,
+  PackageX,
   PanelLeftClose,
   PanelLeftOpen,
   Plug,
   Receipt,
+  RotateCcw,
+  ScanBarcode,
   Search,
   Settings,
-  SlidersHorizontal,
-  Tag,
-  Truck,
   Share2,
+  ShieldCheck,
+  ShoppingCart,
+  SlidersHorizontal,
   Store,
-  Users,
-  Warehouse,
+  Tag,
+  Tags,
+  Truck,
+  Undo2,
   UploadCloud,
-  type LucideIcon, History} from 'lucide-react';
+  Users,
+  Wallet,
+  Warehouse,
+  type LucideIcon,
+} from 'lucide-react';
 import { useAuth } from '../lib/auth';
+import { useAccess } from '../lib/useAccess';
 import { initials } from '../lib/format';
 import { settingsApi } from '../lib/api';
 import { applyFonts } from '../lib/fonts';
@@ -60,6 +64,14 @@ interface NavDef {
   /** Belongs to running a trading operation — listings, prices, stock. A company connected only to
    *  pull order history for analytics has none of that, so the page is hidden for it. */
   ordersOnlyHidden?: boolean;
+  /**
+   * The access area this page lives in. Absent means everyone signed in may see it — used only for
+   * the Overview, which is a landing page rather than a module.
+   *
+   * Hiding is a courtesy, not a boundary: every one of these is enforced on the API too. The point
+   * is not to stop anyone, it is to stop the app offering what it will refuse.
+   */
+  area?: string;
   disabled?: boolean;
   exact?: boolean; // match this route only, not its sub-paths (e.g. /analytics vs /analytics/sales)
 }
@@ -81,89 +93,96 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
   {
     label: 'Sales',
     items: [
-      { to: '/sales-transactions', label: 'Sales Transactions', icon: Receipt },
-      { to: '/shipments', label: 'Shipments', icon: Truck },
-      { to: '/fba-shipments', label: 'FBA Shipments', icon: Container },
+      { to: '/sales-transactions', label: 'Sales Transactions', area: 'sales_transactions', icon: Receipt },
+      { to: '/shipments', label: 'Shipments', area: 'shipments', icon: Truck },
+      { to: '/fba-shipments', label: 'FBA Shipments', area: 'shipments', icon: Container },
     ],
   },
   {
     label: 'Pricing',
     items: [
-      { to: '/pricing/individual', label: 'Individual Pricing', icon: CircleDollarSign },
-      { to: '/pricing/bulk', label: 'Bulk Pricing', icon: SlidersHorizontal },
+      { to: '/pricing/individual', label: 'Individual Pricing', area: 'pricing', icon: CircleDollarSign },
+      { to: '/pricing/bulk', label: 'Bulk Pricing', area: 'pricing', icon: SlidersHorizontal },
     ],
   },
   {
     label: 'Sales channels',
     items: [
-      { to: '/channel-listings', label: 'Channel Listings', icon: Share2, ordersOnlyHidden: true },
-      { to: '/repricing', label: 'Amazon Repricing', icon: Gauge, adminOnly: true, ordersOnlyHidden: true },
+      { to: '/channel-listings', label: 'Channel Listings', area: 'channel_listings', icon: Share2, ordersOnlyHidden: true },
+      { to: '/repricing', label: 'Amazon Repricing', area: 'repricing', icon: Gauge, adminOnly: true, ordersOnlyHidden: true },
     ],
   },
   {
     label: 'Analytics',
     items: [
-      { to: '/analytics', label: 'Overview', icon: LayoutDashboard, exact: true },
-      { to: '/analytics/sales', label: 'Sales', icon: LineChart },
-      { to: '/analytics/profitability', label: 'Profitability & Fees', icon: Coins },
-      { to: '/analytics/products', label: 'Products', icon: Package },
-      { to: '/analytics/countries', label: 'Countries & VAT', icon: Globe },
-      { to: '/analytics/returns', label: 'Returns & Refunds', icon: RotateCcw },
+      { to: '/analytics', label: 'Overview', area: 'analytics', icon: LayoutDashboard, exact: true },
+      { to: '/analytics/sales', label: 'Sales', area: 'analytics', icon: LineChart },
+      { to: '/analytics/profitability', label: 'Profitability & Fees', area: 'analytics', icon: Coins },
+      { to: '/analytics/products', label: 'Products', area: 'analytics', icon: Package },
+      { to: '/analytics/countries', label: 'Countries & VAT', area: 'analytics', icon: Globe },
+      { to: '/analytics/returns', label: 'Returns & Refunds', area: 'analytics', icon: RotateCcw },
     ],
   },
   {
     label: 'Purchasing',
     items: [
-      { to: '/procurement', label: 'Procurement', icon: ShoppingCart },
-      { to: '/purchase-orders', label: 'Purchase Orders', icon: ClipboardList },
-      { to: '/goods-receipts', label: 'Goods Receipts', icon: ClipboardCheck },
-      { to: '/vendor-returns', label: 'Returns to Vendor', icon: Undo2 },
+      { to: '/procurement', label: 'Procurement', area: 'purchasing', icon: ShoppingCart },
+      { to: '/purchase-orders', label: 'Purchase Orders', area: 'purchasing', icon: ClipboardList },
+      { to: '/goods-receipts', label: 'Goods Receipts', area: 'receiving', icon: ClipboardCheck },
+      { to: '/vendor-returns', label: 'Returns to Vendor', area: 'receiving', icon: Undo2 },
     ],
   },
   {
     label: 'Catalogue & Inventory',
     items: [
-      { to: '/products', label: 'Products', icon: Package },
-      { to: '/inventory', label: 'Inventory', icon: Boxes },
-      { to: '/availability', label: 'Availability', icon: Store, ordersOnlyHidden: true },
+      { to: '/products', label: 'Products', area: 'products', icon: Package },
+      { to: '/inventory', label: 'Inventory', area: 'inventory', icon: Boxes },
+      { to: '/availability', label: 'Availability', area: 'products', icon: Store, ordersOnlyHidden: true },
       // A vendor file carries quantities as well as costs, so it belongs beside the stock it
       // feeds rather than under Pricing.
-      { to: '/pricing/vendor-files', label: 'Vendor Files', icon: UploadCloud, ordersOnlyHidden: true },
-      { to: '/stock-owed', label: 'Stock Owed', icon: PackageX },
-      { to: '/warehouses', label: 'Warehouses', icon: Warehouse },
-      { to: '/serials', label: 'Serial Numbers', icon: ScanBarcode },
+      { to: '/pricing/vendor-files', label: 'Vendor Files', area: 'pricing', icon: UploadCloud, ordersOnlyHidden: true },
+      { to: '/stock-owed', label: 'Stock Owed', area: 'inventory', icon: PackageX },
+      { to: '/warehouses', label: 'Warehouses', area: 'inventory', icon: Warehouse },
+      { to: '/serials', label: 'Serial Numbers', area: 'inventory', icon: ScanBarcode },
     ],
   },
   {
     label: 'Expenses',
     items: [
-      { to: '/expenses', label: 'Expenses', icon: Wallet, exact: true },
-      { to: '/expenses/names', label: 'Expense Names', icon: Tags },
-      { to: '/expenses/tags', label: 'Tags', icon: Tag },
-      { to: '/expenses/categories', label: 'Categories', icon: FolderTree },
+      { to: '/expenses', label: 'Expenses', area: 'expenses', icon: Wallet, exact: true },
+      { to: '/expenses/names', label: 'Expense Names', area: 'expenses', icon: Tags },
+      { to: '/expenses/tags', label: 'Tags', area: 'expenses', icon: Tag },
+      { to: '/expenses/categories', label: 'Categories', area: 'expenses', icon: FolderTree },
     ],
   },
   {
     label: 'Setup',
     items: [
-      { to: '/integrations', label: 'Integrations', icon: Plug, adminOnly: true },
-      { to: '/activity', label: 'Activity', icon: History },
-      { to: '/settings', label: 'Global settings', icon: SlidersHorizontal },
-      { to: '/companies', label: 'Companies', icon: Building2, adminOnly: true },
-      { to: '/users', label: 'Users & roles', icon: Users, adminOnly: true },
-      { to: '/modules', label: 'Modules & sharing', icon: Settings, adminOnly: true },
+      { to: '/integrations', label: 'Integrations', area: 'integrations', icon: Plug, adminOnly: true },
+      { to: '/activity', label: 'Activity', area: 'activity', icon: History },
+      { to: '/settings', label: 'Global settings', area: 'global_settings', icon: SlidersHorizontal },
+      { to: '/companies', label: 'Companies', area: 'administration', icon: Building2, adminOnly: true },
+      { to: '/users', label: 'Users', area: 'administration', icon: Users, adminOnly: true },
+      { to: '/roles', label: 'Roles', area: 'administration', icon: ShieldCheck, adminOnly: true },
+      { to: '/modules', label: 'Modules & sharing', area: 'administration', icon: Settings, adminOnly: true },
     ],
   },
 ];
 
 export function AppShell() {
   const { user, signOut, activeCompany } = useAuth();
+  const { can } = useAccess();
   // A company connected purely to pull order history has no listings to manage and no prices to
   // set — its Amazon account belongs to a different legal entity. The API refuses these calls
   // whatever the sidebar shows; hiding them stops the app offering what it will not do.
   const ordersOnlyCompany = activeCompany?.amazonScope === 'orders';
+  // Three independent reasons a link can be hidden, and they are genuinely different questions:
+  // whether the platform lets this person in at all, whether THIS company has the thing, and
+  // whether the page is admin-only regardless.
   const canSee = (i: NavDef) =>
-    (!i.adminOnly || user?.isAdmin) && !(i.ordersOnlyHidden && ordersOnlyCompany);
+    (!i.adminOnly || user?.isAdmin) &&
+    !(i.ordersOnlyHidden && ordersOnlyCompany) &&
+    (!i.area || can(i.area));
   const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);

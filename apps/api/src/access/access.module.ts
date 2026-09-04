@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { AccessService } from './access.service';
 import { AccessGuard } from './access.guard';
 import { AccessController } from './access.controller';
+import { RolesController } from './roles.controller';
 
 /**
  * Access control, wired globally.
@@ -14,7 +15,7 @@ import { AccessController } from './access.controller';
  */
 @Global()
 @Module({
-  controllers: [AccessController],
+  controllers: [AccessController, RolesController],
   providers: [AccessService, { provide: APP_GUARD, useClass: AccessGuard }],
   exports: [AccessService],
 })
