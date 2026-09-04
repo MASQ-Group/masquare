@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#F6F8FA;font-family:Inter,system-ui,sans-serif;color:#232A31}a{color:#0F857D;text-decoration:none}a:hover{color:#0B645E;text-decoration:underline}</style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;flex-direction:column">
+  <div style="height:56px;background:#fff;border-bottom:1px solid #DDE3E9;display:flex;align-items:center;gap:16px;padding:0 32px;position:sticky;top:0;z-index:10">
+    <span style="font-weight:700;font-size:15px;letter-spacing:-.01em">ma<span style="color:#14A79D">Square</span> <span style="font-weight:500;color:#6B7884">Store</span></span>
+    <div style="flex:1"></div>
+    <span style="font-size:13px;color:#6B7884">Aegean Imports Ltd</span>
+    <span style="width:30px;height:30px;border-radius:999px;background:#E7F6F4;color:#0B645E;font-size:12px;font-weight:600;display:inline-flex;align-items:center;justify-content:center">AI</span>
+  </div>
+
+  <div style="max-width:1160px;width:100%;margin:0 auto;padding:36px 32px 80px;display:flex;flex-direction:column;gap:32px;box-sizing:border-box">
+    <div style="font-size:12.5px;color:#6B7884">Catalogue <span style="color:#C3CCD4">/</span> Power tools <span style="color:#C3CCD4">/</span> <span style="color:#374049">Cordless drills</span></div>
+
+    <div style="display:grid;grid-template-columns:440px 1fr;gap:48px;align-items:start">
+      <!-- MEDIA -->
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="aspect-ratio:1;border-radius:12px;background:linear-gradient(160deg,#E7F6F4,#F6F8FA 55%,#EDF1F4);border:1px solid #DDE3E9;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center">
+          <span style="position:absolute;top:18px;left:20px;font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#8FD8D1">Bosch Professional</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:46px;font-weight:600;color:#0B645E;letter-spacing:-.02em;opacity:.85">{{ mainLabel }}</span>
+          <span style="position:absolute;bottom:18px;left:20px;font-family:'JetBrains Mono',monospace;font-size:12.5px;color:#57C3BA">MSQ-BSH-18V55</span>
+          <svg style="position:absolute;right:-30px;bottom:-30px;opacity:.10" width="220" height="220" viewBox="0 0 24 24" fill="none" stroke="#0B645E" stroke-width="1"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"></path></svg>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
+          <sc-for list="{{ thumbs }}" as="t" hint-placeholder-count="5">
+            <div onClick="{{ t.pick }}" style="aspect-ratio:1;border-radius:8px;cursor:pointer;background:linear-gradient(160deg,#E7F6F4,#EDF1F4);display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:#0B645E;border:{{ t.border }}">{{ t.label }}</div>
+          </sc-for>
+        </div>
+        <div style="font-size:12px;color:#97A4AF;text-align:center">Image plates shown — real product photos replace them 1:1</div>
+      </div>
+
+      <!-- SUMMARY -->
+      <div style="display:flex;flex-direction:column;gap:20px">
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="font-size:12px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#0F857D">Bosch Professional</div>
+          <div style="font-size:28px;line-height:1.3;font-weight:600;letter-spacing:-.02em">GSB 18V-55 Cordless Combi Drill, Solo (no battery)</div>
+          <div style="display:flex;gap:14px;align-items:center;font-size:13px;color:#6B7884;flex-wrap:wrap">
+            <span>SKU <span style="font-family:'JetBrains Mono',monospace;color:#232A31;font-weight:500">MSQ-BSH-18V55</span></span><span style="color:#DDE3E9">|</span>
+            <span>EAN <span style="font-family:'JetBrains Mono',monospace;color:#232A31;font-weight:500">3165140901234</span></span>
+            <button title="Copy SKU" style="width:26px;height:26px;border:1px solid #DDE3E9;border-radius:6px;background:#fff;color:#6B7884;cursor:pointer;font-size:12px">⧉</button>
+          </div>
+        </div>
+
+        <div style="background:#fff;border:1px solid #DDE3E9;border-radius:12px;padding:20px 24px;display:flex;flex-direction:column;gap:16px;box-shadow:0 1px 3px rgba(16,24,40,.08),0 1px 2px rgba(16,24,40,.04)">
+          <div style="display:flex;align-items:baseline;gap:12px">
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <span style="font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#0F857D">Your price</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:28px;font-weight:600">€89.40</span>
+            </div>
+            <span style="font-size:12.5px;color:#6B7884;align-self:flex-end;padding-bottom:4px">excl. VAT · per unit</span>
+            <div style="flex:1"></div>
+            <span style="display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:500;color:#557A23;align-self:flex-end;padding-bottom:4px"><span style="width:8px;height:8px;border-radius:50%;background:#8DC73F"></span>In stock · ships 2–3 days</span>
+          </div>
+          <div style="display:flex;gap:10px">
+            <span style="display:inline-flex;border:1px solid #DDE3E9;border-radius:8px;overflow:hidden;height:40px;align-items:stretch"><button style="width:36px;border:none;background:#fff;color:#6B7884;font-size:16px;cursor:pointer">−</button><span style="display:flex;align-items:center;padding:0 14px;font-family:'JetBrains Mono',monospace;font-size:14px;border-left:1px solid #EDF1F4;border-right:1px solid #EDF1F4">12</span><button style="width:36px;border:none;background:#fff;color:#6B7884;font-size:16px;cursor:pointer">+</button></span>
+            <button style="flex:1;height:40px;border:none;border-radius:8px;background:#14A79D;color:#fff;font:600 13.5px Inter,sans-serif;cursor:pointer">Add to order</button>
+          </div>
+          <div style="font-size:12px;color:#97A4AF">Price agreed for Aegean Imports Ltd · updated 02/08/2026</div>
+        </div>
+
+        <!-- SHORT DESCRIPTION -->
+        <div style="font-size:14px;line-height:1.65;color:#4D5963;border-bottom:1px solid #EDF1F4;padding-bottom:18px">
+          Compact 18 V combi drill for trade use — 55 Nm of torque, 20-stage clutch and impact mode for masonry. Solo version: supplied without battery or charger, compatible with all Bosch Professional 18 V packs. <a href="#description">Full description ↓</a>
+        </div>
+
+        <div style="display:flex;flex-direction:column">
+          <div style="display:grid;grid-template-columns:180px 1fr;padding:10px 2px;border-bottom:1px solid #EDF1F4;font-size:13.5px"><span style="color:#6B7884">Manufacturer SKU</span><span style="font-family:'JetBrains Mono',monospace;font-size:13px">06019H5302</span></div>
+          <div style="display:grid;grid-template-columns:180px 1fr;padding:10px 2px;border-bottom:1px solid #EDF1F4;font-size:13.5px"><span style="color:#6B7884">Product weight</span><span style="font-family:'JetBrains Mono',monospace;font-size:13px">1.20 kg</span></div>
+          <div style="display:grid;grid-template-columns:180px 1fr;padding:10px 2px;font-size:13.5px"><span style="color:#6B7884">Country of origin</span><span>Malaysia</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== BOTTOM TABS ===== -->
+    <div id="description" style="display:flex;flex-direction:column;gap:20px;padding-top:8px">
+      <div style="display:flex;gap:28px;border-bottom:1px solid #DDE3E9">
+        <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="3">
+          <span onClick="{{ tab.pick }}" style="padding:0 2px 12px;font-size:14px;cursor:pointer;font-weight:{{ tab.weight }};color:{{ tab.color }};box-shadow:{{ tab.underline }}">{{ tab.label }}</span>
+        </sc-for>
+      </div>
+      <sc-if value="{{ showDescription }}" hint-placeholder-val="{{ true }}">
+      <div style="display:grid;grid-template-columns:1fr 320px;gap:48px;align-items:start">
+        <div style="font-size:14px;line-height:1.7;color:#374049;display:flex;flex-direction:column;gap:12px">
+          <span>The Bosch GSB 18V-55 Professional is a robust cordless combi drill built for daily trade use. Its brushless motor delivers 55 Nm of torque while extending runtime and service life, and the 13 mm metal chuck holds bits securely under high load.</span>
+          <span>The impact mechanism handles drilling in brick and masonry, while the 20+1 clutch settings give precise control in soft materials. The compact 179 mm head length makes it comfortable in tight installation positions and overhead work.</span>
+          <span>Supplied as a solo unit without battery or charger — compatible with all batteries from the Bosch Professional 18 V system.</span>
+        </div>
+        <div style="background:#fff;border:1px solid #DDE3E9;border-radius:12px;padding:18px 22px;display:flex;flex-direction:column;gap:10px">
+          <div style="font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#6B7884">Key features</div>
+          <div style="display:flex;gap:10px;font-size:13.5px;line-height:1.5;color:#374049"><span style="color:#14A79D;flex:none">✓</span>Brushless motor, 55 Nm hard torque</div>
+          <div style="display:flex;gap:10px;font-size:13.5px;line-height:1.5;color:#374049"><span style="color:#14A79D;flex:none">✓</span>Impact mode for brick and masonry</div>
+          <div style="display:flex;gap:10px;font-size:13.5px;line-height:1.5;color:#374049"><span style="color:#14A79D;flex:none">✓</span>13 mm all-metal keyless chuck</div>
+          <div style="display:flex;gap:10px;font-size:13.5px;line-height:1.5;color:#374049"><span style="color:#14A79D;flex:none">✓</span>20+1 precision clutch settings</div>
+          <div style="display:flex;gap:10px;font-size:13.5px;line-height:1.5;color:#374049"><span style="color:#14A79D;flex:none">✓</span>Bosch Professional 18 V system compatible</div>
+        </div>
+      </div>
+      </sc-if>
+      <sc-if value="{{ showSpecs }}" hint-placeholder-val="{{ false }}">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 48px">
+        <sc-for list="{{ specs }}" as="s" hint-placeholder-count="6">
+          <div style="display:grid;grid-template-columns:200px 1fr;padding:11px 2px;border-bottom:1px solid #EDF1F4;font-size:13.5px"><span style="color:#6B7884">{{ s.k }}</span><span style="font-family:{{ s.font }};font-size:{{ s.size }}">{{ s.v }}</span></div>
+        </sc-for>
+      </div>
+      </sc-if>
+      <sc-if value="{{ showFiles }}" hint-placeholder-val="{{ false }}">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+        <sc-for list="{{ files }}" as="f" hint-placeholder-count="3">
+          <div style="background:#fff;border:1px solid #DDE3E9;border-radius:8px;padding:14px 16px;display:flex;align-items:center;gap:12px;cursor:pointer" style-hover="border-color:#8FD8D1">
+            <span style="width:36px;height:36px;border-radius:8px;background:#E7F6F4;color:#0B645E;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex:none">{{ f.ext }}</span>
+            <div style="display:flex;flex-direction:column;gap:1px;min-width:0;flex:1">
+              <span style="font-size:13.5px;font-weight:500;color:#232A31;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ f.name }}</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#97A4AF">{{ f.meta }}</span>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B7884" stroke-width="1.8"><path d="M12 4v12m0 0l-5-5m5 5l5-5M4 20h16"></path></svg>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { active: 0, tab: 0 };
+  renderVals() {
+    const labels = ['18V-55', 'SIDE', 'CHUCK', 'GRIP', 'BOX'];
+    const tabNames = ['Product description', 'Specifications', 'Product files'];
+    return {
+      tabs: tabNames.map((label, i) => ({
+        label,
+        weight: i === this.state.tab ? 600 : 500,
+        color: i === this.state.tab ? '#232A31' : '#6B7884',
+        underline: i === this.state.tab ? 'inset 0 -2px #14A79D' : 'none',
+        pick: () => this.setState({ tab: i })
+      })),
+      showDescription: this.state.tab === 0,
+      showSpecs: this.state.tab === 1,
+      showFiles: this.state.tab === 2,
+      mainLabel: labels[this.state.active],
+      thumbs: labels.map((label, i) => ({
+        label,
+        border: i === this.state.active ? '2px solid #14A79D' : '1px solid #DDE3E9',
+        pick: () => this.setState({ active: i })
+      })),
+      specs: [
+        { k: 'Brand', v: 'Bosch Professional', font: 'Inter,sans-serif', size: '13.5px' },
+        { k: 'Manufacturer SKU', v: '06019H5302', font: "'JetBrains Mono',monospace", size: '13px' },
+        { k: 'Max. torque (hard)', v: '55 Nm', font: "'JetBrains Mono',monospace", size: '13px' },
+        { k: 'Chuck capacity', v: '1.5 – 13 mm', font: "'JetBrains Mono',monospace", size: '13px' },
+        { k: 'Product weight', v: '1.20 kg', font: "'JetBrains Mono',monospace", size: '13px' },
+        { k: 'Package dimensions', v: '31.0 × 9.5 × 22.5 cm', font: "'JetBrains Mono',monospace", size: '13px' },
+        { k: 'Voltage', v: '18 V', font: "'JetBrains Mono',monospace", size: '13px' },
+        { k: 'Battery', v: 'Not included (18 V Li-ion system)', font: 'Inter,sans-serif', size: '13.5px' },
+        { k: 'Country of origin', v: 'Malaysia', font: 'Inter,sans-serif', size: '13.5px' },
+        { k: 'Warranty', v: '3 years (registered)', font: 'Inter,sans-serif', size: '13.5px' }
+      ],
+      files: [
+        { ext: 'PDF', name: 'Datasheet — GSB 18V-55', meta: 'PDF · 1.2 MB' },
+        { ext: 'PDF', name: 'EU Declaration of Conformity', meta: 'PDF · 340 KB' },
+        { ext: 'PDF', name: 'Safety data sheet', meta: 'PDF · 610 KB' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

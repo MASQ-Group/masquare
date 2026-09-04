@@ -1,0 +1,30 @@
+Product Listing Generation Content Guide
+----------------------------------------
+
+1. Product Title (Unformatted Text)
+   - A descriptive SEO optimized product title
+
+2. Ebay Title (Unformatted Text)
+   - A title optimized to be used for listing the product on ebay
+
+3. Short Description (Formatted HTML Code)
+   - A short descriptive sentense for the product (maximum 80 characters)
+   - The 3 product main features in bullets. Each feature must not exceed 75 characters
+
+4. Long Description (Formatted HTML Code)
+   - A detailed description of the product
+   - Do not include any title
+   - It must be structured in sections
+   - Each section must have an H2 Title
+   - The last section must always be "What's in the box"
+
+5. Key Features (Unformatted Text)
+   - 5 Main product key features. Each feature must not exist 35 characters
+
+6. Product Specifications (Formatted HTML Code)
+   - A structured and formatted table including the product's technical specifications
+   - The specifications must be orgnized in section based on relevance i.e. Product, Physical, Power etc. 
+   - Include all the technical specifications you believe are important for a potential customer to view.
+
+7. Search Keywords (Unformatted Text)
+   - up to 10 most suitable, most searchable, best google ranked keywords, comma separated

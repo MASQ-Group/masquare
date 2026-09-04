@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#f1f5f9;font-family:Inter,-apple-system,"Segoe UI",sans-serif;color:#0f172a}a{color:#0d9488;text-decoration:none}a:hover{color:#0f766e}::-webkit-scrollbar{width:0;height:0}</style>
+</helmet>
+
+<div style="max-width:1200px;margin:0 auto;padding:40px 32px 80px;display:flex;gap:48px;flex-wrap:wrap;justify-content:center">
+
+  <!-- LIVE PHONE DEMO -->
+  <div style="display:flex;flex-direction:column;gap:12px;flex:0 0 auto">
+    <div style="font-size:13px;font-weight:600;color:#334155">Live demo — scroll the phone, tap a connection</div>
+    <div style="width:390px;height:720px;border:1px solid #cbd5e1;border-radius:24px;overflow:hidden;background:#f8fafc;box-shadow:0 12px 40px rgba(15,23,42,.12);position:relative">
+      <div style="height:100%;overflow-y:auto;position:relative" onScroll="{{ onScroll }}">
+
+        <!-- global bar : scrolls away -->
+        <div style="display:flex;align-items:center;gap:10px;height:48px;padding:0 12px;background:#fff;border-bottom:1px solid #e2e8f0">
+          <span style="font-size:18px;color:#334155">☰</span>
+          <div style="flex:1;display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#94a3b8;font-size:13px"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#94a3b8" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"></circle><line x1="10.5" y1="10.5" x2="14" y2="14"></line></svg>Search all modules…</div>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;border:1px solid #cbd5e1;color:#64748b;font-size:12px">?</span>
+        </div>
+
+        <!-- STICKY page bar -->
+        <div style="position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(15,23,42,.05)">
+          <div style="display:flex;align-items:center;gap:8px;height:46px;padding:0 12px">
+            <div style="display:flex;align-items:baseline;gap:6px;white-space:nowrap;overflow:hidden">
+              <span style="font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#94a3b8">Setup</span>
+              <span style="color:#cbd5e1;font-size:11px">›</span>
+              <span style="font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis">Marketplace integrations</span>
+              <span title="Connect marketplace accounts and keep orders, fees and listings in sync." style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #cbd5e1;color:#94a3b8;font-size:9px;font-weight:600;transform:translateY(2px);flex:none">i</span>
+            </div>
+            <div style="flex:1"></div>
+            <button title="Sync all (18)" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;flex:none"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#475569" stroke-width="1.5"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"></path></svg></button>
+            <button title="Auto-sync settings · Pull older orders · Secrets" style="width:32px;height:32px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#475569;font-size:15px;cursor:pointer;font-family:Inter;flex:none">⋯</button>
+            <button style="display:inline-flex;align-items:center;gap:4px;height:32px;padding:0 12px;border:none;border-radius:8px;background:#14b8a6;font:600 13px Inter,sans-serif;color:#fff;cursor:pointer;flex:none">+ Add</button>
+          </div>
+          <div style="{{ toolbarStyle }}">
+            <div style="display:flex;align-items:center;gap:8px;padding:0 12px 8px">
+              <div style="flex:1;display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#94a3b8;font-size:13px"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#94a3b8" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"></circle><line x1="10.5" y1="10.5" x2="14" y2="14"></line></svg>Search account, country…</div>
+              <span style="display:inline-flex;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;flex:none">
+                <button style="height:34px;padding:0 12px;border:none;background:#14b8a6;font:600 12.5px Inter,sans-serif;color:#fff;cursor:pointer">All</button>
+                <button style="display:inline-flex;align-items:center;gap:5px;height:34px;padding:0 10px;border:none;border-left:1px solid #e2e8f0;background:#fff;font:500 12.5px Inter,sans-serif;color:#64748b;cursor:pointer">Attention <span style="background:#fef3c7;color:#92400e;font-size:11px;font-weight:600;padding:0 6px;border-radius:99px">2</span></button>
+              </span>
+            </div>
+          </div>
+          <div style="{{ collapsedRowStyle }}">
+            <span style="font-size:12px;color:#64748b"><b style="color:#0f172a">20</b> connections · <b style="color:#0d9488">18</b> healthy · <b style="color:#b45309">2</b> attention</span>
+            <div style="flex:1"></div>
+            <button onClick="{{ expandBar }}" style="display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 10px;border:1px solid #e2e8f0;border-radius:99px;background:#fff;font:500 12px Inter,sans-serif;color:#334155;cursor:pointer">Search &amp; filter ▾</button>
+          </div>
+        </div>
+
+        <!-- KPI STRIP : one compact row of 4 -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:10px 10px 0">
+          <div style="background:#fff;border:1.5px solid #14b8a6;border-radius:10px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;gap:2px">
+            <span style="font-size:18px;font-weight:700">20</span><span style="font-size:10.5px;color:#64748b;text-align:center">Connections</span>
+          </div>
+          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;gap:2px">
+            <span style="font-size:18px;font-weight:700;color:#0d9488">18</span><span style="font-size:10.5px;color:#64748b">Healthy</span>
+          </div>
+          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;gap:2px">
+            <span style="font-size:18px;font-weight:700;color:#b45309">2</span><span style="font-size:10.5px;color:#64748b">Attention</span>
+          </div>
+          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;gap:2px">
+            <span style="font-size:18px;font-weight:700;color:#dc2626">0</span><span style="font-size:10.5px;color:#64748b">Errors</span>
+          </div>
+        </div>
+
+        <!-- auto-sync summary strip -->
+        <div style="margin:8px 10px 0;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:9px 12px;display:flex;align-items:center;gap:8px;font-size:12.5px;color:#475569">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#94a3b8" stroke-width="1.5"><circle cx="8" cy="8" r="6"></circle><path d="M8 4.5V8l2.5 1.5"></path></svg>
+          Auto-sync <b style="color:#0f172a">off</b> · daily 05:00 UTC · 0/20 on
+          <div style="flex:1"></div>
+          <span style="color:#0d9488;font-weight:600;cursor:pointer">Configure ›</span>
+        </div>
+
+        <!-- CONNECTION GROUPS as cards -->
+        <div style="display:flex;flex-direction:column;gap:8px;padding:10px 10px 40px">
+          <sc-for list="{{ groups }}" as="g" hint-placeholder-count="2">
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
+              <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #f1f5f9">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:#f1f5f9;font-size:13px;font-weight:700;color:#334155;flex:none">{{ g.initial }}</span>
+                <span style="font-size:14px;font-weight:700">{{ g.name }}</span>
+                <span style="background:#f1f5f9;color:#475569;font-size:11px;font-weight:600;padding:1px 7px;border-radius:99px">{{ g.count }}</span>
+                <div style="flex:1"></div>
+                <span style="font-size:11.5px;color:#0d9488;font-weight:600;white-space:nowrap">● {{ g.healthy }}</span>
+                <sc-if value="{{ g.verify }}" hint-placeholder-val="{{ false }}"><span style="font-size:11.5px;color:#b45309;font-weight:600;white-space:nowrap">● {{ g.verify }}</span></sc-if>
+                <button title="Auto-sync · Older orders · Sync group" style="width:28px;height:28px;border:1px solid #e2e8f0;border-radius:7px;background:#fff;color:#475569;font-size:14px;cursor:pointer;font-family:Inter;flex:none">⋯</button>
+              </div>
+              <sc-for list="{{ g.accounts }}" as="a" hint-placeholder-count="2">
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #f1f5f9">
+                  <span style="font-size:15px;flex:none">{{ a.flag }}</span>
+                  <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ a.name }}</span>
+                      <span style="font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:99px;background:#ccfbf1;color:#0f766e;flex:none">active</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;font-size:11.5px;white-space:nowrap;overflow:hidden">
+                      <span style="color:{{ a.healthColor }};flex:none">{{ a.health }}</span>
+                      <span style="color:#cbd5e1">·</span>
+                      <span style="color:{{ a.syncColor }};flex:none">{{ a.lastSync }}</span>
+                      <sc-if value="{{ a.delta }}" hint-placeholder-val="{{ false }}"><span style="background:#f1f5f9;color:#64748b;padding:0 5px;border-radius:4px;min-width:0;overflow:hidden;text-overflow:ellipsis">{{ a.delta }}</span></sc-if>
+                    </div>
+                  </div>
+                  <button style="display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;border:none;border-radius:8px;font:600 12px Inter,sans-serif;cursor:pointer;flex:none;background:{{ a.btnBg }};color:{{ a.btnFg }}"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"></path></svg>Sync</button>
+                  <button style="width:30px;height:30px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#475569;font-size:14px;cursor:pointer;font-family:Inter;flex:none">⋯</button>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ANNOTATIONS -->
+  <div style="flex:1;min-width:320px;max-width:460px;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#64748b">Proposal</div>
+      <div style="font-size:22px;font-weight:700;letter-spacing:-.01em">Mobile web view — Marketplace integrations</div>
+      <div style="font-size:13.5px;color:#475569;line-height:1.6">Same mobile pattern as Sales transactions: compact sticky bar with summary strip, one-row toolbar, and cards instead of horizontally-scrolling tables.</div>
+    </div>
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:14px;font-size:13px;color:#475569;line-height:1.6">
+      <div><b style="color:#0f172a">1 · Sticky bar, same recipe.</b> Title row with icon-only Sync all, ⋯ overflow (auto-sync settings, Pull older orders, Secrets) and a shortened "+ Add" primary. On scroll-down it collapses to a 34px health summary — 20 connections · 18 healthy · 2 attention — so status is always visible and there's no dead gap.</div>
+      <div><b style="color:#0f172a">2 · KPI cards → one compact 4-up row.</b> The four big stat cards become a single row of mini-stats (2×2 stacking cost too much height). Attention/error counts keep their colors as the signal.</div>
+      <div><b style="color:#0f172a">3 · Auto-sync panel → one summary strip.</b> Time picker, save, toggle and Pull older orders collapse into a one-line status ("Auto-sync off · daily 05:00 UTC · 0/20 on") with Configure opening a bottom sheet with the full controls.</div>
+      <div><b style="color:#0f172a">4 · Group tables → account cards.</b> Each connection is a 2-line row: name + active badge, then health + last sync + change chip in one line. Status/Health/Last-sync columns fold into it — no horizontal scrolling. Sync stays as a per-row button; everything else moves to the row's ⋯.</div>
+      <div><b style="color:#0f172a">5 · Group header stays scannable.</b> Marketplace logo, count, healthy/verify dots, and one ⋯ for group actions (Auto-sync toggle, Older orders, Sync group).</div>
+    </div>
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;font-size:13px;color:#475569;line-height:1.7">
+      <b style="color:#0f172a">States shown in the demo</b><br>Amazon MX — never synced, mapping not verified (amber, disabled-style sync)<br>Amazon CA — fee chip preserved as a change chip<br>All others — healthy, normal sync
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { collapsed: false, lastY: 0 };
+  renderVals() {
+    const c = this.state.collapsed;
+    const ok = (name, flag, ago, delta) => ({ name, flag, health: '✓ Verified', healthColor: '#0d9488', lastSync: ago, syncColor: '#64748b', delta, btnBg: '#14b8a6', btnFg: '#fff' });
+    return {
+      onScroll: (e) => {
+        const y = e.target.scrollTop;
+        if (y > 60 && y > this.state.lastY && !c) this.setState({ collapsed: true, lastY: y });
+        else if ((y < this.state.lastY - 4 || y <= 60) && c) this.setState({ collapsed: false, lastY: y });
+        else this.setState({ lastY: y });
+      },
+      expandBar: () => this.setState({ collapsed: false }),
+      toolbarStyle: { maxHeight: c ? 0 : 60, opacity: c ? 0 : 1, overflow: 'hidden', transition: 'max-height .22s ease, opacity .18s ease', pointerEvents: c ? 'none' : 'auto' },
+      collapsedRowStyle: { display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', height: c ? 34 : 0, opacity: c ? 1 : 0, overflow: 'hidden', transition: 'height .22s ease, opacity .18s ease', pointerEvents: c ? 'auto' : 'none' },
+      groups: [
+        { initial: 'E', name: 'eBay', count: '1', healthy: '1 healthy', verify: null, accounts: [ ok('eBay', '🌐', '11 d ago', '+2 new · ~6 upd') ] },
+        { initial: 'a', name: 'Amazon', count: '18', healthy: '16 healthy', verify: '2 to verify', accounts: [
+          { name: 'Amazon MX', flag: '🇲🇽', health: '⚠ Not verified', healthColor: '#b45309', lastSync: 'Never synced', syncColor: '#b45309', delta: null, btnBg: '#e2e8f0', btnFg: '#94a3b8' },
+          ok('Amazon CA', '🇨🇦', '15 d ago', '~6 upd · 2 fees'),
+          ok('Amazon US', '🇺🇸', '11 d ago', '~3 upd'),
+          ok('Amazon SE', '🇸🇪', '15 d ago', null),
+          ok('Amazon DE', '🇩🇪', '11 d ago', '~4 upd'),
+          ok('Amazon FR', '🇫🇷', '12 d ago', null)
+        ] }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

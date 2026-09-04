@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#f1f5f9;font-family:Inter,-apple-system,"Segoe UI",sans-serif;color:#0f172a}a{color:#0d9488;text-decoration:none}a:hover{color:#0f766e}::-webkit-scrollbar{width:0;height:0}</style>
+</helmet>
+
+<div style="max-width:1200px;margin:0 auto;padding:40px 32px 80px;display:flex;gap:48px;flex-wrap:wrap;justify-content:center">
+
+  <!-- LIVE PHONE DEMO -->
+  <div style="display:flex;flex-direction:column;gap:12px;flex:0 0 auto">
+    <div style="font-size:13px;font-weight:600;color:#334155">Live demo — scroll the phone, tap Filters</div>
+    <div style="width:390px;height:720px;border:1px solid #cbd5e1;border-radius:24px;overflow:hidden;background:#f8fafc;box-shadow:0 12px 40px rgba(15,23,42,.12);position:relative">
+      <div style="height:100%;overflow-y:auto;position:relative" onScroll="{{ onScroll }}">
+
+        <!-- global bar (module search) : scrolls away, not sticky -->
+        <div style="display:flex;align-items:center;gap:10px;height:48px;padding:0 12px;background:#fff;border-bottom:1px solid #e2e8f0">
+          <span style="font-size:18px;color:#334155">☰</span>
+          <div style="flex:1;display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;color:#94a3b8;font-size:13px"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#94a3b8" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"></circle><line x1="10.5" y1="10.5" x2="14" y2="14"></line></svg>Search all modules…</div>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;border:1px solid #cbd5e1;color:#64748b;font-size:12px">?</span>
+        </div>
+
+        <!-- STICKY page bar -->
+        <div style="position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(15,23,42,.05)">
+          <div style="display:flex;align-items:center;gap:8px;height:46px;padding:0 12px">
+            <div style="display:flex;align-items:baseline;gap:6px;white-space:nowrap;overflow:hidden">
+              <span style="font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#94a3b8">Sales</span>
+              <span style="color:#cbd5e1;font-size:11px">›</span>
+              <span style="font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis">Sales transactions</span>
+              <span title="Register and review sales across all channels." style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #cbd5e1;color:#94a3b8;font-size:9px;font-weight:600;transform:translateY(2px);flex:none">i</span>
+            </div>
+            <div style="flex:1"></div>
+            <button title="Alerts" style="position:relative;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;flex:none"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#475569" stroke-width="1.4"><path d="M8 2a4 4 0 0 0-4 4v3l-1.2 2h10.4L12 9V6a4 4 0 0 0-4-4z"></path><path d="M6.5 13a1.5 1.5 0 0 0 3 0"></path></svg><span style="position:absolute;top:5px;right:6px;width:6px;height:6px;border-radius:50%;background:#f59e0b"></span></button>
+            <button title="Returns · Recalculate · Unlock · Export" style="width:32px;height:32px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#475569;font-size:15px;cursor:pointer;font-family:Inter;flex:none">⋯</button>
+            <button style="display:inline-flex;align-items:center;gap:4px;height:32px;padding:0 12px;border:none;border-radius:8px;background:#14b8a6;font:600 13px Inter,sans-serif;color:#fff;cursor:pointer;flex:none">+ Register</button>
+          </div>
+          <div style="{{ toolbarStyle }}">
+            <div style="display:flex;align-items:center;gap:8px;padding:0 12px 8px">
+              <div style="flex:1;display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#94a3b8;font-size:13px"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#94a3b8" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"></circle><line x1="10.5" y1="10.5" x2="14" y2="14"></line></svg>Search ID or SKU…</div>
+              <button onClick="{{ toggleSheet }}" style="display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;font:500 13px Inter,sans-serif;color:#334155;cursor:pointer;flex:none">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="#475569" stroke-width="1.5"><path d="M2 3h12M4.5 8h7M7 13h2"></path></svg>Filters
+                <span style="background:#ccfbf1;color:#0f766e;font-size:11px;font-weight:600;padding:0 6px;border-radius:99px">2</span>
+              </button>
+            </div>
+            <div style="display:flex;gap:6px;padding:0 12px 10px;overflow-x:auto;white-space:nowrap">
+              <span style="display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:99px;background:#ccfbf1;color:#0f766e;font-size:12px;font-weight:500;flex:none">All time <span style="font-size:13px;cursor:pointer">×</span></span>
+              <span style="display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:99px;background:#ccfbf1;color:#0f766e;font-size:12px;font-weight:500;flex:none">EUR <span style="font-size:13px;cursor:pointer">×</span></span>
+              <span style="display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:99px;border:1px dashed #cbd5e1;color:#64748b;font-size:12px;flex:none">Grouping</span>
+              <span style="display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:99px;border:1px dashed #cbd5e1;color:#64748b;font-size:12px;flex:none">Custom range</span>
+              <span style="display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:99px;border:1px dashed #cbd5e1;color:#64748b;font-size:12px;flex:none">Columns</span>
+            </div>
+          </div>
+          <div style="{{ collapsedRowStyle }}">
+            <span style="font-size:12px;color:#64748b">1,248 transactions · <b style="color:#0f172a">All time</b> · 2 filters</span>
+            <div style="flex:1"></div>
+            <button onClick="{{ expandBar }}" style="display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 10px;border:1px solid #e2e8f0;border-radius:99px;background:#fff;font:500 12px Inter,sans-serif;color:#334155;cursor:pointer">Search &amp; filters ▾</button>
+          </div>
+        </div>
+
+        <!-- CARD LIST -->
+        <div style="display:flex;flex-direction:column;gap:8px;padding:10px 10px 40px">
+          <sc-for list="{{ rows }}" as="r" hint-placeholder-count="4">
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="width:8px;height:8px;border-radius:50%;flex:none;background:{{ r.statusColor }}"></span>
+                <span style="font-family:monospace;font-size:12.5px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.id }}</span>
+                <div style="flex:1"></div>
+                <span style="font-size:12px;color:#94a3b8;flex:none">{{ r.date }}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;overflow:hidden">
+                <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;flex:none;background:{{ r.chBg }};color:{{ r.chFg }}">{{ r.channel }}</span>
+                <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:#eff6ff;color:#1d4ed8;flex:none">FBM</span>
+                <span style="font-family:monospace;font-size:11.5px;color:#64748b;background:#f1f5f9;padding:2px 6px;border-radius:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.sku }}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px">
+                <span style="font-size:13px;font-weight:600;color:#0f172a">{{ r.net }}</span>
+                <span style="font-size:12px;color:#f59e0b">{{ r.fee }}</span>
+                <div style="flex:1"></div>
+                <span style="font-size:13px;font-weight:600;color:#0d9488">{{ r.profit }}</span>
+                <span style="font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:99px;background:{{ r.pctBg }};color:{{ r.pctFg }}">{{ r.pct }}</span>
+                <span style="color:#94a3b8;font-size:14px">›</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+
+        <!-- FILTER SHEET -->
+        <sc-if value="{{ sheetOpen }}" hint-placeholder-val="{{ false }}">
+          <div onClick="{{ toggleSheet }}" style="position:sticky;bottom:720px;height:0;z-index:20">
+            <div style="position:absolute;top:-720px;left:0;width:390px;height:720px;background:rgba(15,23,42,.4)"></div>
+          </div>
+          <div style="position:sticky;bottom:0;z-index:21;background:#fff;border-radius:16px 16px 0 0;box-shadow:0 -8px 30px rgba(15,23,42,.2);padding:8px 16px 20px;display:flex;flex-direction:column;gap:14px">
+            <div style="width:36px;height:4px;border-radius:99px;background:#e2e8f0;margin:0 auto"></div>
+            <div style="display:flex;align-items:center"><span style="font-size:15px;font-weight:700">Filters &amp; view</span><div style="flex:1"></div><span onClick="{{ toggleSheet }}" style="font-size:13px;color:#0d9488;font-weight:600;cursor:pointer">Done</span></div>
+            <div style="display:flex;flex-direction:column;gap:10px;font-size:13px">
+              <div style="display:flex;align-items:center;height:40px;border:1px solid #e2e8f0;border-radius:8px;padding:0 12px;color:#334155">Date range<div style="flex:1"></div><b>All time</b><span style="color:#94a3b8;margin-left:8px">▾</span></div>
+              <div style="display:flex;align-items:center;height:40px;border:1px solid #e2e8f0;border-radius:8px;padding:0 12px;color:#334155">Grouping<div style="flex:1"></div><span style="color:#94a3b8">None</span><span style="color:#94a3b8;margin-left:8px">▾</span></div>
+              <div style="display:flex;align-items:center;height:40px;border:1px solid #e2e8f0;border-radius:8px;padding:0 12px;color:#334155">Status · Channel · Fulfilment<div style="flex:1"></div><span style="background:#ccfbf1;color:#0f766e;font-size:11px;font-weight:600;padding:1px 7px;border-radius:99px">2</span><span style="color:#94a3b8;margin-left:8px">▾</span></div>
+              <div style="display:flex;align-items:center;height:40px;border:1px solid #e2e8f0;border-radius:8px;padding:0 12px;color:#334155">Currency<div style="flex:1"></div><span style="display:inline-flex;border:1px solid #e2e8f0;border-radius:99px;overflow:hidden"><span style="padding:4px 12px;background:#14b8a6;color:#fff;font-weight:600;font-size:12px">EUR</span><span style="padding:4px 12px;color:#64748b;font-size:12px">Original</span></span></div>
+              <div style="display:flex;align-items:center;height:40px;border:1px solid #e2e8f0;border-radius:8px;padding:0 12px;color:#334155">Visible fields<div style="flex:1"></div><span style="color:#94a3b8">6 of 13</span><span style="color:#94a3b8;margin-left:8px">▾</span></div>
+            </div>
+            <button style="height:42px;border:none;border-radius:10px;background:#14b8a6;font:600 14px Inter,sans-serif;color:#fff;cursor:pointer">Apply</button>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+
+  <!-- ANNOTATIONS -->
+  <div style="flex:1;min-width:320px;max-width:460px;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#64748b">Proposal</div>
+      <div style="font-size:22px;font-weight:700;letter-spacing:-.01em">Mobile web view — Sales transactions</div>
+      <div style="font-size:13.5px;color:#475569;line-height:1.6">Responsive web layout for ≤768px, same components and styling as desktop. Fixes the three issues: oversized top bar, horizontal table scrolling, and the disappearing-bar gap.</div>
+    </div>
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:14px;font-size:13px;color:#475569;line-height:1.6">
+      <div><b style="color:#0f172a">1 · Compact sticky bar (never vanishes).</b> The page bar is sticky and collapses on scroll-down to a single 34px summary strip — count, active range, filter count, and a "Search &amp; filters" pill to reopen it. No empty gap, controls always one tap away. The global module-search bar scrolls away normally.</div>
+      <div><b style="color:#0f172a">2 · One-row toolbar + chips.</b> The five stacked selects (All time, Custom range, No grouping, EUR, Columns) become one search field + a Filters button opening a bottom sheet. Active filters show as removable chips in a horizontally scrollable row.</div>
+      <div><b style="color:#0f172a">3 · Cards instead of table rows.</b> Each transaction is a 3-line card: ID + status + date / channel + fulfilment + SKU / money line (net, fee, profit € and %). No horizontal scrolling; tap a card for full detail. Bulk-select via long-press or an Edit mode in ⋯.</div>
+      <div><b style="color:#0f172a">4 · Bottom sheet for filters.</b> All data controls in one thumb-reachable sheet with 40px rows; Columns becomes "Visible fields" controlling which card fields render.</div>
+      <div><b style="color:#0f172a">5 · Header actions stay compact.</b> Alerts becomes an icon with a status dot, secondary actions stay in ⋯, primary shortens to "+ Register" and never wraps.</div>
+    </div>
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px 20px;font-size:13px;color:#475569;line-height:1.7">
+      <b style="color:#0f172a">Breakpoints</b><br>≥1024px — desktop two-row bar (approved design)<br>768–1023px — desktop bar, toolbar wraps to two rows<br>≤767px — this layout: card list, chips, bottom sheet, collapsing summary strip
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { collapsed: false, sheetOpen: false, lastY: 0 };
+  renderVals() {
+    const c = this.state.collapsed;
+    const channels = {
+      'Amazon UK': ['#0f172a', '#fff'], 'Amazon ES': ['#fef3c7', '#92400e'], 'Amazon IT': ['#dcfce7', '#166534'],
+      'Ebay US': ['#1e1b4b', '#fff'], 'Amazon DE': ['#dc2626', '#fff'], 'Amazon NL': ['#1d4ed8', '#fff'], 'Amazon SE': ['#e0f2fe', '#075985']
+    };
+    const mk = (id, ch, sku, net, fee, profit, pct, neg) => ({
+      id, date: '08/08/2026', channel: ch, sku, net, fee, profit, pct,
+      statusColor: '#f97316', chBg: channels[ch][0], chFg: channels[ch][1],
+      pctBg: neg ? '#fee2e2' : '#ccfbf1', pctFg: neg ? '#b91c1c' : '#0f766e'
+    });
+    return {
+      onScroll: (e) => {
+        const y = e.target.scrollTop;
+        const col = y > 60 && y > this.state.lastY;
+        const exp = y < this.state.lastY - 4 || y <= 60;
+        if (col && !this.state.collapsed) this.setState({ collapsed: true, lastY: y });
+        else if (exp && this.state.collapsed) this.setState({ collapsed: false, lastY: y });
+        else this.setState({ lastY: y });
+      },
+      expandBar: () => this.setState({ collapsed: false }),
+      toggleSheet: () => this.setState(s => ({ sheetOpen: !s.sheetOpen })),
+      sheetOpen: this.state.sheetOpen,
+      toolbarStyle: { maxHeight: c ? 0 : 120, opacity: c ? 0 : 1, overflow: 'hidden', transition: 'max-height .22s ease, opacity .18s ease', pointerEvents: c ? 'none' : 'auto' },
+      collapsedRowStyle: { display: 'flex', alignItems: 'center', gap: 8, padding: c ? '0 12px' : '0 12px', height: c ? 34 : 0, opacity: c ? 1 : 0, overflow: 'hidden', transition: 'height .22s ease, opacity .18s ease', pointerEvents: c ? 'auto' : 'none' },
+      rows: [
+        mk('202-8677470-8677914', 'Amazon UK', 'ATH-NES-CLAS-200G…', '£35.93', '~16.2% fee', '€13.32', '31.8%'),
+        mk('403-7755821-7449161', 'Amazon ES', '47-E652E', '€19.42', '~15.5% fee', '€ -0.26', '-1.1%', true),
+        mk('406-5150924-9067539', 'Amazon IT', 'LE-51522', '€13.66', '~13.9% fee', '€0.36', '2.2%'),
+        mk('13-14999-37688', 'Ebay US', 'POT-JS609S-001-125', '$65.94', '19.3% fee', '€28.51', '49.9%'),
+        mk('406-9527592-4325152', 'Amazon ES', 'BE-HL16', '€21.86', '~15.5% fee', '€4.02', '15.2%'),
+        mk('304-3590591-3672347', 'Amazon DE', 'LE-41520', '€18.46', '~12.8% fee', '€3.91', '17.8%'),
+        mk('403-7334454-3643531', 'Amazon NL', 'LE-41524', '€14.01', '~12.5% fee', '€1.16', '6.8%'),
+        mk('403-2519707-6800343', 'Amazon SE', 'BE-MG35', 'SEK 503.20', '~12.5% fee', '€8.89', '15.5%'),
+        mk('302-2410437-8539546', 'Amazon DE', 'LE-41520', '€18.46', '~12.8% fee', '€3.91', '17.8%'),
+        mk('402-1180331-6644323', 'Amazon IT', 'ATH-NES-CLAS-200G…', '€24.90', '~14.1% fee', '€5.12', '20.6%')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
