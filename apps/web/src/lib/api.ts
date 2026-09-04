@@ -1647,6 +1647,9 @@ export interface SalesTransaction {
   /** True while the FBA fulfilment fee is our estimate (Amazon settles it ~2 weeks after the sale). */
   fbaFeeEstimated: boolean;
   returnShippingCost: number;
+  /** What it cost to send a replacement out. A third leg, counted separately from the original
+   *  despatch so the estimate-vs-actual comparison on that despatch stays meaningful. */
+  replacementShippingCost: number;
   dutyImportCost: number;
   /** 'partial' = some outbound shipments recorded, but not yet marked fully shipped. */
   fulfilmentStatus: 'pending' | 'partial' | 'shipped' | 'cancelled';

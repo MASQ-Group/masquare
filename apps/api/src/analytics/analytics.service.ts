@@ -227,7 +227,13 @@ export class AnalyticsService {
       totals.feesEur += fees;
       totals.orders += 1;
       totals.units += units;
-      totals.shippingEur += (t.shippingCostSource === 'actual' ? t.actualShippingCost ?? 0 : t.estimatedShippingCost ?? 0) + (t.returnShippingCost ?? 0);
+      // All three legs: the original despatch, a return we paid for, and a replacement sent out.
+      // Profit already counts all three, so leaving one out here made the shipping line disagree
+      // with the profit line on exactly the orders that went wrong.
+      totals.shippingEur +=
+        (t.shippingCostSource === 'actual' ? t.actualShippingCost ?? 0 : t.estimatedShippingCost ?? 0) +
+        (t.returnShippingCost ?? 0) +
+        (t.replacementShippingCost ?? 0);
       totals.dutyEur += t.dutyImportCost ?? 0;
       totals.refundEur += t.refundEur ?? 0;
       if (isReturn) { returns.returnedOrders += 1; returns.returnedUnits += units; returns.refundEur += t.refundEur ?? 0; }

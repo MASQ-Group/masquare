@@ -77,21 +77,26 @@ export class ShipmentsService {
     const where: Prisma.ShipmentWhereInput = {
       deletedAt: null,
       ...(query.type && query.type !== 'fba' ? { type: query.type } : {}),
-      ...(query.q || query.companyIds || query.companyId || query.salesChannelId
+      // Always: a shipment belonging to a deleted order does not belong in the log. This used to be
+      // applied only when some filter happened to be set, so an unfiltered list showed rows a
+      // filtered one hid.
+      transaction: {
+        deletedAt: null,
+        ...(query.companyIds ? { companyId: { in: query.companyIds } } : query.companyId ? { companyId: query.companyId } : {}),
+        ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
+      },
+      // Search is a sibling of the scope above rather than nested inside it, because the tracking
+      // number lives on the SHIPMENT while the reference and SKUs live on its transaction. Prisma
+      // ANDs the two, so scope still holds however the row matched.
+      ...(query.q
         ? {
-            transaction: {
-              deletedAt: null,
-              ...(query.companyIds ? { companyId: { in: query.companyIds } } : query.companyId ? { companyId: query.companyId } : {}),
-              ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
-              ...(query.q
-                ? {
-                    OR: [
-                      { transactionRef: { contains: query.q, mode: 'insensitive' } },
-                      { items: { some: { deletedAt: null, sku: { contains: query.q, mode: 'insensitive' } } } },
-                    ],
-                  }
-                : {}),
-            },
+            OR: [
+              // What someone actually has in their hand when a courier or a customer asks about a
+              // parcel, and the one thing this box could not find.
+              { trackingNumber: { contains: query.q, mode: 'insensitive' } },
+              { transaction: { transactionRef: { contains: query.q, mode: 'insensitive' } } },
+              { transaction: { items: { some: { deletedAt: null, sku: { contains: query.q, mode: 'insensitive' } } } } },
+            ],
           }
         : {}),
     };
@@ -634,6 +639,8 @@ export class ShipmentsService {
         ? { OR: [
             { transactionRef: { contains: query.q, mode: 'insensitive' } },
             { items: { some: { deletedAt: null, sku: { contains: query.q, mode: 'insensitive' } } } },
+            // Matches the list above, so exporting a search finds the same rows it showed.
+            { shipments: { some: { deletedAt: null, trackingNumber: { contains: query.q, mode: 'insensitive' } } } },
           ] }
         : {}),
     };
