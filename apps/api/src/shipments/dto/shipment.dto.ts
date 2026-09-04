@@ -6,7 +6,13 @@ import {
 
 export class CreateShipmentDto {
   @IsUUID() transactionId!: string;
-  @IsOptional() @IsIn(['outbound', 'inbound']) type?: 'outbound' | 'inbound';
+  @IsOptional() @IsIn(['outbound', 'inbound', 'replacement']) type?: 'outbound' | 'inbound' | 'replacement';
+  /**
+   * Where a REPLACEMENT left from. Required for that type and ignored for the others: the original
+   * despatch records its warehouse per line, but a replacement consumes a second unit that nothing
+   * else accounts for, so it has to say where that unit came from.
+   */
+  @IsOptional() @IsUUID() warehouseId?: string | null;
   @IsDateString() shipmentDate!: string;
   @IsOptional() @IsUUID() shippingServiceId?: string | null;
   @IsOptional() @IsString() trackingNumber?: string | null;
