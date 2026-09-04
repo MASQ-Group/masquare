@@ -171,7 +171,16 @@ model User {
   email        String     @unique
   passwordHash String     @map("password_hash")
   status       UserStatus @default(active)
+  /// The one super-user switch. An admin holds every area and capability outright, so their access
+  /// never depends on a role being present — removing one must not lock out the person able to
+  /// restore it.
   isAdmin      Boolean    @default(false) @map("is_admin")
+
+  /// Starting point for this user's access. Null means they hold only their overrides.
+  roleId       String?    @map("role_id") @db.Uuid
+  /// Per-user deltas ON TOP of the role, shaped like a role's grants. A key present here REPLACES
+  /// the role's value, which is what lets an override revoke as well as grant.
+  accessOverrides Json?   @map("access_overrides")
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -179,11 +188,43 @@ model User {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
+  role          Role?              @relation(fields: [roleId], references: [id], onDelete: SetNull)
   companyAccess UserCompanyAccess[]
   moduleAccess  UserModuleAccess[]
   activity      Activity[]         @relation("ActivityActor")
 
+  @@index([roleId])
   @@map("user")
+}
+
+/**
+ * A named set of grants — Warehouse, Buyer, Finance — assigned to people and then adjusted per
+ * person where the job differs.
+ *
+ * The grants are JSON against a catalogue that lives in code, because the catalogue has to be
+ * versioned with the guards that read it: a permission key stored as a row can outlive the route it
+ * protected, and nothing would fail. Unknown keys are dropped on read and refused on write.
+ */
+model Role {
+  id          String  @id @default(uuid()) @db.Uuid
+  key         String  @unique
+  name        String
+  description String?
+  /// Seeded with the platform. Editable, but not deletable — a role in use is somebody's access.
+  isSystem    Boolean @default(false) @map("is_system")
+  sortOrder   Int     @default(0) @map("sort_order")
+  /// { areas: { <areaKey>: 'none'|'view'|'edit' }, capabilities: { <capKey>: boolean } }
+  grants      Json    @default("{}")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  users User[]
+
+  @@map("role")
 }
 
 model UserCompanyAccess {
