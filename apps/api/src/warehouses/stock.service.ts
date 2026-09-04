@@ -172,6 +172,7 @@ export class StockService {
         include: {
           product: { select: { mainSku: true, title: true } },
           warehouse: { select: { name: true } },
+          transfer: { select: { reference: true, fromWarehouse: { select: { name: true } }, toWarehouse: { select: { name: true } } } },
         },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
@@ -191,6 +192,13 @@ export class StockService {
         reason: m.reason,
         reference: m.reference,
         notes: m.notes,
+        serials: m.serials,
+        // The other end of a transfer, so a -12 row can say where the 12 went without a second look.
+        counterparty: m.transfer
+          ? m.qtyDelta < 0
+            ? m.transfer.toWarehouse.name
+            : m.transfer.fromWarehouse.name
+          : null,
       })),
       total,
       page,
@@ -253,9 +261,16 @@ export class StockService {
       actorId?: string;
       reference?: string | null;
       notes?: string | null;
+      /** The individual units this movement covers, for serial-tracked products. */
+      serials?: string[];
+      /** Set on both legs of a transfer, which is what pairs them. */
+      transferId?: string | null;
     },
   ) {
-    const { productId, warehouseId, qtyDelta, reason, actorId, reference = null, notes = null } = args;
+    const {
+      productId, warehouseId, qtyDelta, reason, actorId,
+      reference = null, notes = null, serials = [], transferId = null,
+    } = args;
     const [product, warehouse] = await Promise.all([
       tx.product.findFirst({ where: { id: productId, deletedAt: null }, select: { id: true, mainSku: true } }),
       tx.warehouse.findFirst({ where: { id: warehouseId, deletedAt: null }, select: { id: true, name: true, isActive: true } }),
@@ -281,7 +296,10 @@ export class StockService {
       update: { quantityOnHand: balanceAfter },
     });
     await tx.stockMovement.create({
-      data: { productId, warehouseId, qtyDelta, balanceAfter, reason, reference, notes, createdById: actorId ?? null },
+      data: {
+        productId, warehouseId, qtyDelta, balanceAfter, reason, reference, notes,
+        serials, transferId, createdById: actorId ?? null,
+      },
     });
 
     return { productId, warehouseId, quantityOnHand: balanceAfter, qtyDelta };

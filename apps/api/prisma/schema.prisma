@@ -69,6 +69,7 @@ model Company {
   vendorReturns      VendorReturn[]
   salesChannels      SalesChannel[]
   fbaFulfilmentPools FbaFulfilmentPool[]
+  stockTransfers     StockTransfer[]
 
   @@map("company")
 }
@@ -1137,6 +1138,8 @@ model Warehouse {
   // Replacement despatches sent from here (see Shipment.warehouseId).
   shipments      Shipment[]      @relation("ShipmentWarehouse")
   stockOwed      StockOwed[]
+  transfersOut   StockTransfer[] @relation("TransferFrom")
+  transfersIn    StockTransfer[] @relation("TransferTo")
 
   @@index([parentWarehouseId])
   @@index([companyId])
@@ -1173,21 +1176,78 @@ model StockMovement {
   warehouseId  String  @map("warehouse_id") @db.Uuid
   qtyDelta     Int     @map("qty_delta") // signed: +in, -out
   balanceAfter Int     @map("balance_after") // the warehouse balance once this was applied
-  // opening_balance | adjustment | damage | stocktake | transfer | goods_receipt | sale
+  // opening_balance | adjustment | damage | stocktake | transfer | goods_receipt | sale | customer_return
   reason       String
   reference    String? // free-text doc reference (PO/receipt/order)
   notes        String?
 
+  /**
+   * Which individual units moved, for serial-tracked products. Empty for everything else.
+   *
+   * Held here rather than only on SerialNumber because that row records where a unit is NOW —
+   * repointing it to a new warehouse leaves no trace of where it came from. The movement is the
+   * only place the journey survives, so a transfer or a write-off can still be explained a year
+   * later. Codes rather than ids, so retiring a serial never blanks the history that mentions it.
+   */
+  serials      String[] @default([])
+
   createdAt   DateTime @default(now()) @map("created_at")
   createdById String?  @map("created_by") @db.Uuid
 
-  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  /** Set on both legs of an internal transfer, which is what pairs them. */
+  transferId String? @map("transfer_id") @db.Uuid
+
+  product   Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  transfer  StockTransfer? @relation(fields: [transferId], references: [id], onDelete: SetNull)
 
   @@index([productId])
   @@index([warehouseId])
   @@index([createdAt])
+  @@index([transferId])
   @@map("stock_movement")
+}
+
+/**
+ * An internal move of stock from one warehouse to another.
+ *
+ * Deliberately has no lines of its own: the two StockMovements per product ARE the lines. Making
+ * them the only record means a transfer cannot claim to have moved something the balances disagree
+ * with. The header exists to give the pair a reference, an author and a reason.
+ *
+ * Transfers land in one step — stock leaves the source and arrives at the destination in the same
+ * transaction. There is no in-transit state, because a warehouse already models one: anyone needing
+ * it can create an "In Transit" warehouse with include_in_inventory off and transfer through it,
+ * which keeps the stock visible and out of the sellable total without a second lifecycle to
+ * maintain here.
+ */
+model StockTransfer {
+  id        String @id @default(uuid()) @db.Uuid
+  /** TRF-YYYY-NNNNN, unique and short enough to quote in a message. */
+  reference String @unique
+  /**
+   * Denormalised from the warehouses, which must both belong to it. Stock crossing between
+   * companies is a sale, not a transfer, and is refused — so one column is always correct.
+   */
+  companyId String? @map("company_id") @db.Uuid
+
+  fromWarehouseId String  @map("from_warehouse_id") @db.Uuid
+  toWarehouseId   String  @map("to_warehouse_id") @db.Uuid
+  notes           String?
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  createdById String?  @map("created_by") @db.Uuid
+
+  company       Company?        @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  fromWarehouse Warehouse       @relation("TransferFrom", fields: [fromWarehouseId], references: [id], onDelete: Restrict)
+  toWarehouse   Warehouse       @relation("TransferTo", fields: [toWarehouseId], references: [id], onDelete: Restrict)
+  movements     StockMovement[]
+
+  @@index([companyId])
+  @@index([createdAt])
+  @@index([fromWarehouseId])
+  @@index([toWarehouseId])
+  @@map("stock_transfer")
 }
 
 // ===========================================================================

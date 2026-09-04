@@ -5,12 +5,18 @@ import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 import { WarehousesService } from './warehouses.service';
 import { StockService } from './stock.service';
+import { TransfersService } from './transfers.service';
+import { AdjustmentsService } from './adjustments.service';
 import {
   AdjustStockDto,
+  AdjustmentImportValidateDto,
+  CreateTransferDto,
   CreateWarehouseDto,
+  ManualAdjustDto,
   SetStockDto,
   StockImportCommitDto,
   StockImportValidateDto,
+  TransferImportValidateDto,
   UpdateWarehouseDto,
 } from './dto/warehouse.dto';
 
@@ -123,5 +129,73 @@ export class StockController {
   @Get('product/:productId')
   byProduct(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
     return this.svc.byProduct(productId, companyIds);
+  }
+}
+
+/**
+ * Manual inventory operations. A separate controller from the stock reads above because these are
+ * the only routes that change a balance by hand, and keeping them together makes that visible.
+ */
+@ApiTags('stock-adjustments')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
+@Controller('stock-adjustments')
+export class AdjustmentsController {
+  constructor(private readonly svc: AdjustmentsService) {}
+
+  @Post()
+  adjust(@Body() dto: ManualAdjustDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.adjust(dto, user.sub, companyIds);
+  }
+
+  @Post('import/validate')
+  importValidate(@Body() dto: AdjustmentImportValidateDto, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.importValidate(dto.rows, companyIds);
+  }
+
+  /** Re-validates server-side rather than trusting the client's dry run. */
+  @Post('import/commit')
+  importCommit(@Body() dto: AdjustmentImportValidateDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.importCommit(dto.rows, user.sub, companyIds);
+  }
+}
+
+@ApiTags('stock-transfers')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
+@Controller('stock-transfers')
+export class TransfersController {
+  constructor(private readonly svc: TransfersService) {}
+
+  @Get()
+  list(
+    @VisibleCompanies() companyIds: string[],
+    @Query('q') q?: string,
+    @Query('warehouseId') warehouseId?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.svc.list({
+      q,
+      warehouseId,
+      companyIds,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  }
+
+  @Post()
+  create(@Body() dto: CreateTransferDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.create(dto, user.sub, companyIds);
+  }
+
+  @Post('import/validate')
+  importValidate(@Body() dto: TransferImportValidateDto, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.importValidate(dto.rows, companyIds);
+  }
+
+  @Post('import/commit')
+  importCommit(@Body() dto: TransferImportValidateDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.importCommit(dto.rows, user.sub, companyIds);
   }
 }

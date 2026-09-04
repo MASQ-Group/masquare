@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, EyeOff, Pencil, Plus, Search, Trash2, Upload, Warehouse as WarehouseIcon } from 'lucide-react';
+import { ArrowRight, ChevronDown, ChevronRight, EyeOff, Pencil, Plus, Search, Trash2, Upload, Warehouse as WarehouseIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { BulkImport, DEFAULT_PAGE_SIZES, ModalShell, Pagination, Select, downloadTemplate, type ImportField } from '@masquare/ui';
-import { stockApi, warehousesApi, type Warehouse, type WarehouseNode } from '../lib/api';
+import { stockApi, transfersApi, warehousesApi, type Warehouse, type WarehouseNode } from '../lib/api';
 import { usePersistentState } from '../lib/usePersistentState';
 import { WarehouseModal } from '../components/warehouses/WarehouseModal';
 import { StockAdjustModal } from '../components/warehouses/StockAdjustModal';
+import { TransferModal } from '../components/warehouses/TransferModal';
+import { AdjustmentImportModal, TransferImportModal } from '../components/warehouses/InventoryImportModals';
 import { PageHeader } from '../components/common/PageHeader';
 
 const STOCK_IMPORT_FIELDS: ImportField[] = [
@@ -40,12 +42,15 @@ const REASON_LABELS: Record<string, string> = {
 
 export function WarehousesPage() {
   const qc = useQueryClient();
-  const [tab, setTab] = usePersistentState<'tree' | 'stock' | 'movements'>('warehouses.tab', 'tree');
+  const [tab, setTab] = usePersistentState<'tree' | 'stock' | 'transfers' | 'movements'>('warehouses.tab', 'tree');
   const [showInactive, setShowInactive] = usePersistentState('warehouses.showInactive', false);
 
   const [modal, setModal] = useState<{ warehouse?: Warehouse; defaultParentId?: string | null } | null>(null);
   const [adjustOpen, setAdjustOpen] = useState<{ warehouseId?: string | null } | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState<{ fromWarehouseId?: string | null } | null>(null);
+  // One value rather than three booleans: the three sheets are alternatives, and two open at once
+  // would be a bug that only shows up as a stacked modal.
+  const [importOpen, setImportOpen] = useState<'stock' | 'transfer' | 'adjustment' | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<WarehouseNode | null>(null);
 
   const { data: tree = [], isLoading } = useQuery({
@@ -56,6 +61,7 @@ export function WarehousesPage() {
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['warehouses'] });
     qc.invalidateQueries({ queryKey: ['stock'] });
+    qc.invalidateQueries({ queryKey: ['transfers'] });
   };
 
   const del = useMutation({
@@ -76,7 +82,10 @@ export function WarehousesPage() {
         info="Where stock is held. Only warehouses marked as available count toward what you can sell."
         actions={
           <>
-            <button className="hbtn" onClick={() => setImportOpen(true)}><Upload size={15} className="text-n-500" /> Import stock</button>
+            <button className="hbtn" onClick={() => setImportOpen(tab === 'transfers' ? 'transfer' : 'adjustment')}>
+              <Upload size={15} className="text-n-500" /> Import {tab === 'transfers' ? 'transfers' : 'adjustments'}
+            </button>
+            <button className="hbtn" onClick={() => setTransferOpen({})}><ArrowRight size={15} className="text-n-500" /> Transfer stock</button>
             <button className="hbtn" onClick={() => setAdjustOpen({})}><Plus size={15} className="text-n-500" /> Adjust stock</button>
           </>
         }
@@ -84,7 +93,7 @@ export function WarehousesPage() {
       />
 
       <div className="mb-4 flex items-center gap-2 border-b border-n-200">
-        {([['tree', 'Warehouses'], ['stock', 'Stock on hand'], ['movements', 'Movement history']] as const).map(([key, label]) => (
+        {([['tree', 'Warehouses'], ['stock', 'Stock on hand'], ['transfers', 'Transfers'], ['movements', 'Movement history']] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -106,10 +115,12 @@ export function WarehousesPage() {
           onEdit={(w) => setModal({ warehouse: w })}
           onAddChild={(id) => setModal({ defaultParentId: id })}
           onAdjust={(id) => setAdjustOpen({ warehouseId: id })}
+          onTransfer={(id) => setTransferOpen({ fromWarehouseId: id })}
           onDelete={setConfirmDelete}
         />
       )}
       {tab === 'stock' && <StockTab tree={tree} onAdjust={(id) => setAdjustOpen({ warehouseId: id })} />}
+      {tab === 'transfers' && <TransfersTab tree={tree} onNew={() => setTransferOpen({})} />}
       {tab === 'movements' && <MovementsTab tree={tree} />}
 
       {modal && (
@@ -127,8 +138,21 @@ export function WarehousesPage() {
           onSaved={() => { setAdjustOpen(null); invalidate(); }}
         />
       )}
-      {importOpen && (
-        <StockImportModal onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); invalidate(); }} />
+      {transferOpen && (
+        <TransferModal
+          defaultFromWarehouseId={transferOpen.fromWarehouseId}
+          onClose={() => setTransferOpen(null)}
+          onSaved={() => { setTransferOpen(null); invalidate(); }}
+        />
+      )}
+      {importOpen === 'stock' && (
+        <StockImportModal onClose={() => setImportOpen(null)} onDone={() => { setImportOpen(null); invalidate(); }} />
+      )}
+      {importOpen === 'transfer' && (
+        <TransferImportModal onClose={() => setImportOpen(null)} onDone={() => { setImportOpen(null); invalidate(); }} />
+      )}
+      {importOpen === 'adjustment' && (
+        <AdjustmentImportModal onClose={() => setImportOpen(null)} onDone={() => { setImportOpen(null); invalidate(); }} />
       )}
       {confirmDelete && (
         <ModalShell
@@ -154,7 +178,7 @@ export function WarehousesPage() {
 // ---------------------------------------------------------------- tree
 
 function WarehouseTree({
-  tree, isLoading, showInactive, onToggleInactive, onEdit, onAddChild, onAdjust, onDelete,
+  tree, isLoading, showInactive, onToggleInactive, onEdit, onAddChild, onAdjust, onTransfer, onDelete,
 }: {
   tree: WarehouseNode[];
   isLoading: boolean;
@@ -163,6 +187,7 @@ function WarehouseTree({
   onEdit: (w: Warehouse) => void;
   onAddChild: (id: string) => void;
   onAdjust: (id: string) => void;
+  onTransfer: (id: string) => void;
   onDelete: (w: WarehouseNode) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -248,6 +273,7 @@ function WarehouseTree({
                 <td className={`${td} text-right`}>
                   <div className="flex justify-end gap-1 opacity-0 transition group-hover:opacity-100">
                     <IconBtn title="Adjust stock here" onClick={() => onAdjust(n.id)}><Plus size={14} /></IconBtn>
+                    <IconBtn title="Transfer stock out of here" onClick={() => onTransfer(n.id)}><ArrowRight size={14} /></IconBtn>
                     <IconBtn title="Add sub-warehouse" onClick={() => onAddChild(n.id)}><WarehouseIcon size={14} /></IconBtn>
                     <IconBtn title="Edit" onClick={() => onEdit(n)}><Pencil size={14} /></IconBtn>
                     <IconBtn title="Remove" danger onClick={() => onDelete(n)}><Trash2 size={14} /></IconBtn>
@@ -373,6 +399,132 @@ function StockTab({ tree, onAdjust }: { tree: WarehouseNode[]; onAdjust: (id: st
   );
 }
 
+// ---------------------------------------------------------------- transfers tab
+
+/**
+ * Past transfers, newest first.
+ *
+ * Each row expands to its lines rather than linking to a detail page: a transfer is three fields
+ * and a short list, and a page of its own would be almost entirely chrome.
+ */
+function TransfersTab({ tree, onNew }: { tree: WarehouseNode[]; onNew: () => void }) {
+  const [qInput, setQInput] = useState('');
+  const [q, setQ] = useState('');
+  const [warehouseId, setWarehouseId] = usePersistentState('warehouses.transfers.warehouse', '');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
+
+  const flat = flatten(tree);
+  const params = { q: q || undefined, warehouseId: warehouseId || undefined, page, pageSize };
+  const { data, isLoading } = useQuery({ queryKey: ['transfers', params], queryFn: () => transfersApi.list(params) });
+  const rows = data?.rows ?? [];
+
+  const toggle = (id: string) =>
+    setExpanded((sx) => { const n = new Set(sx); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const th = 'border-b border-n-200 bg-n-25 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap';
+  const td = 'border-b border-n-100 px-4 py-2.5 text-[13px] text-n-700';
+
+  return (
+    <>
+      <div className="card overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-3">
+          <div className="relative min-w-[220px] flex-1">
+            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-n-400" />
+            <input className="input pl-8" value={qInput} onChange={(e) => setQInput(e.target.value)} placeholder="Search reference, SKU or notes" />
+          </div>
+          <div className="w-[240px]">
+            <Select
+              value={warehouseId}
+              onChange={(v) => { setWarehouseId(v); setPage(1); }}
+              placeholder="All warehouses"
+              options={flat.map((w) => ({ value: w.id, label: `${'  '.repeat(w.depth)}${w.name}` }))}
+            />
+          </div>
+          {warehouseId && <span className="text-[12px] text-n-500">Both what left it and what arrived.</span>}
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className={`${th} text-left`}>Reference</th>
+                <th className={`${th} text-left`}>When</th>
+                <th className={`${th} text-left`}>Route</th>
+                <th className={`${th} text-right`}>Lines</th>
+                <th className={`${th} text-right`}>Units</th>
+                <th className={`${th} text-left`}>By</th>
+                <th className={`${th} text-left`}>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading && <tr><td className={td} colSpan={7}>Loading…</td></tr>}
+              {!isLoading && rows.length === 0 && (
+                <tr>
+                  <td className={`${td} py-10 text-center text-n-400`} colSpan={7}>
+                    No transfers yet. Use <button onClick={onNew} className="font-semibold text-teal-700 underline">Transfer stock</button> to move
+                    stock between warehouses, or import a spreadsheet of them.
+                  </td>
+                </tr>
+              )}
+              {rows.map((t) => (
+                <Fragment key={t.id}>
+                  <tr className="cursor-pointer hover:bg-n-25" onClick={() => toggle(t.id)}>
+                    <td className={`${td} code font-semibold text-n-800`}>
+                      <span className="mr-1.5 inline-block text-n-400">{expanded.has(t.id) ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</span>
+                      {t.reference}
+                    </td>
+                    <td className={`${td} mono whitespace-nowrap text-n-500`}>{new Date(t.createdAt).toLocaleString()}</td>
+                    <td className={td}>
+                      <span className="whitespace-nowrap">
+                        {t.from.name} <ArrowRight size={12} className="mx-1 inline text-n-400" /> {t.to.name}
+                      </span>
+                    </td>
+                    <td className={`${td} mono text-right`}>{t.lineCount}</td>
+                    <td className={`${td} mono text-right font-semibold text-n-800`}>{t.totalUnits}</td>
+                    <td className={`${td} text-[12px] text-n-500`}>{t.createdBy ?? '—'}</td>
+                    <td className={`${td} text-[12px] text-n-500`}>{t.notes ?? ''}</td>
+                  </tr>
+                  {expanded.has(t.id) && (
+                    <tr>
+                      <td className="border-b border-n-100 bg-n-25 px-4 py-3" colSpan={7}>
+                        <div className="flex flex-col gap-1.5">
+                          {t.lines.map((l) => (
+                            <div key={l.productId} className="flex flex-wrap items-baseline gap-2 text-[12.5px]">
+                              <span className="code font-semibold text-n-800">{l.sku}</span>
+                              <span className="text-n-500">{l.productName}</span>
+                              <span className="mono ml-auto font-semibold text-n-700">{l.quantity}</span>
+                              {l.serials.length > 0 && (
+                                <div className="mono w-full text-[11.5px] text-n-400">{l.serials.join(', ')}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <Pagination
+        page={data?.page ?? 1}
+        pageCount={data?.pageCount ?? 1}
+        onPageChange={setPage}
+        pageSize={pageSize}
+        onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
+        pageSizeOptions={DEFAULT_PAGE_SIZES}
+      />
+    </>
+  );
+}
+
 // ---------------------------------------------------------------- movements tab
 
 function MovementsTab({ tree }: { tree: WarehouseNode[] }) {
@@ -426,12 +578,25 @@ function MovementsTab({ tree }: { tree: WarehouseNode[] }) {
                 <td className={`${td} mono whitespace-nowrap text-n-500`}>{new Date(m.createdAt).toLocaleString()}</td>
                 <td className={`${td} code font-semibold text-n-800`}>{m.sku}</td>
                 <td className={td}>{m.warehouseName}</td>
-                <td className={td}><span className="tag">{REASON_LABELS[m.reason] ?? m.reason}</span></td>
+                <td className={td}>
+                  <span className="tag">{REASON_LABELS[m.reason] ?? m.reason}</span>
+                  {/* A transfer leg alone reads as an unexplained -12; the other end is what makes it a move. */}
+                  {m.counterparty && (
+                    <span className="ml-1.5 whitespace-nowrap text-[11.5px] text-n-500">
+                      {m.qtyDelta < 0 ? '→' : '←'} {m.counterparty}
+                    </span>
+                  )}
+                </td>
                 <td className={`${td} mono text-right font-semibold ${m.qtyDelta > 0 ? 'text-teal-700' : 'text-danger'}`}>
                   {m.qtyDelta > 0 ? '+' : ''}{m.qtyDelta}
                 </td>
                 <td className={`${td} mono text-right`}>{m.balanceAfter}</td>
-                <td className={`${td} text-[12px] text-n-500`}>{m.notes ?? m.reference ?? ''}</td>
+                <td className={`${td} text-[12px] text-n-500`}>
+                  {m.notes ?? m.reference ?? ''}
+                  {m.serials && m.serials.length > 0 && (
+                    <div className="mono mt-0.5 text-[11px] text-n-400">{m.serials.join(', ')}</div>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
