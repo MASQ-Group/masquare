@@ -499,6 +499,17 @@ export class RepricingController {
         throw new BadRequestException(`${k} must be a whole number of days between 0 and 3650 (0 = keep forever).`);
       }
     }
+    // The decisions table is not only an audit log — the engine reads it back. The fair-pricing
+    // ceiling takes a 30-day median of observed buy-box prices from it, and the anomaly guard a
+    // 7-day one. Keeping less than 30 days does not fail: the medians quietly narrow, the ceiling
+    // stops protecting against a competitor's bad feed, and the only symptom is a price nobody can
+    // explain. Refused rather than warned about, because that is not a trade anyone would make
+    // knowingly. 0 still means keep forever.
+    if (dto.decisionDays != null && dto.decisionDays > 0 && dto.decisionDays < 31) {
+      throw new BadRequestException(
+        'Decisions must be kept at least 31 days: the fair-pricing ceiling reads a 30-day median of buy-box prices from them, and the anomaly guard a 7-day one.',
+      );
+    }
     const existing = await this.prisma.platformSettings.findFirst({ select: { id: true } });
     const data = {
       ...(dto.decisionDays != null ? { repricingDecisionRetentionDays: dto.decisionDays } : {}),

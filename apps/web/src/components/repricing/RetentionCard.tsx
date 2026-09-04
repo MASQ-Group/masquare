@@ -56,7 +56,7 @@ export function RetentionCard() {
       <div className="grid grid-cols-2 gap-4 max-[480px]:grid-cols-1">
         <Field
           label="Decisions & snapshots"
-          hint="The audit trail — what it chose and the competition it saw."
+          hint="Also read back by the engine: minimum 31 days."
           value={decisionDays}
           onChange={setDecisionDays}
           count={(data?.decisions ?? 0) + (data?.snapshots ?? 0)}
@@ -74,7 +74,9 @@ export function RetentionCard() {
         {/* Both stated, because both are the sort of thing someone reasonably fears when typing a
             number into a box that deletes data. */}
         0 means keep forever. The newest fee estimate for each SKU is never deleted, whatever its
-        age — the floor reads it as the live fee.
+        age — the floor reads it as the live fee. Decisions are not only a record: the fair-pricing
+        ceiling takes a 30-day median of buy-box prices from them, so they cannot be kept for less
+        than 31 days.
       </p>
 
       <div className="flex flex-wrap items-center gap-3 border-t border-n-100 pt-4">
