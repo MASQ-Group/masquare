@@ -2501,6 +2501,10 @@ model FbaShipment {
   estimatedCostEur     Decimal? @map("estimated_cost_eur") @db.Decimal(12, 2)
   // Actual cost registered by operations; when set it overrides the estimate for allocation.
   actualCostEur        Decimal? @map("actual_cost_eur") @db.Decimal(12, 2)
+  /// Duty and import charges on the consignment, on top of carriage. Kept apart from the shipping
+  /// cost because it arrives on its own invoice, often weeks later, and the estimate-vs-actual
+  /// comparison on carriage has to stay honest — but it is shared across the lines the same way.
+  dutyImportEur        Decimal? @map("duty_import_eur") @db.Decimal(12, 2)
   status               String   @default("draft") // draft | confirmed
   comments             String?
 

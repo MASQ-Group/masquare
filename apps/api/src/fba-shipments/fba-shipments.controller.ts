@@ -123,7 +123,7 @@ export class FbaShipmentsController {
 
   @Patch(':id/actual-cost')
   setActualCost(@Param('id') id: string, @Body() dto: SetActualCostDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
-    return this.fba.setActualCost(id, dto.actualCostEur, user.sub, companyIds, dto.confirm);
+    return this.fba.setActualCost(id, dto.actualCostEur, user.sub, companyIds, dto.confirm, dto.dutyImportEur);
   }
 
   @Patch(':id')

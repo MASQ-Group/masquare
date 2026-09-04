@@ -28,6 +28,8 @@ const FBA_IMPORT_FIELDS: ImportField[] = [
   { key: 'salesChannel', label: 'Sales Channel', required: true },
   { key: 'shippingService', label: 'Shipping Service' },
   { key: 'packagingPct', label: 'Packaging %' },
+  // Header-level: read from the first row of each shipment, like Packaging %.
+  { key: 'dutyImportEur', label: 'Duty / Import Charges (EUR)' },
   { key: 'box', label: 'Box' },
   { key: 'boxEmptyWeightKg', label: 'Box Empty Weight (kg)' },
   { key: 'boxLengthCm', label: 'Box Length (cm)' },
@@ -48,7 +50,7 @@ const FBA_IMPORT_FIELDS: ImportField[] = [
 function buildFbaTemplate(channels: { name: string }[], services: { name: string }[]) {
   const sample = (box: string, w: string, l: string, wd: string, h: string, track: string, sku: string, qty: string) => [
     'FBA15ABC001', '2026-01-15', channels[0]?.name ?? 'Amazon SG', services[0]?.name ?? 'DHL Express',
-    '10', box, w, l, wd, h, track, sku, qty,
+    '10', '85.00', box, w, l, wd, h, track, sku, qty,
   ];
   return downloadTemplate('masquare-fba-shipments-template', {
     sheetName: 'FBA Shipments',

@@ -28,6 +28,8 @@ export class FbaShipmentBaseDto {
   @IsOptional() @IsString() fbaShipmentRef?: string | null;
   @IsOptional() @IsUUID() shippingServiceId?: string | null;
   @IsOptional() @IsNumber() @Min(0) packagingPct?: number;
+  /** Duty / import charges on the consignment, shared across the lines alongside carriage. */
+  @IsOptional() @IsNumber() @Min(0) dutyImportEur?: number | null;
   @IsOptional() @IsString() comments?: string | null;
   @IsArray() @ValidateNested({ each: true }) @Type(() => FbaShipmentBoxDto)
   boxes!: FbaShipmentBoxDto[];
@@ -46,6 +48,11 @@ export class UpdateFbaShipmentDto extends FbaShipmentBaseDto {
 
 export class SetActualCostDto {
   @IsNumber() @Min(0) actualCostEur!: number;
+  /**
+   * Duty invoiced on the same consignment. Omit it entirely to leave whatever is stored alone —
+   * carriage and customs are billed separately, so entering one must not wipe the other.
+   */
+  @IsOptional() @IsNumber() @Min(0) dutyImportEur?: number | null;
   /** Confirm in the same action — the cost is what permits it, so the operator does both at once. */
   @IsOptional() @IsBoolean() confirm?: boolean;
 }

@@ -41,6 +41,9 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
   const [serviceId, setServiceId] = useState<string | null>(shipment?.shippingServiceId ?? null);
   const [packagingPct, setPackagingPct] = useState(shipment?.packagingPct != null ? String(shipment.packagingPct) : '10');
   const [comments, setComments] = useState(shipment?.comments ?? '');
+  // Duty is entered here as well as on the actual-cost modal: on a re-import the customs bill is
+  // often known while the carrier's invoice is not, and there is nowhere else to put it.
+  const [dutyImport, setDutyImport] = useState(shipment?.dutyImportEur != null ? String(shipment.dutyImportEur) : '');
   const [boxes, setBoxes] = useState<BoxForm[]>(() => {
     if (shipment && shipment.boxes.length) {
       return shipment.boxes.map((b) => ({
@@ -79,6 +82,7 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
     fbaShipmentRef: fbaRef.trim() || null,
     shippingServiceId: serviceId,
     packagingPct: Number(packagingPct) || 0,
+    dutyImportEur: num(dutyImport),
     comments: comments.trim() || null,
     boxes: boxes.map((b, i) => ({
       label: `Box ${i + 1}`,
@@ -92,7 +96,8 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
   });
 
   const estKey = JSON.stringify({
-    c: channel?.id ?? null, s: serviceId, p: packagingPct,
+    // Duty is part of the key: it changes the allocation, so the preview has to be recomputed.
+    c: channel?.id ?? null, s: serviceId, p: packagingPct, d: dutyImport,
     boxes: boxes.map((b) => ({ w: b.emptyWeightKg, l: b.lengthCm, wd: b.widthCm, h: b.heightCm, items: b.items.filter((l) => l.sku.trim()).map((l) => ({ sku: l.sku.trim(), pid: l.productId, q: l.quantity })) })),
   });
   useEffect(() => {
@@ -151,9 +156,14 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
   // so the only thing on offer here is a draft, and the cost is registered from the Shipments
   // worklist afterwards.
   const canConfirm = actualCost != null;
-  const effectiveTotal = actualCost ?? estimate?.estimatedCostEur ?? null;
   const usingActual = actualCost != null;
-  const allocScale = estimate?.estimatedCostEur && effectiveTotal != null ? effectiveTotal / estimate.estimatedCostEur : 1;
+  // Everything below works on the POT — carriage plus duty — because that is what the lines are
+  // allocated from. Scaling the preview against carriage alone would understate every line by the
+  // duty share the moment an actual cost was registered.
+  const dutyNum = num(dutyImport) ?? 0;
+  const previewPot = estimate?.allocatablePotEur ?? null;
+  const effectiveTotal = actualCost != null ? Math.round((actualCost + dutyNum) * 100) / 100 : previewPot;
+  const allocScale = previewPot && effectiveTotal != null ? effectiveTotal / previewPot : 1;
   const scaled = (v: number | null | undefined) => (v != null ? Math.round(v * allocScale * 10000) / 10000 : null);
 
   return (
@@ -266,6 +276,21 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
             <Row label="Rate band charge" value={eur(estimate?.estimatedCostEur)} strong />
           </div>
 
+          <div>
+            <label className="label">Duty / import charges <span className="font-normal text-n-400">(exc. VAT, €)</span></label>
+            <input
+              className="input mono"
+              inputMode="decimal"
+              value={dutyImport}
+              onChange={(e) => { setDutyImport(e.target.value); touch(); }}
+              placeholder="0.00"
+            />
+            <p className="mt-1 text-[11.5px] text-n-400">
+              Customs charges on this consignment, billed separately from carriage. Added to the amount
+              shared across the SKUs, so it reaches the per-unit cost every FBA order is priced from.
+            </p>
+          </div>
+
           {estimating && <p className="text-[12px] text-n-400">Calculating…</p>}
           {estimate?.warnings?.map((w, i) => (
             <p key={i} className="inline-flex items-start gap-1.5 rounded-md border border-warning-bd bg-warning-bg px-3 py-2 text-[12.5px] text-warning"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> {w}</p>
@@ -283,7 +308,9 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
       {tab === 'allocation' && (
         <div className="flex flex-col gap-3">
           <p className="text-[13px] text-n-500">
-            The {usingActual ? <><strong className="text-n-800">actual</strong> shipping cost ({eur(actualCost)})</> : 'estimated shipping cost'} is split across SKUs by weight share, then divided by quantity to give the cost per individual product.
+            The {usingActual ? <><strong className="text-n-800">actual</strong> shipping cost ({eur(actualCost)})</> : 'estimated shipping cost'}
+            {dutyNum > 0 && <> plus <strong className="text-n-800">{eur(dutyNum)}</strong> duty</>} is split across SKUs by weight
+            share, then divided by quantity to give the cost per individual product.
             {!usingActual && ' Registering the actual cost later re-allocates these figures.'}
           </p>
           <div className="rounded-lg border border-n-200">
@@ -311,6 +338,12 @@ export function FbaShipmentModal({ shipment, onClose, onSaved }: Props) {
             )}
           </div>
           {usingActual && <p className="text-[12px] text-n-400">Estimated shipping cost was {eur(estimate?.estimatedCostEur)}; the registered actual is {eur(actualCost)}.</p>}
+          {dutyNum > 0 && (
+            <p className="text-[12px] text-n-400">
+              Includes {eur(dutyNum)} duty. Duty is levied on customs value, but it is shared by weight here,
+              the same basis as carriage — so one figure per SKU rather than two that split differently.
+            </p>
+          )}
           <div><label className="label">Comments</label><input className="input" value={comments} onChange={(e) => { setComments(e.target.value); touch(); }} placeholder="Optional notes" /></div>
         </div>
       )}
