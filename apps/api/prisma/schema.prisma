@@ -1120,6 +1120,8 @@ model Warehouse {
   goodsReceipts  GoodsReceipt[]
   vendorReturns  VendorReturn[]
   serialNumbers  SerialNumber[]
+  // Replacement despatches sent from here (see Shipment.warehouseId).
+  shipments      Shipment[]      @relation("ShipmentWarehouse")
   stockOwed      StockOwed[]
 
   @@index([parentWarehouseId])
@@ -2268,7 +2270,10 @@ model SalesTransaction {
 model Shipment {
   id                String   @id @default(uuid()) @db.Uuid
   transactionId     String   @map("transaction_id") @db.Uuid
-  type              String   @default("outbound") // outbound | inbound
+  /// outbound = the original despatch. inbound = goods coming back. replacement = a second unit
+  /// sent after a return or a fault, which is a real despatch with its own carrier, cost and
+  /// tracking — and its own unit out of stock, which is why it carries a warehouse.
+  type              String   @default("outbound") // outbound | inbound | replacement
   shipmentDate      DateTime @map("shipment_date")
   shippingServiceId String?  @map("shipping_service_id") @db.Uuid
   trackingNumber    String?  @map("tracking_number")
@@ -2279,6 +2284,10 @@ model Shipment {
   // Set when several orders ship together as one physical parcel: all their shipment rows
   // share this id, and the one real cost is split across them (see ShipmentsService.combine).
   groupId           String?  @map("group_id") @db.Uuid
+  /// Where the goods physically left from. Set on a replacement, whose stock movement is not
+  /// covered by the original sale's line-level warehouse: the first unit was already deducted
+  /// when the order shipped, and the replacement consumes a second one.
+  warehouseId       String?  @map("warehouse_id") @db.Uuid
 
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -2287,6 +2296,7 @@ model Shipment {
 
   transaction     SalesTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   shippingService ShippingService? @relation("ShipmentShippingService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
+  warehouse       Warehouse?       @relation("ShipmentWarehouse", fields: [warehouseId], references: [id], onDelete: SetNull)
 
   @@index([transactionId])
   @@index([groupId])

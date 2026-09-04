@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { StockService } from '../warehouses/stock.service';
 import { CreateCombinedShipmentDto, CreateShipmentBatchDto, CreateShipmentDto, UpdateShipmentDto } from './dto/shipment.dto';
 
 export interface ShipmentQuery {
@@ -43,7 +44,7 @@ const include = {
 
 @Injectable()
 export class ShipmentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly stock: StockService) {}
 
   private serialize(s: any) {
     return {
@@ -370,22 +371,59 @@ export class ShipmentsService {
       });
       if (existing) throw new ConflictException(`A ${type} shipment with tracking number ${tracking} is already recorded for this order.`);
     }
-    const s = await this.prisma.shipment.create({
-      data: {
-        transactionId: dto.transactionId,
-        type,
-        shipmentDate: new Date(dto.shipmentDate),
-        shippingServiceId: dto.shippingServiceId ?? null,
-        trackingNumber: tracking,
-        shippingCostEur: dto.shippingCostEur ?? null,
-        costBorneBy: dto.costBorneBy ?? 'company',
-        dutyImportEur: dto.dutyImportEur ?? null,
-        comments: dto.comments ?? null,
-        createdById: actorId,
-      },
+    // A replacement says where it left from, because it consumes a second unit that nothing else
+    // accounts for. Refused without one rather than recorded with the stock movement missing:
+    // an unexplained shortfall found weeks later is far harder to unpick than a rejected save.
+    if (type === 'replacement' && !dto.warehouseId) {
+      throw new BadRequestException('A replacement shipment must say which warehouse it left from.');
+    }
+
+    const s = await this.prisma.$transaction(async (db) => {
+      const created = await db.shipment.create({
+        data: {
+          transactionId: dto.transactionId,
+          type,
+          shipmentDate: new Date(dto.shipmentDate),
+          shippingServiceId: dto.shippingServiceId ?? null,
+          trackingNumber: tracking,
+          shippingCostEur: dto.shippingCostEur ?? null,
+          costBorneBy: dto.costBorneBy ?? 'company',
+          dutyImportEur: dto.dutyImportEur ?? null,
+          comments: dto.comments ?? null,
+          warehouseId: type === 'replacement' ? dto.warehouseId ?? null : null,
+          createdById: actorId,
+        },
+      });
+
+      // Sending a replacement despatches the same goods again, so the same quantities leave stock
+      // a second time. In the same transaction as the shipment row: a cost recorded without its
+      // stock movement, or the reverse, is worse than neither.
+      if (type === 'replacement' && dto.warehouseId) {
+        const lines = await db.salesTransactionItem.findMany({
+          where: { transactionId: dto.transactionId, deletedAt: null, productId: { not: null } },
+          select: { productId: true, quantity: true, sku: true },
+        });
+        for (const line of lines) {
+          const qty = Math.round(Number(line.quantity ?? 0));
+          if (qty <= 0) continue;
+          await this.stock.applyDeltaWithin(db, {
+            productId: line.productId!,
+            warehouseId: dto.warehouseId,
+            qtyDelta: -qty,
+            reason: 'replacement_shipment',
+            actorId,
+            reference: created.id,
+            notes: `Replacement sent for ${line.sku}`,
+          });
+        }
+      }
+      return created;
     });
-    // Mark the transaction shipped unless the operator says more shipments are coming.
-    if ((dto.type ?? 'outbound') === 'outbound' && dto.markShipped !== false) {
+
+    // Mark the transaction shipped unless the operator says more shipments are coming. A
+    // replacement never touches this: the order was already despatched, which is why there is a
+    // replacement at all.
+    if (type === 'outbound' && dto.markShipped !== false) {
       await this.prisma.salesTransaction.update({ where: { id: dto.transactionId }, data: { fulfilmentStatus: 'shipped' } });
     }
     return this.get(s.id);

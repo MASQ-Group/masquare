@@ -43,6 +43,12 @@ export function ResolveTransactionModal({ transaction: t, onClose, onSaved }: Pr
   const [returnService, setReturnService] = useState('');
   const [returnTracking, setReturnTracking] = useState('');
   const [returnCost, setReturnCost] = useState('');
+  // The OUTBOUND leg of a replacement — us to the customer, a second despatch of the same goods.
+  // Separate from the return leg above, which is the customer sending the original back to us.
+  const [replacementWarehouseId, setReplacementWarehouseId] = useState('');
+  const [replacementService, setReplacementService] = useState('');
+  const [replacementTracking, setReplacementTracking] = useState('');
+  const [replacementCost, setReplacementCost] = useState('');
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const touch = () => setDirty(true);
@@ -58,6 +64,15 @@ export function ResolveTransactionModal({ transaction: t, onClose, onSaved }: Pr
   const save = async () => {
     if (showReturnDecision && returned && !isFba && !returnWarehouseId) {
       toast.error('Choose the warehouse the returned goods go into');
+      return;
+    }
+    // The replacement despatch takes a unit out of stock, so it cannot be recorded without saying
+    // which warehouse lost it. Checked before anything is written rather than after the resolution
+    // has already saved.
+    const wantsReplacement = resolution === 'replaced' && !isFba
+      && (numOrNull(replacementCost) != null || !!replacementService || !!replacementTracking.trim() || !!replacementWarehouseId);
+    if (wantsReplacement && !replacementWarehouseId) {
+      toast.error('Choose the warehouse the replacement was sent from');
       return;
     }
     setBusy(true);
@@ -80,6 +95,21 @@ export function ResolveTransactionModal({ transaction: t, onClose, onSaved }: Pr
           shippingServiceId: returnService || null,
           trackingNumber: returnTracking.trim() || null,
           shippingCostEur: numOrNull(returnCost),
+        });
+      }
+      // The replacement leg: a real despatch with its own carrier, cost and tracking, and its own
+      // unit out of stock. Recorded as a shipment so its cost reaches profit the same way every
+      // other shipping cost does.
+      if (wantsReplacement) {
+        await shipmentsApi.create({
+          transactionId: t.id,
+          type: 'replacement',
+          shipmentDate: todayIso(),
+          warehouseId: replacementWarehouseId,
+          costBorneBy: 'company',
+          shippingServiceId: replacementService || null,
+          trackingNumber: replacementTracking.trim() || null,
+          shippingCostEur: numOrNull(replacementCost),
         });
       }
       toast.success(resolution === 'none' ? 'Resolution cleared' : 'Resolution applied');
@@ -199,6 +229,48 @@ export function ResolveTransactionModal({ transaction: t, onClose, onSaved }: Pr
                     <p className="col-span-2 text-[11px] text-n-400 max-[560px]:col-span-1">Recorded as an inbound shipment and added to this order's costs.</p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* The other leg. The block above is the original coming BACK to us; this is the
+                replacement going OUT again — a second despatch, with its own carrier, cost and
+                tracking, and a second unit leaving stock. FBA is excluded: Amazon sends the
+                replacement from its own inventory, so no warehouse of ours is involved. */}
+            {resolution === 'replaced' && !isFba && (
+              <div className="mt-3 border-t border-n-200 pt-3">
+                <div className="text-[13px] font-semibold text-n-800">Replacement sent to the customer</div>
+                <p className="mt-0.5 text-[11.5px] text-n-500">The outbound leg — what it cost us to send the replacement out.</p>
+                <div className="mt-2 grid grid-cols-2 gap-3 max-[560px]:grid-cols-1">
+                  <div>
+                    <label className="label">Sent from warehouse</label>
+                    <Select
+                      value={replacementWarehouseId}
+                      onChange={(v) => { setReplacementWarehouseId(v); touch(); }}
+                      placeholder="— warehouse"
+                      options={warehouses.map((w) => ({ value: w.id, label: w.name }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Shipping service</label>
+                    <Select value={replacementService} onChange={(v) => { setReplacementService(v); touch(); }} placeholder="— service" options={services.map((s) => ({ value: s.id, label: s.name }))} />
+                  </div>
+                  <div>
+                    <label className="label">Cost (EUR)</label>
+                    <input className="input mono" inputMode="decimal" value={replacementCost} onChange={(e) => { setReplacementCost(e.target.value); touch(); }} placeholder="0.00" />
+                  </div>
+                  <div>
+                    <label className="label">Tracking number</label>
+                    <input className="input" value={replacementTracking} onChange={(e) => { setReplacementTracking(e.target.value); touch(); }} placeholder="Optional" />
+                  </div>
+                  {/* Said plainly, because it is the consequence people forget: the replacement is a
+                      second unit gone, and the stock has to show that. */}
+                  <p className="col-span-2 text-[11px] text-n-400 max-[560px]:col-span-1">
+                    Recorded as a replacement shipment and added to this order's costs.
+                    {replacementWarehouseId
+                      ? <> One unit of each line leaves <strong>{warehouses.find((w) => w.id === replacementWarehouseId)?.name}</strong>.</>
+                      : <> Choose a warehouse — the replacement takes another unit out of stock.</>}
+                  </p>
+                </div>
               </div>
             )}
           </div>
