@@ -236,7 +236,7 @@ export function ShipmentsPage() {
           <>
             <div className="flex h-8 flex-[0_1_300px] items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-2.5 focus-within:border-teal-400">
               <Search size={15} className="text-n-400" />
-              <input className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none" placeholder="Search transaction ID or SKU…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
+              <input className="h-full min-w-0 flex-1 bg-transparent text-[13px] outline-none" placeholder="Search transaction ID, SKU or tracking number…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
             </div>
             <Select dense className="w-40" value={filterChannel} onChange={(v) => { setFilterChannel(v); setPage(1); }} options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]} />
             {tab === 'all' && (

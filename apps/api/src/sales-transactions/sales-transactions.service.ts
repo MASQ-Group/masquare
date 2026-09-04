@@ -408,6 +408,12 @@ export class SalesTransactionsService {
       ? round(shipments.filter((s: any) => s.type === 'outbound' && s.costBorneBy === 'company').reduce((sum: number, s: any) => sum + n(s.shippingCostEur), 0), 2)
       : null;
     const returnShippingCost = round(shipments.filter((s: any) => s.type === 'inbound' && s.costBorneBy === 'company').reduce((sum: number, s: any) => sum + n(s.shippingCostEur), 0), 2);
+    // A replacement is a third kind of leg and matched neither of the two filters above, so its
+    // shipping cost was being dropped from profit entirely — the despatch was recorded, the money
+    // was spent, and the order still reported the margin of one that went out once. Counted here
+    // rather than folded into actualShippingCost, which must keep meaning "what the original
+    // despatch cost" for the estimate-vs-actual comparison.
+    const replacementShippingCost = round(shipments.filter((s: any) => s.type === 'replacement' && s.costBorneBy === 'company').reduce((sum: number, s: any) => sum + n(s.shippingCostEur), 0), 2);
     const dutyImportCost = round(shipments.reduce((sum: number, s: any) => sum + n(s.dutyImportEur), 0), 2);
     // The shipping cost used in the profit calc: actual (when a shipment exists) else estimated.
     // Local sales are the exception: the delivery cost lives on the transaction
@@ -435,7 +441,8 @@ export class SalesTransactionsService {
     const shippingApplies = !cancelledPreShip;
 
     // Profit (€): (net + shipping in EUR) − refund − (product cost + effective shipping +
-    // return shipping we bear + duty + sales fee in EUR), adjusted for the resolution.
+    // return shipping we bear + replacement despatch + duty + sales fee in EUR), adjusted for
+    // the resolution.
     let profit: number | null = null;
     if (fxRate != null) {
       let revenue = 0;
@@ -450,7 +457,9 @@ export class SalesTransactionsService {
       cost += amazonPoints * (feeFx ?? fxRate); // Amazon Points (JP) — seller-funded deduction
       revenue -= refundEur;
       if (shippingApplies) cost += effectiveShippingCost ?? 0;
-      cost += returnShippingCost + dutyImportCost; // real spends regardless of resolution
+      // Real spends regardless of resolution: the money left our account whatever the order
+      // eventually became.
+      cost += returnShippingCost + replacementShippingCost + dutyImportCost;
       profit = round(revenue - cost, 2);
       // An order cancelled before dispatch earns nothing. The money was either never taken or is
       // certain to go back, and Amazon returns its fee, so the whole thing nets to zero.
@@ -496,7 +505,8 @@ export class SalesTransactionsService {
     // Per-item (SKU) economics: transaction-level shipping/duty/refund are allocated to
     // items by revenue share so per-SKU figures sum back to the transaction totals.
     const totalRevExVatNative = items.reduce((s: number, it: any) => s + n(it.netSalesAmount) + sellShip(it), 0);
-    const sharedCostEur = (shippingApplies ? effectiveShippingCost ?? 0 : 0) + returnShippingCost + dutyImportCost;
+    const sharedCostEur =
+      (shippingApplies ? effectiveShippingCost ?? 0 : 0) + returnShippingCost + replacementShippingCost + dutyImportCost;
     const itemEcon = items.map((it: any, idx: number) => {
       const revNative = n(it.netSalesAmount) + sellShip(it);
       const w = totalRevExVatNative > 0 ? revNative / totalRevExVatNative : items.length ? 1 / items.length : 0;
@@ -670,6 +680,7 @@ export class SalesTransactionsService {
       // salesFeeEstimated — so the UI can mark the figure as provisional.
       fbaFeeEstimated,
       returnShippingCost,
+      replacementShippingCost,
       dutyImportCost,
       // Platform fulfilment status is derived from shipment registration (the single point
       // of truth), except 'cancelled' which the returns layer sets explicitly. FBA orders

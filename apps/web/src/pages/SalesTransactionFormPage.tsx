@@ -847,6 +847,7 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                           {!isLocal && t.amazonPoints > 0 && <Row label="Amazon points" value={money(t.amazonPoints, feeCcy)} sub={eurSub(t.amazonPoints, true)} small />}
                           {t.dutyImportCost > 0 && <Row label="Import tax / duty" value={eur(t.dutyImportCost)} small />}
                           {t.returnShippingCost > 0 && <Row label="Return shipping" value={eur(t.returnShippingCost)} small />}
+                          {t.replacementShippingCost > 0 && <Row label="Replacement shipping" value={eur(t.replacementShippingCost)} small />}
                           {t.refundAmount != null && t.refundAmount > 0 && <Row label="Refund to buyer" value={money(t.refundAmount, nativeCcy)} sub={eurSub(t.refundAmount)} small />}
                         </div>
                       </div>

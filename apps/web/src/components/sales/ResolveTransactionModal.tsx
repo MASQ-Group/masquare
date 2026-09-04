@@ -43,12 +43,16 @@ export function ResolveTransactionModal({ transaction: t, onClose, onSaved }: Pr
   const [returnService, setReturnService] = useState('');
   const [returnTracking, setReturnTracking] = useState('');
   const [returnCost, setReturnCost] = useState('');
+  // Duty is separate from carriage and often arrives later, on its own invoice from the courier.
+  // Kept as its own field rather than folded into the cost so the two stay separable in reporting.
+  const [returnDuty, setReturnDuty] = useState('');
   // The OUTBOUND leg of a replacement — us to the customer, a second despatch of the same goods.
   // Separate from the return leg above, which is the customer sending the original back to us.
   const [replacementWarehouseId, setReplacementWarehouseId] = useState('');
   const [replacementService, setReplacementService] = useState('');
   const [replacementTracking, setReplacementTracking] = useState('');
   const [replacementCost, setReplacementCost] = useState('');
+  const [replacementDuty, setReplacementDuty] = useState('');
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const touch = () => setDirty(true);
@@ -70,7 +74,8 @@ export function ResolveTransactionModal({ transaction: t, onClose, onSaved }: Pr
     // which warehouse lost it. Checked before anything is written rather than after the resolution
     // has already saved.
     const wantsReplacement = resolution === 'replaced' && !isFba
-      && (numOrNull(replacementCost) != null || !!replacementService || !!replacementTracking.trim() || !!replacementWarehouseId);
+      && (numOrNull(replacementCost) != null || numOrNull(replacementDuty) != null
+        || !!replacementService || !!replacementTracking.trim() || !!replacementWarehouseId);
     if (wantsReplacement && !replacementWarehouseId) {
       toast.error('Choose the warehouse the replacement was sent from');
       return;
@@ -86,7 +91,10 @@ export function ResolveTransactionModal({ transaction: t, onClose, onSaved }: Pr
         returnWarehouseId: showReturnDecision && returned && !isFba ? returnWarehouseId : null,
       });
       // Company-borne return shipping is a real cost — book it as an inbound shipment (FBM only).
-      if (showReturnDecision && returned && !isFba && weBearReturn && (numOrNull(returnCost) != null || returnService || returnTracking)) {
+      if (
+        showReturnDecision && returned && !isFba && weBearReturn
+        && (numOrNull(returnCost) != null || numOrNull(returnDuty) != null || returnService || returnTracking)
+      ) {
         await shipmentsApi.create({
           transactionId: t.id,
           type: 'inbound',
@@ -95,6 +103,7 @@ export function ResolveTransactionModal({ transaction: t, onClose, onSaved }: Pr
           shippingServiceId: returnService || null,
           trackingNumber: returnTracking.trim() || null,
           shippingCostEur: numOrNull(returnCost),
+          dutyImportEur: numOrNull(returnDuty),
         });
       }
       // The replacement leg: a real despatch with its own carrier, cost and tracking, and its own
@@ -110,6 +119,7 @@ export function ResolveTransactionModal({ transaction: t, onClose, onSaved }: Pr
           shippingServiceId: replacementService || null,
           trackingNumber: replacementTracking.trim() || null,
           shippingCostEur: numOrNull(replacementCost),
+          dutyImportEur: numOrNull(replacementDuty),
         });
       }
       toast.success(resolution === 'none' ? 'Resolution cleared' : 'Resolution applied');
@@ -219,14 +229,21 @@ export function ResolveTransactionModal({ transaction: t, onClose, onSaved }: Pr
                       <Select value={returnService} onChange={(v) => { setReturnService(v); touch(); }} placeholder="— service" options={services.map((s) => ({ value: s.id, label: s.name }))} />
                     </div>
                     <div>
-                      <label className="label">Cost (EUR)</label>
+                      <label className="label">Shipping cost (EUR)</label>
                       <input className="input mono" inputMode="decimal" value={returnCost} onChange={(e) => { setReturnCost(e.target.value); touch(); }} placeholder="0.00" />
                     </div>
-                    <div className="col-span-2 max-[560px]:col-span-1">
+                    <div>
+                      <label className="label">Duty charges (EUR)</label>
+                      <input className="input mono" inputMode="decimal" value={returnDuty} onChange={(e) => { setReturnDuty(e.target.value); touch(); }} placeholder="0.00" />
+                    </div>
+                    <div>
                       <label className="label">Tracking number</label>
                       <input className="input" value={returnTracking} onChange={(e) => { setReturnTracking(e.target.value); touch(); }} placeholder="Optional" />
                     </div>
-                    <p className="col-span-2 text-[11px] text-n-400 max-[560px]:col-span-1">Recorded as an inbound shipment and added to this order's costs.</p>
+                    <p className="col-span-2 text-[11px] text-n-400 max-[560px]:col-span-1">
+                      Recorded as an inbound shipment. Both amounts are added to this order's costs and
+                      reduce its profit.
+                    </p>
                   </div>
                 )}
               </div>
@@ -255,17 +272,21 @@ export function ResolveTransactionModal({ transaction: t, onClose, onSaved }: Pr
                     <Select value={replacementService} onChange={(v) => { setReplacementService(v); touch(); }} placeholder="— service" options={services.map((s) => ({ value: s.id, label: s.name }))} />
                   </div>
                   <div>
-                    <label className="label">Cost (EUR)</label>
+                    <label className="label">Shipping cost (EUR)</label>
                     <input className="input mono" inputMode="decimal" value={replacementCost} onChange={(e) => { setReplacementCost(e.target.value); touch(); }} placeholder="0.00" />
                   </div>
                   <div>
+                    <label className="label">Duty charges (EUR)</label>
+                    <input className="input mono" inputMode="decimal" value={replacementDuty} onChange={(e) => { setReplacementDuty(e.target.value); touch(); }} placeholder="0.00" />
+                  </div>
+                  <div className="col-span-2 max-[560px]:col-span-1">
                     <label className="label">Tracking number</label>
                     <input className="input" value={replacementTracking} onChange={(e) => { setReplacementTracking(e.target.value); touch(); }} placeholder="Optional" />
                   </div>
                   {/* Said plainly, because it is the consequence people forget: the replacement is a
                       second unit gone, and the stock has to show that. */}
                   <p className="col-span-2 text-[11px] text-n-400 max-[560px]:col-span-1">
-                    Recorded as a replacement shipment and added to this order's costs.
+                    Recorded as a replacement shipment. Shipping and duty are both added to this order's costs.
                     {replacementWarehouseId
                       ? <> One unit of each line leaves <strong>{warehouses.find((w) => w.id === replacementWarehouseId)?.name}</strong>.</>
                       : <> Choose a warehouse — the replacement takes another unit out of stock.</>}
