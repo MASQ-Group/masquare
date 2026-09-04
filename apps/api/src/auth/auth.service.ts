@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
+import { AccessService } from '../access/access.service';
 import type { AuthUser } from '../common/current-user.decorator';
 
 @Injectable()
@@ -9,6 +10,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
+    private readonly access: AccessService,
   ) {}
 
   async login(email: string, password: string) {
@@ -67,12 +69,18 @@ export class AuthService {
           .map((row) => row.module)
           .sort((a, b) => a.sortOrder - b.sortOrder);
 
+    // Resolved rather than derived from the module grants above: the sidebar and the in-page
+    // buttons have to agree with what the API will actually allow, and there is only one answer to
+    // that question.
+    const access = await this.access.forUser(user.id);
+
     return {
       id: user.id,
       fullName: user.fullName,
       email: user.email,
       isAdmin: user.isAdmin,
       status: user.status,
+      access,
       companies: companies.map((c) => ({
         id: c.id,
         officialName: c.officialName,

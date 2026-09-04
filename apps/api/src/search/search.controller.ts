@@ -4,11 +4,14 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { VisibleCompanies } from '../common/active-company.decorator';
 import { SearchService, type SearchScope } from './search.service';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('search')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('search')
+// Global search reaches across all three; holding any one is reason enough to search.
+@AccessArea('products', 'sales_transactions', 'inventory')
 export class SearchController {
   constructor(private readonly svc: SearchService) {}
 

@@ -12,6 +12,7 @@ import {
 } from './dto/product.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { AccessArea, RequireCapability } from '../access/access.decorators';
 
 const toArray = (v?: string | string[]) => (v == null ? undefined : Array.isArray(v) ? v : [v]);
 
@@ -19,6 +20,7 @@ const toArray = (v?: string | string[]) => (v == null ? undefined : Array.isArra
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('products')
+@AccessArea('products')
 export class ProductsController {
   constructor(private readonly products: ProductsService, private readonly activityLog: ActivityService) {}
 
@@ -99,6 +101,7 @@ export class ProductsController {
   }
 
   @Post('import/commit')
+  @RequireCapability('bulk_import')
   importCommit(@Body() dto: ImportCommitDto, @CurrentUser() user: AuthUser) {
     return this.products.importCommit(dto.items, user.sub);
   }

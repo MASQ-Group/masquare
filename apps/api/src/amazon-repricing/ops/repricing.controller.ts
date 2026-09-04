@@ -14,6 +14,7 @@ import { IntegrationsService } from '../../integrations/integrations.service';
 import { SqsPollerService } from '../ingest/sqs-poller.service';
 import { queueForMarketplace } from '../config/notification-queues';
 import { JobsService } from '../../jobs/jobs.service';
+import { AccessArea } from '../../access/access.decorators';
 
 // Ops console API for the Amazon repricing module (admin-only). Phase-appropriate subset: onboard
 // SKUs, refresh fees + recompute floors, and inspect the SKU-pricing table + recent decisions.
@@ -22,6 +23,7 @@ import { JobsService } from '../../jobs/jobs.service';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('amazon-repricing')
+@AccessArea('repricing')
 export class RepricingController {
   constructor(
     private readonly onboarding: OnboardingService,

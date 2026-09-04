@@ -4,11 +4,13 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { VisibleCompanies } from '../common/active-company.decorator';
 import { PricingService } from './pricing.service';
 import { BulkPricingDto, IndividualPricingDto } from './dto/pricing.dto';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('pricing')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('pricing')
+@AccessArea('pricing')
 export class PricingController {
   constructor(private readonly svc: PricingService) {}
 

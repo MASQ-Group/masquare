@@ -14,11 +14,13 @@ import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('users')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('users')
+@AccessArea('administration')
 export class UsersController {
   constructor(private readonly users: UsersService) {}
 

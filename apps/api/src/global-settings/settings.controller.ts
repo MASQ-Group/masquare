@@ -4,11 +4,13 @@ import { SettingsService } from './settings.service';
 import { UpdateSettingsDto } from './dto/settings.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('global-settings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('settings')
+@AccessArea('global_settings')
 export class SettingsController {
   constructor(private readonly svc: SettingsService) {}
 

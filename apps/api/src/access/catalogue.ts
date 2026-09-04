@@ -178,6 +178,12 @@ export const CAPABILITIES: CapabilityDef[] = [
     dangerous: true,
   },
   {
+    key: 'trigger_sync',
+    label: 'Run a manual sync',
+    description:
+      'Pull current orders from a connected marketplace on demand. Paired with read access to Integrations it produces someone who can fetch today’s orders and nothing else — no schedules, no auto-sync, no editing or removing a connection, no mapping and no listing previews. Full access to the module is the Integrations area set to Edit instead.',
+  },
+  {
     key: 'unlock_transactions',
     label: 'Unlock locked sales transactions',
     description: 'Reopen an order that has been locked against editing.',

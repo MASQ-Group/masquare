@@ -3,12 +3,14 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ActivityService } from './activity.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AccessArea } from '../access/access.decorators';
 
 /** Retention settings for the change log, and the numbers to choose them against. */
 @ApiTags('activity')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('activity')
+@AccessArea('activity')
 export class ActivityController {
   constructor(private readonly activity: ActivityService, private readonly prisma: PrismaService) {}
 

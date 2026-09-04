@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { AdminGuard } from '../../auth/admin.guard';
 import { AmazonListingService } from './amazon-listing.service';
 import { JobsService } from '../../jobs/jobs.service';
+import { AccessArea, RequireCapability, Requires } from '../../access/access.decorators';
 
 /**
  * Creating an Amazon offer on an existing listing.
@@ -16,6 +17,7 @@ import { JobsService } from '../../jobs/jobs.service';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('listing/amazon')
+@AccessArea('channel_listings')
 export class AmazonListingController {
   constructor(
     private readonly svc: AmazonListingService,
@@ -56,6 +58,7 @@ export class AmazonListingController {
    * Read-only apart from one live fee estimate. POST because it takes a price to evaluate.
    */
   @Post('products/:productId/channels/:integrationId/quote')
+  @Requires('view')
   quote(
     @Param('productId') productId: string,
     @Param('integrationId') integrationId: string,
@@ -78,12 +81,14 @@ export class AmazonListingController {
 
   /** Build the offer and have Amazon validate it. Creates nothing. */
   @Post('products/:productId/channels/:integrationId/preview')
+  @Requires('view')
   preview(@Param('productId') productId: string, @Param('integrationId') integrationId: string) {
     return this.svc.preview(productId, integrationId);
   }
 
   /** The only call in this module that creates an offer. Gated three ways. */
   @Post('products/:productId/channels/:integrationId/submit')
+  @RequireCapability('marketplace_write')
   submit(
     @Param('productId') productId: string,
     @Param('integrationId') integrationId: string,

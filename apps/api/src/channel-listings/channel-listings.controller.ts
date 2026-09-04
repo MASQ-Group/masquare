@@ -5,11 +5,13 @@ import { VisibleCompanies } from '../common/active-company.decorator';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { ChannelListingsService, type ListingsQuery } from './channel-listings.service';
 import { JobsService } from '../jobs/jobs.service';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('channel-listings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('channel-listings')
+@AccessArea('channel_listings')
 export class ChannelListingsController {
   constructor(
     private readonly svc: ChannelListingsService,

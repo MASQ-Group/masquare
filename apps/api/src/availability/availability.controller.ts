@@ -6,11 +6,14 @@ import { JobsService } from '../jobs/jobs.service';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { AvailabilityService, type AvailabilityQuery } from './availability.service';
 import { SetAvailabilityDto } from './dto/availability.dto';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('availability')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('availability')
+// Availability is derived from products and is granted with them.
+@AccessArea('products')
 export class AvailabilityController {
   constructor(
     private readonly svc: AvailabilityService,

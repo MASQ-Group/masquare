@@ -4,11 +4,13 @@ import { ModulesService } from './modules.service';
 import { SetParticipantsDto } from './dto/sharing.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('modules')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('modules')
+@AccessArea('administration')
 export class ModulesController {
   constructor(private readonly modules: ModulesService) {}
 

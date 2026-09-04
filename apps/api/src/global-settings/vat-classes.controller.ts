@@ -4,11 +4,13 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { VatClassesService } from './vat-classes.service';
 import { CreateVatClassDto, UpdateVatClassDto } from './dto/vat-class.dto';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('global-settings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('vat-classes')
+@AccessArea('global_settings')
 export class VatClassesController {
   constructor(private readonly svc: VatClassesService) {}
   @Get() list(@Query('q') q?: string) { return this.svc.list(q); }

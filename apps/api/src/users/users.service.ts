@@ -1,11 +1,18 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
+import { AccessService } from '../access/access.service';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // Every write here changes what somebody may do, so the resolved copy has to go. Without this
+    // a revoked permission would keep working for the length of the cache window — short, but the
+    // wrong shape of wrong: revocation should be immediate or it is not revocation.
+    private readonly access: AccessService,
+  ) {}
 
   private shape(user: any) {
     const { passwordHash, companyAccess, moduleAccess, ...rest } = user;
@@ -63,6 +70,7 @@ export class UsersService {
       },
       include: { companyAccess: true, moduleAccess: true },
     });
+    this.access.invalidate(user.id);
     return this.shape(user);
   }
 
@@ -100,12 +108,15 @@ export class UsersService {
       }
     });
 
+    this.access.invalidate(id);
     return this.get(id);
   }
 
   async remove(id: string) {
     await this.get(id);
     await this.prisma.user.update({ where: { id }, data: { deletedAt: new Date() } });
+    // A deleted user must stop being able to act now, not when their cached set happens to expire.
+    this.access.invalidate(id);
     return { ok: true };
   }
 }

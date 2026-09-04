@@ -5,11 +5,14 @@ import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 import { VendorReturnsService } from './vendor-returns.service';
 import { CreateVendorReturnDto } from './dto/vendor-return.dto';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('vendor-returns')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('vendor-returns')
+// A return to a vendor reverses a receipt and moves stock, so it sits with receiving.
+@AccessArea('receiving')
 export class VendorReturnsController {
   constructor(private readonly svc: VendorReturnsService) {}
 

@@ -3,11 +3,13 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { CostingReadService } from './costing-read.service';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('costing')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('costing')
+@AccessArea('purchasing')
 export class CostingController {
   constructor(private readonly svc: CostingReadService) {}
 

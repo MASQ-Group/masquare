@@ -3,11 +3,14 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 import { CustomsFxService } from './customs-fx.service';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('customs-fx')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('customs-fx')
+// Customs and FX rates are platform reference data.
+@AccessArea('global_settings')
 export class CustomsFxController {
   constructor(private readonly svc: CustomsFxService) {}
 

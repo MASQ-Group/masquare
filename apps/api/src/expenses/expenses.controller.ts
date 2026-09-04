@@ -5,6 +5,7 @@ import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { AllowedCompanies, VisibleCompanies } from '../common/active-company.decorator';
 import { ExpensesService } from './expenses.service';
 import { CancelExpenseDto, CreateExpenseDto, ExpenseImportCommitDto, ExpenseImportValidateDto, SetExpenseAmountDto, UpdateExpenseDto } from './dto/expense.dto';
+import { AccessArea, RequireCapability } from '../access/access.decorators';
 
 const isTrue = (v?: string) => v === 'true' || v === '1';
 
@@ -12,6 +13,7 @@ const isTrue = (v?: string) => v === 'true' || v === '1';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('expenses')
+@AccessArea('expenses')
 export class ExpensesController {
   constructor(private readonly svc: ExpensesService) {}
 
@@ -43,6 +45,7 @@ export class ExpensesController {
   }
 
   @Post('import/commit')
+  @RequireCapability('bulk_import')
   importCommit(@Body() dto: ExpenseImportCommitDto, @CurrentUser() user: AuthUser) {
     return this.svc.importCommit(dto.rows, dto.companyId, user.sub);
   }

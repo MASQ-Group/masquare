@@ -3,11 +3,13 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { VisibleCompanies } from '../common/active-company.decorator';
 import { AnalyticsService, type AnalyticsQuery } from './analytics.service';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('analytics')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('analytics')
+@AccessArea('analytics')
 export class AnalyticsController {
   constructor(private readonly svc: AnalyticsService) {}
 

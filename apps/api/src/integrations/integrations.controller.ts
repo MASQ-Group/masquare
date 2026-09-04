@@ -1,19 +1,23 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
-import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { CurrentAccess, CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { IntegrationsService } from './integrations.service';
 import { CreateIntegrationDto, TestIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
 import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 import { JobsService } from '../jobs/jobs.service';
+import { AccessArea, RequireCapability, Requires } from '../access/access.decorators';
+import type { EffectiveAccess } from '../access/catalogue';
+import { canArea } from '../access/resolve';
 
 // Admin-only across the board: managing third-party API credentials is privileged.
 @ApiTags('integrations')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('integrations')
+@AccessArea('integrations')
 export class IntegrationsController {
   constructor(
     private readonly svc: IntegrationsService,
@@ -43,6 +47,8 @@ export class IntegrationsController {
   }
 
   /** Sync-automation settings: the daily auto-sync time (HH:MM, server/UTC). */
+  // Read as well as write: "no access to scheduling" means not seeing it either.
+  @Requires('edit')
   @Get('sync-settings')
   getSyncSettings() {
     return this.svc.getSyncSettings();
@@ -145,9 +151,28 @@ export class IntegrationsController {
     return this.svc.verifyMapping(id, dto?.confirmed !== false, user.sub);
   }
 
+  /**
+   * Two actions behind one route: a plain sync fetches what is new, and the same call with a date
+   * range is "pull older orders" — a backfill that can rewrite months of history.
+   *
+   * No decorator can tell them apart, because the difference is in the body. So the route asks only
+   * for the lesser right, and the greater one is checked here against the arguments actually sent.
+   */
   @Post(':id/sync')
-  sync(@Param('id') id: string, @Body() dto: { from?: string; to?: string }, @CurrentUser() user: AuthUser) {
+  @Requires('view')
+  @RequireCapability('trigger_sync')
+  sync(
+    @Param('id') id: string,
+    @Body() dto: { from?: string; to?: string },
+    @CurrentUser() user: AuthUser,
+    @CurrentAccess() access: EffectiveAccess,
+  ) {
     const range = dto?.from ? { from: dto.from, to: dto.to } : undefined;
+    if (range && !canArea(access, 'integrations', 'edit')) {
+      throw new ForbiddenException(
+        'Pulling older orders rewrites history and needs full access to Integrations. You can run a sync for current orders.',
+      );
+    }
     return this.svc.syncOrders(id, 'manual', user.sub, range);
   }
 
