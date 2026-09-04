@@ -583,6 +583,101 @@ export class FloorService {
     if (count > 0) this.logger.log(`Purged ${count} expired notification-dedupe rows.`);
   }
 
+  /** Deleted per statement, so a first purge over a long backlog never holds one long lock. */
+  private static readonly PURGE_BATCH = 5000;
+
+  /** The configured windows, creating the settings row on first read. */
+  async retentionSettings(): Promise<{ decisionDays: number; feeDays: number }> {
+    const select = { repricingDecisionRetentionDays: true, repricingFeeRetentionDays: true } as const;
+    let s = await this.prisma.platformSettings.findFirst({ select });
+    if (!s) s = await this.prisma.platformSettings.create({ data: {}, select });
+    return { decisionDays: s.repricingDecisionRetentionDays, feeDays: s.repricingFeeRetentionDays };
+  }
+
+  /**
+   * What the repricer is holding, and what a purge would remove.
+   *
+   * Reported so a window is chosen against real numbers. These four tables were 67% of the database
+   * and growing about 9 MB a day, which is not a thing to guess at.
+   */
+  async retentionStats() {
+    const { decisionDays, feeDays } = await this.retentionSettings();
+    const cut = (d: number) => new Date(Date.now() - d * 86400_000);
+    const [decisions, snapshots, fees, decisionsDue, snapshotsDue, feesDue] = await Promise.all([
+      this.prisma.repricingDecision.count(),
+      this.prisma.repricingOfferSnapshot.count(),
+      this.prisma.repricingFeeEstimate.count(),
+      decisionDays > 0 ? this.prisma.repricingDecision.count({ where: { at: { lt: cut(decisionDays) } } }) : 0,
+      decisionDays > 0 ? this.prisma.repricingOfferSnapshot.count({ where: { createdAt: { lt: cut(decisionDays) } } }) : 0,
+      feeDays > 0 ? this.prisma.repricingFeeEstimate.count({ where: { fetchedAt: { lt: cut(feeDays) } } }) : 0,
+    ]);
+    return { decisions, snapshots, fees, decisionDays, feeDays, decisionsDue, snapshotsDue, feesDue };
+  }
+
+  /**
+   * Delete repricing working data past its window. Runs nightly; safe to call by hand.
+   *
+   * The fee-estimate rule is the one that matters: the floor reads the NEWEST estimate per SKU and
+   * marketplace as live state, so that row is kept whatever its age. Purging purely on age would
+   * silently strip the fees from any SKU not refreshed inside the window, and the floor would then
+   * be computed from nothing — a failure that shows up as mispricing, not as an error.
+   *
+   * A window of 0 means keep forever, so a setting typed to zero can never empty a table.
+   */
+  async purgeRetention(): Promise<{ decisions: number; snapshots: number; fees: number }> {
+    const { decisionDays, feeDays } = await this.retentionSettings();
+    const out = { decisions: 0, snapshots: 0, fees: 0 };
+    const B = FloorService.PURGE_BATCH;
+
+    if (decisionDays > 0) {
+      const cutoff = new Date(Date.now() - decisionDays * 86400_000);
+      for (;;) {
+        const batch = await this.prisma.repricingDecision.findMany({ where: { at: { lt: cutoff } }, select: { id: true }, take: B });
+        if (!batch.length) break;
+        out.decisions += (await this.prisma.repricingDecision.deleteMany({ where: { id: { in: batch.map((b) => b.id) } } })).count;
+        if (batch.length < B) break;
+      }
+      for (;;) {
+        const batch = await this.prisma.repricingOfferSnapshot.findMany({ where: { createdAt: { lt: cutoff } }, select: { id: true }, take: B });
+        if (!batch.length) break;
+        out.snapshots += (await this.prisma.repricingOfferSnapshot.deleteMany({ where: { id: { in: batch.map((b) => b.id) } } })).count;
+        if (batch.length < B) break;
+      }
+    }
+
+    if (feeDays > 0) {
+      const cutoff = new Date(Date.now() - feeDays * 86400_000);
+      // The id of the newest estimate for each SKU/marketplace pair — the live one, exempt from age.
+      const keep = await this.prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT DISTINCT ON (sku, marketplace_id) id
+        FROM repricing_fee_estimate
+        ORDER BY sku, marketplace_id, fetched_at DESC
+      `;
+      const keepIds = keep.map((k) => k.id);
+      for (;;) {
+        const batch = await this.prisma.repricingFeeEstimate.findMany({
+          where: { fetchedAt: { lt: cutoff }, id: { notIn: keepIds } },
+          select: { id: true },
+          take: B,
+        });
+        if (!batch.length) break;
+        out.fees += (await this.prisma.repricingFeeEstimate.deleteMany({ where: { id: { in: batch.map((b) => b.id) } } })).count;
+        if (batch.length < B) break;
+      }
+    }
+
+    if (out.decisions || out.snapshots || out.fees) {
+      this.logger.log(`Repricing purge: ${out.decisions} decisions, ${out.snapshots} snapshots, ${out.fees} fee estimates.`);
+    }
+    return out;
+  }
+
+  /** Nightly at 03:15 — after the dedupe sweep, before the 06:30 channel sync. */
+  @Cron('15 3 * * *')
+  async scheduledRetentionPurge(): Promise<void> {
+    await this.purgeRetention().catch((e) => this.logger.error(`Repricing purge failed: ${e?.message ?? e}`));
+  }
+
   /**
    * Refresh per-SKU fees from Amazon's getMyFeesEstimate (Product Fees API) → RepricingFeeEstimate
    * (spec §4.3), then recompute the floor. Delegates the SP-API call to FeeService (Pricing role).

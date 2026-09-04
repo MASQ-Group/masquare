@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { canApplyPreset } from '../config/resolve-preset';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
@@ -481,6 +481,43 @@ export class RepricingController {
     // The floor depends on the margin, so a strategy change makes every stored floor on those SKUs
     // stale until it is recomputed. Saying so beats leaving the old number on screen looking current.
     return { applied: eligible.length, refused, recomputeNeeded: eligible.length > 0 };
+  }
+
+  /** What the repricer is holding, and what a purge would remove. */
+  @Get('retention')
+  retention() {
+    return this.floors.retentionStats();
+  }
+
+  @Patch('retention')
+  async setRetention(@Body() dto: { decisionDays?: number; feeDays?: number }) {
+    // 0 means keep forever and is allowed; a negative window is meaningless, and anything past a
+    // decade is a typo for something much smaller.
+    for (const [k, v] of Object.entries(dto)) {
+      if (v == null) continue;
+      if (!Number.isInteger(v) || v < 0 || v > 3650) {
+        throw new BadRequestException(`${k} must be a whole number of days between 0 and 3650 (0 = keep forever).`);
+      }
+    }
+    const existing = await this.prisma.platformSettings.findFirst({ select: { id: true } });
+    const data = {
+      ...(dto.decisionDays != null ? { repricingDecisionRetentionDays: dto.decisionDays } : {}),
+      ...(dto.feeDays != null ? { repricingFeeRetentionDays: dto.feeDays } : {}),
+    };
+    if (existing) await this.prisma.platformSettings.update({ where: { id: existing.id }, data });
+    else await this.prisma.platformSettings.create({ data });
+    return this.floors.retentionStats();
+  }
+
+  /**
+   * Purge now rather than waiting for tonight. Separate from saving the window on purpose:
+   * shortening retention and deleting to it are different decisions, and one button for both makes
+   * a mistyped number irreversible before anyone sees the count.
+   */
+  @Post('retention/purge')
+  async purgeRetention() {
+    const removed = await this.floors.purgeRetention();
+    return { ...removed, stats: await this.floors.retentionStats() };
   }
 
   @Get('quarantine')
