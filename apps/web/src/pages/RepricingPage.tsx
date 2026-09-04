@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { FloorExplainCard } from '../components/repricing/FloorExplainCard';
 import { StrategiesCard } from '../components/repricing/StrategiesCard';
+import { RetentionCard } from '../components/repricing/RetentionCard';
 import { MarketplaceCostsCard } from '../components/repricing/MarketplaceCostsCard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle, Gauge, ListChecks, ScrollText, SlidersHorizontal, Plug } from 'lucide-react';
@@ -288,6 +289,9 @@ export function RepricingPage() {
         <div className="flex flex-col gap-6">
           <NotificationSetupCard />
           <RoleCheckCard />
+          {/* Sits with the connection because it is about the volume the notification stream
+              produces, not about how anything is priced. */}
+          <RetentionCard />
         </div>
       </TabPanel>
     </div>

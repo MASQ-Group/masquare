@@ -693,6 +693,20 @@ model PlatformSettings {
   activityRetentionUserDays   Int @default(365) @map("activity_retention_user_days")
   activityRetentionSystemDays Int @default(30) @map("activity_retention_system_days")
 
+  /// How long the repricer's working data is kept. Two clocks, for the same reason as the activity
+  /// log: they are different kinds of record.
+  ///
+  /// Decisions (and the offer snapshots that explain them) are the audit trail — what the engine
+  /// chose and why. That is what a shadow-mode review reads, so it is worth months.
+  ///
+  /// Fee estimates are mostly bulk: each row carries the verbatim Amazon response. Only the newest
+  /// per SKU and marketplace is live — the floor reads it directly — and the purge keeps that one
+  /// whatever its age. The rest is history nobody consults.
+  ///
+  /// 0 means keep forever, on both.
+  repricingDecisionRetentionDays Int @default(90) @map("repricing_decision_retention_days")
+  repricingFeeRetentionDays      Int @default(30) @map("repricing_fee_retention_days")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

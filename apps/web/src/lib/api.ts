@@ -1477,7 +1477,18 @@ export const listingApi = {
     api.delete<{ removed: boolean }>(`/listing/products/${productId}/channels/${integrationId}`, { params: { marketplace } }).then((r) => r.data),
 };
 
+export interface RepricingRetention {
+  decisions: number; snapshots: number; fees: number;
+  decisionDays: number; feeDays: number;
+  decisionsDue: number; snapshotsDue: number; feesDue: number;
+}
+
 export const repricingApi = {
+  retention: () => api.get<RepricingRetention>('/amazon-repricing/retention').then((r) => r.data),
+  setRetention: (body: { decisionDays?: number; feeDays?: number }) =>
+    api.patch<RepricingRetention>('/amazon-repricing/retention', body).then((r) => r.data),
+  purgeRetention: () =>
+    api.post<{ decisions: number; snapshots: number; fees: number; stats: RepricingRetention }>('/amazon-repricing/retention/purge').then((r) => r.data),
   marketplaceCosts: () => api.get<RepricingMarketplaceCosts[]>('/amazon-repricing/marketplace-costs').then((r) => r.data),
   setMarketplaceCosts: (body: { marketplace: string; storageApplies?: boolean; adsApply?: boolean; defaultStoragePerUnitCents?: number | null; defaultAdCostPerUnitCents?: number | null }) =>
     api.post('/amazon-repricing/marketplace-costs', body).then((r) => r.data),
