@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { AuthUser } from '../common/current-user.decorator';
 import { ACCESS_AREA, ACCESS_CAPABILITY, ACCESS_LEVEL, ACCESS_SKIP } from './access.decorators';
@@ -44,11 +44,20 @@ export class AccessGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest();
     const user = req.user as AuthUser | undefined;
-    // Unauthenticated requests are JwtAuthGuard's business. Reaching here without a user means the
-    // route has no auth guard either, which is a mistake rather than a permission question.
+    /**
+     * No authenticated user.
+     *
+     * A global guard runs BEFORE the controller's JwtAuthGuard, so this is the ordinary
+     * not-signed-in case rather than anything exotic — and it has to answer 401, because the web
+     * client redirects to the login page on 401 and does nothing on 403. Answering 403 here left an
+     * expired session staring at a broken page instead of being asked to sign in again.
+     *
+     * A route genuinely missing its auth guard lands here too and is refused just the same; the log
+     * line is what tells the two apart, since the response deliberately cannot.
+     */
     if (!user?.sub) {
-      this.logger.error(`${controller.name}.${handler.name} has no authentication guard — refusing.`);
-      throw new ForbiddenException('This endpoint is not configured for access control.');
+      this.logger.debug(`${controller.name}.${handler.name} reached the access guard with no authenticated user.`);
+      throw new UnauthorizedException();
     }
 
     const areas = pick<string[]>(ACCESS_AREA);

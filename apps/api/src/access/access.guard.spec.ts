@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { AccessGuard } from './access.guard';
 import { ACCESS_AREA, ACCESS_CAPABILITY, ACCESS_LEVEL, ACCESS_SKIP } from './access.decorators';
 import { resolveAccess } from './resolve';
@@ -37,9 +37,12 @@ describe('a route that declares nothing', () => {
     await expect(g.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('is refused when it has no authentication guard either', async () => {
+  it('answers 401, not 403, when nobody is signed in', async () => {
+    // A global guard runs before the controller's JwtAuthGuard, so this is the ordinary
+    // not-signed-in case. The web client redirects to login on 401 and does nothing on 403 — a
+    // 403 here left an expired session stuck on a broken page.
     const { guard: g, ctx } = guard({ [ACCESS_AREA]: ['inventory'] }, { user: null });
-    await expect(g.canActivate(ctx)).rejects.toThrow(/not configured for access control/);
+    await expect(g.canActivate(ctx)).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('is allowed only through an explicit exemption', async () => {
