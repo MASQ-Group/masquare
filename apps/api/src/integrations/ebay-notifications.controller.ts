@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, Logger, Post, Query } from '@nestjs/co
 import { ApiExcludeController } from '@nestjs/swagger';
 import { createHash } from 'crypto';
 import { NoAccessCheck } from '../access/access.decorators';
+import { Public } from '../auth/public.decorator';
 
 /**
  * eBay Marketplace Account Deletion / Closure notifications.
@@ -25,6 +26,7 @@ import { NoAccessCheck } from '../access/access.decorators';
 @Controller('ebay/notifications')
 // eBay's webhook. It arrives with no user at all; its own signature check is the gate.
 @NoAccessCheck()
+@Public()
 export class EbayNotificationsController {
   private readonly logger = new Logger('EbayNotifications');
 

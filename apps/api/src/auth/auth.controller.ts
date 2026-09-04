@@ -5,6 +5,7 @@ import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { NoAccessCheck } from '../access/access.decorators';
+import { Public } from './public.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -13,6 +14,9 @@ import { NoAccessCheck } from '../access/access.decorators';
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
+  // The only route on this controller with no user at all. `me` below deliberately is NOT public:
+  // it reports your own profile and has to know whose.
+  @Public()
   @Post('login')
   @HttpCode(200)
   login(@Body() dto: LoginDto) {
