@@ -5,11 +5,13 @@ import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { VisibleCompanies } from '../common/active-company.decorator';
 import { ShipmentsService, type ShipmentQuery } from './shipments.service';
 import { CreateCombinedShipmentDto, CreateShipmentBatchDto, CreateShipmentDto, SetFulfilmentDto, ShipmentImportCommitDto, ShipmentImportValidateDto, UpdateShipmentDto } from './dto/shipment.dto';
+import { AccessArea, RequireCapability } from '../access/access.decorators';
 
 @ApiTags('shipments')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('shipments')
+@AccessArea('shipments')
 export class ShipmentsController {
   constructor(private readonly svc: ShipmentsService) {}
 
@@ -101,6 +103,7 @@ export class ShipmentsController {
   }
 
   @Post('import/commit')
+  @RequireCapability('bulk_import')
   importCommit(@Body() dto: ShipmentImportCommitDto, @CurrentUser() user: AuthUser) {
     return this.svc.importCommit(dto.items, user.sub);
   }

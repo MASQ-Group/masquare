@@ -4,11 +4,13 @@ import { CategoriesService } from './categories.service';
 import { CreateCategoryDto, MoveCategoryDto, UpdateCategoryDto } from './dto/category.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('global-settings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('categories')
+@AccessArea('global_settings')
 export class CategoriesController {
   constructor(private readonly svc: CategoriesService) {}
 

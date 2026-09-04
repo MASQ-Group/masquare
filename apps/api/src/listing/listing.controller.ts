@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { ListingService, type ChannelPlanPatch } from './listing.service';
+import { AccessArea } from '../access/access.decorators';
 
 /**
  * Preparing products for sale on a channel.
@@ -15,6 +16,7 @@ import { ListingService, type ChannelPlanPatch } from './listing.service';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('listing')
+@AccessArea('channel_listings')
 export class ListingController {
   constructor(private readonly svc: ListingService) {}
 

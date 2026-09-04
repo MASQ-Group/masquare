@@ -4,11 +4,13 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { ExpenseCategoriesService } from './expense-categories.service';
 import { CreateExpenseCategoryDto, UpdateExpenseCategoryDto } from './dto/expense-category.dto';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('expense-categories')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('expense-categories')
+@AccessArea('expenses')
 export class ExpenseCategoriesController {
   constructor(private readonly svc: ExpenseCategoriesService) {}
 

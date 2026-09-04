@@ -14,11 +14,13 @@ import { CreateCompanyDto, UpdateCompanyDto } from './dto/company.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('companies')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('companies')
+@AccessArea('administration')
 export class CompaniesController {
   constructor(private readonly companies: CompaniesService) {}
 

@@ -4,11 +4,13 @@ import { AttributesService } from './attributes.service';
 import { AddAttributeValueDto, CreateAttributeDto, UpdateAttributeDto } from './dto/attribute.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('global-settings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('attributes')
+@AccessArea('global_settings')
 export class AttributesController {
   constructor(private readonly svc: AttributesService) {}
 

@@ -58,6 +58,64 @@ export interface ModuleRef {
   name: string;
   status?: string | null;
 }
+export type AccessLevel = 'none' | 'view' | 'edit';
+
+/** Resolved on the server so the page and the guard can never disagree about what someone holds. */
+export interface EffectiveAccess {
+  areas: Record<string, AccessLevel>;
+  capabilities: Record<string, boolean>;
+  isAdmin: boolean;
+}
+
+export interface AreaDef {
+  key: string;
+  label: string;
+  group: string;
+  description: string;
+}
+
+export interface CapabilityDef {
+  key: string;
+  label: string;
+  description: string;
+  dangerous?: boolean;
+}
+
+export interface AccessCatalogue {
+  areas: AreaDef[];
+  groups: { group: string; areas: AreaDef[] }[];
+  capabilities: CapabilityDef[];
+}
+
+export interface GrantSet {
+  areas: Partial<Record<string, AccessLevel>>;
+  capabilities: Partial<Record<string, boolean>>;
+}
+
+export interface Role {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  isSystem: boolean;
+  grants: GrantSet;
+  userCount: number;
+}
+
+export const accessApi = {
+  catalogue: () => api.get<AccessCatalogue>('/access/catalogue').then((r) => r.data),
+  mine: () => api.get<EffectiveAccess>('/access/me').then((r) => r.data),
+};
+
+export const rolesApi = {
+  list: () => api.get<Role[]>('/roles').then((r) => r.data),
+  create: (body: { name: string; description?: string | null; grants: GrantSet }) =>
+    api.post<{ id: string; key: string }>('/roles', body).then((r) => r.data),
+  update: (id: string, body: { name?: string; description?: string | null; grants?: GrantSet }) =>
+    api.patch(`/roles/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/roles/${id}`).then((r) => r.data),
+};
+
 export interface Me {
   id: string;
   fullName: string;
@@ -66,6 +124,8 @@ export interface Me {
   status: string;
   companies: CompanyRef[];
   modules: ModuleRef[];
+  /** What this person may actually do. The sidebar and the in-page buttons are built from it. */
+  access: EffectiveAccess;
 }
 
 export interface Company {
@@ -101,6 +161,11 @@ export interface User {
   status: 'active' | 'disabled';
   companyIds: string[];
   moduleIds: string[];
+  role: { id: string; key: string; name: string } | null;
+  accessOverrides: GrantSet;
+  access: EffectiveAccess;
+  /** One line for the list row, phrased server-side so every screen says it the same way. */
+  accessSummary: string;
 }
 
 export interface ModuleCatalogItem {

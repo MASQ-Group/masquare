@@ -19,6 +19,7 @@ import {
   TransferImportValidateDto,
   UpdateWarehouseDto,
 } from './dto/warehouse.dto';
+import { AccessArea, RequireCapability } from '../access/access.decorators';
 
 const isTrue = (v?: string) => v === 'true' || v === '1';
 
@@ -26,6 +27,7 @@ const isTrue = (v?: string) => v === 'true' || v === '1';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('warehouses')
+@AccessArea('inventory')
 export class WarehousesController {
   constructor(private readonly svc: WarehousesService) {}
 
@@ -65,6 +67,7 @@ export class WarehousesController {
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('stock')
+@AccessArea('inventory')
 export class StockController {
   constructor(private readonly svc: StockService) {}
 
@@ -112,6 +115,7 @@ export class StockController {
   }
 
   @Post('import/commit')
+  @RequireCapability('bulk_import')
   importCommit(@Body() dto: StockImportCommitDto, @CurrentUser() user: AuthUser) {
     return this.svc.importCommit(dto.items, dto.reason ?? 'opening_balance', user.sub);
   }
@@ -140,6 +144,7 @@ export class StockController {
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('stock-adjustments')
+@AccessArea('inventory')
 export class AdjustmentsController {
   constructor(private readonly svc: AdjustmentsService) {}
 
@@ -155,6 +160,7 @@ export class AdjustmentsController {
 
   /** Re-validates server-side rather than trusting the client's dry run. */
   @Post('import/commit')
+  @RequireCapability('bulk_import')
   importCommit(@Body() dto: AdjustmentImportValidateDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
     return this.svc.importCommit(dto.rows, user.sub, companyIds);
   }
@@ -164,6 +170,7 @@ export class AdjustmentsController {
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('stock-transfers')
+@AccessArea('inventory')
 export class TransfersController {
   constructor(private readonly svc: TransfersService) {}
 
@@ -195,6 +202,7 @@ export class TransfersController {
   }
 
   @Post('import/commit')
+  @RequireCapability('bulk_import')
   importCommit(@Body() dto: TransferImportValidateDto, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
     return this.svc.importCommit(dto.rows, user.sub, companyIds);
   }

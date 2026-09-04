@@ -1,6 +1,7 @@
 import { Controller, Get, Header, Query } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { IntegrationsService } from './integrations.service';
+import { AccessArea } from '../access/access.decorators';
 
 /**
  * eBay OAuth redirect landing. eBay sends the browser here (the RuName's "accepted URL")
@@ -11,6 +12,7 @@ import { IntegrationsService } from './integrations.service';
  */
 @ApiExcludeController()
 @Controller('ebay/oauth')
+@AccessArea('integrations')
 export class EbayOAuthController {
   constructor(private readonly svc: IntegrationsService) {}
 

@@ -8,11 +8,13 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 import { JobsService } from '../jobs/jobs.service';
+import { AccessArea, RequireCapability } from '../access/access.decorators';
 
 @ApiTags('fba-shipments')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('fba-shipments')
+@AccessArea('shipments')
 export class FbaShipmentsController {
   constructor(
     private readonly fba: FbaShipmentsService,
@@ -36,6 +38,7 @@ export class FbaShipmentsController {
   }
 
   @Post('import')
+  @RequireCapability('bulk_import')
   import(@Body() body: { rows?: Record<string, string>[] }, @CurrentUser() user: AuthUser, @WriteCompany() companyId: string) {
     return this.fba.importShipments(body?.rows ?? [], user.sub, companyId);
   }

@@ -6,11 +6,13 @@ import { CreateSalesTransactionDto, DecideUnlockDto, ResolveTransactionDto, Upda
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { VisibleCompanies } from '../common/active-company.decorator';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('sales-transactions')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('sales-transactions')
+@AccessArea('sales_transactions')
 export class SalesTransactionsController {
   constructor(private readonly svc: SalesTransactionsService, private readonly activityLog: ActivityService) {}
 

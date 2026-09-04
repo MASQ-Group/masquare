@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { ExpenseTagsService } from './expense-tags.service';
 import { CreateExpenseTagDto, UpdateExpenseTagDto } from './dto/expense-tag.dto';
+import { AccessArea } from '../access/access.decorators';
 
 const isTrue = (v?: string) => v === 'true' || v === '1';
 
@@ -11,6 +12,7 @@ const isTrue = (v?: string) => v === 'true' || v === '1';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('expense-tags')
+@AccessArea('expenses')
 export class ExpenseTagsController {
   constructor(private readonly svc: ExpenseTagsService) {}
 

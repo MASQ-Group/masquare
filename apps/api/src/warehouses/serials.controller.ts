@@ -3,11 +3,13 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { VisibleCompanies } from '../common/active-company.decorator';
 import { SerialsService } from './serials.service';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('serials')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('serials')
+@AccessArea('inventory')
 export class SerialsController {
   constructor(private readonly svc: SerialsService) {}
 

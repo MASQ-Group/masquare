@@ -5,11 +5,13 @@ import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { VisibleCompanies, WriteCompany } from '../common/active-company.decorator';
 import { ProcurementService, type DemandQuery } from './procurement.service';
 import { GenerateOrdersDto } from './dto/procurement.dto';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('procurement')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('procurement')
+@AccessArea('purchasing')
 export class ProcurementController {
   constructor(private readonly svc: ProcurementService) {}
 

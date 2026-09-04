@@ -3,11 +3,13 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { VisibleCompanies } from '../common/active-company.decorator';
 import { InventoryService } from './inventory.service';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('inventory')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('inventory')
+@AccessArea('inventory')
 export class InventoryController {
   constructor(private readonly svc: InventoryService) {}
 

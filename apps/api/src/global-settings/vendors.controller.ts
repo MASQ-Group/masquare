@@ -4,11 +4,13 @@ import { VendorsService } from './vendors.service';
 import { CreateVendorDto, UpdateVendorDto } from './dto/vendor.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('global-settings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('vendors')
+@AccessArea('global_settings')
 export class VendorsController {
   constructor(private readonly vendors: VendorsService) {}
 

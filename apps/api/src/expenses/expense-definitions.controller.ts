@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { ExpenseDefinitionsService } from './expense-definitions.service';
 import { CreateExpenseDefinitionDto, UpdateExpenseDefinitionDto } from './dto/expense-definition.dto';
+import { AccessArea } from '../access/access.decorators';
 
 const isTrue = (v?: string) => v === 'true' || v === '1';
 
@@ -11,6 +12,7 @@ const isTrue = (v?: string) => v === 'true' || v === '1';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('expense-definitions')
+@AccessArea('expenses')
 export class ExpenseDefinitionsController {
   constructor(private readonly svc: ExpenseDefinitionsService) {}
 

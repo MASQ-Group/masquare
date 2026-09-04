@@ -8,11 +8,13 @@ import { PurchaseOrdersService, type PurchaseOrderQuery } from './purchase-order
 import { GoodsReceiptsService, type GoodsReceiptQuery } from './goods-receipts.service';
 import { AmendPurchaseOrderDto, CancelPurchaseOrderDto, CreatePurchaseOrderDto, DecideUnlockDto, RequestUnlockDto, UnlockPurchaseOrderDto, UpdatePurchaseOrderDto } from './dto/purchase-order.dto';
 import { CancelGoodsReceiptDto, PostGoodsReceiptDto } from './dto/goods-receipt.dto';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('purchase-orders')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('purchase-orders')
+@AccessArea('purchasing')
 export class PurchaseOrdersController {
   constructor(
     private readonly svc: PurchaseOrdersService,
@@ -140,6 +142,7 @@ export class PurchaseOrdersController {
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('goods-receipts')
+@AccessArea('purchasing')
 export class GoodsReceiptsController {
   constructor(private readonly svc: GoodsReceiptsService) {}
 

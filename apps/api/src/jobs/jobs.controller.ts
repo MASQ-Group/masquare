@@ -2,12 +2,15 @@ import { Controller, Get, NotFoundException, Param, Post, UseGuards } from '@nes
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { JobsService } from './jobs.service';
+import { NoAccessCheck } from '../access/access.decorators';
 
 /** Progress for long-running actions. Read-only apart from cancel; the ids are unguessable UUIDs. */
 @ApiTags('jobs')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('jobs')
+// Progress of a job the caller already started; the work itself was authorised when it began.
+@NoAccessCheck()
 export class JobsController {
   constructor(private readonly jobs: JobsService) {}
 

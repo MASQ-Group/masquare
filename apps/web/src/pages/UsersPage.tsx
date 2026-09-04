@@ -35,7 +35,7 @@ export function UsersPage() {
           <table className="w-full min-w-[760px] border-collapse">
             <thead>
               <tr>
-                {['User', 'Role', 'Status', 'Companies', 'Modules', ''].map((h) => (
+                {['User', 'Type', 'Role', 'Status', 'Companies', 'Access', ''].map((h) => (
                   <th key={h} className="border-b border-n-200 bg-n-25 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-n-500">
                     {h}
                   </th>
@@ -47,7 +47,7 @@ export function UsersPage() {
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-[13px] text-n-500">Loading…</td></tr>
               )}
               {!isLoading && users.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-10 text-center text-[13px] text-n-500">No users yet.</td></tr>
+                <tr><td colSpan={7} className="px-4 py-10 text-center text-[13px] text-n-500">No users yet.</td></tr>
               )}
               {users.map((u) => (
                 <tr key={u.id} className="hover:bg-teal-50">
@@ -62,6 +62,15 @@ export function UsersPage() {
                       <span className="tag border border-n-200 bg-n-100 text-n-600">Member</span>
                     )}
                   </td>
+                  {/* An admin's access does not come from a role, so naming one would be misleading;
+                      a non-admin with none holds only their own overrides, which is worth flagging. */}
+                  <td className="border-b border-n-100 px-4 py-3 text-[13px]">
+                    {u.isAdmin
+                      ? <span className="text-n-400">—</span>
+                      : u.role
+                        ? <span className="text-n-700">{u.role.name}</span>
+                        : <span className="text-warning">No role</span>}
+                  </td>
                   <td className="border-b border-n-100 px-4 py-3">
                     {u.status === 'active' ? (
                       <span className="tag border border-success-bd bg-success-bg text-success">Active</span>
@@ -72,8 +81,10 @@ export function UsersPage() {
                   <td className="mono border-b border-n-100 px-4 py-3 text-[13px] text-n-700">
                     {u.isAdmin ? 'all' : u.companyIds.length}
                   </td>
-                  <td className="mono border-b border-n-100 px-4 py-3 text-[13px] text-n-700">
-                    {u.isAdmin ? 'all' : u.moduleIds.length}
+                  {/* What they can actually do, phrased by the server so every screen says it the
+                      same way. The old column counted module grants that enforced nothing. */}
+                  <td className="border-b border-n-100 px-4 py-3 text-[12.5px] text-n-600">
+                    {u.accessSummary}
                   </td>
                   <td className="border-b border-n-100 px-4 py-3">
                     <div className="flex justify-end gap-1">
@@ -112,7 +123,8 @@ export function UsersPage() {
               <div className="flex flex-wrap items-center gap-2 text-[12px]">
                 {u.isAdmin ? <span className="tag border border-info-bd bg-info-bg text-info">Admin</span> : <span className="tag border border-n-200 bg-n-100 text-n-600">Member</span>}
                 {u.status === 'active' ? <span className="tag border border-success-bd bg-success-bg text-success">Active</span> : <span className="tag border border-n-200 bg-n-100 text-n-500">Disabled</span>}
-                <span className="text-n-500">Companies {u.isAdmin ? 'all' : u.companyIds.length} · Modules {u.isAdmin ? 'all' : u.moduleIds.length}</span>
+                {u.role && <span className="tag border border-n-200 bg-n-50 text-n-600">{u.role.name}</span>}
+                <span className="text-n-500">Companies {u.isAdmin ? 'all' : u.companyIds.length} · {u.accessSummary}</span>
               </div>
             </div>
           ))}

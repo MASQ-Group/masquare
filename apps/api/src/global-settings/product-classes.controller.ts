@@ -4,11 +4,13 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { ProductClassesService } from './product-classes.service';
 import { CreateProductClassDto, UpdateProductClassDto } from './dto/product-class.dto';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('global-settings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('product-classes')
+@AccessArea('global_settings')
 export class ProductClassesController {
   constructor(private readonly svc: ProductClassesService) {}
   @Get() list(@Query('q') q?: string) { return this.svc.list(q); }

@@ -4,10 +4,13 @@ import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { SavedMapping, VendorImportService } from './vendor-import.service';
+import { AccessArea } from '../access/access.decorators';
 
 @ApiTags('vendor-import')
 @UseGuards(JwtAuthGuard)
 @Controller('vendor-import')
+// A vendor file sets purchase costs; its stock effect follows from them.
+@AccessArea('pricing')
 export class VendorImportController {
   constructor(private readonly svc: VendorImportService) {}
 
