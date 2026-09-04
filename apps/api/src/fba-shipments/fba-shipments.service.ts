@@ -54,6 +54,9 @@ export interface EstimateResult {
   boxesVolumetricWeightKg: number | null; // Σ box volumetric weights
   chargeableWeightKg: number | null;     // weight used to pick the rate band
   estimatedCostEur: number | null;
+  dutyImportEur: number | null;
+  /** What is actually shared across the lines: carriage plus duty. */
+  allocatablePotEur: number | null;
   boxes: EstimateBox[];
   allocation: EstimateLine[];            // aggregated per product (for Tab 3)
   warnings: string[];
@@ -230,9 +233,14 @@ export class FbaShipmentsService {
     if (anyMissing) warnings.push('Some SKUs have no matching product or missing weight/dimensions — they are excluded from the weight.');
     if (calcMethod === 'volumetric_weight' && boxesVolumetric <= 0) warnings.push('No box dimensions entered — volumetric weight cannot be computed.');
 
-    // Allocate the effective cost across all lines by their weight×qty share.
+    // Allocate carriage AND duty across all lines by their weight×qty share. Duty is levied on
+    // customs value rather than weight, so weight is a simplification — but it is the same
+    // simplification the carriage split already makes, and one basis per shipment keeps the
+    // per-SKU figure a single number people can reason about.
+    const dutyImportEur = num(input.dutyImportEur);
     const allLines = boxes.flatMap((b) => b.items);
-    this.allocate(allLines, estimatedCostEur);
+    const allocatablePotEur = this.allocatablePot(estimatedCostEur, dutyImportEur);
+    this.allocate(allLines, allocatablePotEur);
 
     // Aggregate per product for the allocation view (Tab 3).
     const allocation = this.aggregate(allLines);
@@ -251,10 +259,29 @@ export class FbaShipmentsService {
       boxesVolumetricWeightKg,
       chargeableWeightKg,
       estimatedCostEur,
+      dutyImportEur,
+      allocatablePotEur,
       boxes,
       allocation,
       warnings,
     };
+  }
+
+  /**
+   * What gets shared across the lines: carriage plus any duty on the same consignment.
+   *
+   * One definition, because four separate places allocate — the estimate, an edit, a relink and
+   * registering the actual cost — and a duty that reached three of them would leave the same
+   * shipment costing different amounts depending on which action last touched it.
+   *
+   * Duty alone still allocates. It arrives on its own invoice, often before the carrier's, and a
+   * charge already paid should not wait on an unrelated one being entered.
+   */
+  private allocatablePot(shippingCostEur: unknown, dutyEur: unknown): number | null {
+    const ship = n(shippingCostEur);
+    const duty = n(dutyEur);
+    if (ship == null && duty == null) return null;
+    return round((ship ?? 0) + (duty ?? 0), 2);
   }
 
   /** Distribute `cost` across lines proportional to lineWeight (weight × qty). Mutates lines. */
@@ -344,8 +371,15 @@ export class FbaShipmentsService {
       chargeableWeightKg: n(s.chargeableWeightKg),
       estimatedCostEur: n(s.estimatedCostEur),
       actualCostEur: n(s.actualCostEur),
+      // Carriage only, so "actual vs estimated" keeps comparing like with like.
       effectiveCostEur: s.actualCostEur != null ? n(s.actualCostEur) : n(s.estimatedCostEur),
       costSource: s.actualCostEur != null ? 'actual' : 'estimated',
+      dutyImportEur: n(s.dutyImportEur),
+      // What the per-SKU allocation below actually divides up.
+      allocatablePotEur: this.allocatablePot(
+        s.actualCostEur != null ? s.actualCostEur : s.estimatedCostEur,
+        s.dutyImportEur,
+      ),
       status: s.status,
       comments: s.comments,
       boxCount: boxes.length,
@@ -442,6 +476,7 @@ export class FbaShipmentsService {
       emptyBoxesWeightKg: est.emptyBoxesWeightKg,
       chargeableWeightKg: est.chargeableWeightKg,
       estimatedCostEur: est.estimatedCostEur,
+      dutyImportEur: est.dutyImportEur,
       comments: dto.comments?.trim() || null,
     };
   }
@@ -496,9 +531,11 @@ export class FbaShipmentsService {
     // If an actual cost was already registered, keep allocating the lines to it (by their
     // new weight shares) rather than reverting to the fresh estimate. actualCostEur itself
     // is left untouched below (headerData doesn't include it).
+    // The duty comes from THIS edit rather than from `before`, because changing it is exactly
+    // what someone may have opened the shipment to do.
     if (before.actualCostEur != null) {
       const lines = est.boxes.flatMap((b) => b.items);
-      this.allocate(lines, before.actualCostEur);
+      this.allocate(lines, this.allocatablePot(before.actualCostEur, est.dutyImportEur));
       est.allocation = this.aggregate(lines);
     }
     await this.prisma.$transaction(async (tx) => {
@@ -577,7 +614,7 @@ export class FbaShipmentsService {
     const est = await this.computeEstimate(dto);
     if (before.actualCostEur != null) {
       const lines = est.boxes.flatMap((b) => b.items);
-      this.allocate(lines, Number(before.actualCostEur));
+      this.allocate(lines, this.allocatablePot(before.actualCostEur, before.dutyImportEur));
       est.allocation = this.aggregate(lines);
     }
 
@@ -661,23 +698,43 @@ export class FbaShipmentsService {
     return this.get(id);
   }
 
-  /** Register the actual shipping cost; re-allocate each line by its weight share. */
-  async setActualCost(id: string, actualCostEur: number, actorId?: string, companyIds?: string[], confirm = false) {
+  /**
+   * Register the actual shipping cost and any duty; re-allocate each line by its weight share.
+   *
+   * `dutyImportEur` left undefined means "leave whatever is stored alone" — the carrier invoice and
+   * the customs bill arrive separately, so registering one must not silently wipe the other. Passed
+   * as null it clears the value deliberately.
+   */
+  async setActualCost(
+    id: string,
+    actualCostEur: number,
+    actorId?: string,
+    companyIds?: string[],
+    confirm = false,
+    dutyImportEur?: number | null,
+  ) {
     const existing = await this.prisma.fbaShipment.findFirst({ where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) }, include: { items: { where: { deletedAt: null } } } });
     if (!existing) throw new NotFoundException('FBA shipment not found');
+    const duty = dutyImportEur === undefined ? existing.dutyImportEur : dutyImportEur;
+    const pot = this.allocatablePot(actualCostEur, duty) ?? 0;
     const totalWeight = (existing.items ?? []).reduce(
       (sum: number, it: any) => sum + (it.unitWeightKg != null ? Number(it.unitWeightKg) * (it.quantity ?? 1) : 0), 0);
     await this.prisma.$transaction(async (tx) => {
       for (const it of existing.items ?? []) {
         const lineW = it.unitWeightKg != null ? Number(it.unitWeightKg) * (it.quantity ?? 1) : 0;
-        const alloc = totalWeight > 0 ? round((lineW / totalWeight) * actualCostEur, 4) : null;
+        const alloc = totalWeight > 0 ? round((lineW / totalWeight) * pot, 4) : null;
         await tx.fbaShipmentItem.update({ where: { id: it.id }, data: { allocatedCostEur: alloc } });
       }
       // Confirmed in the same transaction as the cost that permits it, so the two can never
       // disagree — no window where a shipment is confirmed on a cost that failed to save.
       await tx.fbaShipment.update({
         where: { id },
-        data: { actualCostEur, ...(confirm ? { status: 'confirmed' } : {}), updatedById: actorId },
+        data: {
+          actualCostEur,
+          ...(dutyImportEur !== undefined ? { dutyImportEur } : {}),
+          ...(confirm ? { status: 'confirmed' } : {}),
+          updatedById: actorId,
+        },
       });
     });
     return this.get(id);
@@ -970,6 +1027,9 @@ export class FbaShipmentsService {
         if (!date) throw new Error(`Invalid or missing date "${get(first, 'date')}"`);
         const pkg = Number(get(first, 'packagingPct'));
         const packagingPct = Number.isFinite(pkg) && get(first, 'packagingPct') !== '' ? pkg : undefined;
+        // Header-level, like the packaging uplift: one consignment clears customs once, however
+        // many SKU rows describe it. Taken from the first row of the group.
+        const dutyImportEur = num(get(first, 'dutyImportEur'));
 
         // Group each shipment's rows into boxes.
         const boxOrder: string[] = [];
@@ -996,7 +1056,11 @@ export class FbaShipmentsService {
         const boxes = boxOrder.map((k) => boxMap.get(k)).filter((b) => b.items.length > 0);
         if (!boxes.length) throw new Error('No SKU lines');
 
-        await this.create({ date: date.toISOString(), salesChannelId, fbaShipmentRef: fbaId, shippingServiceId, packagingPct, boxes, status: 'draft' } as any, actorId, companyId);
+        await this.create(
+          { date: date.toISOString(), salesChannelId, fbaShipmentRef: fbaId, shippingServiceId, packagingPct, dutyImportEur, boxes, status: 'draft' } as any,
+          actorId,
+          companyId,
+        );
         created++;
       } catch (e: any) {
         errors.push({ fbaRef: fbaId, message: (e?.message ?? String(e)).slice(0, 200) });

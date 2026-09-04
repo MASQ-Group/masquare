@@ -18,10 +18,13 @@ interface Props {
  *  Shipments page and the Shipments module. */
 export function FbaActualCostModal({ shipment, contextLine, onClose, onSaved }: Props) {
   const [value, setValue] = useState(shipment.actualCostEur != null ? String(shipment.actualCostEur) : '');
+  // Pre-filled from what is stored, so saving carriage never silently drops a duty entered earlier.
+  const [duty, setDuty] = useState(shipment.dutyImportEur != null ? String(shipment.dutyImportEur) : '');
   // Registering the cost is what permits confirming, so the operator does both in one action.
   const [confirmToo, setConfirmToo] = useState(shipment.status !== 'confirmed');
   const save = useMutation({
-    mutationFn: (amount: number) => fbaShipmentsApi.setActualCost(shipment.id, amount, confirmToo),
+    mutationFn: ({ amount, dutyEur }: { amount: number; dutyEur: number | null }) =>
+      fbaShipmentsApi.setActualCost(shipment.id, amount, confirmToo, dutyEur),
     onSuccess: () => {
       toast.success(confirmToo ? 'Cost registered and shipment confirmed' : 'Actual cost registered — allocation updated');
       onSaved();
@@ -32,7 +35,10 @@ export function FbaActualCostModal({ shipment, contextLine, onClose, onSaved }: 
   const submit = () => {
     const amount = Number(value);
     if (!Number.isFinite(amount) || amount < 0) { toast.error('Enter a valid amount'); return; }
-    save.mutate(amount);
+    const raw = duty.trim();
+    const dutyEur = raw === '' ? null : Number(raw);
+    if (dutyEur != null && (!Number.isFinite(dutyEur) || dutyEur < 0)) { toast.error('Enter a valid duty amount'); return; }
+    save.mutate({ amount, dutyEur });
   };
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(12,16,20,0.5)] p-4" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
@@ -42,9 +48,17 @@ export function FbaActualCostModal({ shipment, contextLine, onClose, onSaved }: 
           <p className="mt-0.5 text-[12.5px] text-n-500">{shipment.fbaShipmentRef ?? 'FBA shipment'}{contextLine ? ` · ${contextLine}` : ''} · estimate {eur(shipment.estimatedCostEur)}</p>
         </div>
         <div className="px-5 py-4">
-          <label className="label">Actual cost <span className="font-normal text-n-400">(exc. VAT, €)</span></label>
+          <label className="label">Actual shipping cost <span className="font-normal text-n-400">(exc. VAT, €)</span></label>
           <input autoFocus className="input mono" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder="0.00" onKeyDown={(e) => { if (e.key === 'Enter' && !busy) submit(); }} />
-          <p className="mt-2 text-[12px] text-n-500">This is the shipment's actual shipping cost. It overrides the estimate in the FBA module and re-allocates the cost across the shipment's SKUs by weight.</p>
+
+          <label className="label mt-3 block">Duty / import charges <span className="font-normal text-n-400">(exc. VAT, €)</span></label>
+          <input className="input mono" inputMode="decimal" value={duty} onChange={(e) => setDuty(e.target.value)} placeholder="0.00" onKeyDown={(e) => { if (e.key === 'Enter' && !busy) submit(); }} />
+
+          <p className="mt-2 text-[12px] text-n-500">
+            Both override the estimate in the FBA module and are re-allocated across the shipment's SKUs
+            by weight. Leave duty blank if the customs bill has not arrived — it can be added later
+            without re-entering the shipping cost.
+          </p>
           {shipment.status !== 'confirmed' && (
             <label className="mt-3 flex items-start gap-2 rounded-md border border-n-200 bg-n-25 p-2.5 text-[12.5px] text-n-700">
               <input type="checkbox" className="mt-0.5" checked={confirmToo} onChange={(e) => setConfirmToo(e.target.checked)} />

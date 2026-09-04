@@ -1856,6 +1856,9 @@ export interface FbaEstimate {
   boxesVolumetricWeightKg: number | null;
   chargeableWeightKg: number | null;
   estimatedCostEur: number | null;
+  dutyImportEur: number | null;
+  /** Carriage + duty — what `allocation` below actually divides up. */
+  allocatablePotEur: number | null;
   boxes: FbaEstimateBox[];
   allocation: FbaEstimateItem[];
   warnings: string[];
@@ -1903,6 +1906,10 @@ export interface FbaShipment {
   estimatedCostEur: number | null;
   actualCostEur: number | null;
   effectiveCostEur: number | null;
+  /** Duty / import charges on the consignment, on top of carriage. */
+  dutyImportEur: number | null;
+  /** Carriage + duty — what the per-SKU allocation actually divides up. */
+  allocatablePotEur: number | null;
   costSource: 'actual' | 'estimated';
   status: 'draft' | 'confirmed';
   comments: string | null;
@@ -1934,6 +1941,8 @@ export interface FbaShipmentInput {
   fbaShipmentRef?: string | null;
   shippingServiceId?: string | null;
   packagingPct?: number;
+  /** Duty / import charges on the consignment, allocated across the SKUs alongside carriage. */
+  dutyImportEur?: number | null;
   comments?: string | null;
   status?: 'draft' | 'confirmed';
   boxes: FbaBoxInput[];
@@ -1948,7 +1957,15 @@ export const fbaShipmentsApi = {
   update: (id: string, body: FbaShipmentInput) => api.patch<FbaShipment>(`/fba-shipments/${id}`, body).then((r) => r.data),
   setStatus: (id: string, status: 'draft' | 'confirmed') => api.patch<FbaShipment>(`/fba-shipments/${id}/status`, { status }).then((r) => r.data),
   /** confirm settles the shipment in the same call — the cost is what permits it. */
-  setActualCost: (id: string, actualCostEur: number, confirm = false) => api.patch<FbaShipment>(`/fba-shipments/${id}/actual-cost`, { actualCostEur, confirm }).then((r) => r.data),
+  /** `dutyImportEur` omitted leaves the stored value alone — carriage and customs are billed apart. */
+  setActualCost: (id: string, actualCostEur: number, confirm = false, dutyImportEur?: number | null) =>
+    api
+      .patch<FbaShipment>(`/fba-shipments/${id}/actual-cost`, {
+        actualCostEur,
+        confirm,
+        ...(dutyImportEur !== undefined ? { dutyImportEur } : {}),
+      })
+      .then((r) => r.data),
   remove: (id: string) => api.delete(`/fba-shipments/${id}`).then((r) => r.data),
   skuCosts: (params: { q?: string; salesChannelId?: string }) =>
     api.get<FbaSkuCost[]>('/fba-shipments/sku-costs', { params }).then((r) => r.data),

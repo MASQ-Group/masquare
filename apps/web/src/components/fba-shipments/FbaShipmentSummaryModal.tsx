@@ -72,6 +72,9 @@ export function FbaShipmentSummaryModal({ shipment: s, canEdit, onClose, onEdit,
             <div>
               <div className="text-[11px] text-n-500">Cost used (effective)</div>
               <div className="mono text-[13.5px] font-semibold" style={{ color: '#14A79D' }}>{eur(s.effectiveCostEur)} <span className="text-[10.5px] font-normal text-n-400">· {isActual ? 'actual' : 'estimated'}</span></div>
+              {s.dutyImportEur != null && s.dutyImportEur > 0 && (
+                <div className="mt-0.5 text-[11.5px] text-n-500">+ {eur(s.dutyImportEur)} duty · {eur(s.allocatablePotEur)} allocated</div>
+              )}
             </div>
           </div>
         </div>
@@ -139,7 +142,9 @@ export function FbaShipmentSummaryModal({ shipment: s, canEdit, onClose, onEdit,
                   <td className="bg-n-25 px-3 py-2 text-[12px] font-semibold uppercase tracking-wide text-n-500">Total</td>
                   <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-800">{s.quantity}</td>
                   <td className="bg-n-25" />
-                  <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-900">{eur(s.effectiveCostEur)}</td>
+                  {/* The allocation column sums to carriage PLUS duty, so the total has to say so —
+                      a footer showing carriage alone would not add up to the rows above it. */}
+                  <td className="mono bg-n-25 px-3 py-2 text-right text-[13px] font-semibold text-n-900">{eur(s.allocatablePotEur ?? s.effectiveCostEur)}</td>
                   <td className="bg-n-25" />
                 </tr>
               </tbody>
