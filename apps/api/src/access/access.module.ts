@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { AccessService } from './access.service';
 import { AccessGuard } from './access.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AccessBootstrap } from './access.bootstrap';
 import { AccessController } from './access.controller';
 import { RolesController } from './roles.controller';
 
@@ -27,6 +28,9 @@ import { RolesController } from './roles.controller';
   controllers: [AccessController, RolesController],
   providers: [
     AccessService,
+    // Seeds the shipped roles on every start. Roles are not optional data: with enforcement on, a
+    // deploy that migrates and stops there locks out everyone who is not a platform admin.
+    AccessBootstrap,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: AccessGuard },
   ],
