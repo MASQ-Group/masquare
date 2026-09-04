@@ -18,6 +18,7 @@ const DashboardPage = lazyPage(() => import('./pages/DashboardPage'), 'Dashboard
 const CompaniesPage = lazyPage(() => import('./pages/CompaniesPage'), 'CompaniesPage');
 const UsersPage = lazyPage(() => import('./pages/UsersPage'), 'UsersPage');
 const RolesPage = lazyPage(() => import('./pages/RolesPage'), 'RolesPage');
+const HelpPage = lazyPage(() => import('./pages/HelpPage'), 'HelpPage');
 const ModulesPage = lazyPage(() => import('./pages/ModulesPage'), 'ModulesPage');
 const SettingsPage = lazyPage(() => import('./pages/SettingsPage'), 'SettingsPage');
 const ActivityPage = lazyPage(() => import('./pages/ActivityPage'), 'ActivityPage');
@@ -172,6 +173,10 @@ export function App() {
         <Route path="/modules" element={<RequireAdmin><ModulesPage /></RequireAdmin>} />
         <Route path="/activity" element={<RequireArea area="activity"><ActivityPage /></RequireArea>} />
         <Route path="/settings" element={<RequireArea area="global_settings"><SettingsPage /></RequireArea>} />
+        {/* Deliberately ungated: someone who cannot reach a screen still benefits from knowing
+            what it does, and the help is the thing you reach for when something is refused. */}
+        <Route path="/help/*" element={<HelpPage />} />
+        <Route path="/help" element={<HelpPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -2,6 +2,7 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
+  BookOpen,
   Boxes,
   Building2,
   ChevronDown,
@@ -165,6 +166,8 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
       { to: '/users', label: 'Users', area: 'administration', icon: Users, adminOnly: true },
       { to: '/roles', label: 'Roles', area: 'administration', icon: ShieldCheck, adminOnly: true },
       { to: '/modules', label: 'Modules & sharing', area: 'administration', icon: Settings, adminOnly: true },
+      // No area: the handbook is for everyone, including the person wondering why a page is refused.
+      { to: '/help', label: 'Help', icon: BookOpen },
     ],
   },
 ];
