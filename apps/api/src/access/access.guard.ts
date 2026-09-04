@@ -91,8 +91,9 @@ export class AccessGuard implements CanActivate {
       throw new ForbiddenException(`This action needs the “${capabilityLabel(capability)}” permission.`);
     }
 
-    // Handed to the request so a service can shape what it returns — hiding cost columns from
-    // someone without `cost_profit` is a question about the response, not about the route.
+    // Handed to the request so a service can shape what it returns, should one ever need to:
+    // narrowing a response is a question about the answer rather than about the route, and the
+    // guard is the only place that has already worked out who is asking.
     req.access = access;
     return true;
   }

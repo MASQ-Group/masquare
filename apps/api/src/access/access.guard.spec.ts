@@ -169,6 +169,6 @@ describe('what the handler is given', () => {
     const access = resolveAccess({ isAdmin: false, role: ROLE('warehouse') });
     const { guard: g, ctx, req } = guard({ [ACCESS_AREA]: ['inventory'] }, { access });
     await g.canActivate(ctx);
-    expect(req.access.capabilities.cost_profit).toBe(false);
+    expect(req.access.capabilities.marketplace_write).toBe(false);
   });
 });

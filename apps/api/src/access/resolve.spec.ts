@@ -75,8 +75,8 @@ describe('per-user overrides', () => {
   });
 
   it('grants a capability the role withholds', () => {
-    const access = resolveAccess({ isAdmin: false, role: WAREHOUSE, overrides: { areas: {}, capabilities: { cost_profit: true } } });
-    expect(access.capabilities.cost_profit).toBe(true);
+    const access = resolveAccess({ isAdmin: false, role: WAREHOUSE, overrides: { areas: {}, capabilities: { marketplace_write: true } } });
+    expect(access.capabilities.marketplace_write).toBe(true);
   });
 
   it('cannot be used to climb past an admin check', () => {
@@ -104,7 +104,7 @@ describe('grants that no longer match the catalogue', () => {
   });
 
   it('drops a capability that is not a boolean', () => {
-    const cleaned = sanitiseGrants({ areas: {}, capabilities: { cost_profit: 'yes' } });
+    const cleaned = sanitiseGrants({ areas: {}, capabilities: { bulk_import: 'yes' } });
     expect(cleaned.capabilities).toEqual({});
   });
 
@@ -118,7 +118,7 @@ describe('grants that no longer match the catalogue', () => {
 
 describe('validating grants on the way in', () => {
   it('accepts a well-formed set', () => {
-    const res = validateGrants({ areas: { inventory: 'edit' }, capabilities: { cost_profit: true } });
+    const res = validateGrants({ areas: { inventory: 'edit' }, capabilities: { bulk_import: true } });
     expect(res.ok).toBe(true);
   });
 
@@ -158,10 +158,10 @@ describe('the shipped roles', () => {
     expect(allowed).toEqual(['operations']);
   });
 
-  it('does not show margins to the warehouse', () => {
+  it('lets the warehouse move stock without letting it reach a marketplace', () => {
     const access = resolveAccess({ isAdmin: false, role: WAREHOUSE });
-    expect(canDo(access, 'cost_profit')).toBe(false);
     expect(canArea(access, 'inventory', 'edit')).toBe(true);
+    expect(canDo(access, 'marketplace_write')).toBe(false);
   });
 
   it('lets read-only see without changing anything', () => {

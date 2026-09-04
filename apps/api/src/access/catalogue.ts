@@ -17,6 +17,9 @@
  *   marketplace, and folding the second into the first is how an ordinary edit right turns into an
  *   outage. On 4 August a bad push emptied roughly 5,000 listings; that action now has a switch of
  *   its own that nobody holds by default.
+ *
+ * Every capability here is enforced by something. One that would only describe an intention does
+ * not belong in this list at all — see the note above CAPABILITIES.
  */
 
 export const ACCESS_LEVELS = ['none', 'view', 'edit'] as const;
@@ -150,13 +153,18 @@ export interface CapabilityDef {
   dangerous?: boolean;
 }
 
+/**
+ * Note on a capability that is deliberately absent.
+ *
+ * "See cost & profit" was drafted here and removed before it shipped: hiding money columns is a
+ * data-shaping job across every service that returns a cost, and the decision was to leave those
+ * columns visible to everyone who can reach the page at all.
+ *
+ * It is not parked in the list as an unenforced switch, because that is the exact failure this
+ * whole area exists to end — a control that looks like access and grants nothing. If the decision
+ * changes, the capability comes back together with the code that honours it, in that order.
+ */
 export const CAPABILITIES: CapabilityDef[] = [
-  {
-    key: 'cost_profit',
-    label: 'See cost & profit',
-    description:
-      'Purchase costs, margins, profitability analytics and repricing floors. Without it the same screens still work, with the money columns hidden — someone counting stock needs the quantity, not the markup.',
-  },
   {
     key: 'marketplace_write',
     label: 'Write to marketplaces',

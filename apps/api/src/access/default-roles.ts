@@ -44,7 +44,6 @@ export const DEFAULT_ROLES: DefaultRole[] = [
         administration: 'none',
       },
       capabilities: {
-        cost_profit: true,
         marketplace_write: true,
         bulk_import: true,
         delete_records: true,
@@ -80,9 +79,8 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       capabilities: {
         // Stock and shipment sheets are a normal part of the job, so the import switch is on.
         bulk_import: true,
-        // Deliberately off: this role has every reason to move stock and none to price it, erase
-        // it, or push it to a marketplace.
-        cost_profit: false,
+        // Deliberately off: this role has every reason to move stock and none to erase it or push
+        // it to a marketplace.
         marketplace_write: false,
         delete_records: false,
         trigger_sync: false,
@@ -114,7 +112,6 @@ export const DEFAULT_ROLES: DefaultRole[] = [
         administration: 'none',
       },
       capabilities: {
-        cost_profit: true,
         bulk_import: true,
         marketplace_write: false,
         delete_records: false,
@@ -148,7 +145,6 @@ export const DEFAULT_ROLES: DefaultRole[] = [
         administration: 'none',
       },
       capabilities: {
-        cost_profit: true,
         // A correction to a settled order is exactly this role's work.
         unlock_transactions: true,
         bulk_import: true,
@@ -187,7 +183,6 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       },
       capabilities: {
         trigger_sync: true,
-        cost_profit: false,
         marketplace_write: false,
         bulk_import: false,
         delete_records: false,
@@ -219,8 +214,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
         administration: 'none',
       },
       capabilities: {
-        // Read-only means read-only: no money figures and no bulk anything.
-        cost_profit: false,
+        // Read-only means read-only: no bulk anything and nothing that leaves our database.
         marketplace_write: false,
         bulk_import: false,
         delete_records: false,
