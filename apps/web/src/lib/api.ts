@@ -2117,6 +2117,10 @@ export interface StockLevelRow {
 }
 
 export interface StockMovementRow {
+  /** Individual units, for serial-tracked products. Empty otherwise. */
+  serials?: string[];
+  /** The warehouse at the other end, when this row is one leg of a transfer. */
+  counterparty?: string | null;
   id: string;
   createdAt: string;
   sku: string;
@@ -2220,6 +2224,136 @@ export const stockApi = {
     api.post<{ rows: StockImportRowResult[]; validCount: number; errorCount: number }>('/stock/import/validate', { rows }).then((r) => r.data),
   importCommit: (items: { productId: string; warehouseId: string; quantityOnHand: number }[], reason = 'opening_balance') =>
     api.post<{ applied: number; unchanged: number; total: number }>('/stock/import/commit', { items, reason }).then((r) => r.data),
+};
+
+// ---------------------------------------------------------------- manual inventory operations
+
+export type AdjustmentMode = 'set' | 'add' | 'remove';
+
+export interface AdjustmentRow {
+  productId: string;
+  warehouseId: string;
+  mode: AdjustmentMode;
+  /** Omitted for serial-tracked products — the server counts the serials instead. */
+  quantity?: number;
+  serials?: string[];
+  reason: string;
+  disposition?: 'scrapped' | 'returned_to_vendor';
+  notes?: string | null;
+}
+
+/** One row of an uploaded sheet, as typed. Everything is a string because nothing is trusted yet. */
+export interface AdjustmentImportRow {
+  sku?: string;
+  warehouse?: string;
+  action?: string;
+  quantity?: string;
+  serials?: string;
+  reason?: string;
+  notes?: string;
+}
+
+export interface AdjustmentImportRowResult {
+  row: number;
+  sku: string;
+  productId: string | null;
+  productName: string | null;
+  serialTracked: boolean;
+  warehouse: string;
+  warehouseId: string | null;
+  mode: AdjustmentMode | null;
+  quantity: number | null;
+  serials: string[];
+  reason: string | null;
+  notes: string | null;
+  errors: string[];
+  valid: boolean;
+}
+
+export const adjustmentsApi = {
+  adjust: (body: AdjustmentRow) =>
+    api.post<{ changed: boolean; quantityOnHand: number; qtyDelta: number }>('/stock-adjustments', body).then((r) => r.data),
+  importValidate: (rows: AdjustmentImportRow[]) =>
+    api
+      .post<{ rows: AdjustmentImportRowResult[]; validCount: number; errorCount: number }>('/stock-adjustments/import/validate', { rows })
+      .then((r) => r.data),
+  importCommit: (rows: AdjustmentImportRow[]) =>
+    api
+      .post<{ applied: number; unchanged: number; failed: number; failures: { row: number; sku: string; message: string }[]; total: number }>(
+        '/stock-adjustments/import/commit',
+        { rows },
+      )
+      .then((r) => r.data),
+};
+
+export interface TransferLineInput {
+  productId: string;
+  quantity: number;
+  serials?: string[];
+}
+
+export interface TransferRow {
+  id: string;
+  reference: string;
+  createdAt: string;
+  createdBy: string | null;
+  from: { id: string; name: string };
+  to: { id: string; name: string };
+  notes: string | null;
+  lineCount: number;
+  totalUnits: number;
+  lines: { productId: string; sku: string; productName: string; quantity: number; serials: string[] }[];
+}
+
+export interface TransferImportRow {
+  sku?: string;
+  fromWarehouse?: string;
+  toWarehouse?: string;
+  quantity?: string;
+  serials?: string;
+  notes?: string;
+}
+
+export interface TransferImportRowResult {
+  row: number;
+  sku: string;
+  productId: string | null;
+  productName: string | null;
+  serialTracked: boolean;
+  fromWarehouse: string;
+  fromWarehouseId: string | null;
+  toWarehouse: string;
+  toWarehouseId: string | null;
+  quantity: number | null;
+  serials: string[];
+  notes: string | null;
+  errors: string[];
+  valid: boolean;
+}
+
+export const transfersApi = {
+  list: (params: { q?: string; warehouseId?: string; page?: number; pageSize?: number }) =>
+    api
+      .get<{ rows: TransferRow[]; total: number; page: number; pageSize: number; pageCount: number }>('/stock-transfers', { params })
+      .then((r) => r.data),
+  create: (body: { fromWarehouseId: string; toWarehouseId: string; lines: TransferLineInput[]; notes?: string | null }) =>
+    api
+      .post<{ id: string; reference: string; from: { name: string }; to: { name: string }; lineCount: number; totalUnits: number }>(
+        '/stock-transfers',
+        body,
+      )
+      .then((r) => r.data),
+  importValidate: (rows: TransferImportRow[]) =>
+    api
+      .post<{ rows: TransferImportRowResult[]; validCount: number; errorCount: number }>('/stock-transfers/import/validate', { rows })
+      .then((r) => r.data),
+  importCommit: (rows: TransferImportRow[]) =>
+    api
+      .post<{ transferCount: number; lineCount: number; totalUnits: number; transfers: { reference: string }[] }>(
+        '/stock-transfers/import/commit',
+        { rows },
+      )
+      .then((r) => r.data),
 };
 
 // ---------------------------------------------------------------- purchase orders
