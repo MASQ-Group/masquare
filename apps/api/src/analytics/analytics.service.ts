@@ -74,6 +74,9 @@ export class AnalyticsService {
       compareRange: q.compareFrom && q.compareTo ? { from: q.compareFrom, to: q.compareTo } : null,
       totals: main.totals,
       compareTotals: compare?.totals ?? null,
+      // Orders left out of every figure above because the marketplace has not priced them yet.
+      // Surfaced so their absence is a stated fact rather than a discrepancy someone has to find.
+      pending: main.pending,
       byChannel,
       byCountry,
       bySku: mergeSkuPrev(main.bySku, compare?.bySku),
@@ -202,6 +205,15 @@ export class AnalyticsService {
     const txns = allTxns.filter((t) => matchesGlobal(t, q));
 
     const totals = { revenueExVatEur: 0, revenueIncVatEur: 0, profitEur: 0, feesEur: 0, orders: 0, units: 0, shippingEur: 0, dutyEur: 0, refundEur: 0 };
+    /**
+     * Orders the marketplace has announced but not yet priced.
+     *
+     * Counted, never added. They carry costs and no revenue, so including them books a loss that is
+     * a fact about the sync rather than about the business — and one that quietly corrects itself a
+     * week later, which is the worst kind of wrong number because nobody reconciles a figure that
+     * moves on its own. Reported separately so the orders are visibly excluded rather than missing.
+     */
+    const pending = { orders: 0, units: 0, oldestDate: null as string | null };
     const returns = { returnedOrders: 0, returnedUnits: 0, refundEur: 0 };
     const channelMap = new Map<string, any>();
     const countryMap = new Map<string, any>();
@@ -213,6 +225,13 @@ export class AnalyticsService {
     const byMonth = spanDays > 92; // long ranges bucket by month, else by day
 
     for (const t of txns) {
+      if (t.awaitingFinancials) {
+        pending.orders += 1;
+        pending.units += t.totals?.quantity ?? 0;
+        const d = typeof t.date === 'string' ? t.date.slice(0, 10) : new Date(t.date).toISOString().slice(0, 10);
+        if (!pending.oldestDate || d < pending.oldestDate) pending.oldestDate = d;
+        continue;
+      }
       const revEx = t.revenueExVatEur ?? 0;
       const revInc = t.revenueIncVatEur ?? 0;
       const fees = t.feesEur ?? 0;
@@ -366,7 +385,7 @@ export class AnalyticsService {
         avgOrderValueEur: v.orders ? round(v.revenueExVatEur / v.orders) : 0,
       }));
 
-    return { totals: finalizeTotals, byChannel, byCountry, bySku, bySkuByCountry, channels, countries, trend, returns: roundObj(returns) };
+    return { totals: finalizeTotals, pending, byChannel, byCountry, bySku, bySkuByCountry, channels, countries, trend, returns: roundObj(returns) };
   }
 }
 
