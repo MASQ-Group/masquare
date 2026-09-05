@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { VisibleCompanies } from '../common/active-company.decorator';
 import { ListingService, type ChannelPlanPatch } from './listing.service';
 import { AccessArea } from '../access/access.decorators';
 
@@ -33,10 +34,16 @@ export class ListingController {
     return this.svc.updateMarketplaceProfile(id, patch);
   }
 
-  /** Every connected channel for this product, with its readiness and eligibility verdicts. */
+  /**
+   * Every connected channel for this product, with its readiness and eligibility verdicts.
+   *
+   * Scoped to the companies the caller can see. Each company holds its own seller account per
+   * marketplace, so without this the tab listed Amazon DE, FR, ES and the rest twice over — once
+   * per company, with nothing on screen to tell the two apart.
+   */
   @Get('products/:productId/channels')
-  productChannels(@Param('productId') productId: string) {
-    return this.svc.productChannels(productId);
+  productChannels(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.productChannels(productId, companyIds);
   }
 
   @Put('products/:productId/channels/:integrationId')
@@ -45,8 +52,9 @@ export class ListingController {
     @Param('integrationId') integrationId: string,
     @Body() patch: ChannelPlanPatch,
     @CurrentUser() user: AuthUser,
+    @VisibleCompanies() companyIds: string[],
   ) {
-    return this.svc.upsertPlan(productId, integrationId, patch, user.sub);
+    return this.svc.upsertPlan(productId, integrationId, patch, user.sub, companyIds);
   }
 
   @Delete('products/:productId/channels/:integrationId')

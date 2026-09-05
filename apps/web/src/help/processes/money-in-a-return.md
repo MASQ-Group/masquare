@@ -7,7 +7,7 @@ status: outline
 covers:
   - apps/api/src/sales-transactions/sales-transactions.service.ts
   - apps/web/src/components/sales/ResolveTransactionModal.tsx
-reviewed: 2026-09-04
+reviewed: 2026-09-05
 ---
 
 # Money in a return
@@ -28,6 +28,16 @@ better it looked.
 Whether the goods actually went is answered by the **channel**, not by us. An order Amazon
 cancelled before despatch and an order nobody has got round to recording look identical in our own
 records, and only Amazon can tell them apart.
+
+## An order still waiting to be priced is not a loss either
+
+Related, and easily confused with a cancellation: a marketplace order that has arrived but has not
+yet been priced has costs and no revenue. It is not cancelled and nothing is wrong with it — the
+money simply has not been reported yet.
+
+Those orders are excluded from every analytics total until the sale amount lands, rather than
+counted as the loss the costs alone would suggest. See
+[How a SKU gets its cost](/help/processes/how-a-sku-gets-its-cost).
 
 ## Still to cover
 
