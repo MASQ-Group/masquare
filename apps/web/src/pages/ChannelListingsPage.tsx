@@ -11,6 +11,7 @@ import { Flag } from '../components/common/Flag';
 import { PageHeader } from '../components/common/PageHeader';
 import { AnchoredPanel } from '../components/common/AnchoredPanel';
 import { usePersistentState } from '../lib/usePersistentState';
+import { listingUrl } from '../lib/channelUrls';
 import { CHANNEL_GROUPS, channelGroupOf, sortChannelsCanonical, type ChannelGroup } from '../lib/channelGroups';
 
 // Design status palette.
@@ -607,7 +608,9 @@ export function ChannelListingsPage() {
                                 <button title="Push / sync (coming)" className="grid h-7 w-7 place-items-center rounded-md border border-n-200 bg-n-0 text-n-500 hover:bg-n-50"><RefreshCw size={13} /></button>
                                 <button title="Pause (coming)" className="grid h-7 w-7 place-items-center rounded-md border border-n-200 bg-n-0 text-n-500 hover:bg-n-50"><Pause size={13} /></button>
                                 <div className="flex-1" />
-                                {cell.asin && <a href={`https://www.amazon.com/dp/${cell.asin}`} target="_blank" rel="noreferrer" title="View on Amazon" className="grid h-7 w-7 place-items-center text-n-400 hover:text-teal-700"><ExternalLink size={13} /></a>}
+                                {listingUrl({ channelType: 'amazon', countryIso: c.countryIso, asin: cell.asin }) && (
+                                  <a href={listingUrl({ channelType: 'amazon', countryIso: c.countryIso, asin: cell.asin })!} target="_blank" rel="noreferrer" title={`View on ${c.name}`} className="grid h-7 w-7 place-items-center text-n-400 hover:text-teal-700"><ExternalLink size={13} /></a>
+                                )}
                               </div>
                             </>
                           ) : (

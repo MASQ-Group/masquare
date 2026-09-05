@@ -1095,7 +1095,7 @@ export class ChannelListingsService {
         availability: { select: { quantity: true, updatedAt: true } },
         channelListings: {
           where: companyIds ? { companyId: { in: companyIds } } : undefined,
-          select: { integrationId: true, marketplace: true, channelSku: true, asin: true, listedPrice: true, currency: true, listedQuantity: true, fulfilmentChannel: true, listingStatus: true, lastPulledAt: true },
+          select: { integrationId: true, marketplace: true, channelSku: true, asin: true, externalListingId: true, listedPrice: true, currency: true, listedQuantity: true, fulfilmentChannel: true, listingStatus: true, lastPulledAt: true },
           orderBy: { integration: { name: 'asc' } },
         },
       },
@@ -1119,6 +1119,13 @@ export class ChannelListingsService {
       return {
         integrationId: ch.id, name: ch.name, color: ch.color, currency: ch.currency,
         countryIso: ch.countryIso,
+        // Carried so the card can link to the listing itself. The channel's own identifier is the
+        // only thing that resolves on its storefront - our SKU means nothing there.
+        channelType: ch.channelType ?? null,
+        asin: l?.asin ?? null,
+        channelSku: l?.channelSku ?? null,
+        // eBay's ItemID lives here; it is the only thing that resolves on an eBay URL.
+        externalListingId: l?.externalListingId ?? null,
         listed: !!l,
         price: l?.listedPrice ?? null,
         priceCurrency: l?.currency ?? null,
