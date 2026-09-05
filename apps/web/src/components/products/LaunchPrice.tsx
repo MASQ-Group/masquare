@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { Ban, Calculator, TrendingUp, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { amazonListingApi, type AmazonQuote } from '../../lib/api';
+import { eurAside } from '../../lib/format';
 
 const money = (cents: number, currency: string) => {
   const symbol: Record<string, string> = { EUR: '€', GBP: '£', USD: '$', CAD: 'CA$', AUD: 'A$', JPY: '¥', SEK: 'kr', PLN: 'zł', AED: 'AED ', SAR: 'SAR ', MXN: 'MX$', TRY: '₺', INR: '₹', BRL: 'R$', ZAR: 'R', SGD: 'S$' };
@@ -93,6 +94,11 @@ export function LaunchPrice({
           <span className={`inline-flex items-center gap-1.5 text-[12px] font-semibold ${q.at[0].aboveBreakeven ? 'text-teal-700' : 'text-danger'}`}>
             <TrendingUp size={13} />
             {money(q.at[0].profitCents, q.currency)} profit · {q.at[0].marginPct}%
+            {/* The euro figure beside it: what this earns is a company question, and the company
+                reports in euro. Suppressed where the marketplace already trades in euro. */}
+            {eurAside(q.at[0].profitEurCents, q.currency) && (
+              <span className="font-normal text-n-500">= {eurAside(q.at[0].profitEurCents, q.currency)}</span>
+            )}
           </span>
         )}
         {q.at[0] && typedCents !== q.at[0].priceCents && (
@@ -116,6 +122,7 @@ export function LaunchPrice({
           {q.inputs.closingFeeCents > 0 && <span>Closing fee {money(q.inputs.closingFeeCents, q.currency)}</span>}
           <span>VAT {q.inputs.vatRatePct}%</span>
           <span>Returns {q.inputs.returnsRatePct}%</span>
+          {q.fx.currency !== 'EUR' && <span>1 {q.fx.currency} = €{q.fx.eurPerUnit.toFixed(4)}</span>}
         </div>
       </details>
     </div>

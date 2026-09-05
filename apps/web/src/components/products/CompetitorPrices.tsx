@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { Ban, TrendingDown, TrendingUp, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { amazonListingApi } from '../../lib/api';
+import { eurAside } from '../../lib/format';
 
 const SYMBOL: Record<string, string> = { EUR: '€', GBP: '£', USD: '$', CAD: 'CA$', AUD: 'A$', JPY: '¥', SEK: 'kr', PLN: 'zł', AED: 'AED ', SAR: 'SAR ', MXN: 'MX$', TRY: '₺', INR: '₹', BRL: 'R$', ZAR: 'R', SGD: 'S$' };
 const money = (cents: number, currency: string) =>
@@ -58,7 +59,10 @@ export function CompetitorPrices({ productId, integrationId }: { productId: stri
 
       {c?.ok && (
         <div className="mt-2 flex flex-col gap-1">
-          {c.prices.map((p) => (
+          {c.prices.map((p) => {
+            // Signed the way the chip is: the minus belongs to the figure, not inside the amount.
+            const profitEur = eurAside(p.profitEurCents == null ? null : Math.abs(p.profitEurCents), c.currency);
+            return (
             <div key={p.kind} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-n-100 py-1.5 first:border-t-0">
               <span className="w-[124px] shrink-0 text-[12px] text-n-600">{p.label}</span>
 
@@ -86,10 +90,19 @@ export function CompetitorPrices({ productId, integrationId }: { productId: stri
                       <span className="font-normal opacity-80">{p.profitMarginPct}%</span>
                     </span>
                   )}
+
+                  {/* Every marketplace quotes its own currency; the comparison a person is
+                      actually making across them is in euro. */}
+                  {profitEur && (
+                    <span className="text-[11.5px] tabular-nums text-n-500">
+                      = {p.aboveBreakeven ? '' : '−'}{profitEur}
+                    </span>
+                  )}
                 </>
               )}
             </div>
-          ))}
+            );
+          })}
 
           {/* Ours last, as the thing being compared against rather than another option. */}
           <div className="mt-1 flex flex-wrap items-center gap-x-3 border-t border-n-200 pt-1.5 text-[12px]">
@@ -98,6 +111,9 @@ export function CompetitorPrices({ productId, integrationId }: { productId: stri
               {money(c.suggestedCents, c.currency)}
             </span>
             <span className="text-[11.5px] text-n-500">at {c.marginPct}% · breakeven {money(c.breakevenCents, c.currency)}</span>
+            {c.fx.currency !== 'EUR' && (
+              <span className="text-[11px] text-n-400">1 {c.fx.currency} = €{c.fx.eurPerUnit.toFixed(4)}</span>
+            )}
           </div>
         </div>
       )}

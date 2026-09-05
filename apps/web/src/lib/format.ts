@@ -18,6 +18,21 @@ export const currencySymbol = (currency?: string | null) =>
 export const formatAmount = (amount: number, currency?: string | null) =>
   `${currencySymbol(currency)}${amount.toFixed(2)}`;
 
+/**
+ * The same figure in euro, for a card that quotes a marketplace's own currency.
+ *
+ * Returns null when the marketplace already trades in euro — "€12.34 (€12.34)" is noise, and a
+ * repeated number invites the reader to look for a difference that isn't there.
+ *
+ * The euro value itself is always converted by the API at the rate the costs came in on. Nothing
+ * here does arithmetic: a second conversion in the browser is a second answer.
+ */
+export const eurAside = (eurCents: number | null | undefined, currency?: string | null): string | null => {
+  if (eurCents == null) return null;
+  if ((currency ?? 'EUR').toUpperCase() === 'EUR') return null;
+  return formatAmount(eurCents / 100, 'EUR');
+};
+
 /** Money as a right-aligned mono string, e.g. €50.00. Null amount renders as "—". */
 export function formatMoney(money?: { amount: number | null; currency: string } | null): string {
   if (!money || money.amount == null) return '—';

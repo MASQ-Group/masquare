@@ -1412,6 +1412,8 @@ export interface AmazonSweepRow {
   /** Present only when the sweep was asked to price. The featured offer is the one that sells. */
   featuredPriceCents: number | null;
   featuredProfitCents: number | null;
+  /** The same profit in euro — a sweep spans marketplaces in a dozen currencies. */
+  featuredProfitEurCents: number | null;
   featuredMarginPct: number | null;
   lowestPriceCents: number | null;
   /** True when we could win the Buy Box at a profit; false when we could not; null if unpriced. */
@@ -1444,7 +1446,9 @@ export type AmazonQuote =
       suggestedCents: number;
       currency: string;
       marginPct: number;
-      at: Array<{ priceCents: number; profitCents: number; marginPct: number; aboveBreakeven: boolean }>;
+      /** `profitEurCents` is the same profit in euro, converted by the API at the costing rate. */
+      at: Array<{ priceCents: number; profitCents: number; profitEurCents: number; marginPct: number; aboveBreakeven: boolean }>;
+      fx: { currency: string; eurPerUnit: number };
       inputs: {
         cogsLandedCents: number;
         fixedPerUnitCents: number;
@@ -1498,12 +1502,15 @@ export type AmazonCompetition =
       suggestedCents: number;
       breakevenCents: number;
       marginPct: number;
+      fx: { currency: string; eurPerUnit: number };
       prices: Array<{
         kind: 'featured' | 'competitive' | 'lowest';
         label: string;
         /** Null when Amazon has no such price for this ASIN. */
         priceCents: number | null;
         profitCents: number | null;
+        /** The same profit in euro, so a SEK or GBP price can be judged against the rest. */
+        profitEurCents: number | null;
         profitMarginPct: number | null;
         aboveBreakeven: boolean | null;
       }>;
