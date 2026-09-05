@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { evaluateEligibility, type MarketProfile, type ProductTechnical } from './eligibility';
 import { evaluateReadiness, checkBoost, type ListingFacts } from './readiness';
+import { fullScopeIntegrationWhere } from '../common/amazon-scope';
 
 /**
  * The channels that can carry a listing. Anything else is ignored rather than guessed at.
@@ -66,10 +67,16 @@ export class ListingService {
         // Company-scoped, like the Channel Listings page beside it. Both companies sell on most of
         // the same marketplaces through their own seller accounts, so an unscoped read returns two
         // rows per marketplace — indistinguishable on screen, and only one of them the caller's.
+        //
+        // The scope filter then removes an orders-only company outright: its Amazon account exists
+        // to pull order history and nothing else, so it has no listable channels at all. Without
+        // it the tab offered Multitrade fifteen marketplaces to plan listings against, none of
+        // which it may publish to.
         where: {
           deletedAt: null,
           channelType: { in: LISTABLE_CHANNELS },
           ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
+          ...(await fullScopeIntegrationWhere(this.prisma)),
         },
         select: { id: true, name: true, channelType: true, marketplace: true, status: true },
         orderBy: [{ channelType: 'asc' }, { name: 'asc' }],

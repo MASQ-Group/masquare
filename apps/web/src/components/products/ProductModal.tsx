@@ -19,6 +19,7 @@ import {
 import { categoryOptions } from '../../lib/categoryPaths';
 import { RefField } from './RefField';
 import { CountrySelect } from '../common/CountrySelect';
+import { useAuth } from '../../lib/auth';
 
 interface Props {
   product: Product | null; // null = create
@@ -40,6 +41,10 @@ const TABS = [
 // Stock levels and channel plans only mean anything for a saved product, so both appear in edit
 // mode only — there is no product id to hang them on until then.
 const STOCK_TAB = { key: 'stock', label: 'Stock levels' };
+// Hidden entirely for an orders-only company. Its Amazon account exists to pull order history,
+// so there is nothing to list and nothing to plan — an empty tab would read as a fault rather than
+// as "not applicable here". Same rule that already hides Channel Listings and Repricing from the
+// sidebar; this tab was simply missed.
 const CHANNELS_TAB = { key: 'channels', label: 'Channels' };
 // Last, and edit-only: a product being created has no history, and the tab is for looking back
 // rather than for filling anything in.
@@ -48,6 +53,10 @@ const HISTORY_TAB = { key: 'history', label: 'History' };
 const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s));
 
 export function ProductModal({ product, onClose, onSaved }: Props) {
+  const { activeCompany } = useAuth();
+  // An orders-only company's Amazon account exists to pull order history; it has no listable
+  // channels, so the tab is not shown rather than shown empty.
+  const canListOnChannels = activeCompany?.amazonScope !== 'orders';
   const [costHistoryOpen, setCostHistoryOpen] = useState(false);
   const [serialTracked, setSerialTracked] = useState(product?.serialTracked ?? false);
   const [tab, setTab] = useState('general');
@@ -213,7 +222,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   return (
     <ModalShell
       open title={product ? 'Edit product' : 'New product'} subtitle={product?.mainSku}
-      tabs={product ? [...TABS, STOCK_TAB, CHANNELS_TAB, HISTORY_TAB] : TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
+      tabs={product ? [...TABS, STOCK_TAB, ...(canListOnChannels ? [CHANNELS_TAB] : []), HISTORY_TAB] : TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
       primaryLabel={product ? 'Save changes' : 'Create product'} onPrimary={save} primaryDisabled={!canSave} busy={busy} onClose={onClose}
     >
       {tab === 'general' && (
@@ -584,7 +593,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
       )}
 
       {tab === 'stock' && product && <ProductStockSection productId={product.id} />}
-      {tab === 'channels' && product && <ProductChannelsTab productId={product.id} />}
+      {tab === 'channels' && product && canListOnChannels && <ProductChannelsTab productId={product.id} />}
       {tab === 'history' && product && <EntityHistory entityKey="product" entityId={product.id} fetchPage={(id, p) => productsApi.activity(id, p)} />}
     </ModalShell>
   );
