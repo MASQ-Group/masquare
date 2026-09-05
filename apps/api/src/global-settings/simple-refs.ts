@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { AccessArea, NoAccessCheck } from '../access/access.decorators';
 import {
   CreateBrandDto, UpdateBrandDto,
   CreateProductTypeDto, UpdateProductTypeDto,
@@ -38,13 +39,18 @@ export class BrandsService {
   }
 }
 
+// Reference data. Writing it is a settings action; READING it is not — a country list, a
+// carrier name or a brand is needed by nearly every form in the platform, and gating those
+// reads behind Global settings would break the shipment form for anyone in the warehouse for
+// no benefit. So the GETs below carry @NoAccessCheck and the writes do not.
+@AccessArea('global_settings')
 @ApiTags('global-settings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('brands')
 export class BrandsController {
   constructor(private readonly svc: BrandsService) {}
-  @Get() list(@Query('q') q?: string) { return this.svc.list(q); }
+  @NoAccessCheck() @Get() list(@Query('q') q?: string) { return this.svc.list(q); }
   @Post() create(@Body() dto: CreateBrandDto, @CurrentUser() u: AuthUser) { return this.svc.create(dto, u.sub); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateBrandDto, @CurrentUser() u: AuthUser) { return this.svc.update(id, dto, u.sub); }
   @Delete(':id') remove(@Param('id') id: string) { return this.svc.remove(id); }
@@ -79,13 +85,18 @@ export class ProductTypesService {
   }
 }
 
+// Reference data. Writing it is a settings action; READING it is not — a country list, a
+// carrier name or a brand is needed by nearly every form in the platform, and gating those
+// reads behind Global settings would break the shipment form for anyone in the warehouse for
+// no benefit. So the GETs below carry @NoAccessCheck and the writes do not.
+@AccessArea('global_settings')
 @ApiTags('global-settings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('product-types')
 export class ProductTypesController {
   constructor(private readonly svc: ProductTypesService) {}
-  @Get() list(@Query('q') q?: string) { return this.svc.list(q); }
+  @NoAccessCheck() @Get() list(@Query('q') q?: string) { return this.svc.list(q); }
   @Post() create(@Body() dto: CreateProductTypeDto, @CurrentUser() u: AuthUser) { return this.svc.create(dto, u.sub); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateProductTypeDto, @CurrentUser() u: AuthUser) { return this.svc.update(id, dto, u.sub); }
   @Delete(':id') remove(@Param('id') id: string) { return this.svc.remove(id); }
@@ -120,13 +131,18 @@ export class FulfilmentTypesService {
   }
 }
 
+// Reference data. Writing it is a settings action; READING it is not — a country list, a
+// carrier name or a brand is needed by nearly every form in the platform, and gating those
+// reads behind Global settings would break the shipment form for anyone in the warehouse for
+// no benefit. So the GETs below carry @NoAccessCheck and the writes do not.
+@AccessArea('global_settings')
 @ApiTags('global-settings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('fulfilment-types')
 export class FulfilmentTypesController {
   constructor(private readonly svc: FulfilmentTypesService) {}
-  @Get() list(@Query('q') q?: string) { return this.svc.list(q); }
+  @NoAccessCheck() @Get() list(@Query('q') q?: string) { return this.svc.list(q); }
   @Post() create(@Body() dto: CreateFulfilmentTypeDto, @CurrentUser() u: AuthUser) { return this.svc.create(dto, u.sub); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateFulfilmentTypeDto, @CurrentUser() u: AuthUser) { return this.svc.update(id, dto, u.sub); }
   @Delete(':id') remove(@Param('id') id: string) { return this.svc.remove(id); }
