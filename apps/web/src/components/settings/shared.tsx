@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import { Pencil, Plus, Trash2, Upload } from 'lucide-react';
+import { Pencil, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell, BulkImport, type ImportField } from '@masquare/ui';
 
@@ -19,6 +19,60 @@ export function SectionHeader({
         <p className="mt-0.5 text-[13px] text-n-500">{description}</p>
       </div>
       <div className="flex items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Filter box for a settings list.
+ *
+ * These lists grow quietly - a few hundred brands, a category tree several levels deep - and until
+ * now the only way to reach a row was to scroll. The matching itself stays with each section,
+ * because what counts as a match differs: a brand matches on its manufacturer contacts, an
+ * attribute on its values, a category on its ancestors.
+ *
+ * `matched` and `total` are shown only while filtering, so a person can tell "no matches" from
+ * "nothing here yet" without clearing the box to check.
+ */
+export function SectionSearch({
+  value, onChange, placeholder, matched, total,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  matched: number;
+  total: number;
+}) {
+  const active = value.trim().length > 0;
+  return (
+    <div className="mb-3 flex items-center gap-3">
+      {/* Metrics copied from the box Vendors already had, so the five sections that now carry a
+          search look like one control rather than two designs sitting next to each other. */}
+      <div className="flex h-[38px] w-72 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3">
+        <Search size={16} className="shrink-0 text-n-400" />
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="h-full min-w-0 flex-1 text-[13px] outline-none"
+        />
+        {active && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            title="Clear search"
+            aria-label="Clear search"
+            className="shrink-0 text-[12px] text-n-400 hover:text-n-600"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {active && (
+        <span className="text-[12.5px] text-n-500">
+          {matched} of {total}
+        </span>
+      )}
     </div>
   );
 }

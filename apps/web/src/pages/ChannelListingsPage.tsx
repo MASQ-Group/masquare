@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, ChevronDown, Edit3, ExternalLink, Eye, Grid2x2, LayoutGrid, Layers, Package, Pause, RefreshCw, Search, SlidersHorizontal, TrendingDown, TrendingUp } from 'lucide-react';
@@ -277,9 +277,21 @@ export function ChannelListingsPage() {
   const qc = useQueryClient();
   const [tab, setTab] = usePersistentState<'listings' | 'analytics'>('channelListings.tab', 'listings');
   const [view, setView] = usePersistentState<'matrix' | 'product'>('channelListings.view', 'matrix');
-  const [q, setQ] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [page, setPage] = useState(1);
+  /**
+   * Search, status and page persist like the filters beside them.
+   *
+   * Opening a product is a route change, so this page unmounts and any plain useState goes with
+   * it. Coming back from the breadcrumb landed on an unfiltered page one, and the work of finding
+   * the row again had to be redone every time - which is the whole reason anyone opens a product
+   * from a filtered list.
+   *
+   * Safe to keep because all three are visible when they come back: the term sits in the search
+   * box, the status in its select, the page in the pager. A restored filter you cannot see would
+   * be a trap; one you can see is where you left off.
+   */
+  const [q, setQ] = usePersistentState('channelListings.q', '');
+  const [statusFilter, setStatusFilter] = usePersistentState('channelListings.status', 'all');
+  const [page, setPage] = usePersistentState('channelListings.page', 1);
   // Product filters (persist across reloads); '' = all.
   const [brandId, setBrandId] = usePersistentState('channelListings.brandId', '');
   const [vendorId, setVendorId] = usePersistentState('channelListings.vendorId', '');
@@ -339,6 +351,14 @@ export function ChannelListingsPage() {
   const rows = data?.items ?? [];
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
+
+  // A remembered page can outlive the results that made it - a filter narrows, listings sync away,
+  // and page 7 of 3 is a blank screen that reads as "nothing here". Waits for `data`, because
+  // while the first fetch is in flight `total` is 0 and pageCount is 1, which would throw away the
+  // restored page before there was anything to check it against.
+  useEffect(() => {
+    if (data && page > pageCount) setPage(pageCount);
+  }, [data, page, pageCount, setPage]);
 
   // Status filter is applied client-side over the loaded page (server does search + channel).
   const matchStatus = (cell?: ChannelListingCell) => {

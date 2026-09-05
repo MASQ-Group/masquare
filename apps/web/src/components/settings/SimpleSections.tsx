@@ -1,16 +1,24 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   brandsApi, productTypesApi, fulfilmentTypesApi,
   type Brand, type ProductType, type FulfilmentType,
 } from '../../lib/api';
-import { AddButton, ImportButton, RefTable, SectionHeader, SimpleRefModal, type SimpleField } from './shared';
+import { AddButton, ImportButton, RefTable, SectionHeader, SectionSearch, SimpleRefModal, type SimpleField } from './shared';
+
+/** Case-insensitive substring match across the given fields, ignoring the empty ones. */
+const hits = (term: string, ...fields: (string | null | undefined)[]) => {
+  const t = term.trim().toLowerCase();
+  if (!t) return true;
+  return fields.some((f) => (f ?? '').toLowerCase().includes(t));
+};
 
 // --- Brands ---------------------------------------------------------------
 export function BrandsSection() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Brand | null | undefined>(undefined);
+  const [q, setQ] = useState('');
   const { data = [], isLoading } = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['brands'] });
   const del = useMutation({ mutationFn: (id: string) => brandsApi.remove(id), onSuccess: () => { toast.success('Removed'); invalidate(); } });
@@ -34,6 +42,13 @@ export function BrandsSection() {
     { key: 'euRpContactUrl', label: 'Contact URL' },
   ];
 
+  // Manufacturer and EU RP names are searchable too: this section is titled
+  // "Brands / Manufacturers", so looking one up by the manufacturer behind it should work.
+  const shown = useMemo(
+    () => data.filter((b) => hits(q, b.name, b.website, b.manufacturerName, b.euRpName)),
+    [data, q],
+  );
+
   return (
     <div>
       <SectionHeader title="Brands / Manufacturers" description="Brand and manufacturer names used across products.">
@@ -41,10 +56,11 @@ export function BrandsSection() {
           onCommit={async (rows) => { for (const r of rows) await brandsApi.create(r as any); invalidate(); }} />
         <AddButton label="Add brand" onClick={() => setEditing(null)} />
       </SectionHeader>
+      <SectionSearch value={q} onChange={setQ} placeholder="Search brand, website or manufacturer…" matched={shown.length} total={data.length} />
       <RefTable<Brand>
         loading={isLoading}
-        empty="No brands yet. Add your first brand."
-        rows={data}
+        empty={q.trim() ? `No brand matches “${q.trim()}”.` : 'No brands yet. Add your first brand.'}
+        rows={shown}
         columns={[
           { key: 'name', header: 'Name', render: (r) => <span className="font-medium text-n-800">{r.name}</span> },
           { key: 'website', header: 'Website', render: (r) => r.website ?? '—' },
@@ -81,9 +97,12 @@ export function BrandsSection() {
 export function ProductTypesSection() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<ProductType | null | undefined>(undefined);
+  const [q, setQ] = useState('');
   const { data = [], isLoading } = useQuery({ queryKey: ['product-types'], queryFn: () => productTypesApi.list() });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['product-types'] });
   const del = useMutation({ mutationFn: (id: string) => productTypesApi.remove(id), onSuccess: () => { toast.success('Removed'); invalidate(); } });
+
+  const shown = useMemo(() => data.filter((t) => hits(q, t.name)), [data, q]);
 
   return (
     <div>
@@ -92,10 +111,11 @@ export function ProductTypesSection() {
           onCommit={async (rows) => { for (const r of rows) await productTypesApi.create(r as any); invalidate(); }} />
         <AddButton label="Add type" onClick={() => setEditing(null)} />
       </SectionHeader>
+      <SectionSearch value={q} onChange={setQ} placeholder="Search product types…" matched={shown.length} total={data.length} />
       <RefTable<ProductType>
         loading={isLoading}
-        empty="No product types yet."
-        rows={data}
+        empty={q.trim() ? `No product type matches “${q.trim()}”.` : 'No product types yet.'}
+        rows={shown}
         columns={[{ key: 'name', header: 'Name', render: (r) => <span className="font-medium text-n-800">{r.name}</span> }]}
         onEdit={setEditing}
         onDelete={(r) => confirm(`Remove ${r.name}?`) && del.mutate(r.id)}
