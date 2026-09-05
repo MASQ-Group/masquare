@@ -6,6 +6,7 @@ import { PricingService } from '../pricing/pricing.service';
 import type { ProgressSink } from '../jobs/jobs.service';
 import { syncDecision } from './sync-decision';
 import { deriveListingStatus } from './listing-status';
+import { planTransition } from './plan-transition';
 import { fullScopeIntegrationWhere } from '../common/amazon-scope';
 
 const ACTIVE = { deletedAt: null };
@@ -147,6 +148,85 @@ export class ChannelListingsService {
   }
 
   /**
+   * After a COMPLETE account pull, settle every plan on that channel that was waiting.
+   *
+   * The listings for this integration have just been replaced wholesale from an answer we trust,
+   * so a product with no row is genuinely not on this channel. Anything still sitting at SUBMITTED
+   * therefore never became a listing, and the button should come back.
+   *
+   * Deliberately not called for an update-only or refused pull, where absence proves nothing.
+   */
+  private async settlePlansAfterCompletePull(integrationId: string) {
+    const waiting = await this.prisma.productChannelPlan.findMany({
+      where: { integrationId, status: 'SUBMITTED', deletedAt: null },
+      select: { id: true, productId: true },
+    });
+    if (!waiting.length) return;
+
+    // Keyed by product so a confirmed plan can carry the channel's own id, exactly as the
+    // per-product path does — a plan marked LISTED without one is a confirmation missing its proof.
+    const asinByProduct = new Map(
+      (await this.prisma.channelListing.findMany({
+        where: { integrationId, productId: { in: waiting.map((w) => w.productId) } },
+        select: { productId: true, asin: true },
+      })).map((r) => [r.productId as string, r.asin]),
+    );
+
+    for (const w of waiting) {
+      await this.settleSubmittedPlan({
+        productId: w.productId,
+        integrationId,
+        found: asinByProduct.has(w.productId),
+        externalListingId: asinByProduct.get(w.productId) ?? null,
+      });
+    }
+  }
+
+  /**
+   * Settle a plan that was submitted to a channel, now that a sync has looked.
+   *
+   * Submitting is not listing. Amazon accepts an offer and publishes it minutes later, so the plan
+   * sits at SUBMITTED in between and the UI stops offering to list it again. Something has to end
+   * that wait, and only a sync can: it is the one thing that has actually asked the channel.
+   *
+   *  - Found   -> the channel confirms it. The plan is LISTED, carrying the id the channel gave.
+   *  - Missing -> the submission did not become a listing. The plan is released back to DRAFT so
+   *               the button returns and a person can try again.
+   *
+   * Only ever called where absence is EVIDENCE. A pull that came back short says nothing about
+   * what it did not return, and releasing a plan on that would undo a submission that succeeded.
+   */
+  private async settleSubmittedPlan(args: {
+    productId: string;
+    integrationId: string;
+    found: boolean;
+    externalListingId?: string | null;
+  }) {
+    const plan = await this.prisma.productChannelPlan.findFirst({
+      where: { productId: args.productId, integrationId: args.integrationId, deletedAt: null },
+      select: { id: true, status: true },
+    });
+    if (!plan) return;
+
+    const move = planTransition({ status: plan.status, found: args.found });
+    if (move === 'none') return;
+
+    if (move === 'confirm') {
+      await this.prisma.productChannelPlan.update({
+        where: { id: plan.id },
+        data: { status: 'LISTED', ...(args.externalListingId ? { externalListingId: args.externalListingId } : {}) },
+      });
+      return;
+    }
+
+    // release: the wait is over and it did not become a listing.
+    await this.prisma.productChannelPlan.update({
+      where: { id: plan.id },
+      data: { status: 'DRAFT', listedAt: null },
+    });
+  }
+
+  /**
    * Where is THIS product listed on Amazon, right now?
    *
    * The account-wide sync answers the same question for everything at once, which is minutes of
@@ -241,6 +321,15 @@ export class ChannelListingsService {
         where: { integrationId: intg.id, productId: product.id, ...(foundSkus.length ? { channelSku: { notIn: foundSkus } } : {}) },
       });
       removed += stale.count;
+
+      // The narrow query asked about this product by name, so its answer settles the plan either
+      // way - this is exactly the evidence the wait was for.
+      await this.settleSubmittedPlan({
+        productId: product.id,
+        integrationId: intg.id,
+        found: found.length > 0,
+        externalListingId: found[0]?.asin ?? null,
+      });
 
       if (found.length) listedCount++;
       results.push({
@@ -378,6 +467,11 @@ export class ChannelListingsService {
         const ops: Prisma.PrismaPromise<unknown>[] = [this.prisma.channelListing.deleteMany({ where: { integrationId: intg.id } })];
         for (let i = 0; i < data.length; i += 1000) ops.push(this.prisma.channelListing.createMany({ data: data.slice(i, i + 1000), skipDuplicates: true }));
         await this.prisma.$transaction(ops);
+
+        // A complete pull is the only kind that can settle a submission, for the same reason it is
+        // the only kind allowed to delete: absence in a truncated answer is not absence.
+        await this.settlePlansAfterCompletePull(intg.id);
+
         results.push({ integrationId: intg.id, name: intg.name, ok: true, pulled: data.length });
         progress?.tick(true);
       } catch (e: any) {

@@ -1,10 +1,20 @@
-import { Ban, Lock, Search, TrendingDown, TrendingUp } from 'lucide-react';
+import { Ban, Clock, Lock, Search, TrendingDown, TrendingUp } from 'lucide-react';
 import type { AmazonSweepRow, ProductChannelRow } from '../../lib/api';
 import { eurAside } from '../../lib/format';
 
 const SYMBOL: Record<string, string> = { EUR: '€', GBP: '£', USD: '$', CAD: 'CA$', AUD: 'A$', JPY: '¥', SEK: 'kr', PLN: 'zł', AED: 'AED ', SAR: 'SAR ', MXN: 'MX$', TRY: '₺', INR: '₹', BRL: 'R$', ZAR: 'R', SGD: 'S$' };
 const money = (cents: number, currency: string) =>
   `${SYMBOL[currency] ?? `${currency} `}${(cents / 100).toFixed(currency === 'JPY' ? 0 : 2)}`;
+
+/** How long ago, in words. The age of a submission is the thing that decides whether to worry. */
+const ago = (iso: string | null | undefined) => {
+  if (!iso) return null;
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  return hrs < 24 ? `${hrs} hr ago` : `${Math.round(hrs / 24)} d ago`;
+};
 
 /**
  * A channel this product is not on yet, and whether it is worth going there.
@@ -34,7 +44,18 @@ export function NotListedPanel({
   const restricted = sweep?.restricted === true;
   const notInCatalogue = analysed && sweep != null && !sweep.found;
 
-  const canList = !!integrationId && !blocked && !restricted && !notInCatalogue;
+  /**
+   * Already sent to the channel, and not yet seen by a sync.
+   *
+   * Amazon accepts a submission and publishes it some minutes later, so there is a window where we
+   * have asked for a listing and no listing exists yet. Leaving the green button up through that
+   * window invites sending the same request twice - the product card already says "Submitted"
+   * here, and this panel was the one place that did not.
+   */
+  const submitted = !!plan?.plan && plan.plan.status === 'SUBMITTED';
+  const submittedAgo = ago(plan?.plan?.listedAt);
+
+  const canList = !!integrationId && !blocked && !restricted && !notInCatalogue && !submitted;
 
   return (
     <div className="flex flex-col items-stretch gap-2.5 px-4 py-5">
@@ -85,6 +106,22 @@ export function NotListedPanel({
         </div>
       )}
 
+      {/* Reported instead of the button, not beside it: the point is that there is nothing
+          useful to press until a sync says what became of the request. */}
+      {submitted && (
+        <div
+          className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900"
+          title="Sent to the channel. It will show as listed once a sync finds it; if a sync does not, this returns to offering the listing again."
+        >
+          <Clock size={12} className="mt-0.5 shrink-0 text-amber-600" />
+          <span>
+            <b>Listing requested{submittedAgo ? ` ${submittedAgo}` : ''}.</b> Waiting for a sync to
+            confirm it on {channelName}.
+          </span>
+        </div>
+      )}
+
+      {!submitted && (
       <button
         type="button"
         disabled={!canList}
@@ -100,10 +137,12 @@ export function NotListedPanel({
       >
         + List on {channelName}
       </button>
+      )}
 
-      {!analysed && !blocked && (
+      {/* The prompt to run the analysis is pointless once a request is already in flight. */}
+      {!analysed && !blocked && !submitted && (
         <span className="text-center text-[11px] text-n-400">
-          Run “Check all Amazon channels” above to see whether this one is worth listing on.
+          Run “Check Amazon availability” above to see whether this one is worth listing on.
         </span>
       )}
     </div>
