@@ -213,6 +213,25 @@ function buildInsights(d: AnalyticsReport): Insight[] {
   const WARN = { tone: 'Warning', toneColor: C.warn, toneBg: '#FDF3E4' };
   const INFO = { tone: 'Info', toneColor: C.tealDark, toneBg: '#E8F4F2' };
 
+  // Said before anything else about profit, because it qualifies every figure on the page. A
+  // marketplace announces an order days before it says what it was worth; until then the order has
+  // costs and no revenue, so it is left out entirely rather than booked as a loss that would
+  // quietly reverse itself later.
+  if (d.pending?.orders) {
+    const n = d.pending.orders;
+    out.push({
+      ...INFO,
+      stat: String(n),
+      statColor: 'var(--n-700)',
+      lead: `${n} order${n > 1 ? 's are' : ' is'} waiting on marketplace financials`,
+      body: `and ${n > 1 ? 'are' : 'is'} excluded from every figure here until the sale amount arrives${
+        d.pending.oldestDate ? `. The oldest was placed on ${d.pending.oldestDate}` : ''
+      }.`,
+      link: 'View orders',
+      to: '/sales-transactions',
+    });
+  }
+
   const losers = d.bySku.filter((s) => s.profitEur < 0);
   if (losers.length) {
     const loss = losers.reduce((s, x) => s + x.profitEur, 0);

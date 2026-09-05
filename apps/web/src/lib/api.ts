@@ -955,6 +955,12 @@ export interface AnalyticsReport {
   compareRange: { from: string; to: string } | null;
   totals: AnalyticsTotals;
   compareTotals: AnalyticsTotals | null;
+  /**
+   * Orders the marketplace has told us about but not yet priced, left out of every figure above.
+   * They carry costs and no revenue, so counting them books a loss that belongs to the sync rather
+   * than to the business — and one that corrects itself a week later on its own.
+   */
+  pending: { orders: number; units: number; oldestDate: string | null };
   byChannel: AnalyticsChannelRow[];
   byCountry: AnalyticsCountryRow[];
   bySku: AnalyticsSkuRow[];

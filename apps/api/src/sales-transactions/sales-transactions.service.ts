@@ -440,6 +440,30 @@ export class SalesTransactionsService {
     const cogsReversed = cancelledPreShip || (resolution !== 'none' && !!t.restockItems);
     const shippingApplies = !cancelledPreShip;
 
+    /**
+     * The money has not arrived yet.
+     *
+     * A marketplace tells us about an order twice: once when the customer places it, and again —
+     * days later — with what it was actually worth. Between those two messages the order is real,
+     * has goods against it, and has no revenue, so every cost on it lands with nothing on the other
+     * side and the order books a loss. Amazon is the one that does this at scale; on this database
+     * a dozen FBA orders sit in that state at any moment, each a week or so old.
+     *
+     * That loss is not a fact about the business, it is a fact about the sync. Counting it drags a
+     * company's profit down and then silently corrects itself later, which is worse than either
+     * being right or being obviously absent — nobody reconciles a number that quietly moves.
+     *
+     * Only the NET SALES matter here. Fees are estimated until the marketplace settles them and
+     * that estimate is good, so an order with revenue and no posted fee is complete enough to count.
+     * An order with no revenue is not.
+     *
+     * Deliberately not applied to `manual` or `erp_import`: nothing further is coming for those, so
+     * a zero there is the real figure — or a data problem worth seeing rather than hiding.
+     */
+    const awaitsChannelFinancials = t.source != null && !['manual', 'erp_import'].includes(t.source);
+    const awaitingFinancials =
+      awaitsChannelFinancials && resolution === 'none' && totals.quantity > 0 && totals.netSales === 0;
+
     // Profit (€): (net + shipping in EUR) − refund − (product cost + effective shipping +
     // return shipping we bear + replacement despatch + duty + sales fee in EUR), adjusted for
     // the resolution.
@@ -461,6 +485,9 @@ export class SalesTransactionsService {
       // eventually became.
       cost += returnShippingCost + replacementShippingCost + dutyImportCost;
       profit = round(revenue - cost, 2);
+      // Not yet knowable: null rather than the negative number the costs alone would produce.
+      // Zero would be a claim that it broke even, which is just as untrue and much harder to spot.
+      if (awaitingFinancials) profit = null;
       // An order cancelled before dispatch earns nothing. The money was either never taken or is
       // certain to go back, and Amazon returns its fee, so the whole thing nets to zero.
       //
@@ -682,6 +709,12 @@ export class SalesTransactionsService {
       returnShippingCost,
       replacementShippingCost,
       dutyImportCost,
+      /**
+       * The marketplace has told us about the order but not yet what it was worth. Profit is null
+       * rather than negative, and analytics leaves the order out of its totals entirely until the
+       * revenue lands — see the note where this is derived.
+       */
+      awaitingFinancials,
       // Platform fulfilment status is derived from shipment registration (the single point
       // of truth), except 'cancelled' which the returns layer sets explicitly. FBA orders
       // are fulfilled by the channel (Amazon) with no action from us — always considered shipped.
