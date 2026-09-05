@@ -1692,14 +1692,35 @@ export class IntegrationsService implements OnModuleInit {
     return (e?.message || e?.code || '').toString().slice(0, 200);
   }
 
-  /** Read-only pull of all Listings Items for one Amazon integration (SKU, ASIN, title, FBM
-   *  quantity, offer price, listing status). Paginated via pageToken; capped to avoid runaway.
-   *  Feeds the Channel Listings dashboard. */
-  async fetchAmazonListings(integrationId: string, opts: { maxPages?: number } = {}): Promise<Array<{
-    sku: string; asin: string | null; externalId: string | null; title: string | null; quantity: number | null;
-    price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
-    marketplace: string | null;
-  }>> {
+  /**
+   * Read-only pull of all Listings Items for one Amazon integration (SKU, ASIN, title, FBM
+   * quantity, offer price, listing status). Feeds the Channel Listings dashboard.
+   *
+   * -- Why this reads the account twice --------------------------------------------------------
+   * Amazon stops issuing `nextToken` after 1,000 items, whatever `numberOfResults` says. Paging
+   * politely to the end therefore returns the FIRST 1,000 and no indication that anything is
+   * missing. On 5 Sep 2026 that hid 484 live listings across five marketplaces (ES 13, IT 40,
+   * NL 258, PL 171, SE 2), and one of them - IT68277 on Amazon ES - was sitting Inactive with a
+   * product-safety violation while the platform offered it as somewhere we could go and list.
+   *
+   * So a short pull is read again in the opposite sort order and the two are merged: oldest-first
+   * gives the first 1,000, newest-first gives the last 1,000, and the union covers up to 2,000.
+   * The second pass is only paid for when the first came up short.
+   *
+   * `reportedTotal` is Amazon's own count. It travels with the rows so the caller can tell a
+   * complete answer from a partial one - that distinction is what makes deleting safe or unsafe.
+   */
+  async fetchAmazonListings(integrationId: string, opts: { maxPages?: number } = {}): Promise<{
+    rows: Array<{
+      sku: string; asin: string | null; externalId: string | null; title: string | null; quantity: number | null;
+      price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+      marketplace: string | null;
+    }>;
+    /** What Amazon says the account holds, or null when it did not say. */
+    reportedTotal: number | null;
+    /** False when we know rows are missing - Amazon reported more than we could reach. */
+    complete: boolean;
+  }> {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
     if (!row) throw new NotFoundException('Integration not found');
     const config = (row.config ?? {}) as Record<string, string>;
@@ -1709,38 +1730,66 @@ export class IntegrationsService implements OnModuleInit {
     const secrets = await this.decryptedSecrets(row.id);
     const token = await this.amazonAccessToken(config, secrets);
 
-    const out: any[] = [];
     const maxPages = opts.maxPages ?? 400;
-    let pageToken: string | null = null;
-    for (let page = 0; page < maxPages; page++) {
-      const params = new URLSearchParams({ marketplaceIds: meta.marketplaceId, includedData: 'summaries,offers,fulfillmentAvailability', pageSize: '20' });
-      if (pageToken) params.set('pageToken', pageToken);
-      const res = await this.amzFetch(`${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}?${params.toString()}`, token);
-      const json: any = await res.json().catch(() => null);
-      if (!res.ok) throw new BadRequestException(`Amazon listings fetch failed (${res.status}${IntegrationsService.amzErr(json) ? ': ' + IntegrationsService.amzErr(json) : ''}).`);
-      for (const it of json?.items ?? []) {
-        const summ = it.summaries?.[0] ?? {};
-        const avail: any[] = it.fulfillmentAvailability ?? [];
-        const merchant = avail.filter((a) => (a.fulfillmentChannelCode || 'DEFAULT') === 'DEFAULT');
-        const isFbm = merchant.length > 0;
-        const offer = (it.offers ?? [])[0] ?? null;
-        out.push({
-          sku: it.sku,
-          asin: summ.asin ?? null,
-          externalId: summ.asin ?? null, // Amazon's own product identifier is the ASIN
-          title: summ.itemName ?? null,
-          quantity: isFbm ? merchant.reduce((s: number, a: any) => s + (a.quantity || 0), 0) : null,
-          price: offer?.price?.amount != null ? Number(offer.price.amount) : null,
-          currency: offer?.price?.currencyCode ?? null,
-          fulfilmentChannel: isFbm ? 'FBM' : (avail.length ? 'FBA' : null),
-          status: Array.isArray(summ.status) ? summ.status.join(',') : (summ.status ?? null),
-          marketplace: null, // Amazon integration is already marketplace-specific → single column
+    const bySku = new Map<string, any>();
+    let reportedTotal: number | null = null;
+
+    /** One full walk of the account in a given order, merged into `bySku`. */
+    const walk = async (sortOrder: 'ASC' | 'DESC') => {
+      let pageToken: string | null = null;
+      for (let page = 0; page < maxPages; page++) {
+        const params = new URLSearchParams({
+          marketplaceIds: meta.marketplaceId,
+          includedData: 'summaries,offers,fulfillmentAvailability',
+          pageSize: '20',
+          sortBy: 'lastUpdatedDate',
+          sortOrder,
         });
+        if (pageToken) params.set('pageToken', pageToken);
+        const res = await this.amzFetch(`${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}?${params.toString()}`, token);
+        const json: any = await res.json().catch(() => null);
+        if (!res.ok) throw new BadRequestException(`Amazon listings fetch failed (${res.status}${IntegrationsService.amzErr(json) ? ': ' + IntegrationsService.amzErr(json) : ''}).`);
+        if (typeof json?.numberOfResults === 'number') reportedTotal = json.numberOfResults;
+        for (const it of json?.items ?? []) {
+          const summ = it.summaries?.[0] ?? {};
+          const avail: any[] = it.fulfillmentAvailability ?? [];
+          const merchant = avail.filter((a) => (a.fulfillmentChannelCode || 'DEFAULT') === 'DEFAULT');
+          const isFbm = merchant.length > 0;
+          const offer = (it.offers ?? [])[0] ?? null;
+          bySku.set(it.sku, {
+            sku: it.sku,
+            asin: summ.asin ?? null,
+            externalId: summ.asin ?? null, // Amazon's own product identifier is the ASIN
+            title: summ.itemName ?? null,
+            quantity: isFbm ? merchant.reduce((s: number, a: any) => s + (a.quantity || 0), 0) : null,
+            price: offer?.price?.amount != null ? Number(offer.price.amount) : null,
+            currency: offer?.price?.currencyCode ?? null,
+            fulfilmentChannel: isFbm ? 'FBM' : (avail.length ? 'FBA' : null),
+            // An empty status array is Amazon saying "inactive" - '' is that answer, not a missing
+            // one. DISCOVERABLE without BUYABLE is the listing that exists but cannot be bought.
+            status: Array.isArray(summ.status) ? summ.status.join(',') : (summ.status ?? null),
+            marketplace: null, // Amazon integration is already marketplace-specific → single column
+          });
+        }
+        pageToken = json?.pagination?.nextToken ?? null;
+        if (!pageToken) break;
       }
-      pageToken = json?.pagination?.nextToken ?? null;
-      if (!pageToken) break;
+    };
+
+    await walk('ASC');
+    // Only when the first walk provably fell short - otherwise this doubles the call count for
+    // every marketplace under the cap, and most of ours are.
+    if (reportedTotal != null && bySku.size < reportedTotal) await walk('DESC');
+
+    const rows = [...bySku.values()];
+    const complete = reportedTotal == null || rows.length >= reportedTotal;
+    if (!complete) {
+      this.logger.warn(
+        `Amazon listings pull for ${row.name} reached ${rows.length} of ${reportedTotal} — `
+        + `${reportedTotal! - rows.length} listing(s) are beyond the API paging limit.`,
+      );
     }
-    return out;
+    return { rows, reportedTotal, complete };
   }
 
   /** Read-only pull of eBay listings via the Sell Inventory API (scope `sell.inventory.readonly`,
@@ -2469,7 +2518,8 @@ export class IntegrationsService implements OnModuleInit {
     if (!['amazon', 'ebay', 'onbuy'].includes(type)) throw new BadRequestException('Listings preview supports Amazon, eBay and OnBuy only.');
     try {
       const listings =
-        type === 'amazon' ? await this.fetchAmazonListings(id, { maxPages: 1 })
+        // Amazon now reports completeness alongside the rows; the preview only wants the rows.
+        type === 'amazon' ? (await this.fetchAmazonListings(id, { maxPages: 1 })).rows
         : type === 'ebay' ? await this.fetchEbayListings(id, { maxItems: limit })
         : await this.fetchOnBuyListings(id, { maxItems: limit });
       await this.audit(id, actorId, 'listings.preview', `${type} count=${listings.length}`);

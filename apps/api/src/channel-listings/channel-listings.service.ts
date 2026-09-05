@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { PricingService } from '../pricing/pricing.service';
 import type { ProgressSink } from '../jobs/jobs.service';
+import { syncDecision } from './sync-decision';
 
 const ACTIVE = { deletedAt: null };
 // Per-channel accent dots (fallback palette; overridden by the SalesChannel chip colour if set).
@@ -20,14 +21,6 @@ export interface ListingsQuery {
   page?: number;
   pageSize?: number;
 }
-
-/**
- * A channel with fewer than this on record is too small to reason about — a genuine small catalogue
- * can legitimately halve between pulls, and refusing there would be noise.
- */
-const MIN_LISTINGS_TO_GUARD = 50;
-/** A pull holding less than this share of what we already have is treated as partial, not as truth. */
-const KEEP_FRACTION = 0.5;
 
 @Injectable()
 export class ChannelListingsService {
@@ -186,12 +179,15 @@ export class ChannelListingsService {
     for (const intg of ints) {
       progress?.note(intg.name);
       try {
-        const listings =
+        // Amazon reports whether its answer was complete; the others cannot, so they are assumed
+        // complete and rely on the proportional guard below.
+        const pull =
           intg.channelType === 'amazon' ? await this.integrations.fetchAmazonListings(intg.id)
-          : intg.channelType === 'ebay' ? await this.integrations.fetchEbayListings(intg.id)
-          : intg.channelType === 'onbuy' ? await this.integrations.fetchOnBuyListings(intg.id)
+          : intg.channelType === 'ebay' ? { rows: await this.integrations.fetchEbayListings(intg.id), reportedTotal: null, complete: true }
+          : intg.channelType === 'onbuy' ? { rows: await this.integrations.fetchOnBuyListings(intg.id), reportedTotal: null, complete: true }
           : null;
-        if (!listings) {
+        const listings = pull?.rows ?? null;
+        if (!listings || !pull) {
           results.push({ integrationId: intg.id, name: intg.name, ok: false, message: `Listings sync for ${intg.channelType} isn't available yet` });
           continue;
         }
@@ -226,7 +222,10 @@ export class ChannelListingsService {
         // So a replace that would remove most of what we hold refuses and leaves the records alone.
         // Going stale is recoverable by running it again; deleting is not.
         const held = await this.prisma.channelListing.count({ where: { integrationId: intg.id } });
-        if (held >= MIN_LISTINGS_TO_GUARD && data.length < held * KEEP_FRACTION) {
+
+        const decision = syncDecision({ received: data.length, reportedTotal: pull.reportedTotal, held });
+
+        if (decision.mode === 'refuse') {
           results.push({
             integrationId: intg.id, name: intg.name, ok: false, pulled: data.length,
             message: `Refused: the pull returned ${data.length} listing(s) against ${held} on record. `
@@ -235,6 +234,35 @@ export class ChannelListingsService {
           progress?.tick(false);
           continue;
         }
+
+        if (decision.mode === 'update-only') {
+          // Write what arrived, remove nothing. The rows we could not reach are still live on the
+          // channel, and a record we keep is merely stale where a record we delete is a listing
+          // the platform believes does not exist.
+          for (let i = 0; i < data.length; i += 500) {
+            await this.prisma.$transaction(
+              data.slice(i, i + 500).map((d) =>
+                this.prisma.channelListing.upsert({
+                  where: { integrationId_channelSku_marketplace: { integrationId: d.integrationId, channelSku: d.channelSku, marketplace: d.marketplace ?? '' } },
+                  create: d,
+                  update: {
+                    productId: d.productId, asin: d.asin, externalListingId: d.externalListingId, title: d.title,
+                    listedQuantity: d.listedQuantity, listedPrice: d.listedPrice, currency: d.currency,
+                    fulfilmentChannel: d.fulfilmentChannel, listingStatus: d.listingStatus, lastPulledAt: d.lastPulledAt,
+                  },
+                }),
+              ),
+            );
+          }
+          results.push({
+            integrationId: intg.id, name: intg.name, ok: true, pulled: data.length,
+            message: `${intg.name} reports ${pull.reportedTotal} listing(s) but would only return ${data.length}. `
+              + `Those were updated and nothing was deleted, so the other ${decision.shortBy} are kept rather than lost.`,
+          });
+          progress?.tick(true);
+          continue;
+        }
+
         const ops: Prisma.PrismaPromise<unknown>[] = [this.prisma.channelListing.deleteMany({ where: { integrationId: intg.id } })];
         for (let i = 0; i < data.length; i += 1000) ops.push(this.prisma.channelListing.createMany({ data: data.slice(i, i + 1000), skipDuplicates: true }));
         await this.prisma.$transaction(ops);
