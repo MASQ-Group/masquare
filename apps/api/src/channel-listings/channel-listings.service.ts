@@ -5,6 +5,8 @@ import { IntegrationsService } from '../integrations/integrations.service';
 import { PricingService } from '../pricing/pricing.service';
 import type { ProgressSink } from '../jobs/jobs.service';
 import { syncDecision } from './sync-decision';
+import { deriveListingStatus } from './listing-status';
+import { fullScopeIntegrationWhere } from '../common/amazon-scope';
 
 const ACTIVE = { deletedAt: null };
 // Per-channel accent dots (fallback palette; overridden by the SalesChannel chip colour if set).
@@ -32,12 +34,7 @@ export class ChannelListingsService {
 
   /** Derive a listing status the UI colours by: live | low | oos | paused | error. */
   private deriveStatus(l: { listedQuantity: number | null; listingStatus: string | null; fulfilmentChannel: string | null }): string {
-    if (l.fulfilmentChannel === 'FBA') return 'live'; // Amazon controls FBA quantity
-    const s = (l.listingStatus ?? '').toUpperCase();
-    if (l.listedQuantity != null && l.listedQuantity <= 0) return 'oos';
-    if (s && !s.includes('BUYABLE')) return 'paused'; // e.g. DISCOVERABLE-only
-    if (l.listedQuantity != null && l.listedQuantity <= 5) return 'low';
-    return 'live';
+    return deriveListingStatus(l);
   }
 
   /** The connected channels (Amazon marketplaces) that can carry listings. */
@@ -147,6 +144,121 @@ export class ChannelListingsService {
       for (const a of p.aliases) m.set(a.skuValue.trim().toLowerCase(), p.id);
     }
     return m;
+  }
+
+  /**
+   * Where is THIS product listed on Amazon, right now?
+   *
+   * The account-wide sync answers the same question for everything at once, which is minutes of
+   * paging over thousands of listings when someone only wants to know about one product. This asks
+   * Amazon about the product's own SKUs instead - one call per marketplace - and reconciles just
+   * that product's records.
+   *
+   * Two things make the narrow query the more trustworthy of the two:
+   *
+   *  - Nothing is enumerated, so the 1,000-item paging ceiling cannot apply. A SKU missing from
+   *    the reply is genuinely not listed on that marketplace.
+   *  - Because absence is meaningful here, a stale record CAN be removed - which the account-wide
+   *    sync may not do when its own pull came back short.
+   *
+   * A marketplace that errors is left exactly as it was. "We could not ask" and "it is not there"
+   * are different answers, and only one of them justifies deleting a record.
+   */
+  async syncProduct(productId: string, companyIds?: string[], progress?: ProgressSink) {
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, ...ACTIVE },
+      select: { id: true, mainSku: true, aliases: { where: ACTIVE, select: { skuValue: true } } },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+
+    // Every SKU this product could be listed under. The account-wide sync matches pulled listings
+    // to products by exactly this set, so asking by it gives the narrow query the same reach.
+    //
+    // SKUs we already hold a record under are asked about too. Without them, a record whose SKU is
+    // no longer one of the product's own would never appear in Amazon's reply and would be deleted
+    // as stale without anyone ever checking whether the listing is still there.
+    const held = await this.prisma.channelListing.findMany({
+      where: { productId: product.id, integration: { channelType: 'amazon' } },
+      select: { channelSku: true },
+    });
+    const skus = [...new Set(
+      [product.mainSku, ...product.aliases.map((a) => a.skuValue), ...held.map((h) => h.channelSku)]
+        .map((v) => (v ?? '').trim())
+        .filter(Boolean),
+    )];
+
+    const ints = await this.prisma.channelIntegration.findMany({
+      where: {
+        ...ACTIVE,
+        status: 'active',
+        channelType: 'amazon',
+        ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
+        ...(await fullScopeIntegrationWhere(this.prisma)),
+      },
+      select: { id: true, name: true, marketplace: true, targetCompanyId: true },
+      orderBy: { name: 'asc' },
+    });
+    progress?.setTotal(ints.length);
+
+    const now = new Date();
+    const results: Array<{ integrationId: string; name: string; marketplace: string | null; ok: boolean; listed: boolean; status?: string | null; message?: string }> = [];
+    let listedCount = 0;
+    let removed = 0;
+
+    for (const intg of ints) {
+      progress?.note(intg.marketplace ?? intg.name);
+      const res = await this.integrations.fetchAmazonListingsBySku(intg.id, skus);
+
+      if (!res.ok) {
+        // Left untouched on purpose - see the note above about absence versus ignorance.
+        results.push({ integrationId: intg.id, name: intg.name, marketplace: intg.marketplace, ok: false, listed: false, message: res.message });
+        progress?.tick(false);
+        continue;
+      }
+
+      const found = res.rows.filter((r) => skus.some((s) => s.toLowerCase() === (r.sku ?? '').toLowerCase()));
+      for (const l of found) {
+        await this.prisma.channelListing.upsert({
+          where: { integrationId_channelSku_marketplace: { integrationId: intg.id, channelSku: l.sku, marketplace: '' } },
+          create: {
+            integrationId: intg.id, companyId: intg.targetCompanyId, channelSku: l.sku, marketplace: '',
+            productId: product.id, asin: l.asin, externalListingId: l.externalId ?? null, title: l.title,
+            listedQuantity: l.quantity, listedPrice: l.price, currency: l.currency,
+            fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now,
+          },
+          update: {
+            productId: product.id, asin: l.asin, externalListingId: l.externalId ?? null, title: l.title,
+            listedQuantity: l.quantity, listedPrice: l.price, currency: l.currency,
+            fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now,
+          },
+        });
+      }
+
+      // Records for SKUs Amazon did not return are stale: the listing was deleted or moved. Scoped
+      // to this product and this marketplace, so nothing else can be caught by it.
+      const foundSkus = found.map((f) => f.sku);
+      const stale = await this.prisma.channelListing.deleteMany({
+        where: { integrationId: intg.id, productId: product.id, ...(foundSkus.length ? { channelSku: { notIn: foundSkus } } : {}) },
+      });
+      removed += stale.count;
+
+      if (found.length) listedCount++;
+      results.push({
+        integrationId: intg.id, name: intg.name, marketplace: intg.marketplace,
+        ok: true, listed: found.length > 0, status: found[0]?.status ?? null,
+      });
+      progress?.tick(true);
+    }
+
+    return {
+      productId: product.id,
+      mainSku: product.mainSku,
+      checked: ints.length,
+      listed: listedCount,
+      removed,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+    };
   }
 
   /** Pull listings from the given (or all active Amazon) channels into ChannelListing. */

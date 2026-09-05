@@ -88,6 +88,20 @@ export class ChannelListingsController {
     );
   }
 
+  /**
+   * Refresh ONE product's Amazon listings.
+   *
+   * Same question the full sync answers, asked only about this product: one call per marketplace
+   * rather than a walk of the whole account, so it takes seconds instead of minutes. A job all the
+   * same, because it still fans out across every connected marketplace.
+   */
+  @Post('product/:productId/sync')
+  syncProduct(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.jobs.start('channel-listings.syncProduct', 'Checking every Amazon marketplace for this product', (ctx) =>
+      this.svc.syncProduct(productId, companyIds, ctx),
+    );
+  }
+
   @Get('product/:productId')
   detail(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
     return this.svc.detail(productId, companyIds);

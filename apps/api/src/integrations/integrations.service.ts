@@ -1693,6 +1693,92 @@ export class IntegrationsService implements OnModuleInit {
   }
 
   /**
+   * One Listings Items entry, as a Channel Listings row.
+   *
+   * Shared by the account-wide pull and the per-product lookup so the two can never disagree about
+   * what a listing is - the same SKU read either way must produce the same record.
+   */
+  private static amazonListingRow(it: any): {
+    sku: string; asin: string | null; externalId: string | null; title: string | null; quantity: number | null;
+    price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+    marketplace: string | null;
+  } {
+    const summ = it.summaries?.[0] ?? {};
+    const avail: any[] = it.fulfillmentAvailability ?? [];
+    const merchant = avail.filter((a) => (a.fulfillmentChannelCode || 'DEFAULT') === 'DEFAULT');
+    const isFbm = merchant.length > 0;
+    const offer = (it.offers ?? [])[0] ?? null;
+    return {
+      sku: it.sku,
+      asin: summ.asin ?? null,
+      externalId: summ.asin ?? null, // Amazon's own product identifier is the ASIN
+      title: summ.itemName ?? null,
+      quantity: isFbm ? merchant.reduce((s: number, a: any) => s + (a.quantity || 0), 0) : null,
+      price: offer?.price?.amount != null ? Number(offer.price.amount) : null,
+      currency: offer?.price?.currencyCode ?? null,
+      fulfilmentChannel: isFbm ? 'FBM' : (avail.length ? 'FBA' : null),
+      // An empty status array is Amazon saying "inactive" - '' is that answer, not a missing one.
+      // DISCOVERABLE without BUYABLE is the listing that exists but cannot be bought.
+      status: Array.isArray(summ.status) ? summ.status.join(',') : (summ.status ?? null),
+      marketplace: null, // Amazon integration is already marketplace-specific → single column
+    };
+  }
+
+  /**
+   * Which of these SKUs this Amazon marketplace is carrying, and how.
+   *
+   * Asks about named SKUs rather than walking the account, so it answers in ONE call per
+   * marketplace instead of fifty-plus. That is what makes a per-product sync worth having: the
+   * account-wide pull is minutes of paging over thousands of listings to settle a question about
+   * one product.
+   *
+   * It also sidesteps the 1,000-item paging ceiling entirely - nothing is being enumerated, so
+   * nothing can fall off the end. A SKU absent from the reply is genuinely not listed here, which
+   * is what lets the caller safely remove a stale record.
+   *
+   * `ok: false` means we could not find out. That is deliberately distinct from "not listed", so a
+   * failed call can never be mistaken for an answer.
+   */
+  async fetchAmazonListingsBySku(integrationId: string, skus: string[]): Promise<
+    | { ok: true; rows: ReturnType<typeof IntegrationsService.amazonListingRow>[] }
+    | { ok: false; message: string }
+  > {
+    const wanted = [...new Set(skus.map((s) => s.trim()).filter(Boolean))];
+    if (!wanted.length) return { ok: true, rows: [] };
+
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) return { ok: false, message: 'Integration not found' };
+    const config = (row.config ?? {}) as Record<string, string>;
+    if (!config.sellerId) return { ok: false, message: 'This Amazon integration has no Seller ID stored.' };
+
+    try {
+      const meta = this.amazonMarketMeta(row);
+      const token = await this.amazonAccessToken(config, await this.decryptedSecrets(row.id));
+      const out: ReturnType<typeof IntegrationsService.amazonListingRow>[] = [];
+      // Amazon accepts at most 20 identifiers per call; a product with more aliases than that is
+      // asked about in batches rather than silently truncated.
+      for (let i = 0; i < wanted.length; i += 20) {
+        const params = new URLSearchParams({
+          marketplaceIds: meta.marketplaceId,
+          identifiers: wanted.slice(i, i + 20).join(','),
+          identifiersType: 'SKU',
+          includedData: 'summaries,offers,fulfillmentAvailability',
+          pageSize: '20',
+        });
+        const res = await this.amzFetch(`${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(config.sellerId)}?${params.toString()}`, token);
+        const json: any = await res.json().catch(() => null);
+        if (!res.ok) {
+          return { ok: false, message: IntegrationsService.amzErr(json) || `Amazon returned ${res.status}` };
+        }
+        for (const it of json?.items ?? []) out.push(IntegrationsService.amazonListingRow(it));
+      }
+      return { ok: true, rows: out };
+    } catch (e: any) {
+      return { ok: false, message: (e?.message ?? 'Lookup failed').toString().slice(0, 200) };
+    }
+  }
+
+  /**
    * Read-only pull of all Listings Items for one Amazon integration (SKU, ASIN, title, FBM
    * quantity, offer price, listing status). Feeds the Channel Listings dashboard.
    *
@@ -1750,27 +1836,7 @@ export class IntegrationsService implements OnModuleInit {
         const json: any = await res.json().catch(() => null);
         if (!res.ok) throw new BadRequestException(`Amazon listings fetch failed (${res.status}${IntegrationsService.amzErr(json) ? ': ' + IntegrationsService.amzErr(json) : ''}).`);
         if (typeof json?.numberOfResults === 'number') reportedTotal = json.numberOfResults;
-        for (const it of json?.items ?? []) {
-          const summ = it.summaries?.[0] ?? {};
-          const avail: any[] = it.fulfillmentAvailability ?? [];
-          const merchant = avail.filter((a) => (a.fulfillmentChannelCode || 'DEFAULT') === 'DEFAULT');
-          const isFbm = merchant.length > 0;
-          const offer = (it.offers ?? [])[0] ?? null;
-          bySku.set(it.sku, {
-            sku: it.sku,
-            asin: summ.asin ?? null,
-            externalId: summ.asin ?? null, // Amazon's own product identifier is the ASIN
-            title: summ.itemName ?? null,
-            quantity: isFbm ? merchant.reduce((s: number, a: any) => s + (a.quantity || 0), 0) : null,
-            price: offer?.price?.amount != null ? Number(offer.price.amount) : null,
-            currency: offer?.price?.currencyCode ?? null,
-            fulfilmentChannel: isFbm ? 'FBM' : (avail.length ? 'FBA' : null),
-            // An empty status array is Amazon saying "inactive" - '' is that answer, not a missing
-            // one. DISCOVERABLE without BUYABLE is the listing that exists but cannot be bought.
-            status: Array.isArray(summ.status) ? summ.status.join(',') : (summ.status ?? null),
-            marketplace: null, // Amazon integration is already marketplace-specific → single column
-          });
-        }
+        for (const it of json?.items ?? []) bySku.set(it.sku, IntegrationsService.amazonListingRow(it));
         pageToken = json?.pagination?.nextToken ?? null;
         if (!pageToken) break;
       }

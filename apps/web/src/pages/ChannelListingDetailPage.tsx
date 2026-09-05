@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw, Search } from 'lucide-react';
-import { amazonListingApi, listingApi, salesTransactionsApi, type AmazonSweep, channelListingsApi } from '../lib/api';
+import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw, Search, RotateCw } from 'lucide-react';
+import { amazonListingApi, listingApi, salesTransactionsApi, type AmazonSweep, type ProductListingSyncResult, channelListingsApi } from '../lib/api';
 import { DateRangePicker, ProgressButton, type DateRangeValue } from '@masquare/ui';
 import { formatAmount } from '../lib/format';
 import { Flag } from '../components/common/Flag';
@@ -44,6 +44,24 @@ export function ChannelListingDetailPage() {
     enabled: !!productId,
   });
   const planByIntegration = new Map((plans?.channels ?? []).map((c) => [c.integrationId, c]));
+
+  /**
+   * "Where is this listed?" - asked of Amazon directly, about this product only.
+   *
+   * The sync on the main page walks every listing in the account, which is minutes to settle a
+   * question about one product. This asks each marketplace about this product's own SKUs instead,
+   * so it answers in seconds and writes the same records.
+   */
+  const listingSync = useJobProgress(`channel-listings.syncProduct.${productId}`, (job) => {
+    if (job.state === 'error') { toast.error(job.error ?? 'Could not check the marketplaces'); return; }
+    const r = job.result as ProductListingSyncResult;
+    const failed = r.failed ? ` · ${r.failed} could not be checked` : '';
+    const removed = r.removed ? ` · ${r.removed} stale record${r.removed === 1 ? '' : 's'} cleared` : '';
+    toast.success(`Listed on ${r.listed} of ${r.checked} Amazon marketplace${r.checked === 1 ? '' : 's'}${removed}${failed}`);
+    // Everything on this page reads those records, so all of it is now out of date.
+    qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] });
+    qc.invalidateQueries({ queryKey: ['listing', 'product-channels', productId] });
+  });
 
   // The competitive read costs two live calls per candidate marketplace, so it is asked for.
   const analysis = useJobProgress(`listing.amazon.sweep.${productId}`);
@@ -121,6 +139,20 @@ export function ChannelListingDetailPage() {
           <>
             {/* Two live calls per candidate marketplace, so it is a job with progress rather than
                 something that happens on page load. */}
+            {/* Two questions, deliberately two buttons. This one reads our own listings back from
+                Amazon and updates the records; the other searches Amazon's catalogue for somewhere
+                new to sell. One writes and is quick, the other only reads and is slow. */}
+            <ProgressButton
+              running={listingSync.running}
+              value={listingSync.value}
+              detail={listingSync.detail}
+              onClick={() => listingSync.start(() => channelListingsApi.syncProduct(productId as string))}
+              runningLabel={<><RotateCw size={15} /> Syncing</>}
+              className="!h-8 !text-[13px]"
+              title="Asks every Amazon marketplace whether this product's SKUs are listed there, and refreshes its records. Seconds, rather than the full-account sync."
+            >
+              <RotateCw size={15} /> Sync Amazon listings
+            </ProgressButton>
             <ProgressButton
               running={analysis.running}
               value={analysis.value}
@@ -128,9 +160,9 @@ export function ChannelListingDetailPage() {
               onClick={() => analysis.start(() => amazonListingApi.sweep(productId as string, true))}
               runningLabel={<><Search size={15} /> Checking</>}
               className="!h-8 !text-[13px]"
-              title="Searches every Amazon marketplace and works out whether we could win the Buy Box at a profit. Read-only."
+              title="Searches Amazon's catalogue on every marketplace for somewhere we could sell this, and whether we would make money there. Read-only — nothing is listed or changed."
             >
-              <Search size={15} /> Check all Amazon channels
+              <Search size={15} /> Check Amazon availability
             </ProgressButton>
             <button
               onClick={() => { qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] }); toast.success('Refreshed'); }}
