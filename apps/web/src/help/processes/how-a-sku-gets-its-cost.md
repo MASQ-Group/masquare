@@ -7,7 +7,7 @@ covers:
   - apps/api/src/purchase-orders/costing.service.ts
   - apps/api/src/sales-transactions/sales-transactions.service.ts
   - apps/api/src/fba-shipments/fba-shipments.service.ts
-reviewed: 2026-09-04
+reviewed: 2026-09-05
 ---
 
 # How a SKU gets its cost
@@ -119,6 +119,20 @@ Every shipping leg counts, and this is the part most easily got wrong. An order 
 came back, and went out again has **three** carriage costs against one sale. Leaving any of them
 out makes a loss-making order look profitable — which is exactly what happened before the
 replacement leg was included.
+
+### When there is no revenue yet
+
+A marketplace announces an order when the customer places it and says what it was worth days
+later. In between the order has costs and no revenue, so the arithmetic above would book a loss
+that is a fact about the sync rather than about the business.
+
+Such an order reports its profit as **unknown** rather than as a number, and Analytics leaves it
+out of every total until the sale amount arrives — orders, units and revenue included. The
+overview says how many are waiting and how old the oldest is, so they are visibly set aside rather
+than quietly missing.
+
+Only the sale amount gates this. Fees are estimated until the marketplace settles them, and that
+estimate is good enough to count.
 
 ## When the chain breaks
 

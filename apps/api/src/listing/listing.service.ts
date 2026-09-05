@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { evaluateEligibility, type MarketProfile, type ProductTechnical } from './eligibility';
 import { evaluateReadiness, checkBoost, type ListingFacts } from './readiness';
+import { fullScopeIntegrationWhere } from '../common/amazon-scope';
 
 /**
  * The channels that can carry a listing. Anything else is ignored rather than guessed at.
@@ -46,7 +47,7 @@ export class ListingService {
    * Neither is stored — both are derived on read, so correcting a voltage or filling in a title
    * fixes every affected channel at once instead of leaving stale verdicts behind.
    */
-  async productChannels(productId: string) {
+  async productChannels(productId: string, companyIds?: string[]) {
     const product = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
       include: {
@@ -63,7 +64,20 @@ export class ListingService {
 
     const [integrations, profiles, plans, liveListings] = await Promise.all([
       this.prisma.channelIntegration.findMany({
-        where: { deletedAt: null, channelType: { in: LISTABLE_CHANNELS } },
+        // Company-scoped, like the Channel Listings page beside it. Both companies sell on most of
+        // the same marketplaces through their own seller accounts, so an unscoped read returns two
+        // rows per marketplace — indistinguishable on screen, and only one of them the caller's.
+        //
+        // The scope filter then removes an orders-only company outright: its Amazon account exists
+        // to pull order history and nothing else, so it has no listable channels at all. Without
+        // it the tab offered Multitrade fifteen marketplaces to plan listings against, none of
+        // which it may publish to.
+        where: {
+          deletedAt: null,
+          channelType: { in: LISTABLE_CHANNELS },
+          ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
+          ...(await fullScopeIntegrationWhere(this.prisma)),
+        },
         select: { id: true, name: true, channelType: true, marketplace: true, status: true },
         orderBy: [{ channelType: 'asc' }, { name: 'asc' }],
       }),
@@ -231,11 +245,20 @@ export class ListingService {
    * Refuses rather than warns on an over-limit boost: OnBuy's own default is 20% of revenue, and a
    * warning on a bulk action is read once while the commission is paid every month afterwards.
    */
-  async upsertPlan(productId: string, integrationId: string, patch: ChannelPlanPatch, actorId?: string) {
+  async upsertPlan(
+    productId: string,
+    integrationId: string,
+    patch: ChannelPlanPatch,
+    actorId?: string,
+    companyIds?: string[],
+  ) {
     const [product, integration, settings] = await Promise.all([
       this.prisma.product.findFirst({ where: { id: productId, deletedAt: null }, select: { id: true } }),
       this.prisma.channelIntegration.findFirst({
-        where: { id: integrationId, deletedAt: null },
+        // Scoped for the same reason the read is, and here it matters more: an id is enough to
+        // reach a channel, so without this a plan could be written against the other company's
+        // seller account by anyone who happened to know its id.
+        where: { id: integrationId, deletedAt: null, ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}) },
         select: { id: true, channelType: true, marketplace: true },
       }),
       this.prisma.platformSettings.findFirst({ select: { maxBoostPct: true } }),

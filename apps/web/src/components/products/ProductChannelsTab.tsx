@@ -4,9 +4,22 @@ import { AlertTriangle, Ban, Check, ChevronDown, ChevronRight, Clock, Loader2, P
 import { toast } from 'sonner';
 import { Select } from '@masquare/ui';
 import { amazonListingApi, listingApi, type AmazonSweep, type ProductChannelRow } from '../../lib/api';
-import { ChannelGroup, CHANNEL_TONE } from './ChannelGroup';
+import { ChannelGroup, SweepResult } from './ChannelGroup';
 import { PlanEditor } from './ChannelPlanEditor';
 import { useJobProgress } from '../../lib/useJobProgress';
+import { CHANNEL_GROUPS, channelGroupOf } from '../../lib/channelGroups';
+import { Flag } from '../common/Flag';
+import { ProgressButton } from '@masquare/ui';
+import { Search } from 'lucide-react';
+
+/**
+ * Amazon calls the United Kingdom "UK"; ISO — and therefore the flag set and the grouping tables —
+ * calls it "GB". Everything else Amazon sends is already an ISO-2 code.
+ */
+const isoOf = (marketplace?: string | null): string => {
+  const m = (marketplace ?? '').trim().toUpperCase();
+  return m === 'UK' ? 'GB' : m;
+};
 
 const CONDITIONS = [
   { value: 'NEW', label: 'New' },
@@ -52,10 +65,27 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
 
   const { summary } = data;
 
-  // Insertion order follows the API's ordering (channelType asc), which keeps the groups stable.
-  const groups = [...new Map(
-    data.channels.map((r) => [r.channelType, data.channels.filter((c) => c.channelType === r.channelType)]),
-  ).entries()];
+  /**
+   * Rows by marketplace family, in the platform's canonical order.
+   *
+   * The same grouping the Channel Listings page uses, so a channel sits in the same place wherever
+   * you meet it. A row whose region cannot be worked out is not dropped — it falls into a group of
+   * its own, because a channel that quietly vanishes from this tab is how something goes unlisted.
+   */
+  const grouped = CHANNEL_GROUPS.map((g) => ({
+    key: g.key,
+    label: g.label,
+    platform: g.platform,
+    rows: data.channels.filter((r) => channelGroupOf({ name: r.name, countryIso: isoOf(r.marketplace) })?.key === g.key),
+  })).filter((g) => g.rows.length > 0);
+
+  const placed = new Set(grouped.flatMap((g) => g.rows.map((r) => r.integrationId)));
+  const ungrouped = data.channels.filter((r) => !placed.has(r.integrationId));
+  const groups = ungrouped.length
+    ? [...grouped, { key: 'other', label: 'Other channels', platform: 'other' as const, rows: ungrouped }]
+    : grouped;
+
+  const hasAmazon = data.channels.some((c) => c.channelType === 'amazon');
 
   return (
     <div className="flex flex-col gap-3">
@@ -76,26 +106,45 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
         <span className="text-teal-700"><b>{summary.ready}</b> ready to list</span>
         {summary.blocked > 0 && <span className="text-danger"><b>{summary.blocked}</b> blocked</span>}
         <div className="flex-1" />
-        <span className="text-[11.5px] text-n-400">Nothing here is sent to a channel — this is what we intend to list.</span>
+        {/* One sweep for the whole tab. It searches every Amazon marketplace at once, so repeating
+            the button on each of the four Amazon regions would offer the same action four times. */}
+        {hasAmazon && (
+          <ProgressButton
+            running={sweep.running}
+            value={sweep.value}
+            detail={sweep.detail}
+            onClick={() => sweep.start(() => amazonListingApi.sweep(productId))}
+            runningLabel={<><Search size={13} /> Searching</>}
+            className="!h-7 !text-[12px]"
+            title="Searches every connected Amazon marketplace for this product. Read-only — nothing is listed."
+          >
+            <Search size={13} /> Search all Amazon
+          </ProgressButton>
+        )}
       </div>
+      <p className="-mt-1.5 text-[11.5px] text-n-400">Nothing here is sent to a channel — this is what we intend to list.</p>
 
-      {/* Grouped by marketplace family: eighteen Amazon rows beside one eBay row read as eighteen
-          unrelated channels rather than one marketplace in eighteen countries. */}
-      {groups.map(([channelType, rows]) => (
-        <ChannelGroup
-          key={channelType}
-          channelType={channelType}
-          rows={rows}
-          // Only Amazon keeps a separate catalogue per country, so only Amazon has anything to sweep.
-          sweep={channelType === 'amazon' ? {
-            running: sweep.running,
-            value: sweep.value,
-            detail: sweep.detail,
-            result: (sweep.result as AmazonSweep | null) ?? null,
-            error: sweep.error,
-            onRun: () => sweep.start(() => amazonListingApi.sweep(productId)),
-          } : undefined}
-        >
+      {/* The sweep answers for every Amazon marketplace at once, so it is reported once — inside a
+          region it would repeat the same full result in each of the four. */}
+      {sweep.error && (
+        <div className="flex items-start gap-2 rounded-lg border border-danger-bd bg-danger-bg px-3.5 py-2 text-[12px] text-danger">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+          <span>{sweep.error}</span>
+        </div>
+      )}
+      {sweep.running && !sweep.result && (
+        <div className="rounded-lg border border-n-200 bg-n-25 px-3.5 py-2 text-[12px] text-n-500">
+          Searching each marketplace in turn — {sweep.detail || 'starting…'}
+        </div>
+      )}
+      {sweep.result != null && (
+        <div className="overflow-hidden rounded-lg border border-n-200">
+          <SweepResult sweep={sweep.result as AmazonSweep} />
+        </div>
+      )}
+
+      {groups.map(({ key, label, rows }) => (
+        <ChannelGroup key={key} label={label} rows={rows}>
           {rows.map((row, i) => (
             <ChannelRow
               key={row.integrationId}
@@ -128,19 +177,22 @@ function ChannelRow({
   const warnFindings = row.eligibility.findings.filter((f) => f.severity === 'warn');
 
   return (
-    <div className={first ? '' : 'border-t border-n-100'}>
+    /* An open row is a drawer, and says so: a tinted body, a darker header, and a teal edge down
+       the left so the eye can find where it starts and ends in a list of eighteen. */
+    <div className={`${first ? '' : 'border-t border-n-100'} ${expanded ? 'border-l-2 border-l-teal-400 bg-n-25' : ''}`}>
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex w-full flex-wrap items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-n-25"
+        className={`flex w-full flex-wrap items-center gap-2.5 px-3.5 py-2.5 text-left ${
+          expanded ? 'bg-n-100' : 'hover:bg-n-25'
+        }`}
       >
         {expanded ? <ChevronDown size={14} className="shrink-0 text-n-400" /> : <ChevronRight size={14} className="shrink-0 text-n-400" />}
-        <span className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase ${CHANNEL_TONE[row.channelType] ?? 'border-n-200 bg-n-50 text-n-600'}`}>
-          {row.channelType}
-        </span>
+        {/* The flag says which market at a glance; the group heading above already says which
+            platform, so a repeated "AMAZON" chip on every row was saying nothing. */}
+        <Flag code={isoOf(row.marketplace)} title={row.name} />
         <span className="text-[13px] font-medium text-n-800">{row.name}</span>
-        {row.marketplace && <span className="mono text-[11.5px] text-n-500">{row.marketplace}</span>}
 
         <div className="flex-1" />
 
@@ -193,13 +245,17 @@ function ChannelRow({
         </div>
       )}
 
+      {/* Inset rather than edge-to-edge: the steps are a panel within the row, and running them to
+          both edges made them read as a continuation of the list instead of as its contents. */}
       {expanded && (
-        <PlanEditor
-          row={row}
-          productId={productId}
-          warnings={warnFindings.map((f) => f.reason)}
-          onSaved={onSaved}
-        />
+        <div className="px-3.5 pb-3.5 pt-1">
+          <PlanEditor
+            row={row}
+            productId={productId}
+            warnings={warnFindings.map((f) => f.reason)}
+            onSaved={onSaved}
+          />
+        </div>
       )}
     </div>
   );

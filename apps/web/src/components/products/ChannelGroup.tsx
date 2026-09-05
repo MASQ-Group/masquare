@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, Search } from 'lucide-react';
-import { ProgressButton } from '@masquare/ui';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { AmazonSweep, AmazonSweepRow, ProductChannelRow } from '../../lib/api';
 
 /** Channel identity, kept clear of the semantic colours so a chip never reads as a status. */
@@ -10,30 +9,20 @@ export const CHANNEL_TONE: Record<string, string> = {
   onbuy: 'bg-teal-50 text-teal-700 border-teal-200',
 };
 
-const GROUP_LABEL: Record<string, string> = { amazon: 'Amazon', ebay: 'eBay', onbuy: 'OnBuy' };
-
 /**
  * One marketplace family, collapsed to a single heading.
  *
- * Eighteen Amazon rows next to one eBay row read as eighteen unrelated channels rather than one
- * marketplace we sell on in eighteen countries. Grouping restores that, and gives the family-wide
- * search somewhere to live.
+ * Grouped the way the rest of the platform groups channels — Amazon Europe, Amazon Americas,
+ * Amazon Asia-Pacific and so on — rather than by selling platform. Eighteen Amazon rows in one
+ * list read as eighteen unrelated channels; split by region they read as the handful of markets
+ * they actually are, and a person looking for Germany knows where to look.
  */
 export function ChannelGroup({
-  channelType, rows, sweep, children,
+  label, rows, children,
 }: {
-  channelType: string;
+  /** The group's own name, e.g. "Amazon Europe". */
+  label: string;
   rows: ProductChannelRow[];
-  /** Only Amazon has a per-country catalogue, so only Amazon gets a sweep. */
-  sweep?: {
-    running: boolean;
-    value: number | null;
-    detail: string;
-    result: AmazonSweep | null;
-    /** A failed sweep has to say so — silence reads as "nothing found", which is a different answer. */
-    error: string | null;
-    onRun: () => void;
-  };
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(true);
@@ -52,9 +41,7 @@ export function ChannelGroup({
           className="flex items-center gap-2 text-left"
         >
           {open ? <ChevronDown size={15} className="text-n-400" /> : <ChevronRight size={15} className="text-n-400" />}
-          <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase ${CHANNEL_TONE[channelType] ?? 'border-n-200 bg-n-50 text-n-600'}`}>
-            {GROUP_LABEL[channelType] ?? channelType}
-          </span>
+          <span className="text-[13px] font-semibold text-n-800">{label}</span>
           <span className="text-[12.5px] text-n-500">
             {rows.length} marketplace{rows.length === 1 ? '' : 's'}
           </span>
@@ -64,40 +51,7 @@ export function ChannelGroup({
         {listed > 0 && <span className="text-[12px] font-semibold text-teal-700">{listed} already listed</span>}
         {ready > 0 && <span className="text-[12px] text-n-600">{ready} ready</span>}
         {blocked > 0 && <span className="text-[12px] text-danger">{blocked} blocked</span>}
-
-        <div className="flex-1" />
-
-        {sweep && (
-          <ProgressButton
-            running={sweep.running}
-            value={sweep.value}
-            detail={sweep.detail}
-            onClick={sweep.onRun}
-            runningLabel={<><Search size={13} /> Searching</>}
-            className="!h-7 !text-[12px]"
-            title="Searches every connected Amazon marketplace for this product. Read-only — nothing is listed."
-          >
-            <Search size={13} /> Search all {GROUP_LABEL[channelType] ?? channelType}
-          </ProgressButton>
-        )}
       </div>
-
-      {sweep?.error && (
-        <div className="flex items-start gap-2 border-b border-danger-bd bg-danger-bg px-3 py-2 text-[12px] text-danger">
-          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-          <span>{sweep.error}</span>
-        </div>
-      )}
-
-      {/* While it runs, say so here as well as on the button: the search takes about a minute and
-          the button alone is easy to lose track of on a long tab. */}
-      {sweep?.running && !sweep.result && (
-        <div className="border-b border-n-100 bg-n-25 px-3 py-2 text-[12px] text-n-500">
-          Searching each marketplace in turn — {sweep.detail || 'starting…'}
-        </div>
-      )}
-
-      {sweep?.result && <SweepResult sweep={sweep.result} />}
 
       {open && <div>{children}</div>}
     </div>
@@ -110,7 +64,7 @@ export function ChannelGroup({
  * A chip per marketplace, coloured by what you can actually do there. The point is to answer
  * "where can we sell this" without opening eighteen rows.
  */
-function SweepResult({ sweep }: { sweep: AmazonSweep }) {
+export function SweepResult({ sweep }: { sweep: AmazonSweep }) {
   const { summary } = sweep;
   // Ordered by what you would act on: already ours, then what we could take, then what stands in
   // the way, then the ones we could not answer for.

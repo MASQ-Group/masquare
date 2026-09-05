@@ -5,6 +5,7 @@ import { AdminGuard } from '../../auth/admin.guard';
 import { AmazonListingService } from './amazon-listing.service';
 import { JobsService } from '../../jobs/jobs.service';
 import { AccessArea, RequireCapability, Requires } from '../../access/access.decorators';
+import { VisibleCompanies } from '../../common/active-company.decorator';
 
 /**
  * Creating an Amazon offer on an existing listing.
@@ -41,14 +42,18 @@ export class AmazonListingController {
    * Returns the job to follow; the result lands on it when the sweep finishes.
    */
   @Post('products/:productId/sweep')
-  sweep(@Param('productId') productId: string, @Body() body: { withPricing?: boolean } = {}) {
+  sweep(
+    @Param('productId') productId: string,
+    @VisibleCompanies() companyIds: string[],
+    @Body() body: { withPricing?: boolean } = {},
+  ) {
     // Pricing doubles the calls per candidate marketplace, so it is asked for rather than assumed:
     // the product card wants a fast "where does this exist", the listings page wants "and would it pay".
     const withPricing = body.withPricing === true;
     return this.jobs.start(
       'listing.amazon.sweep',
       withPricing ? 'Checking every Amazon marketplace' : 'Searching Amazon marketplaces',
-      (ctx) => this.svc.sweepMarketplaces(productId, ctx, { withPricing }),
+      (ctx) => this.svc.sweepMarketplaces(productId, ctx, { withPricing, companyIds }),
     );
   }
 
