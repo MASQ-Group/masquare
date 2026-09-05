@@ -140,10 +140,20 @@ export class AmazonListingService {
   async sweepMarketplaces(
     productId: string,
     ctx?: { setTotal(n: number): void; tick(ok?: boolean): void; note(m: string): void },
-    opts: { withPricing?: boolean } = {},
+    opts: { withPricing?: boolean; companyIds?: string[] } = {},
   ) {
     const integrations = await this.prisma.channelIntegration.findMany({
-      where: { deletedAt: null, channelType: 'amazon', ...(await fullScopeIntegrationWhere(this.prisma)) },
+      // Company-scoped: the two companies hold separate seller accounts on most of the same
+      // marketplaces, so an unscoped sweep searches the other company's account as well and
+      // reports its results as though they were ours. The amazon-scope filter beside it answers a
+      // different question — whether an account is ours to touch at all — and neither replaces the
+      // other.
+      where: {
+        deletedAt: null,
+        channelType: 'amazon',
+        ...(opts.companyIds ? { targetCompanyId: { in: opts.companyIds } } : {}),
+        ...(await fullScopeIntegrationWhere(this.prisma)),
+      },
       select: { id: true, name: true, marketplace: true },
       orderBy: { marketplace: 'asc' },
     });
