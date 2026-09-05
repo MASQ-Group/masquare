@@ -362,6 +362,26 @@ export interface ChannelPushRow { productId: string; channelKey: string; channel
 export interface ChannelPushResult { dryRun: boolean; count: number; ok: number; failed: number; results: ChannelPushRow[] }
 export interface ChannelIdentifier { channelType: string; channelName: string; marketplace: string | null; countryIso: string | null; channelSku: string; identifierType: string; identifier: string | null }
 
+/** What a per-product listings sync found, one entry per Amazon marketplace checked. */
+export interface ProductListingSyncResult {
+  productId: string;
+  mainSku: string;
+  checked: number;
+  listed: number;
+  removed: number;
+  failed: number;
+  results: Array<{
+    integrationId: string;
+    name: string;
+    marketplace: string | null;
+    /** False when the marketplace could not be asked — distinct from "not listed there". */
+    ok: boolean;
+    listed: boolean;
+    status?: string | null;
+    message?: string;
+  }>;
+}
+
 export const channelListingsApi = {
   channels: () => api.get<ChannelListingChannel[]>('/channel-listings/channels').then((r) => r.data),
   dashboard: (params: { q?: string; channelId?: string; brandId?: string; vendorId?: string; productTypeId?: string; page?: number; pageSize?: number } = {}) =>
@@ -369,6 +389,9 @@ export const channelListingsApi = {
   /** Starts a run and returns the job to follow — the result arrives on the job when it finishes. */
   sync: (integrationIds?: string[]) =>
     api.post<JobView>('/channel-listings/sync', integrationIds?.length ? { integrationIds } : {}).then((r) => r.data),
+  /** One product's Amazon listings, refreshed in seconds rather than a full-account walk. */
+  syncProduct: (productId: string) =>
+    api.post<JobView>(`/channel-listings/product/${productId}/sync`, {}).then((r) => r.data),
   detail: (productId: string) => api.get<ChannelListingDetail>(`/channel-listings/product/${productId}`).then((r) => r.data),
   identifiers: (productId: string) => api.get<ChannelIdentifier[]>(`/channel-listings/product/${productId}/identifiers`).then((r) => r.data),
   push: (productIds: string[], dryRun: boolean, channels?: string[]) =>
