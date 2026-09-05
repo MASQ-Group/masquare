@@ -324,7 +324,7 @@ export class AmazonListingService {
    */
   private async priceAgainstCompetition(productId: string, integrationId: string, iso: string, asin: string) {
     const currency = currencyForMarketplace(iso);
-    const none = { currency, featuredPriceCents: null, featuredProfitCents: null, featuredMarginPct: null, lowestPriceCents: null, competitive: null };
+    const none = { currency, featuredPriceCents: null, featuredProfitCents: null, featuredProfitEurCents: null, featuredMarginPct: null, lowestPriceCents: null, competitive: null };
     const marketplaceId = MARKETPLACE_IDS[iso.toUpperCase()];
     if (!marketplaceId) return none;
 
@@ -357,6 +357,7 @@ export class AmazonListingService {
       currency,
       featuredPriceCents: featured,
       featuredProfitCents: quote.at[0].profitCents,
+      featuredProfitEurCents: quote.at[0].profitEurCents,
       featuredMarginPct: quote.at[0].marginPct,
       lowestPriceCents: lowest,
       competitive: quote.at[0].aboveBreakeven,
@@ -450,6 +451,7 @@ export class AmazonListingService {
       suggestedCents: quote.suggestedCents,
       breakevenCents: quote.breakevenCents,
       marginPct: quote.marginPct,
+      fx: quote.fx,
       prices: references.map((r) => {
         const at = r.priceCents != null ? byPrice.get(r.priceCents) ?? null : null;
         return {
@@ -457,6 +459,7 @@ export class AmazonListingService {
           label: r.label,
           priceCents: r.priceCents,
           profitCents: at?.profitCents ?? null,
+          profitEurCents: at?.profitEurCents ?? null,
           profitMarginPct: at?.marginPct ?? null,
           // Below breakeven is a loss on every unit sold, which is the thing worth seeing at a
           // glance next to a price Amazon is inviting you to match.

@@ -1,5 +1,6 @@
 import { Ban, Lock, Search, TrendingDown, TrendingUp } from 'lucide-react';
 import type { AmazonSweepRow, ProductChannelRow } from '../../lib/api';
+import { eurAside } from '../../lib/format';
 
 const SYMBOL: Record<string, string> = { EUR: '€', GBP: '£', USD: '$', CAD: 'CA$', AUD: 'A$', JPY: '¥', SEK: 'kr', PLN: 'zł', AED: 'AED ', SAR: 'SAR ', MXN: 'MX$', TRY: '₺', INR: '₹', BRL: 'R$', ZAR: 'R', SGD: 'S$' };
 const money = (cents: number, currency: string) =>
@@ -57,6 +58,10 @@ export function NotListedPanel({
               ? `${sweep.competitive ? '' : '−'}${money(Math.abs(sweep.featuredProfitCents), sweep.currency)} at that price`
               : 'profit unknown'}
             {sweep.featuredMarginPct != null && ` · ${sweep.featuredMarginPct}%`}
+            {/* A sweep spans marketplaces in a dozen currencies at once, so "can we compete here"
+                is only answerable against the others once the figure is in euro. */}
+            {eurAside(sweep.featuredProfitEurCents == null ? null : Math.abs(sweep.featuredProfitEurCents), sweep.currency)
+              && ` = ${sweep.competitive ? '' : '−'}${eurAside(Math.abs(sweep.featuredProfitEurCents!), sweep.currency)}`}
           </span>
         </div>
       )}

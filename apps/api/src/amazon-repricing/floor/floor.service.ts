@@ -226,8 +226,17 @@ export class FloorService {
         suggestedCents: number;
         currency: string;
         marginPct: number;
-        /** One entry per price asked about, in the order given. */
-        at: Array<{ priceCents: number; profitCents: number; marginPct: number; aboveBreakeven: boolean }>;
+        /**
+         * One entry per price asked about, in the order given.
+         *
+         * `profitEurCents` is the same profit in euro. It is computed here rather than by each
+         * caller so every card quotes ONE figure from ONE rate — a screen that converts for itself
+         * eventually disagrees with the screen beside it, and two answers to "what does this earn"
+         * is the disagreement the platform is not allowed to have.
+         */
+        at: Array<{ priceCents: number; profitCents: number; profitEurCents: number; marginPct: number; aboveBreakeven: boolean }>;
+        /** The rate the euro figures were produced with, so a card can say what it converted at. */
+        fx: { currency: string; eurPerUnit: number };
         /** What the figure is built on, so a surprising price can be traced without a second call. */
         inputs: {
           cogsLandedCents: number;
@@ -326,6 +335,9 @@ export class FloorService {
         return {
           priceCents,
           profitCents,
+          // Back to euro at the same rate the costs came in on. Converting the profit itself, not
+          // the price, keeps the two currencies describing one calculation instead of two.
+          profitEurCents: Math.round(profitCents * eurPerUnit),
           // Margin on revenue, the same basis the floor solver targets.
           marginPct: Math.round((profitCents / priceCents) * 1000) / 10,
           aboveBreakeven: profitCents > 0,
@@ -339,6 +351,7 @@ export class FloorService {
       currency: ccy,
       marginPct: Math.round(args.marginPct * 1000) / 10,
       at,
+      fx: { currency: ccy, eurPerUnit },
       inputs: {
         cogsLandedCents,
         fixedPerUnitCents,
