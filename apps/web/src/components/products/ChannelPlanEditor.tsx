@@ -112,7 +112,13 @@ export function PlanEditor({
         deliveryTemplate: delivery.trim() || null,
         boostPct: Number(boost || 0),
       }),
-    onSuccess: () => { toast.success('Saved'); onSaved(); },
+    onSuccess: () => {
+      toast.success('Saved');
+      // The sequence advances on a save rather than on a keystroke — the guiding is kept, without
+      // it being able to interrupt someone mid-number.
+      setOpen((n) => (n < 4 ? n + 1 : n));
+      onSaved();
+    },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save'),
   });
 
@@ -138,8 +144,18 @@ export function PlanEditor({
 
   const done = { match: matched, price: priceSet, terms: termsSet };
   const firstOpen = !done.match ? 1 : !done.price ? 2 : !done.terms ? 3 : 4;
-  const [open, setOpen] = useState<number | null>(null);
-  const current = open ?? firstOpen;
+
+  /**
+   * Which step is open, decided ONCE from where the plan stood when this panel was opened.
+   *
+   * It used to fall back to `firstOpen` on every render, and `firstOpen` reads the live input
+   * state: typing the "1" of "15" made the price count as set, which moved the sequence on and
+   * closed the panel under the cursor. The "5" then went nowhere and the plan saved as 1.00.
+   *
+   * The step a person is filling in must not be a function of what they have typed so far.
+   */
+  const [open, setOpen] = useState<number>(firstOpen);
+  const current = open;
 
   const stateOf = (n: number, isDone: boolean, unlocked: boolean): StepState =>
     isDone && current !== n ? 'done' : unlocked ? 'current' : 'locked';
