@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsInt, IsOptional, IsString, MinLength } from 'class-validator';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AccessArea, NoAccessCheck } from '../access/access.decorators';
 
 /**
  * The vocabularies a product's compliance answers are chosen from.
@@ -143,6 +144,11 @@ export class ComplianceOptionsService {
   }
 }
 
+// Reference data. Writing it is a settings action; READING it is not — a country list, a
+// carrier name or a brand is needed by nearly every form in the platform, and gating those
+// reads behind Global settings would break the shipment form for anyone in the warehouse for
+// no benefit. So the GETs below carry @NoAccessCheck and the writes do not.
+@AccessArea('global_settings')
 @ApiTags('global-settings')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
@@ -150,17 +156,17 @@ export class ComplianceOptionsService {
 export class ComplianceOptionsController {
   constructor(private readonly svc: ComplianceOptionsService) {}
 
-  @Get('kinds')
+  @NoAccessCheck() @Get('kinds')
   kinds() {
     return COMPLIANCE_KINDS.map((k) => ({ kind: k, label: KIND_LABEL[k] }));
   }
 
-  @Get()
+  @NoAccessCheck() @Get()
   list(@Query('kind') kind?: string, @Query('includeInactive') includeInactive?: string) {
     return this.svc.list(kind, includeInactive === 'true');
   }
 
-  @Get(':id/usage')
+  @NoAccessCheck() @Get(':id/usage')
   usage(@Param('id') id: string) {
     return this.svc.usage(id);
   }

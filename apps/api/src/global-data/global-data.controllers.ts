@@ -11,52 +11,73 @@ import { CreateCountryDto, SetCountryZoneDto, UpdateCountryDto } from './dto/cou
 import { CreateShippingServiceDto, UpdateShippingServiceDto } from './dto/shipping.dto';
 import { CreateSalesChannelDto, UpdateSalesChannelDto } from './dto/sales-channel.dto';
 import { SaveProfitTiersDto } from './dto/profit-tier.dto';
+import { AccessArea, NoAccessCheck } from '../access/access.decorators';
 
+// Reference data. Writing it is a settings action; READING it is not — a country list, a
+// carrier name or a brand is needed by nearly every form in the platform, and gating those
+// reads behind Global settings would break the shipment form for anyone in the warehouse for
+// no benefit. So the GETs below carry @NoAccessCheck and the writes do not.
+@AccessArea('global_settings')
 @ApiTags('global-data')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('countries')
 export class CountriesController {
   constructor(private readonly svc: CountriesService) {}
-  @Get() list(@Query('q') q?: string) { return this.svc.list(q); }
+  @NoAccessCheck() @Get() list(@Query('q') q?: string) { return this.svc.list(q); }
   @Post() create(@Body() dto: CreateCountryDto, @CurrentUser() u: AuthUser) { return this.svc.create(dto, u.sub); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateCountryDto, @CurrentUser() u: AuthUser) { return this.svc.update(id, dto, u.sub); }
   @Put(':id/shipping-zone') setZone(@Param('id') id: string, @Body() dto: SetCountryZoneDto) { return this.svc.setZone(id, dto); }
   @Delete(':id') remove(@Param('id') id: string) { return this.svc.remove(id); }
 }
 
+// Reference data. Writing it is a settings action; READING it is not — a country list, a
+// carrier name or a brand is needed by nearly every form in the platform, and gating those
+// reads behind Global settings would break the shipment form for anyone in the warehouse for
+// no benefit. So the GETs below carry @NoAccessCheck and the writes do not.
+@AccessArea('global_settings')
 @ApiTags('global-data')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('shipping-services')
 export class ShippingServicesController {
   constructor(private readonly svc: ShippingServicesService) {}
-  @Get() list() { return this.svc.list(); }
-  @Get(':id') get(@Param('id') id: string) { return this.svc.get(id); }
+  @NoAccessCheck() @Get() list() { return this.svc.list(); }
+  @NoAccessCheck() @Get(':id') get(@Param('id') id: string) { return this.svc.get(id); }
   @Post() create(@Body() dto: CreateShippingServiceDto, @CurrentUser() u: AuthUser) { return this.svc.create(dto, u.sub); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateShippingServiceDto, @CurrentUser() u: AuthUser) { return this.svc.update(id, dto, u.sub); }
   @Delete(':id') remove(@Param('id') id: string) { return this.svc.remove(id); }
 }
 
+// Reference data. Writing it is a settings action; READING it is not — a country list, a
+// carrier name or a brand is needed by nearly every form in the platform, and gating those
+// reads behind Global settings would break the shipment form for anyone in the warehouse for
+// no benefit. So the GETs below carry @NoAccessCheck and the writes do not.
+@AccessArea('global_settings')
 @ApiTags('global-data')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('sales-channels')
 export class SalesChannelsController {
   constructor(private readonly svc: SalesChannelsService) {}
-  @Get() list(@VisibleCompanies() companyIds: string[], @Query('q') q?: string) { return this.svc.list(q, companyIds); }
+  @NoAccessCheck() @Get() list(@VisibleCompanies() companyIds: string[], @Query('q') q?: string) { return this.svc.list(q, companyIds); }
   @Post() create(@Body() dto: CreateSalesChannelDto, @CurrentUser() u: AuthUser, @WriteCompany() companyId: string) { return this.svc.create(dto, u.sub, companyId); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateSalesChannelDto, @CurrentUser() u: AuthUser, @VisibleCompanies() companyIds: string[]) { return this.svc.update(id, dto, u.sub, companyIds); }
   @Delete(':id') remove(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) { return this.svc.remove(id, companyIds); }
 }
 
+// Reference data. Writing it is a settings action; READING it is not — a country list, a
+// carrier name or a brand is needed by nearly every form in the platform, and gating those
+// reads behind Global settings would break the shipment form for anyone in the warehouse for
+// no benefit. So the GETs below carry @NoAccessCheck and the writes do not.
+@AccessArea('global_settings')
 @ApiTags('global-data')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('profit-tiers')
 export class ProfitTiersController {
   constructor(private readonly svc: ProfitTiersService) {}
-  @Get() list(@VisibleCompanies() companyIds: string[]) { return this.svc.list(companyIds); }
+  @NoAccessCheck() @Get() list(@VisibleCompanies() companyIds: string[]) { return this.svc.list(companyIds); }
   // WriteCompany rather than VisibleCompanies: this replaces a whole list, so it must know exactly
   // whose it is replacing. It throws when a multi-company user has not picked one, which is the
   // right answer — a replace-all cannot guess.

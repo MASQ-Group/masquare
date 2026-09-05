@@ -16,12 +16,28 @@ import { AREA_KEYS, CAPABILITY_KEYS } from './catalogue';
 
 const SRC = join(__dirname, '..');
 
+/**
+ * Every file that declares a controller — found by looking for `@Controller(`, not by trusting the
+ * filename.
+ *
+ * This used to glob `*.controller.ts`, and three files do not follow that convention:
+ * `global-data.controllers.ts` (plural) and two in global-settings named after what they contain.
+ * Between them they hold eight controllers and 34 routes — countries, shipping services, sales
+ * channels, profit tiers, brands, product types, fulfilment types and compliance options — none of
+ * which were annotated, all of which the guard therefore refused. Every one of those screens came
+ * up empty, and it read as data loss.
+ *
+ * The filename convention is not enforced anywhere, so a test that relies on it is checking the
+ * wrong thing. This reads the source.
+ */
 function controllerFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) out.push(...controllerFiles(full));
-    else if (entry.endsWith('.controller.ts')) out.push(full);
+    else if (entry.endsWith('.ts') && !entry.endsWith('.spec.ts') && readFileSync(full, 'utf8').includes('@Controller(')) {
+      out.push(full);
+    }
   }
   return out;
 }
@@ -55,9 +71,12 @@ function declarations(source: string): { className: string; decorators: string }
 const FILES = controllerFiles(SRC);
 
 describe('access declarations', () => {
-  it('finds the controllers', () => {
-    // A guard against this whole file silently passing because the walk broke.
-    expect(FILES.length).toBeGreaterThan(30);
+  it('finds every controller class in the source tree', () => {
+    // Counted, not bounded. `toBeGreaterThan(30)` passed happily with 42 files while three were
+    // missing entirely — a floor cannot notice an omission above it. If this number moves, a
+    // controller was added or removed and somebody should say which.
+    const classes = FILES.reduce((n, f) => n + declarations(readFileSync(f, 'utf8')).length, 0);
+    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(56);
   });
 
   it('declares an area or an explicit exemption on every controller', () => {
@@ -107,11 +126,19 @@ describe('access declarations', () => {
       .map((f) => f.replace(SRC, '').replace(/\\/g, '/'))
       .sort();
     expect(exempt).toEqual([
+      // Sorted, so these read in path order rather than in the order anyone happened to add them.
+
       // The caller's own access set and the catalogue of what CAN be granted — neither reveals
       // anything about anyone else.
       '/access/access.controller.ts',
       // Signing in, and reading your own profile. There is no grant to check yet.
       '/auth/auth.controller.ts',
+      // The three below exempt their READ routes only — country, carrier, channel, brand, product
+      // type, fulfilment type and compliance lists, which nearly every form needs and which say
+      // nothing worth withholding. Their writes still require Global settings.
+      '/global-data/global-data.controllers.ts',
+      '/global-settings/compliance-options.ts',
+      '/global-settings/simple-refs.ts',
       // Liveness probe, called by the platform rather than a person.
       '/health.controller.ts',
       // eBay's webhook. It arrives with no user at all; its signature check is the gate.
