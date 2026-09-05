@@ -1,27 +1,37 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell, Select } from '@masquare/ui';
 import { attributesApi, type Attribute } from '../../lib/api';
-import { AddButton, RefTable, SectionHeader } from './shared';
+import { AddButton, RefTable, SectionHeader, SectionSearch } from './shared';
 
 export function AttributesSection() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Attribute | null | undefined>(undefined);
+  const [q, setQ] = useState('');
   const { data = [], isLoading } = useQuery({ queryKey: ['attributes'], queryFn: () => attributesApi.list() });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['attributes'] });
   const del = useMutation({ mutationFn: (id: string) => attributesApi.remove(id), onSuccess: () => { toast.success('Removed'); invalidate(); } });
+
+  // Values are searchable as well as names: you are as likely to be looking for the attribute that
+  // holds "Rose Gold" as for one called "Colour".
+  const shown = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    if (!t) return data;
+    return data.filter((a) => a.name.toLowerCase().includes(t) || a.values.some((v) => v.value.toLowerCase().includes(t)));
+  }, [data, q]);
 
   return (
     <div>
       <SectionHeader title="Attributes" description="Reusable product characteristics — predefined value sets or free text.">
         <AddButton label="Add attribute" onClick={() => setEditing(null)} />
       </SectionHeader>
+      <SectionSearch value={q} onChange={setQ} placeholder="Search attributes or their values…" matched={shown.length} total={data.length} />
       <RefTable<Attribute>
         loading={isLoading}
-        empty="No attributes yet."
-        rows={data}
+        empty={q.trim() ? `No attribute matches “${q.trim()}”.` : 'No attributes yet.'}
+        rows={shown}
         columns={[
           { key: 'name', header: 'Name', render: (r) => <span className="font-medium text-n-800">{r.name}</span> },
           { key: 'type', header: 'Input', render: (r) => (

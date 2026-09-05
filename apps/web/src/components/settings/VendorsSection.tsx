@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Trash2 } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell, Select } from '@masquare/ui';
 import { vendorsApi, type Vendor, type VendorContact } from '../../lib/api';
 import { CountrySelect } from '../common/CountrySelect';
 import { CurrencySelect } from '../common/CurrencySelect';
-import { AddButton, ImportButton, RefTable, SectionHeader } from './shared';
+import { AddButton, ImportButton, RefTable, SectionHeader, SectionSearch } from './shared';
 
 export function VendorsSection() {
   const qc = useQueryClient();
@@ -40,16 +40,7 @@ export function VendorsSection() {
         />
         <AddButton label="Add vendor" onClick={() => setEditing(null)} />
       </SectionHeader>
-      <div className="mb-3 flex h-[38px] w-72 items-center gap-2 rounded-md border border-n-200 bg-n-0 px-3">
-        <Search size={16} className="text-n-400" />
-        <input
-          className="h-full flex-1 text-[13px] outline-none"
-          placeholder="Search name, VAT, country, contact…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        {needle && <button className="text-[12px] text-n-400 hover:text-n-600" onClick={() => setQ('')}>Clear</button>}
-      </div>
+      <SectionSearch value={q} onChange={setQ} placeholder="Search name, VAT, country, contact…" matched={rows.length} total={data.length} />
 
       <RefTable<Vendor>
         loading={isLoading}

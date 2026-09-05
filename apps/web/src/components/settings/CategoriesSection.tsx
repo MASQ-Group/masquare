@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, GripVertical, Pencil, Plus, Trash2 } from 'l
 import { toast } from 'sonner';
 import { ModalShell, SmartReferenceInput, type ReferenceOption } from '@masquare/ui';
 import { categoriesApi, type Category } from '../../lib/api';
-import { AddButton, SectionHeader } from './shared';
+import { AddButton, SectionHeader, SectionSearch } from './shared';
 
 interface TreeNode extends Category {
   children: TreeNode[];
@@ -20,14 +20,42 @@ function buildTree(flat: Category[]): TreeNode[] {
   return roots;
 }
 
+/**
+ * The tree, reduced to what the search is about.
+ *
+ * A category three levels down is unreachable if its parents are hidden, so a branch is kept when
+ * anything inside it matches. A node that matches itself keeps its whole subtree: searching for a
+ * branch is usually a request to see what is under it, not just the one row.
+ *
+ * Ancestors kept purely to reach a deeper match are not counted as matches - the count beside the
+ * box would otherwise inflate with rows the person did not search for.
+ */
+function pruneTree(nodes: TreeNode[], term: string): TreeNode[] {
+  const t = term.trim().toLowerCase();
+  if (!t) return nodes;
+  const walk = (list: TreeNode[]): TreeNode[] =>
+    list.flatMap((n) => {
+      if (n.name.toLowerCase().includes(t)) return [n];
+      const children = walk(n.children);
+      return children.length ? [{ ...n, children }] : [];
+    });
+  return walk(nodes);
+}
+
 export function CategoriesSection() {
   const qc = useQueryClient();
   const { data = [], isLoading } = useQuery({ queryKey: ['categories'], queryFn: categoriesApi.list });
   const invalidate = () => qc.invalidateQueries({ queryKey: ['categories'] });
   const [modal, setModal] = useState<{ mode: 'create' | 'edit'; category?: Category; parentId?: string | null } | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [q, setQ] = useState('');
 
   const tree = useMemo(() => buildTree(data), [data]);
+  const shownTree = useMemo(() => pruneTree(tree, q), [tree, q]);
+  const matchCount = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    return t ? data.filter((c) => c.name.toLowerCase().includes(t)).length : data.length;
+  }, [data, q]);
 
   const move = useMutation({
     mutationFn: ({ id, parentId }: { id: string; parentId: string | null }) => categoriesApi.move(id, { parentId }),
@@ -50,12 +78,16 @@ export function CategoriesSection() {
         <AddButton label="Add category" onClick={() => setModal({ mode: 'create', parentId: null })} />
       </SectionHeader>
 
+      <SectionSearch value={q} onChange={setQ} placeholder="Search categories…" matched={matchCount} total={data.length} />
+
       <div className="card p-2">
         {isLoading && <div className="px-3 py-8 text-center text-[13px] text-n-500">Loading…</div>}
-        {!isLoading && tree.length === 0 && (
-          <div className="px-3 py-10 text-center text-[13px] text-n-500">No categories yet. Add your first category.</div>
+        {!isLoading && shownTree.length === 0 && (
+          <div className="px-3 py-10 text-center text-[13px] text-n-500">
+            {q.trim() ? `No category matches “${q.trim()}”.` : 'No categories yet. Add your first category.'}
+          </div>
         )}
-        {tree.map((node) => (
+        {shownTree.map((node) => (
           <TreeRow
             key={node.id}
             node={node}
