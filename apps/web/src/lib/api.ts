@@ -349,6 +349,8 @@ export interface ChannelListingRow {
 export interface ChannelListingsDashboard { items: ChannelListingRow[]; total: number; page: number; pageSize: number }
 export interface ChannelListingDetailChannel {
   integrationId: string; name: string; color: string; currency: string | null; countryIso: string | null; listed: boolean;
+  /** Enough to link to the listing on its own storefront; our SKU resolves nowhere public. */
+  channelType: string | null; asin: string | null; channelSku: string | null; externalListingId: string | null;
   price: number | null; priceCurrency: string | null; quantity: number | null; fulfilmentChannel: string | null; status: string | null;
   profitEur: number | null; marginPct: number | null; loss: boolean; lastPulledAt: string | null;
 }

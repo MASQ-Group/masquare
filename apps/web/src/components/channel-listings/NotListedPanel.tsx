@@ -58,7 +58,9 @@ export function NotListedPanel({
   const canList = !!integrationId && !blocked && !restricted && !notInCatalogue && !submitted;
 
   return (
-    <div className="flex flex-col items-stretch gap-2.5 px-4 py-5">
+    /* flex-1 so this fills the card the grid stretched, and the action below can sit on its
+       floor rather than wherever the reasons above happened to end. */
+    <div className="flex flex-1 flex-col items-stretch gap-2.5 px-4 pb-4 pt-5">
       <div className="text-center text-[13px] text-n-500">Not listed on {channelName} yet.</div>
 
       {/* The competitive read, when we have one: the number that decides whether to bother. */}
@@ -106,6 +108,15 @@ export function NotListedPanel({
         </div>
       )}
 
+      {/* The prompt to run the analysis is pointless once a request is already in flight. */}
+      {!analysed && !blocked && !submitted && (
+        <span className="text-center text-[11px] text-n-400">
+          Run “Check Amazon availability” above to see whether this one is worth listing on.
+        </span>
+      )}
+
+      <div className="flex-1" />
+
       {/* Reported instead of the button, not beside it: the point is that there is nothing
           useful to press until a sync says what became of the request. */}
       {submitted && (
@@ -139,12 +150,6 @@ export function NotListedPanel({
       </button>
       )}
 
-      {/* The prompt to run the analysis is pointless once a request is already in flight. */}
-      {!analysed && !blocked && !submitted && (
-        <span className="text-center text-[11px] text-n-400">
-          Run “Check Amazon availability” above to see whether this one is worth listing on.
-        </span>
-      )}
     </div>
   );
 }

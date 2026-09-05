@@ -6,6 +6,7 @@ import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw, Search, RotateC
 import { amazonListingApi, listingApi, salesTransactionsApi, type AmazonSweep, type ProductListingSyncResult, channelListingsApi } from '../lib/api';
 import { DateRangePicker, ProgressButton, type DateRangeValue } from '@masquare/ui';
 import { formatAmount } from '../lib/format';
+import { listingUrl } from '../lib/channelUrls';
 import { Flag } from '../components/common/Flag';
 import { useJobProgress } from '../lib/useJobProgress';
 import { ListOnChannelModal } from '../components/channel-listings/ListOnChannelModal';
@@ -263,8 +264,14 @@ export function ChannelListingDetailPage() {
         <div className="mt-3 grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' }}>
           {data.channels.map((c) => {
             const st = c.status ? STATUS[c.status] ?? STATUS.live : null;
+            // Null whenever we cannot build an honest link — a "View" that lands on the wrong
+            // storefront reads as a missing listing.
+            const viewUrl = listingUrl({ channelType: c.channelType, countryIso: c.countryIso, asin: c.asin, externalListingId: c.externalListingId });
             return (
-              <div key={c.integrationId} className="card overflow-hidden p-0" style={c.loss ? { borderColor: '#F0B3A2' } : undefined}>
+              /* A column of full height: the cards in a row are already stretched to match the
+                 tallest, and this lets the actions sit at the foot of each rather than floating
+                 wherever that card's content happened to end. */
+              <div key={c.integrationId} className="card flex h-full flex-col overflow-hidden p-0" style={c.loss ? { borderColor: '#F0B3A2' } : undefined}>
                 <div className="flex items-center gap-2.5 border-b border-n-100 px-4 py-3.5">
                   <Flag code={c.countryIso} />
                   <span className="flex-1 text-[14.5px] font-bold text-n-900">{c.name}</span>
@@ -273,7 +280,7 @@ export function ChannelListingDetailPage() {
                     : <span className="rounded-full px-2.5 py-1 text-[11px] font-bold text-n-500" style={{ background: '#EEF1F0' }}>Not listed</span>}
                 </div>
                 {c.listed ? (
-                  <div className="p-4">
+                  <div className="flex flex-1 flex-col p-4">
                     {/* Quantity leads — it's the number that syncs across channels — with price beside it. */}
                     <div className="flex items-end justify-between gap-2.5">
                       <div>
@@ -307,9 +314,32 @@ export function ChannelListingDetailPage() {
                         </div>
                       ))}
                     </div>
-                    <div className="mt-3.5 flex items-center gap-2">
-                      <button className="h-[34px] flex-1 rounded-md border border-n-200 bg-n-0 text-[12.5px] font-semibold text-n-700 hover:bg-n-50" title="Coming with push sync">Edit price</button>
-                      {c.integrationId && <a className="inline-flex h-[34px] items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:bg-n-50" href="#" onClick={(e) => e.preventDefault()}><ExternalLink size={14} /> View</a>}
+                    {/* mt-auto, so this sits on the floor of the card whatever the body above it
+                        came to. "Edit price" used to live here and did nothing: it promised a price
+                        write to the channel that does not exist, and a button that never works is
+                        worse than no button. Prices are set in Pricing; the repricer is what sends
+                        them. */}
+                    <div className="mt-auto flex items-center gap-2 pt-3.5">
+                      {viewUrl
+                        ? (
+                          <a
+                            className="inline-flex h-[34px] flex-1 items-center justify-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:bg-n-50"
+                            href={viewUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={`Open this listing on ${c.name}`}
+                          >
+                            <ExternalLink size={14} /> View on {c.name}
+                          </a>
+                        )
+                        : (
+                          <span
+                            className="inline-flex h-[34px] flex-1 items-center justify-center rounded-md border border-dashed border-n-200 px-3 text-[12px] text-n-400"
+                            title="The channel has not given us an id for this listing yet, so there is nothing to open."
+                          >
+                            No public link yet
+                          </span>
+                        )}
                     </div>
                   </div>
                 ) : (
