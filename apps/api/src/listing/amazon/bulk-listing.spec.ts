@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseMarginPct, verdictFor, type BulkChannelFacts } from './bulk-listing';
+import { parseHandlingDays, parseMarginPct, verdictFor, type BulkChannelFacts } from './bulk-listing';
 
 const ok = (over: Partial<BulkChannelFacts> = {}): BulkChannelFacts => ({
   found: true,
@@ -79,6 +79,56 @@ describe('which channels a bulk listing may touch', () => {
   it('refuses a product not permitted on the marketplace, quoting the reason', () => {
     const v = verdictFor(ok({ eligible: false, eligibilityReasons: ['230V product cannot be sold in the US'] }));
     expect(v.blockers).toContain('230V product cannot be sold in the US');
+  });
+});
+
+describe('the one blocker a reader can clear on the spot', () => {
+  it('flags a channel held up only by a missing handling time', () => {
+    // The screen offers a box for exactly these. Every other blocker needs a trip somewhere else —
+    // Amazon, the brand, the product record — and a box that cannot help is worse than none.
+    const v = verdictFor(ok({ handlingTimeDays: null }));
+    expect(v.canList).toBe(false);
+    expect(v.blockedOnlyByHandlingTime).toBe(true);
+  });
+
+  it('does not flag one that has other problems too', () => {
+    // Typing a handling time here fixes nothing, and offering the box would imply otherwise.
+    const v = verdictFor(ok({ handlingTimeDays: null, asin: null }));
+    expect(v.blockedOnlyByHandlingTime).toBe(false);
+  });
+
+  it('is false for a channel that is already fine', () => {
+    expect(verdictFor(ok()).blockedOnlyByHandlingTime).toBe(false);
+  });
+});
+
+describe('days to dispatch, as someone types it', () => {
+  it('takes a normal figure', () => {
+    expect(parseHandlingDays('2')).toEqual({ ok: true, days: 2 });
+    expect(parseHandlingDays(5)).toEqual({ ok: true, days: 5 });
+  });
+
+  it('accepts zero, which means same-day dispatch', () => {
+    // Unusual enough to accept deliberately rather than treat as an empty box.
+    expect(parseHandlingDays(0)).toEqual({ ok: true, days: 0 });
+  });
+
+  it('refuses a fraction of a day', () => {
+    // Amazon's field is an integer. Silently truncating 1.5 makes a different promise from the one
+    // that was typed, and the customer is the one who finds out.
+    expect(parseHandlingDays(1.5).ok).toBe(false);
+  });
+
+  it('refuses a negative, an empty box, and nonsense', () => {
+    expect(parseHandlingDays(-1).ok).toBe(false);
+    expect(parseHandlingDays('').ok).toBe(false);
+    expect(parseHandlingDays(null).ok).toBe(false);
+    expect(parseHandlingDays('soon').ok).toBe(false);
+  });
+
+  it('refuses a figure Amazon would not accept anyway', () => {
+    expect(parseHandlingDays(31).ok).toBe(false);
+    expect(parseHandlingDays(30).ok).toBe(true);
   });
 });
 

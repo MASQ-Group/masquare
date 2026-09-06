@@ -7,7 +7,7 @@ status: outline
 covers:
   - apps/api/src/sales-transactions/sales-transactions.service.ts
   - apps/web/src/components/sales/ResolveTransactionModal.tsx
-reviewed: 2026-09-05
+reviewed: 2026-09-06
 ---
 
 # Money in a return
@@ -28,6 +28,14 @@ better it looked.
 Whether the goods actually went is answered by the **channel**, not by us. An order Amazon
 cancelled before despatch and an order nobody has got round to recording look identical in our own
 records, and only Amazon can tell them apart.
+
+### Never placed is its own thing
+
+An order cancelled while it was still *pending* never became an order at all: no payment was taken
+and nothing shipped. One cancelled after it was placed is a real order that fell over on its way out
+of the door. Sales Transactions marks the first **Npl** and the second **Cxl**, and they filter
+separately — selecting *Cancelled* deliberately excludes the never-placed ones, because counting
+both together inflates any cancellation figure by orders that never existed.
 
 ## An order still waiting to be priced is not a loss either
 

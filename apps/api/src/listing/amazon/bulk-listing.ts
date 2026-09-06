@@ -38,7 +38,19 @@ export interface BulkChannelVerdict {
   blockers: string[];
   /** Things worth knowing that do not prevent listing. */
   warnings: string[];
+  /**
+   * Nothing is wrong here except that nobody has said how long dispatch takes.
+   *
+   * Reported as its own flag rather than left for a screen to recognise by matching the sentence,
+   * because it is the one blocker the reader can clear on the spot. Everything else needs a trip
+   * somewhere else — Amazon, the brand, the product record. True ONLY when handling time is the
+   * sole blocker: supplying one where the ASIN is also missing fixes nothing, and offering a box
+   * that cannot help is worse than offering none.
+   */
+  blockedOnlyByHandlingTime: boolean;
 }
+
+const HANDLING_BLOCKER = 'No handling time set — enter days to dispatch above';
 
 export function verdictFor(f: BulkChannelFacts): BulkChannelVerdict {
   const blockers: string[] = [];
@@ -55,7 +67,7 @@ export function verdictFor(f: BulkChannelFacts): BulkChannelVerdict {
   if (!f.asin) blockers.push('No ASIN to offer on');
   if (f.priceCents == null || f.priceCents <= 0) blockers.push(f.priceReason ?? 'Could not work out a price at this margin');
   if (f.quantity == null) blockers.push('No sellable quantity recorded');
-  if (f.handlingTimeDays == null) blockers.push('No handling time set — list one channel manually first, then this can copy it');
+  if (f.handlingTimeDays == null) blockers.push(HANDLING_BLOCKER);
 
   /**
    * A brand restriction warns and does not block.
@@ -67,7 +79,32 @@ export function verdictFor(f: BulkChannelFacts): BulkChannelVerdict {
   if (f.brandRestriction) warnings.push(f.brandRestriction);
   if (f.quantity === 0) warnings.push('Zero stock — the listing will go live out of stock');
 
-  return { canList: blockers.length === 0, blockers, warnings };
+  return {
+    canList: blockers.length === 0,
+    blockers,
+    warnings,
+    blockedOnlyByHandlingTime: blockers.length === 1 && blockers[0] === HANDLING_BLOCKER,
+  };
+}
+
+/**
+ * Days to dispatch, as someone typed it.
+ *
+ * Whole days only — Amazon's lead_time_to_ship_max_days is an integer, and half a day silently
+ * truncated is a different promise from the one that was made. Zero is allowed and means same-day
+ * dispatch; it is unusual enough to be worth accepting deliberately rather than treating as empty.
+ *
+ * The ceiling is not arithmetic. Amazon rejects long handling times on most marketplaces, and a
+ * figure beyond a month is far more often a typo than a plan.
+ */
+export function parseHandlingDays(raw: unknown): { ok: true; days: number } | { ok: false; reason: string } {
+  if (raw === '' || raw == null) return { ok: false, reason: 'Enter the days to dispatch' };
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return { ok: false, reason: 'Days to dispatch must be a number' };
+  if (!Number.isInteger(n)) return { ok: false, reason: 'Days to dispatch must be a whole number of days' };
+  if (n < 0) return { ok: false, reason: 'Days to dispatch cannot be negative' };
+  if (n > 30) return { ok: false, reason: 'Amazon will not accept a handling time longer than 30 days' };
+  return { ok: true, days: n };
 }
 
 /** A margin a person typed, or a refusal. Percent, not a fraction. */
@@ -79,4 +116,16 @@ export function parseMarginPct(raw: unknown): { ok: true; marginPct: number } | 
   if (n <= 0) return { ok: false, reason: 'The profit percentage must be above zero' };
   if (n > 90) return { ok: false, reason: 'A profit percentage above 90% is almost certainly a typo' };
   return { ok: true, marginPct: Math.round(n * 10) / 10 };
+}
+
+/**
+ * Handling times a caller supplied for a bulk listing run.
+ *
+ * `applyToAll` is a convenience, not a separate rule: it fills in every channel that has no figure
+ * of its own. Most products dispatch in the same time everywhere, and making somebody type the same
+ * number eighteen times is how the eighteenth ends up different from the rest by accident.
+ */
+export interface BulkHandlingInput {
+  applyToAll?: number | string | null;
+  perChannel?: Record<string, number | string | null>;
 }

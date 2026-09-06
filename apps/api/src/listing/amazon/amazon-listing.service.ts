@@ -10,7 +10,7 @@ import { isSkuInUseRejection } from './sku-collision';
 import { ListingService } from '../listing.service';
 import { recordAvailability } from '../availability/availability-record';
 import { decimalsFor, isExpressible, priceAmountFor, roundPriceCents } from '../../common/currency-precision';
-import { parseMarginPct, verdictFor, type BulkChannelFacts } from './bulk-listing';
+import { parseHandlingDays, parseMarginPct, verdictFor, type BulkChannelFacts, type BulkHandlingInput } from './bulk-listing';
 import { restrictionFor, restrictionReason } from '../brand-restrictions';
 
 /**
@@ -1266,10 +1266,36 @@ export class AmazonListingService {
    *
    * Read-only. It quotes prices, which costs a live fee estimate per marketplace, and writes nothing.
    */
-  async listEverywherePreview(productId: string, rawMargin: unknown, companyIds?: string[]) {
+  async listEverywherePreview(
+    productId: string,
+    rawMargin: unknown,
+    companyIds?: string[],
+    handling: BulkHandlingInput = {},
+  ) {
     const margin = parseMarginPct(rawMargin);
     if (!margin.ok) throw new BadRequestException(margin.reason);
     const marginPct = margin.marginPct;
+
+    /**
+     * Handling times the caller supplied, validated once here.
+     *
+     * Checked up front rather than per channel so a single bad figure is reported as itself — "9.5
+     * is not a whole number of days" — instead of surfacing eighteen times as a channel that
+     * mysteriously will not list.
+     */
+    const perChannel = new Map<string, number>();
+    for (const [integrationId, raw] of Object.entries(handling.perChannel ?? {})) {
+      if (raw === '' || raw == null) continue;
+      const parsed = parseHandlingDays(raw);
+      if (!parsed.ok) throw new BadRequestException(`Days to dispatch: ${parsed.reason}`);
+      perChannel.set(integrationId, parsed.days);
+    }
+    let suppliedForAll: number | null = null;
+    if (handling.applyToAll !== '' && handling.applyToAll != null) {
+      const parsed = parseHandlingDays(handling.applyToAll);
+      if (!parsed.ok) throw new BadRequestException(`Days to dispatch: ${parsed.reason}`);
+      suppliedForAll = parsed.days;
+    }
 
     const product = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
@@ -1323,8 +1349,10 @@ export class AmazonListingService {
     const rows: Array<{
       integrationId: string; name: string; marketplace: string; currency: string;
       asin: string | null; priceCents: number | null; profitCents: number | null;
-      profitEurCents: number | null; handlingTimeDays: number | null; handlingTimeBorrowed: boolean;
+      profitEurCents: number | null; handlingTimeDays: number | null;
+      handlingTimeSource: 'entered' | 'all' | 'plan' | 'borrowed' | 'none';
       checkedAt: Date | null; canList: boolean; blockers: string[]; warnings: string[];
+      blockedOnlyByHandlingTime: boolean;
     }> = [];
 
     for (const integration of integrations) {
@@ -1360,6 +1388,27 @@ export class AmazonListingService {
         built = await this.buildFromPlan(productId, integration.id).catch(() => null);
       }
 
+      /**
+       * Where this channel's handling time comes from, in order of who decided it.
+       *
+       * A value typed for THIS channel wins, then one typed for all of them, then the plan this
+       * channel already has, then one copied from another marketplace's plan for this product. The
+       * order is deliberate: the most recent, most specific human decision beats an older or more
+       * general one, and a borrowed figure is the last resort rather than the first.
+       *
+       * The source travels with the number so the screen can say a figure was copied. A handling
+       * time is a promise to a customer, and one arriving from a marketplace nobody was looking at
+       * deserves to be seen before it is agreed to.
+       */
+      const resolvedHandling =
+        perChannel.get(integration.id) ?? suppliedForAll ?? plan?.handlingTimeDays ?? fallbackHandling;
+      const handlingTimeSource: 'entered' | 'all' | 'plan' | 'borrowed' | 'none' =
+        perChannel.has(integration.id) ? 'entered'
+          : suppliedForAll != null ? 'all'
+          : plan?.handlingTimeDays != null ? 'plan'
+          : fallbackHandling != null ? 'borrowed'
+          : 'none';
+
       const restriction = restrictionFor({ channelType: 'amazon', marketplace: integration.marketplace }, brandRestrictions);
       const facts: BulkChannelFacts = {
         // No stored check is NOT "found". Nobody has asked Amazon, and creating offers in bulk is
@@ -1373,7 +1422,7 @@ export class AmazonListingService {
         priceCents,
         priceReason: priceReason ?? (avail ? null : 'Availability here has not been checked yet'),
         quantity: built ? this.quantityFromBuilt(built) : null,
-        handlingTimeDays: plan?.handlingTimeDays ?? fallbackHandling,
+        handlingTimeDays: resolvedHandling,
         brandRestriction: restriction
           ? restrictionReason(product.brand?.name ?? null, { channelType: 'amazon', marketplace: integration.marketplace }, restriction)
           : null,
@@ -1388,8 +1437,8 @@ export class AmazonListingService {
         priceCents,
         profitCents,
         profitEurCents,
-        handlingTimeDays: facts.handlingTimeDays,
-        handlingTimeBorrowed: plan?.handlingTimeDays == null && fallbackHandling != null,
+        handlingTimeDays: resolvedHandling,
+        handlingTimeSource,
         checkedAt: avail?.checkedAt ?? null,
         ...verdictFor(facts),
       });
@@ -1440,6 +1489,7 @@ export class AmazonListingService {
     opts: { confirm?: boolean } = {},
     companyIds?: string[],
     ctx?: { setTotal(n: number): void; tick(ok?: boolean): void; note(m: string): void },
+    handling: BulkHandlingInput = {},
   ) {
     if (!opts.confirm) {
       throw new BadRequestException('Creating offers on several marketplaces needs an explicit confirmation.');
@@ -1448,7 +1498,9 @@ export class AmazonListingService {
       throw new BadRequestException('Choose at least one marketplace to list on');
     }
 
-    const preview = await this.listEverywherePreview(productId, rawMargin, companyIds);
+    // Re-previewed WITH the same handling times, so what is validated is what will be written. A
+    // preview taken without them would refuse every channel the caller has just supplied one for.
+    const preview = await this.listEverywherePreview(productId, rawMargin, companyIds, handling);
     const byId = new Map(preview.rows.map((r) => [r.integrationId, r]));
 
     const unknown = integrationIds.filter((id) => !byId.has(id));

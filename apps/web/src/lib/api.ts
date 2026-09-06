@@ -1644,6 +1644,11 @@ export interface AmazonListingState {
 }
 
 /** Amazon's own reference prices, each with what it would make or lose us. */
+/** Days to dispatch for a bulk run: one figure for all, and per-channel exceptions. */
+export interface BulkHandling {
+  forAll?: number | string | null;
+  byChannel?: Record<string, number | string | null>;
+}
 export interface ListEverywhereRow {
   integrationId: string;
   name: string;
@@ -1654,14 +1659,19 @@ export interface ListEverywhereRow {
   profitCents: number | null;
   profitEurCents: number | null;
   handlingTimeDays: number | null;
-  /** No handling time of its own — copied from another marketplace's plan for this product. */
-  handlingTimeBorrowed: boolean;
+  /**
+   * Who decided the handling time: typed for this channel, typed for all of them, this channel's
+   * own plan, or copied from another marketplace's plan for this product.
+   */
+  handlingTimeSource: 'entered' | 'all' | 'plan' | 'borrowed' | 'none';
   checkedAt: string | null;
   canList: boolean;
   /** Every reason it would be skipped, not just the first. */
   blockers: string[];
   /** Worth knowing, but not preventing. */
   warnings: string[];
+  /** Nothing wrong except a missing handling time — the one blocker the reader can clear here. */
+  blockedOnlyByHandlingTime: boolean;
 }
 export interface ListEverywherePreview {
   productId: string;
@@ -1722,11 +1732,16 @@ export const amazonListingApi = {
   quote: (productId: string, integrationId: string, atPricesCents?: number[]) =>
     api.post<AmazonQuote>(`/listing/amazon/products/${productId}/channels/${integrationId}/quote`, { atPricesCents }).then((r) => r.data),
   /** What listing on every eligible marketplace at one margin would do. Read-only. */
-  listEverywherePreview: (productId: string, marginPct: number) =>
-    api.post<ListEverywherePreview>(`/listing/amazon/products/${productId}/list-everywhere/preview`, { marginPct }).then((r) => r.data),
+  listEverywherePreview: (productId: string, marginPct: number, handling: BulkHandling = {}) =>
+    api.post<ListEverywherePreview>(`/listing/amazon/products/${productId}/list-everywhere/preview`, {
+      marginPct, handlingForAll: handling.forAll ?? null, handlingByChannel: handling.byChannel ?? {},
+    }).then((r) => r.data),
   /** Creates the offers. A job, because it fans out across marketplaces. */
-  listEverywhere: (productId: string, marginPct: number, integrationIds: string[]) =>
-    api.post<JobView>(`/listing/amazon/products/${productId}/list-everywhere`, { marginPct, integrationIds, confirm: true }).then((r) => r.data),
+  listEverywhere: (productId: string, marginPct: number, integrationIds: string[], handling: BulkHandling = {}) =>
+    api.post<JobView>(`/listing/amazon/products/${productId}/list-everywhere`, {
+      marginPct, integrationIds, confirm: true,
+      handlingForAll: handling.forAll ?? null, handlingByChannel: handling.byChannel ?? {},
+    }).then((r) => r.data),
   /** What the competition charges, and what each of those prices would earn us. Read-only. */
   competition: (productId: string, integrationId: string) =>
     api.get<AmazonCompetition>(`/listing/amazon/products/${productId}/channels/${integrationId}/competition`).then((r) => r.data),

@@ -109,9 +109,12 @@ export class AmazonListingController {
   listEverywherePreview(
     @Param('productId') productId: string,
     @VisibleCompanies() companyIds: string[],
-    @Body() body: { marginPct?: number } = {},
+    @Body() body: { marginPct?: number; handlingForAll?: number | string | null; handlingByChannel?: Record<string, number | string | null> } = {},
   ) {
-    return this.svc.listEverywherePreview(productId, body.marginPct, companyIds);
+    return this.svc.listEverywherePreview(productId, body.marginPct, companyIds, {
+      applyToAll: body.handlingForAll,
+      perChannel: body.handlingByChannel,
+    });
   }
 
   /**
@@ -126,13 +129,32 @@ export class AmazonListingController {
   listEverywhere(
     @Param('productId') productId: string,
     @VisibleCompanies() companyIds: string[],
-    @Body() body: { marginPct?: number; integrationIds?: string[]; confirm?: boolean } = {},
+    @Body()
+    body: {
+      marginPct?: number;
+      integrationIds?: string[];
+      confirm?: boolean;
+      handlingForAll?: number | string | null;
+      handlingByChannel?: Record<string, number | string | null>;
+    } = {},
   ) {
     const count = body.integrationIds?.length ?? 0;
     return this.jobs.start(
       'listing.amazon.listEverywhere',
       `Listing on ${count} marketplace${count === 1 ? '' : 's'}`,
-      (ctx) => this.svc.listEverywhere(productId, body.marginPct, body.integrationIds ?? [], { confirm: body.confirm }, companyIds, ctx),
+      (ctx) =>
+        this.svc.listEverywhere(
+          productId,
+          body.marginPct,
+          body.integrationIds ?? [],
+          { confirm: body.confirm },
+          companyIds,
+          ctx,
+          // The same handling times the preview was taken with, so what is written is what was
+          // shown. Sent rather than remembered server-side: nothing here is stateful between the
+          // two calls, and a remembered value is one that can go stale between them.
+          { applyToAll: body.handlingForAll, perChannel: body.handlingByChannel },
+        ),
     );
   }
 
