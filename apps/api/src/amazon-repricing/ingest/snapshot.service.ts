@@ -42,7 +42,34 @@ export class SnapshotService {
       const type = envelope.NotificationType ?? '';
       if (type === 'PricingHealth' || type === 'PRICING_HEALTH') return await this.ingestPricingHealth(envelope);
       if (type === 'FeePromotion' || type === 'FEE_PROMOTION') return await this.ingestFeePromotion(envelope);
-      // Default: ANY_OFFER_CHANGED (also covers an absent type on an AOC-shaped body).
+
+      /**
+       * ORDER_CHANGE is subscribed on purpose and used by nothing here.
+       *
+       * It exists as a positive control: it fires on ordinary daily sales, so it proves the
+       * Amazon -> SQS path is alive when the pricing notifications are quiet and we otherwise
+       * cannot tell "no events" from "events not arriving". Repricing reads none of it.
+       *
+       * It used to fall through to the ANY_OFFER_CHANGED parser, which of course found no
+       * OfferChangeTrigger and reported `ANY_OFFER_CHANGED missing MarketplaceId` at ERROR — so
+       * the heartbeat we deliberately asked for looked like a stream of broken messages, and an
+       * error log that cries wolf is one nobody reads when something real breaks.
+       */
+      if (type === 'OrderChange' || type === 'ORDER_CHANGE') {
+        return { status: 'IGNORED', reason: 'ORDER_CHANGE — delivery heartbeat, not used by repricing' };
+      }
+
+      /**
+       * Anything else is a type we do not handle, and saying so is the useful thing.
+       *
+       * Only an ABSENT type still falls through to ANY_OFFER_CHANGED, because Amazon does send
+       * AOC-shaped bodies without one. A named type we do not know is reported by name instead of
+       * being mis-parsed and blamed on AOC.
+       */
+      if (type && type !== 'AnyOfferChanged' && type !== 'ANY_OFFER_CHANGED') {
+        return { status: 'IGNORED', reason: `unhandled notification type ${type}` };
+      }
+
       return await this.ingest(parseAnyOfferChanged(envelope));
     } catch (e) {
       if (e instanceof ParseError) return { status: 'PARSE_ERROR', detail: e.message };

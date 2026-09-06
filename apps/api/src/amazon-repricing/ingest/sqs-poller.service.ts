@@ -32,6 +32,9 @@ export class SqsPollerService implements OnModuleInit, OnModuleDestroy {
   // "arriving but unusable" is indistinguishable from "nothing arriving at all".
   private received = 0;
   private discarded = 0;
+  /** Delivered and understood, but nothing repricing acts on — the ORDER_CHANGE heartbeat,
+   *  chiefly. Counted separately so it can never look like a parse failure. */
+  private ignored = 0;
   private lastMessageAt: string | null = null;
   private lastReceiveError: string | null = null;
 
@@ -65,7 +68,7 @@ export class SqsPollerService implements OnModuleInit, OnModuleDestroy {
         poller: 'running',
         env,
         // Separates "Amazon has sent nothing" from "messages arrive but we can't use them".
-        messages: { receivedSinceBoot: this.received, discardedSinceBoot: this.discarded, lastMessageAt: this.lastMessageAt, lastReceiveError: this.lastReceiveError },
+        messages: { receivedSinceBoot: this.received, discardedSinceBoot: this.discarded, ignoredSinceBoot: this.ignored, lastMessageAt: this.lastMessageAt, lastReceiveError: this.lastReceiveError },
         queue: {
           reachable: true,
           // Normally 0 on a healthy pipeline: the poller drains messages as fast as they arrive.
@@ -78,7 +81,7 @@ export class SqsPollerService implements OnModuleInit, OnModuleDestroy {
       return {
         poller: 'running',
         env,
-        messages: { receivedSinceBoot: this.received, discardedSinceBoot: this.discarded, lastMessageAt: this.lastMessageAt, lastReceiveError: this.lastReceiveError },
+        messages: { receivedSinceBoot: this.received, discardedSinceBoot: this.discarded, ignoredSinceBoot: this.ignored, lastMessageAt: this.lastMessageAt, lastReceiveError: this.lastReceiveError },
         queue: { reachable: false, error: (e as Error).message },
       };
     }
@@ -107,6 +110,7 @@ export class SqsPollerService implements OnModuleInit, OnModuleDestroy {
     const result = await this.snapshots.ingestRaw(msg.body);
     this.received += 1;
     this.lastMessageAt = new Date().toISOString();
+    if (result.status === 'IGNORED') this.ignored += 1;
     if (result.status === 'PARSE_ERROR') {
       this.discarded += 1;
       // Malformed messages must not wedge the queue — log and let it be deleted (or DLQ'd).

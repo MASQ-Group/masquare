@@ -240,7 +240,7 @@ export class RepricingController {
       ]);
 
     // Read the chain in order — the first broken link is the one to fix.
-    const received = (poller as { messages?: { receivedSinceBoot?: number; discardedSinceBoot?: number } }).messages;
+    const received = (poller as { messages?: { receivedSinceBoot?: number; discardedSinceBoot?: number; ignoredSinceBoot?: number } }).messages;
     const notifications = dedupe24h > 0 || snapshots24h > 0 || (received?.receivedSinceBoot ?? 0) > 0;
     const diagnosis =
       (poller as { poller?: string }).poller !== 'running'
@@ -251,6 +251,11 @@ export class RepricingController {
             ? 'Connected to the queue, but no notifications have arrived in 24h. Confirm a marketplace is subscribed (Notification subscriptions card); Amazon only publishes when a listing you sell actually changes.'
             : (received?.receivedSinceBoot ?? 0) > 0 && (received?.discardedSinceBoot ?? 0) >= (received?.receivedSinceBoot ?? 0)
               ? 'Messages ARE arriving but every one failed to parse and was discarded — check the API logs for "Discarding unparseable SQS message".'
+              // Everything delivered is a type repricing does not act on. The path works; Amazon
+              // simply has not sent a pricing event yet. Distinguished from a parse failure so the
+              // ORDER_CHANGE heartbeat cannot read as breakage.
+              : (received?.receivedSinceBoot ?? 0) > 0 && (received?.ignoredSinceBoot ?? 0) >= (received?.receivedSinceBoot ?? 0)
+                ? 'Only heartbeat notifications (ORDER_CHANGE) are arriving — the Amazon → queue path works, but no pricing events have been published yet.'
               : decisions === 0
                 ? 'Notifications are arriving but no decisions were logged — events are probably for ASINs that have no onboarded SKU row on that marketplace.'
                 : 'Pipeline healthy: notifications in, decisions logged.';
