@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { VatService } from './vat.service';
 import { FeeService } from './fee.service';
-import { FloorInputs, netRevenueCents, solveFloors } from './floor-solver';
+import { FloorInputs, grossToNet, netRevenueCents, solveFloors } from './floor-solver';
 import { describeCompleteness, resolveReturnsRate, type ReturnsObservation } from './returns-rate';
 import { resolveParams } from '../config/resolve-preset';
 import { eurToCents } from '../common/money';
@@ -338,8 +338,20 @@ export class FloorService {
           // Back to euro at the same rate the costs came in on. Converting the profit itself, not
           // the price, keeps the two currencies describing one calculation instead of two.
           profitEurCents: Math.round(profitCents * eurPerUnit),
-          // Margin on revenue, the same basis the floor solver targets.
-          marginPct: Math.round((profitCents / priceCents) * 1000) / 10,
+          /**
+           * Margin as a fraction of NET revenue — the basis the solver actually targets.
+           *
+           * This used to divide by the GROSS price while claiming, in a comment, to match the
+           * solver. It did not: solveMinFeasiblePrice tests
+           * `netRevenue(P) >= requiredMargin * grossToNet(P)`, so "20%" from the suggestion has
+           * always meant 20% of net.
+           *
+           * Shown side by side the two bases contradicted each other. On Amazon FR: the lowest
+           * offer at EUR 67.50 read 18.2% while the suggestion at EUR 65.52 read 20% — a lower
+           * price appearing to earn a higher margin, which cannot happen on one cost basis. Both
+           * numbers were right about different things, which is worse than one being wrong.
+           */
+          marginPct: Math.round((profitCents / grossToNet(priceCents, inputs.vatRate)) * 1000) / 10,
           aboveBreakeven: profitCents > 0,
         };
       });

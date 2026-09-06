@@ -55,6 +55,7 @@ import { settingsApi } from '../lib/api';
 import { applyFonts } from '../lib/fonts';
 import { CompanySwitcher } from './CompanySwitcher';
 import { GlobalSearch } from './GlobalSearch';
+import { RouteBoundary } from './common/RouteBoundary';
 
 interface NavDef {
   to?: string;
@@ -424,10 +425,15 @@ export function AppShell() {
         </header>
 
         <main className="flex-1 overflow-auto px-8 py-7 max-[760px]:px-4 max-[760px]:py-5">
-          {/* Suspense boundary for lazily-loaded route chunks; the shell stays put. */}
-          <Suspense fallback={<div className="grid h-full place-items-center text-[13px] text-n-500">Loading…</div>}>
-            <Outlet />
-          </Suspense>
+          {/* Suspense boundary for lazily-loaded route chunks; the shell stays put.
+              The error boundary sits OUTSIDE it: a chunk that fails to load rejects the lazy
+              import, and without something to catch that React unmounts the tree and leaves a
+              blank screen. Outside, so it also catches a page that throws while rendering. */}
+          <RouteBoundary>
+            <Suspense fallback={<div className="grid h-full place-items-center text-[13px] text-n-500">Loading…</div>}>
+              <Outlet />
+            </Suspense>
+          </RouteBoundary>
         </main>
       </div>
 

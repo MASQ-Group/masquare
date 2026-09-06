@@ -76,7 +76,7 @@ describe('access declarations', () => {
     // missing entirely — a floor cannot notice an omission above it. If this number moves, a
     // controller was added or removed and somebody should say which.
     const classes = FILES.reduce((n, f) => n + declarations(readFileSync(f, 'utf8')).length, 0);
-    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(56);
+    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(57);
   });
 
   it('declares an area or an explicit exemption on every controller', () => {
@@ -133,10 +133,14 @@ describe('access declarations', () => {
       '/access/access.controller.ts',
       // Signing in, and reading your own profile. There is no grant to check yet.
       '/auth/auth.controller.ts',
-      // The three below exempt their READ routes only — country, carrier, channel, brand, product
+      // The four below exempt their READ routes only — country, carrier, channel, brand, product
       // type, fulfilment type and compliance lists, which nearly every form needs and which say
       // nothing worth withholding. Their writes still require Global settings.
       '/global-data/global-data.controllers.ts',
+      // Brand channel restrictions: the READ is exempt because the listing flow has to raise the
+      // warning, and gating it would hide the restriction from the one screen obliged to show it.
+      // Recording a restriction is still a Global settings action.
+      '/global-settings/brand-restrictions.controller.ts',
       '/global-settings/compliance-options.ts',
       '/global-settings/simple-refs.ts',
       // Liveness probe, called by the platform rather than a person.

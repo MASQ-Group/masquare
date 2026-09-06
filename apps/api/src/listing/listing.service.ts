@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { evaluateEligibility, type MarketProfile, type ProductTechnical } from './eligibility';
 import { evaluateReadiness, checkBoost, type ListingFacts } from './readiness';
 import { fullScopeIntegrationWhere } from '../common/amazon-scope';
+import { restrictionFor, restrictionReason } from './brand-restrictions';
 
 /**
  * The channels that can carry a listing. Anything else is ignored rather than guessed at.
@@ -67,7 +68,7 @@ export class ListingService {
     });
     if (!product) throw new NotFoundException('Product not found');
 
-    const [integrations, profiles, plans, liveListings] = await Promise.all([
+    const [integrations, profiles, plans, liveListings, brandRestrictions] = await Promise.all([
       this.prisma.channelIntegration.findMany({
         // Company-scoped, like the Channel Listings page beside it. Both companies sell on most of
         // the same marketplaces through their own seller accounts, so an unscoped read returns two
@@ -99,6 +100,14 @@ export class ListingService {
           currency: true, listingStatus: true, lastPulledAt: true,
         },
       }),
+      // Channels the BRAND has told us not to sell on — a letter, not an Amazon refusal. Reported
+      // separately from Amazon's own gating because the two have different remedies.
+      product.brandId
+        ? this.prisma.brandChannelRestriction.findMany({
+            where: { brandId: product.brandId, deletedAt: null },
+            select: { channelType: true, marketplace: true, note: true },
+          })
+        : Promise.resolve([] as { channelType: string; marketplace: string; note: string | null }[]),
     ]);
 
     const profileFor = (channelType: string, marketplace: string | null): MarketProfile | null => {
@@ -151,6 +160,28 @@ export class ListingService {
         return { value: sibling.l.listedQuantity, source: 'sibling-listing', from: sibling.i?.marketplace ?? sibling.i?.name ?? null };
       }
       return { value: null, source: 'none', from: null };
+    };
+
+    /**
+     * Add the brand's own restriction to a channel's verdict.
+     *
+     * A WARNING, never a block, and `eligible` is left untouched. The person listing may know the
+     * letter was withdrawn or does not cover this line; the platform's job is to make sure nobody
+     * lists in ignorance of it, not to decide for them.
+     */
+    const withBrandRestriction = <T extends { findings: { code: any; severity: 'block' | 'warn'; reason: string }[] }>(
+      verdict: T,
+      integration: { channelType: string; marketplace: string | null },
+    ): T => {
+      const hit = restrictionFor(integration, brandRestrictions);
+      if (!hit) return verdict;
+      return {
+        ...verdict,
+        findings: [
+          ...verdict.findings,
+          { code: 'BRAND_CHANNEL' as const, severity: 'warn' as const, reason: restrictionReason(product.brand?.name ?? null, integration, hit) },
+        ],
+      };
     };
 
     const rows = integrations.map((integration) => {
@@ -207,11 +238,14 @@ export class ListingService {
             }
           : null,
         readiness: evaluateReadiness(integration.channelType, facts),
-        eligibility: profile
-          ? evaluateEligibility(technical, profile)
-          : // No profile means nothing to judge against. Reported as such rather than as a pass —
-            // an unknown market is not a cleared one.
-            { eligible: true, findings: [], unchecked: ['VOLTAGE' as const], noProfile: true },
+        eligibility: withBrandRestriction(
+          profile
+            ? evaluateEligibility(technical, profile)
+            : // No profile means nothing to judge against. Reported as such rather than as a pass —
+              // an unknown market is not a cleared one.
+              { eligible: true, findings: [], unchecked: ['VOLTAGE' as const], noProfile: true },
+          integration,
+        ),
         // Only aspects are pending; everything else the readiness check reports is real.
         aspectsPending: integration.channelType === 'ebay',
         quantity: resolveQuantity(integration, live),

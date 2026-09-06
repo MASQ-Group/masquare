@@ -290,6 +290,7 @@ export interface PlatformSettings {
   launchMarginPct: number;
   /** Whether creating real marketplace listings is permitted. Off by default. */
   listingLiveWrites: boolean;
+  channelPriceWrites: boolean;
   /** Whether the platform may CHANGE quantities / prices on the marketplaces. On by default. */
   channelQuantityPushEnabled: boolean;
   channelPricePushEnabled: boolean;
@@ -329,6 +330,25 @@ export const vendorsApi = {
       .then((r) => r.data),
 };
 export const brandsApi = crud<Brand>('/brands');
+
+/** A channel a brand has told us not to sell them on. Warns when listing; never blocks. */
+export interface BrandRestriction {
+  id: string;
+  brandId: string;
+  brand?: { id: string; name: string } | null;
+  channelType: string;
+  /** '' means every marketplace of that channel type. */
+  marketplace: string;
+  note: string | null;
+}
+
+export const brandRestrictionsApi = {
+  list: (brandId?: string) =>
+    api.get<BrandRestriction[]>('/brand-restrictions', { params: brandId ? { brandId } : {} }).then((r) => r.data),
+  create: (dto: { brandId: string; channelType: string; marketplace?: string | null; note?: string | null }) =>
+    api.post<BrandRestriction>('/brand-restrictions', dto).then((r) => r.data),
+  remove: (id: string) => api.delete(`/brand-restrictions/${id}`).then((r) => r.data),
+};
 export const productTypesApi = crud<ProductType>('/product-types');
 
 // ---- Channel listings (what's live on each marketplace) ----
@@ -1501,6 +1521,34 @@ export interface AmazonUseSkuResult {
   warning: string | null;
 }
 
+/** A profit quote for the live price and for one the operator is considering. */
+export type AmazonPriceCheck =
+  | { ok: false; reason: string; sku: string | null; currentCents: number | null }
+  | {
+      ok: true;
+      sku: string | null;
+      currency: string;
+      currentCents: number | null;
+      current: { priceCents: number; profitCents: number; profitEurCents: number; marginPct: number; aboveBreakeven: boolean } | null;
+      proposed: { priceCents: number; profitCents: number; profitEurCents: number; marginPct: number; aboveBreakeven: boolean } | null;
+      suggestedCents: number;
+      breakevenCents: number;
+      targetMarginPct: number;
+      fx: { currency: string; eurPerUnit: number };
+    };
+
+export interface AmazonPriceUpdate {
+  ok: boolean;
+  /** True when nothing was sent — the gate is off, or confirm was not given. */
+  dryRun: boolean;
+  liveWritesEnabled: boolean;
+  sku: string;
+  currency: string;
+  priceCents: number;
+  status: string;
+  message: string;
+}
+
 export interface AmazonSubmitResult {
   ok: boolean;
   sku: string;
@@ -1559,7 +1607,15 @@ export type AmazonCompetition =
     };
 
 export const amazonListingApi = {
-  status: () => api.get<{ liveWritesEnabled: boolean }>('/listing/amazon/status').then((r) => r.data),
+  status: () => api.get<{ liveWritesEnabled: boolean; priceWritesEnabled: boolean }>('/listing/amazon/status').then((r) => r.data),
+  /** What a price would earn, and what we would suggest. Read-only. */
+  priceCheck: (productId: string, integrationId: string, atPriceCents?: number | null) =>
+    api.get<AmazonPriceCheck>(`/listing/amazon/products/${productId}/channels/${integrationId}/price-check`, {
+      params: atPriceCents != null ? { atPriceCents } : {},
+    }).then((r) => r.data),
+  /** Change one listing's price. Validates only unless the price gate is on AND confirm is true. */
+  updatePrice: (productId: string, integrationId: string, priceCents: number, confirm = false) =>
+    api.post<AmazonPriceUpdate>(`/listing/amazon/products/${productId}/channels/${integrationId}/price`, { priceCents, confirm }).then((r) => r.data),
   candidates: (productId: string, integrationId: string) =>
     api.get<AmazonCandidates>(`/listing/amazon/products/${productId}/channels/${integrationId}/candidates`).then((r) => r.data),
   /** Searches every Amazon marketplace. Slow, so it returns a job to follow. */

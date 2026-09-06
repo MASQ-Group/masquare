@@ -489,6 +489,7 @@ model Brand {
   deletedAt   DateTime? @map("deleted_at")
 
   products Product[]
+  channelRestrictions BrandChannelRestriction[]
 
   @@map("brand")
 }
@@ -643,6 +644,16 @@ model PlatformSettings {
   /// Whether creating real marketplace listings is permitted. Off by default; LISTING_LIVE_WRITES
   /// can force it off regardless, and every submission is separately confirmed by a human.
   listingLiveWrites Boolean @default(false) @map("listing_live_writes")
+
+  /// Whether a person may change ONE listing's price from the platform.
+  ///
+  /// Deliberately its own switch, sharing none with the other two. The repricing engine
+  /// (AMZ_REPRICING_LIVE_WRITES) writes prices in bulk from automation; creating a listing
+  /// (listingLiveWrites) is a different act again. Turning on a human editing a single price
+  /// should not turn on either of the others, and neither should turn this on.
+  ///
+  /// Off by default, and CHANNEL_PRICE_WRITES=false forces it off whatever the toggle says.
+  channelPriceWrites Boolean @default(false) @map("channel_price_writes")
 
   /// Outbound writes to the sales channels, separately from the integrations themselves.
   ///
@@ -3099,4 +3110,36 @@ model FbaFulfilmentPoolChannel {
   @@unique([poolId, salesChannelId])
   @@index([salesChannelId])
   @@map("fba_fulfilment_pool_channel")
+}
+
+/// A channel a brand has told us not to sell them on.
+///
+/// Nothing to do with Amazon's own gating: Amazon may be perfectly happy to list the product, and
+/// the restriction still stands because the brand wrote to us. The two are separate facts about the
+/// same listing and are reported separately, because "Amazon will not let you" and "the brand asked
+/// you not to" have different answers.
+///
+/// Keyed by channel TYPE and marketplace rather than by integration: a letter from Beurer saying
+/// "not on Amazon US" applies to that marketplace whichever of our companies holds the account.
+/// An empty marketplace means the whole channel type (all of eBay, say).
+model BrandChannelRestriction {
+  id          String  @id @default(uuid()) @db.Uuid
+  brandId     String  @map("brand_id") @db.Uuid
+  /// amazon | ebay | onbuy
+  channelType String  @map("channel_type")
+  /// ISO-2 marketplace ('US', 'CA'). Empty string = every marketplace of that channel type.
+  marketplace String  @default("")
+  /// Why, and who said so — the letter reference, usually. Read by whoever hits the warning later.
+  note        String?
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([brandId, channelType, marketplace])
+  @@index([channelType, marketplace])
+  @@map("brand_channel_restriction")
 }

@@ -293,7 +293,23 @@ export class AmazonListingService {
     if (!product) throw new NotFoundException('Product not found');
     if (!integration || integration.channelType !== 'amazon') throw new BadRequestException('Not an Amazon channel');
 
-    const asin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin;
+    /**
+     * The ASIN fees are quoted against.
+     *
+     * The plan is the first source, because that is where a listing being PREPARED records its
+     * match. But a product already selling on the channel usually has no plan at all — its listing
+     * came from the sync, not from our listing flow — and its ASIN sits on the listing record.
+     * Reading only the plan meant the price of a live listing could not be quoted, which is exactly
+     * the listing whose price someone wants to change.
+     */
+    const planAsin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin;
+    const listedAsin = planAsin
+      ? null
+      : (await this.prisma.channelListing.findFirst({
+          where: { productId, integrationId, asin: { not: null } },
+          select: { asin: true },
+        }))?.asin ?? null;
+    const asin = planAsin ?? listedAsin;
     if (!asin) throw new BadRequestException('Match an Amazon listing first — fees are quoted against the ASIN');
 
     const iso = (integration.marketplace ?? '').toUpperCase();
@@ -420,6 +436,167 @@ export class AmazonListingService {
       fulfilment: fbm ? 'FBM' : null,
       /** Said plainly: without a configured FBM type the alias is created without one. */
       warning: fbm ? null : 'No FBM fulfilment type is configured, so the alias was saved without one.',
+    };
+  }
+
+  /**
+   * Refuse a channel that is not the caller's.
+   *
+   * An integration id is enough to reach a seller account, and the two companies hold separate
+   * ones. Without this, knowing an id would be enough to change a price on the other company's
+   * Amazon account - which is the rule the isolation test exists to keep.
+   */
+  private async assertOwnChannel(integrationId: string, companyIds?: string[]): Promise<void> {
+    if (!companyIds) return; // no scope supplied means an internal caller, not an unscoped request
+    const mine = await this.prisma.channelIntegration.findFirst({
+      where: { id: integrationId, deletedAt: null, targetCompanyId: { in: companyIds } },
+      select: { id: true },
+    });
+    if (!mine) throw new NotFoundException('Channel not found');
+  }
+  /**
+   * Whether ONE listing's price may be changed for real.
+   *
+   * Its own gate, sharing nothing with the other two. The repricing engine writes prices in bulk
+   * from automation; creating a listing is a different act again. Turning on a human editing a
+   * single price must not turn on either of the others, and neither must turn this on.
+   *
+   * CHANNEL_PRICE_WRITES=false forces it off whatever the toggle says, so a server can be made
+   * incapable of changing a price regardless of who is clicking.
+   */
+  async priceWritesEnabled(): Promise<boolean> {
+    if (process.env.CHANNEL_PRICE_WRITES === 'false') return false;
+    const settings = await this.prisma.platformSettings.findFirst({ select: { channelPriceWrites: true } });
+    return settings?.channelPriceWrites ?? false;
+  }
+
+  /**
+   * What a price would earn, and what we would suggest instead.
+   *
+   * Read-only, and the same engine every other profit figure comes from — a second calculation
+   * would be a second answer to the same question. Answers for the CURRENT listing price too, so
+   * a card showing a loss can say what the loss is without anyone typing anything.
+   */
+  async priceCheck(productId: string, integrationId: string, atPriceCents?: number | null, companyIds?: string[]) {
+    await this.assertListingAllowed(integrationId);
+    await this.assertOwnChannel(integrationId, companyIds);
+    const listing = await this.prisma.channelListing.findFirst({
+      where: { productId, integrationId },
+      select: { channelSku: true, listedPrice: true, currency: true },
+    });
+    const currentCents = listing?.listedPrice != null ? Math.round(listing.listedPrice * 100) : null;
+
+    // Both prices in one call: each quote costs a live Amazon fee estimate, and asking twice for
+    // the same cost basis is a wasted call and a chance for the two to disagree.
+    const prices = [atPriceCents, currentCents].filter((p): p is number => p != null && p > 0);
+    const quote = await this.quote(productId, integrationId, [...new Set(prices)]);
+
+    if (!quote.ok) return { ok: false as const, reason: quote.reason, sku: listing?.channelSku ?? null, currentCents };
+
+    const at = (p: number | null | undefined) => (p == null ? null : quote.at.find((a) => a.priceCents === p) ?? null);
+    return {
+      ok: true as const,
+      sku: listing?.channelSku ?? null,
+      currency: quote.currency,
+      currentCents,
+      /** What the price on the listing right now earns. Null when there is no listing yet. */
+      current: at(currentCents),
+      /** What the price the person typed would earn. Null until they type one. */
+      proposed: at(atPriceCents),
+      suggestedCents: quote.suggestedCents,
+      breakevenCents: quote.breakevenCents,
+      targetMarginPct: quote.marginPct,
+      fx: quote.fx,
+    };
+  }
+
+  /**
+   * Change one listing's price on the channel.
+   *
+   * Refuses rather than silently doing nothing when the gate is off: a price that appears to have
+   * been sent and was not is worse than a clear refusal, because the next person reads the card and
+   * believes the marketplace agrees with it.
+   *
+   * Every attempt is recorded in ChannelPush — sent or not, accepted or not. A price change is the
+   * kind of act somebody asks about a week later.
+   */
+  async updatePrice(
+    productId: string,
+    integrationId: string,
+    priceCents: number,
+    opts: { confirm?: boolean } = {},
+    actorId?: string,
+    companyIds?: string[],
+  ) {
+    await this.assertListingAllowed(integrationId);
+    await this.assertOwnChannel(integrationId, companyIds);
+    if (!Number.isFinite(priceCents) || priceCents <= 0) throw new BadRequestException('A price above zero is required');
+
+    const [integration, listing] = await Promise.all([
+      this.prisma.channelIntegration.findFirst({
+        where: { id: integrationId, deletedAt: null, channelType: 'amazon' },
+        select: { id: true, name: true, marketplace: true, targetCompanyId: true },
+      }),
+      this.prisma.channelListing.findFirst({
+        where: { productId, integrationId },
+        select: { channelSku: true, listedPrice: true, currency: true, marketplace: true },
+      }),
+    ]);
+    if (!integration) throw new NotFoundException('Amazon channel not found');
+    if (!listing) throw new BadRequestException('This product is not listed on that channel, so there is no price to change');
+
+    const currency = listing.currency ?? currencyForMarketplace(integration.marketplace);
+    const live = await this.priceWritesEnabled();
+    // Validation-only unless BOTH the gate is open and the caller said so. Two independent yeses,
+    // the same shape as listing creation.
+    const dryRun = !(live && opts.confirm === true);
+
+    const result = await this.integrations.patchListingsPrice(
+      integrationId,
+      listing.channelSku,
+      priceCents / 100,
+      currency,
+      // No repricing backstops here: this is a person naming one price, not automation that needs
+      // a floor and a ceiling to stay inside.
+      { minAmount: null, maxAmount: null },
+      dryRun,
+    );
+
+    await this.prisma.channelPush.create({
+      data: {
+        companyId: integration.targetCompanyId,
+        integrationId,
+        productId,
+        channelSku: listing.channelSku,
+        marketplace: listing.marketplace ?? '',
+        field: 'price',
+        requestedValue: priceCents,
+        previousValue: listing.listedPrice != null ? Math.round(listing.listedPrice * 100) : null,
+        ok: result.ok,
+        message: result.message.slice(0, 300),
+        dryRun,
+        createdById: actorId ?? null,
+      },
+    });
+
+    // Our own record follows only a real, accepted write. Amazon processes asynchronously, so this
+    // is what we ASKED for; the next sync is what confirms it.
+    if (result.ok && !dryRun) {
+      await this.prisma.channelListing.updateMany({
+        where: { productId, integrationId },
+        data: { listedPrice: priceCents / 100, lastPushedAt: new Date() },
+      });
+    }
+
+    return {
+      ok: result.ok,
+      dryRun,
+      liveWritesEnabled: live,
+      sku: listing.channelSku,
+      currency,
+      priceCents,
+      status: result.status,
+      message: result.message,
     };
   }
 
