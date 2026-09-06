@@ -98,6 +98,66 @@ export class AmazonListingController {
     return this.svc.preview(productId, integrationId);
   }
 
+  /**
+   * What "list on every eligible marketplace at N%" would do, before it does anything.
+   *
+   * Read-only, and POST because it takes a margin. Company-scoped: without it, a product could be
+   * previewed — and then listed — against the other company's seller accounts.
+   */
+  @Post('products/:productId/list-everywhere/preview')
+  @Requires('view')
+  listEverywherePreview(
+    @Param('productId') productId: string,
+    @VisibleCompanies() companyIds: string[],
+    @Body() body: { marginPct?: number; handlingForAll?: number | string | null; handlingByChannel?: Record<string, number | string | null> } = {},
+  ) {
+    return this.svc.listEverywherePreview(productId, body.marginPct, companyIds, {
+      applyToAll: body.handlingForAll,
+      perChannel: body.handlingByChannel,
+    });
+  }
+
+  /**
+   * Create the offers, on the marketplaces named and no others.
+   *
+   * A job, because it fans out across marketplaces and each one is a validate-then-write round trip.
+   * The marketplaces are sent explicitly rather than re-derived, so what is acted on is what
+   * somebody agreed to.
+   */
+  @Post('products/:productId/list-everywhere')
+  @RequireCapability('marketplace_write')
+  listEverywhere(
+    @Param('productId') productId: string,
+    @VisibleCompanies() companyIds: string[],
+    @Body()
+    body: {
+      marginPct?: number;
+      integrationIds?: string[];
+      confirm?: boolean;
+      handlingForAll?: number | string | null;
+      handlingByChannel?: Record<string, number | string | null>;
+    } = {},
+  ) {
+    const count = body.integrationIds?.length ?? 0;
+    return this.jobs.start(
+      'listing.amazon.listEverywhere',
+      `Listing on ${count} marketplace${count === 1 ? '' : 's'}`,
+      (ctx) =>
+        this.svc.listEverywhere(
+          productId,
+          body.marginPct,
+          body.integrationIds ?? [],
+          { confirm: body.confirm },
+          companyIds,
+          ctx,
+          // The same handling times the preview was taken with, so what is written is what was
+          // shown. Sent rather than remembered server-side: nothing here is stateful between the
+          // two calls, and a remembered value is one that can go stale between them.
+          { applyToAll: body.handlingForAll, perChannel: body.handlingByChannel },
+        ),
+    );
+  }
+
   /** The only call in this module that creates an offer. Gated three ways. */
   @Post('products/:productId/channels/:integrationId/submit')
   @RequireCapability('marketplace_write')

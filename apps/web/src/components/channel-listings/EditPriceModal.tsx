@@ -5,7 +5,9 @@ import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
 import { amazonListingApi } from '../../lib/api';
 import { eurAside } from '../../lib/format';
+import { isZeroDecimalCurrency, limitPriceInput } from '../../lib/currencies';
 import { useConfirm } from '../ConfirmProvider';
+import { CompetitorPrices } from '../products/CompetitorPrices';
 
 const SYMBOL: Record<string, string> = { EUR: '€', GBP: '£', USD: '$', CAD: 'CA$', AUD: 'A$', JPY: '¥', SEK: 'kr', PLN: 'zł', AED: 'AED ', SAR: 'SAR ', MXN: 'MX$', TRY: '₺', SGD: 'S$' };
 const money = (cents: number, ccy: string) =>
@@ -66,7 +68,8 @@ export function EditPriceModal({
   // Seed the box with what is live, so the modal opens on the number being questioned.
   useEffect(() => {
     if (initial.data?.ok && initial.data.currentCents != null && price === '') {
-      setPrice((initial.data.currentCents / 100).toFixed(2));
+      const ccy = initial.data.currency;
+      setPrice((initial.data.currentCents / 100).toFixed(isZeroDecimalCurrency(ccy) ? 0 : 2));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial.data]);
@@ -122,13 +125,21 @@ export function EditPriceModal({
         )}
 
         <label className="flex flex-col gap-1">
-          <span className="text-[12px] font-semibold text-n-600">New price ({currency})</span>
+          <span className="text-[12px] font-semibold text-n-600">
+            New price ({currency})
+            {/* Said where the number is entered, because that is where it can still be acted on. */}
+            {isZeroDecimalCurrency(currency) && (
+              <span className="ml-1.5 font-normal text-n-400">— {currency} has no decimals</span>
+            )}
+          </span>
           <div className="flex flex-wrap items-center gap-2">
             <input
               value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              inputMode="decimal"
-              placeholder="in this marketplace's currency"
+              // Filtered as it is typed, not checked on submit: a box that silently drops what you
+              // typed at the end is worse than one that never accepted it.
+              onChange={(e) => setPrice(limitPriceInput(e.target.value, currency))}
+              inputMode={isZeroDecimalCurrency(currency) ? 'numeric' : 'decimal'}
+              placeholder={isZeroDecimalCurrency(currency) ? 'whole numbers only' : "in this marketplace's currency"}
               className="mono h-9 w-[180px] rounded-md border border-n-200 px-2.5 text-[13px] outline-none focus:border-teal-400"
             />
             <button
@@ -142,7 +153,7 @@ export function EditPriceModal({
             {ok?.suggestedCents != null && (
               <button
                 type="button"
-                onClick={() => { setPrice((ok.suggestedCents / 100).toFixed(2)); setPricedAt(null); }}
+                onClick={() => { setPrice((ok.suggestedCents / 100).toFixed(isZeroDecimalCurrency(currency) ? 0 : 2)); setPricedAt(null); }}
                 title={`The price that earns ${ok.targetMarginPct}% — breakeven is ${money(ok.breakevenCents, currency)}`}
                 className="inline-flex h-9 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-teal-300 hover:text-teal-700"
               >
@@ -167,6 +178,13 @@ export function EditPriceModal({
           </div>
         )}
         {stale && <p className="text-[11.5px] text-n-400">Price changed since the last calculation.</p>}
+
+        {/* The same panel as the listing flow, not a second version of it.
+            A price set without knowing what everyone else charges is a guess, and the figures it
+            needs are one call away. Read-only and no Match button, deliberately: none of Amazon's
+            reference prices knows our costs, and matching one blind is how a listing sells at a
+            loss all month. */}
+        <CompetitorPrices productId={productId} integrationId={integrationId} />
 
         {/* Said before the button is pressed, not after. A price that looks sent and was not is
             worse than a refusal, because the card then disagrees with the marketplace. */}

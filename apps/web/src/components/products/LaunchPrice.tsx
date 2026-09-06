@@ -4,6 +4,7 @@ import { Ban, Calculator, TrendingUp, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { amazonListingApi, type AmazonQuote } from '../../lib/api';
 import { eurAside } from '../../lib/format';
+import { isZeroDecimalCurrency } from '../../lib/currencies';
 
 const money = (cents: number, currency: string) => {
   const symbol: Record<string, string> = { EUR: '€', GBP: '£', USD: '$', CAD: 'CA$', AUD: 'A$', JPY: '¥', SEK: 'kr', PLN: 'zł', AED: 'AED ', SAR: 'SAR ', MXN: 'MX$', TRY: '₺', INR: '₹', BRL: 'R$', ZAR: 'R', SGD: 'S$' };
@@ -70,7 +71,9 @@ export function LaunchPrice({
         <div className="flex-1" />
         <button
           type="button"
-          onClick={() => onPriceChange((q.suggestedCents / 100).toFixed(2))}
+          // Filled in at the currency's own precision. A suggested yen price with two decimals is
+          // one Amazon JP will refuse, so "Use suggested" would hand over an unusable number.
+          onClick={() => onPriceChange((q.suggestedCents / 100).toFixed(isZeroDecimalCurrency(q.currency) ? 0 : 2))}
           className="inline-flex h-7 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12px] font-semibold text-n-700 hover:border-teal-300 hover:text-teal-700"
         >
           <Wand2 size={13} /> Use suggested

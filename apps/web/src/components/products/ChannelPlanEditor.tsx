@@ -8,6 +8,7 @@ import { AmazonCandidates } from './AmazonCandidates';
 import { AmazonOfferPreview } from './AmazonOfferPreview';
 import { CompetitorPrices } from './CompetitorPrices';
 import { LaunchPrice } from './LaunchPrice';
+import { currencyForMarketplace, isZeroDecimalCurrency, limitPriceInput } from '../../lib/currencies';
 
 const CONDITIONS = [
   { value: 'NEW', label: 'New' },
@@ -94,7 +95,11 @@ export function PlanEditor({
   const [handling, setHandling] = useState(plan?.handlingTimeDays?.toString() ?? '');
   const [delivery, setDelivery] = useState(plan?.deliveryTemplate ?? '');
   const [boost, setBoost] = useState(plan?.boostPct?.toString() ?? '0');
-  const [price, setPrice] = useState(plan?.offerPriceCents != null ? (plan.offerPriceCents / 100).toFixed(2) : '');
+  // Known before anything is fetched, because whether decimals are allowed is a property of the
+  // marketplace. Amazon JP rejects a price carrying any.
+  const planCurrency = currencyForMarketplace(row.marketplace);
+  const planDecimals = isZeroDecimalCurrency(planCurrency) ? 0 : 2;
+  const [price, setPrice] = useState(plan?.offerPriceCents != null ? (plan.offerPriceCents / 100).toFixed(planDecimals) : '');
   const asin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin ?? null;
 
   const isAmazon = row.channelType === 'amazon';
@@ -242,12 +247,15 @@ export function PlanEditor({
       >
         <div className="flex flex-col gap-2">
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Launch price</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">
+              Launch price
+              {planDecimals === 0 && <span className="ml-1 normal-case tracking-normal text-n-400">({planCurrency} has no decimals)</span>}
+            </span>
             <input
               value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              inputMode="decimal"
-              placeholder="in this marketplace's currency"
+              onChange={(e) => setPrice(limitPriceInput(e.target.value, planCurrency))}
+              inputMode={planDecimals === 0 ? 'numeric' : 'decimal'}
+              placeholder={planDecimals === 0 ? `whole ${planCurrency} only` : "in this marketplace's currency"}
               className="input mono h-8 w-[160px] text-right text-[12.5px]"
             />
           </label>

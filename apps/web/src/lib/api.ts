@@ -349,6 +349,23 @@ export const brandRestrictionsApi = {
     api.post<BrandRestriction>('/brand-restrictions', dto).then((r) => r.data),
   remove: (id: string) => api.delete(`/brand-restrictions/${id}`).then((r) => r.data),
 };
+export interface AvailabilitySweepStatus {
+  enabled: boolean; batchSize: number; intervalMinutes: number; recheckDays: number;
+  lastRunAt: string | null; nextDueAt: string | null;
+  totalPairs: number; checkedPairs: number; neverChecked: number; oldestCheckedAt: string | null;
+  pairsPerDay: number;
+  /** null when the configured rate would never finish a pass. */
+  fullPassDays: number | null;
+  /** True when a full pass cannot finish inside the re-check window. */
+  behind: boolean;
+}
+export const availabilitySweepApi = {
+  status: () => api.get<AvailabilitySweepStatus>('/availability-sweep').then((r) => r.data),
+  update: (dto: { enabled?: boolean; batchSize?: number; intervalMinutes?: number; recheckDays?: number }) =>
+    api.post<AvailabilitySweepStatus>('/availability-sweep', dto).then((r) => r.data),
+  run: () => api.post<{ ran: boolean; reason?: string; checked?: number; failed?: number }>('/availability-sweep/run').then((r) => r.data),
+};
+
 export const productTypesApi = crud<ProductType>('/product-types');
 
 // ---- Channel listings (what's live on each marketplace) ----
@@ -357,8 +374,24 @@ export interface ChannelListingChannel {
   salesChannelId: string | null; countryIso: string | null;
   currency: string | null; color: string; listingCount: number; lastPulledAt: string | null;
 }
+/**
+ * A cell that is NOT a listing: what a check found about listing there.
+ *
+ * Present only where the product is not on that marketplace. The grid used to say "Not listed" and
+ * stop, which is the same three words for a marketplace we could open tomorrow and one Amazon does
+ * not stock the product in.
+ */
+export interface CellAvailability {
+  found: boolean;
+  /** null means the restrictions call failed — unknown, not permitted. */
+  restricted: boolean | null;
+  restrictionReason: string | null;
+  checkedAt: string;
+}
 export interface ChannelListingCell {
   integrationId: string; channelSku: string; asin: string | null; listed: boolean;
+  /** Set instead of the listing fields when there is no listing here. */
+  availability?: CellAvailability;
   price: number | null; currency: string | null; quantity: number | null; fulfilmentChannel: string | null; status: string;
   profitEur: number | null; marginPct: number | null; loss: boolean;
 }
@@ -373,6 +406,23 @@ export interface ChannelListingDetailChannel {
   channelType: string | null; asin: string | null; channelSku: string | null; externalListingId: string | null;
   price: number | null; priceCurrency: string | null; quantity: number | null; fulfilmentChannel: string | null; status: string | null;
   profitEur: number | null; marginPct: number | null; loss: boolean; lastPulledAt: string | null;
+  /**
+   * The last stored answer to "could we list this here", or null if nobody has asked.
+   *
+   * Null and `found: false` are different facts and must stay distinguishable: one means nobody
+   * has checked, the other means Amazon has nothing to attach an offer to.
+   */
+  availability: StoredAvailability | null;
+}
+export interface StoredAvailability {
+  found: boolean;
+  asin: string | null;
+  /** null means the restrictions call failed — unknown, not unrestricted. */
+  restricted: boolean | null;
+  restrictionReason: string | null;
+  error: string | null;
+  checkedAt: string;
+  source: 'scheduled' | 'manual';
 }
 export interface ChannelListingDetail {
   productId: string; sku: string; title: string; brand: string | null;
@@ -1458,6 +1508,15 @@ export interface AmazonSweepRow {
   restricted: boolean | null;
   restrictionReason: string | null;
   error: string | null;
+  /**
+   * Amazon was asked what the competition charges and would not say.
+   *
+   * Distinct from `competitive: null`, which also covers "not asked". Without the distinction a
+   * throttled price lookup renders as a card with no competitive read — indistinguishable from a
+   * marketplace where we simply have nothing to warn about.
+   */
+  competitionUnavailable?: boolean;
+  competitionMessage?: string | null;
   /** We already sell here. Not an opportunity, and not something to list again. */
   alreadyListed: boolean;
   listedSku: string | null;
@@ -1485,6 +1544,8 @@ export interface AmazonSweep {
     sellable: number;
     restricted: number;
     notFound: number;
+    /** Marketplaces where Amazon refused the price lookup — the number that says the run is incomplete. */
+    competitionUnavailable?: number;
     failed: number;
     competitive: number;
     uncompetitive: number;
@@ -1583,8 +1644,54 @@ export interface AmazonListingState {
 }
 
 /** Amazon's own reference prices, each with what it would make or lose us. */
+/** Days to dispatch for a bulk run: one figure for all, and per-channel exceptions. */
+export interface BulkHandling {
+  forAll?: number | string | null;
+  byChannel?: Record<string, number | string | null>;
+}
+export interface ListEverywhereRow {
+  integrationId: string;
+  name: string;
+  marketplace: string;
+  currency: string;
+  asin: string | null;
+  priceCents: number | null;
+  profitCents: number | null;
+  profitEurCents: number | null;
+  handlingTimeDays: number | null;
+  /**
+   * Who decided the handling time: typed for this channel, typed for all of them, this channel's
+   * own plan, or copied from another marketplace's plan for this product.
+   */
+  handlingTimeSource: 'entered' | 'all' | 'plan' | 'borrowed' | 'none';
+  checkedAt: string | null;
+  canList: boolean;
+  /** Every reason it would be skipped, not just the first. */
+  blockers: string[];
+  /** Worth knowing, but not preventing. */
+  warnings: string[];
+  /** Nothing wrong except a missing handling time — the one blocker the reader can clear here. */
+  blockedOnlyByHandlingTime: boolean;
+}
+export interface ListEverywherePreview {
+  productId: string;
+  sku: string;
+  title: string;
+  marginPct: number;
+  liveWritesEnabled: boolean;
+  rows: ListEverywhereRow[];
+  summary: { total: number; ready: number; blocked: number; warned: number };
+}
+export interface ListEverywhereResult {
+  productId: string;
+  marginPct: number;
+  results: Array<{ integrationId: string; name: string; ok: boolean; priceCents: number | null; message: string }>;
+  summary: { attempted: number; submitted: number; failed: number };
+}
+
 export type AmazonCompetition =
-  | { ok: false; reason: string }
+  /** `throttled` means the answer exists and Amazon would not hand it over yet — worth another go. */
+  | { ok: false; reason: string; throttled?: boolean }
   | {
       ok: true;
       currency: string;
@@ -1624,6 +1731,17 @@ export const amazonListingApi = {
   /** The launch price here, and what a given price would earn. */
   quote: (productId: string, integrationId: string, atPricesCents?: number[]) =>
     api.post<AmazonQuote>(`/listing/amazon/products/${productId}/channels/${integrationId}/quote`, { atPricesCents }).then((r) => r.data),
+  /** What listing on every eligible marketplace at one margin would do. Read-only. */
+  listEverywherePreview: (productId: string, marginPct: number, handling: BulkHandling = {}) =>
+    api.post<ListEverywherePreview>(`/listing/amazon/products/${productId}/list-everywhere/preview`, {
+      marginPct, handlingForAll: handling.forAll ?? null, handlingByChannel: handling.byChannel ?? {},
+    }).then((r) => r.data),
+  /** Creates the offers. A job, because it fans out across marketplaces. */
+  listEverywhere: (productId: string, marginPct: number, integrationIds: string[], handling: BulkHandling = {}) =>
+    api.post<JobView>(`/listing/amazon/products/${productId}/list-everywhere`, {
+      marginPct, integrationIds, confirm: true,
+      handlingForAll: handling.forAll ?? null, handlingByChannel: handling.byChannel ?? {},
+    }).then((r) => r.data),
   /** What the competition charges, and what each of those prices would earn us. Read-only. */
   competition: (productId: string, integrationId: string) =>
     api.get<AmazonCompetition>(`/listing/amazon/products/${productId}/channels/${integrationId}/competition`).then((r) => r.data),

@@ -30,7 +30,13 @@ export interface TxQuery {
   sku?: string;
   hasAlert?: boolean; // only transactions with an active alert (e.g. unresolved SKU)
   needsReturn?: boolean; // defective (cancel/refund) orders still awaiting the operator's return decision
-  resolution?: string[]; // filter by resolution state: none | cancelled | returned | replaced
+  /**
+   * Resolution state: none | cancelled | npl | returned | replaced.
+   *
+   * `npl` (never placed) is not a stored value — it is cancelled-while-still-pending, and asking
+   * for `cancelled` deliberately excludes it.
+   */
+  resolution?: string[];
   dateFrom?: string;
   dateTo?: string;
   sortBy?: 'date' | 'profit' | 'profitPct';
@@ -807,7 +813,35 @@ export class SalesTransactionsService {
     if (query.status?.length) and.push({ status: { in: query.status } });
     if (query.fulfilmentType?.length) and.push({ fulfilmentType: { in: query.fulfilmentType } });
     if (query.sku?.trim()) and.push({ items: { some: { deletedAt: null, sku: { contains: query.sku.trim(), mode: 'insensitive' } } } });
-    if (query.resolution?.length) and.push({ resolution: { in: query.resolution } });
+    /**
+     * Resolution, with never-placed pulled out of "cancelled".
+     *
+     * A cancellation that never became an order and one that did are different events that were
+     * counting as the same thing. The first took no payment and shipped nothing; the second is a
+     * real order that fell over on its way out of the door. The row badge has told them apart for a
+     * while — Npl against Cxl — but the filter could not, so anyone counting cancellations was
+     * counting both and any figure drawn from it was wrong by however many never happened.
+     *
+     * `npl` is a filter value, not a stored one: it is resolution=cancelled AND cancelStage=pending,
+     * exactly the condition the badge already uses. Selecting 'cancelled' now excludes them.
+     */
+    if (query.resolution?.length) {
+      const wanted = new Set(query.resolution);
+      const nplWanted = wanted.delete('npl');
+      const plain = [...wanted];
+
+      const clauses: Prisma.SalesTransactionWhereInput[] = [];
+      if (nplWanted) clauses.push({ resolution: 'cancelled', cancelStage: 'pending' });
+      if (plain.includes('cancelled')) {
+        clauses.push({ resolution: 'cancelled', NOT: { cancelStage: 'pending' } });
+      }
+      const others = plain.filter((r) => r !== 'cancelled');
+      if (others.length) clauses.push({ resolution: { in: others } });
+
+      // Several selected resolutions are alternatives, so they OR together. An AND would ask for a
+      // transaction that is cancelled and returned at once, which is nothing.
+      if (clauses.length) and.push(clauses.length === 1 ? clauses[0] : { OR: clauses });
+    }
     // The return-decision worklist: a refund/cancel that the operator hasn't yet acted on.
     if (query.needsReturn) and.push({ resolution: { not: 'none' }, returnHandled: false });
     if (query.dateFrom) and.push({ date: { gte: new Date(query.dateFrom) } });

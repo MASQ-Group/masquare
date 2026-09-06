@@ -7,6 +7,11 @@ import { FloorService } from '../../amazon-repricing/floor/floor.service';
 import { fullScopeIntegrationWhere, isOrdersOnlyCompany } from '../../common/amazon-scope';
 import { suggestSku } from './sku-suggestion';
 import { isSkuInUseRejection } from './sku-collision';
+import { ListingService } from '../listing.service';
+import { recordAvailability } from '../availability/availability-record';
+import { decimalsFor, isExpressible, priceAmountFor, roundPriceCents } from '../../common/currency-precision';
+import { parseHandlingDays, parseMarginPct, verdictFor, type BulkChannelFacts, type BulkHandlingInput } from './bulk-listing';
+import { restrictionFor, restrictionReason } from '../brand-restrictions';
 
 /**
  * Creating an offer on an existing Amazon listing.
@@ -24,6 +29,10 @@ export class AmazonListingService {
     private readonly prisma: PrismaService,
     private readonly integrations: IntegrationsService,
     private readonly floors: FloorService,
+    // The one writer of channel plans. Bulk listing sets a price and a handling time before
+    // submitting, and doing that with a raw upsert here would skip the validation and the readiness
+    // recompute every other path goes through.
+    private readonly listing: ListingService,
   ) {}
 
   /**
@@ -156,7 +165,7 @@ export class AmazonListingService {
         ...(opts.companyIds ? { targetCompanyId: { in: opts.companyIds } } : {}),
         ...(await fullScopeIntegrationWhere(this.prisma)),
       },
-      select: { id: true, name: true, marketplace: true },
+      select: { id: true, name: true, marketplace: true, targetCompanyId: true },
       orderBy: { marketplace: 'asc' },
     });
     ctx?.setTotal(integrations.length);
@@ -182,6 +191,12 @@ export class AmazonListingService {
       lowestPriceCents: number | null;
       /** True when we could win the Buy Box at a profit. The question worth asking before listing. */
       competitive: boolean | null;
+      /**
+       * Amazon was asked and would not say. Distinct from competitive: null, which also covers
+       * "not asked" — a card cannot warn about a silence it cannot see.
+       */
+      competitionUnavailable: boolean;
+      competitionMessage: string | null;
     }> = [];
 
     for (const integration of integrations) {
@@ -213,6 +228,8 @@ export class AmazonListingService {
                 currency: currencyForMarketplace(integration.marketplace),
                 featuredPriceCents: null, featuredProfitCents: null, featuredMarginPct: null,
                 lowestPriceCents: null, competitive: null,
+                // Not asked, which is not the same as asked-and-refused.
+                competitionUnavailable: false, competitionMessage: null,
               }),
         });
         ctx?.tick(true);
@@ -227,10 +244,21 @@ export class AmazonListingService {
           currency: currencyForMarketplace(integration.marketplace),
           featuredPriceCents: null, featuredProfitCents: null, featuredMarginPct: null,
           lowestPriceCents: null, competitive: null,
+          competitionUnavailable: false, competitionMessage: null,
         });
         ctx?.tick(false);
       }
     }
+
+    // The same answers the background sweep stores, stored by the same function.
+    //
+    // Someone pressing the button is asking Amazon the question the schedule asks; leaving the reply
+    // only in this response would mean the page forgets it on reload AND the scheduler re-asks it
+    // tomorrow, spending the call twice for one fact. Best-effort: a failure to file the answer must
+    // not lose the answer the caller is waiting for.
+    await this.storeSweep(productId, integrations, results).catch((e) =>
+      this.logger.warn(`Could not store availability from the manual sweep: ${(e as Error)?.message ?? e}`),
+    );
 
     return {
       productId,
@@ -247,9 +275,53 @@ export class AmazonListingService {
         competitive: results.filter((r) => r.competitive === true).length,
         uncompetitive: results.filter((r) => r.competitive === false).length,
         notFound: results.filter((r) => !r.found && !r.alreadyListed && !r.error).length,
+        /**
+         * Marketplaces where the competition could not be read.
+         *
+         * Counted separately because it is the one number that says the sweep is incomplete. Left
+         * out, a throttled run looks like a finished one that simply found less.
+         */
+        competitionUnavailable: results.filter((r) => r.competitionUnavailable).length,
         failed: results.filter((r) => r.error && !r.found && !r.alreadyListed).length,
       },
     };
+  }
+
+  /**
+   * File what a manual sweep learnt, so it counts as a check.
+   *
+   * Marketplaces we are already listed on are skipped: the sweep does not ask Amazon about those —
+   * `alreadyListed` is read from our own listings table — so there is no reply to store, and writing
+   * a fabricated "not found" for them would be worse than writing nothing.
+   */
+  private async storeSweep(
+    productId: string,
+    integrations: Array<{ id: string; marketplace: string | null; targetCompanyId: string | null }>,
+    results: Array<{
+      integrationId: string; found: boolean; asin: string | null; productType: string | null;
+      title: string | null; restricted: boolean | null; restrictionReason: string | null;
+      error: string | null; alreadyListed: boolean;
+    }>,
+  ): Promise<void> {
+    for (const r of results) {
+      if (r.alreadyListed) continue;
+      const integration = integrations.find((i) => i.id === r.integrationId);
+      if (!integration?.targetCompanyId) continue;
+      await recordAvailability(
+        this.prisma,
+        {
+          productId,
+          integrationId: r.integrationId,
+          companyId: integration.targetCompanyId,
+          marketplace: integration.marketplace ?? '',
+        },
+        {
+          found: r.found, asin: r.asin, productType: r.productType, title: r.title,
+          restricted: r.restricted, restrictionReason: r.restrictionReason, error: r.error,
+        },
+        'manual',
+      );
+    }
   }
 
   /**
@@ -279,7 +351,7 @@ export class AmazonListingService {
     }
   }
 
-  async quote(productId: string, integrationId: string, atPricesCents?: number[]) {
+  async quote(productId: string, integrationId: string, atPricesCents?: number[], marginOverride?: number) {
     await this.assertListingAllowed(integrationId);
     const [product, integration, plan, settings] = await Promise.all([
       this.prisma.product.findFirst({ where: { id: productId, deletedAt: null }, select: { id: true } }),
@@ -316,7 +388,16 @@ export class AmazonListingService {
     const marketplaceId = MARKETPLACE_IDS[iso];
     if (!marketplaceId) throw new BadRequestException(`Unknown marketplace ${iso}`);
 
-    const marginPct = Number(settings?.launchMarginPct ?? 20) / 100;
+    /**
+     * The platform's launch margin, unless the caller named one.
+     *
+     * The override exists for "list everywhere at N%", where the whole point is one margin chosen
+     * for this run rather than the standing default. Passed as a fraction, and only used when it is
+     * a real positive number so a stray 0 or NaN cannot quietly price a listing at breakeven.
+     */
+    const marginPct = marginOverride != null && Number.isFinite(marginOverride) && marginOverride > 0
+      ? marginOverride
+      : Number(settings?.launchMarginPct ?? 20) / 100;
 
     return this.floors.quoteForNewListing({
       productId,
@@ -546,6 +627,24 @@ export class AmazonListingService {
     if (!listing) throw new BadRequestException('This product is not listed on that channel, so there is no price to change');
 
     const currency = listing.currency ?? currencyForMarketplace(integration.marketplace);
+
+    /**
+     * Refuse a price this currency cannot express, rather than quietly altering it.
+     *
+     * Amazon JP takes whole yen only. Rounding somebody's 5687.57 to 5688 behind their back means
+     * the price they confirmed and the price on the marketplace are different numbers, and the
+     * difference surfaces later as an inexplicable penny. The screen prevents typing it; this
+     * refuses it if it arrives anyway, and says what the currency allows.
+     */
+    if (!isExpressible(priceCents, currency)) {
+      const places = decimalsFor(currency);
+      throw new BadRequestException(
+        places === 0
+          ? `${currency} prices are whole numbers — ${currency} ${(priceCents / 100).toFixed(2)} has decimals this marketplace will reject. Try ${currency} ${priceAmountFor(priceCents, currency)}.`
+          : `${currency} prices may have at most ${places} decimal places`,
+      );
+    }
+
     const live = await this.priceWritesEnabled();
     // Validation-only unless BOTH the gate is open and the caller said so. Two independent yeses,
     // the same shape as listing creation.
@@ -554,7 +653,7 @@ export class AmazonListingService {
     const result = await this.integrations.patchListingsPrice(
       integrationId,
       listing.channelSku,
-      priceCents / 100,
+      priceAmountFor(priceCents, currency),
       currency,
       // No repricing backstops here: this is a person naming one price, not automation that needs
       // a floor and a ceiling to stay inside.
@@ -610,12 +709,27 @@ export class AmazonListingService {
    */
   private async priceAgainstCompetition(productId: string, integrationId: string, iso: string, asin: string) {
     const currency = currencyForMarketplace(iso);
-    const none = { currency, featuredPriceCents: null, featuredProfitCents: null, featuredProfitEurCents: null, featuredMarginPct: null, lowestPriceCents: null, competitive: null };
+    /**
+     * `competitionUnavailable` is the whole point of this shape.
+     *
+     * Every "no read" used to collapse into competitive: null, which the card rendered as nothing
+     * at all — visually identical to a marketplace with no competition worth mentioning. So a
+     * throttled price lookup produced a card that looked like an opportunity, and the disagreement
+     * only surfaced later inside the listing flow, where the featured offer turned out to be 40%
+     * below our suggestion. A missing answer has to look missing.
+     */
+    const none = {
+      currency, featuredPriceCents: null, featuredProfitCents: null, featuredProfitEurCents: null,
+      featuredMarginPct: null, lowestPriceCents: null, competitive: null,
+      competitionUnavailable: false, competitionMessage: null as string | null,
+    };
     const marketplaceId = MARKETPLACE_IDS[iso.toUpperCase()];
     if (!marketplaceId) return none;
 
     const offers = await this.integrations.getAmazonItemOffers(integrationId, asin);
-    if (!offers.ok) return none;
+    if (!offers.ok) {
+      return { ...none, competitionUnavailable: true, competitionMessage: offers.message ?? 'Amazon would not return offers' };
+    }
     const summary = (offers.summary ?? {}) as { BuyBoxPrices?: RawPriceLike[]; LowestPrices?: RawPriceLike[] };
 
     const landed = (p?: RawPriceLike) => {
@@ -624,7 +738,12 @@ export class AmazonListingService {
     };
     const featured = landed(summary.BuyBoxPrices?.[0]);
     const lowest = landed(summary.LowestPrices?.[0]);
-    if (featured == null) return { ...none, lowestPriceCents: lowest };
+    if (featured == null) {
+      // Amazon answered and there is no featured offer. A real finding — nobody currently holds the
+      // Buy Box — and deliberately NOT flagged as unavailable, which would cry wolf on every
+      // uncontested listing.
+      return { ...none, lowestPriceCents: lowest };
+    }
 
     const settings = await this.prisma.platformSettings.findFirst({ select: { launchMarginPct: true } });
     const quote = await this.floors.quoteForNewListing({
@@ -637,7 +756,16 @@ export class AmazonListingService {
       marginPct: Number(settings?.launchMarginPct ?? 20) / 100,
       atPricesCents: [featured],
     });
-    if (!quote.ok || !quote.at[0]) return { ...none, featuredPriceCents: featured, lowestPriceCents: lowest };
+    if (!quote.ok || !quote.at[0]) {
+      // We know what they charge but not what it would earn us, so "competitive" is unanswerable.
+      // Reported as unavailable rather than shown as a bare price a reader would judge for
+      // themselves without our costs.
+      return {
+        ...none, featuredPriceCents: featured, lowestPriceCents: lowest,
+        competitionUnavailable: true,
+        competitionMessage: quote.ok ? 'Could not price this against the competition' : quote.reason,
+      };
+    }
 
     return {
       currency,
@@ -647,6 +775,8 @@ export class AmazonListingService {
       featuredMarginPct: quote.at[0].marginPct,
       lowestPriceCents: lowest,
       competitive: quote.at[0].aboveBreakeven,
+      competitionUnavailable: false,
+      competitionMessage: null,
     };
   }
 
@@ -674,8 +804,22 @@ export class AmazonListingService {
     if (!product) throw new NotFoundException('Product not found');
     if (!integration || integration.channelType !== 'amazon') throw new BadRequestException('Not an Amazon channel');
 
-    const asin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin;
-    if (!asin) throw new BadRequestException('Match an Amazon listing first');
+    /**
+     * The plan's ASIN, or the live listing's.
+     *
+     * Same fallback as quote(), and needed for the same reason: a product already selling here has
+     * no plan — its listing came from the sync — so reading only the plan made the competition
+     * unreachable for exactly the listing whose price somebody is trying to set. "Match an Amazon
+     * listing first" is nonsense advice about a listing that is already matched and live.
+     */
+    const planAsin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin;
+    const asin = planAsin
+      ?? (await this.prisma.channelListing.findFirst({
+        where: { productId, integrationId, asin: { not: null } },
+        select: { asin: true },
+      }))?.asin
+      ?? null;
+    if (!asin) throw new BadRequestException('No Amazon listing or matched ASIN for this product here yet');
 
     const iso = (integration.marketplace ?? '').toUpperCase();
     const marketplaceId = MARKETPLACE_IDS[iso];
@@ -684,7 +828,13 @@ export class AmazonListingService {
 
     const offers = await this.integrations.getAmazonItemOffers(integrationId, asin);
     if (!offers.ok) {
-      return { ok: false as const, reason: offers.message ?? 'Amazon would not return offers for this listing' };
+      // `throttled` separates "wait and it will work" from "this will never work", so the screen can
+      // offer a retry for the first and stop pretending for the second.
+      return {
+        ok: false as const,
+        throttled: offers.throttled === true,
+        reason: offers.message ?? 'Amazon would not return offers for this listing',
+      };
     }
 
     const summary = (offers.summary ?? {}) as {
@@ -1099,6 +1249,322 @@ export class AmazonListingService {
       quantitySource,
       ...verdict,
       liveWritesEnabled: await this.liveWritesEnabled(),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Listing on every eligible marketplace at one margin
+  // ---------------------------------------------------------------------------
+
+  /**
+   * What "list everywhere at N%" would actually do, before it does anything.
+   *
+   * The preview IS the feature. One press of the button that follows creates real, customer-visible
+   * offers on up to eighteen marketplaces in several currencies, and there is no undo worth the
+   * name: taking a listing down is a separate act on each one. So every channel is shown with the
+   * price it would launch at, what that price earns, and - where it would be skipped - exactly why.
+   *
+   * Read-only. It quotes prices, which costs a live fee estimate per marketplace, and writes nothing.
+   */
+  async listEverywherePreview(
+    productId: string,
+    rawMargin: unknown,
+    companyIds?: string[],
+    handling: BulkHandlingInput = {},
+  ) {
+    const margin = parseMarginPct(rawMargin);
+    if (!margin.ok) throw new BadRequestException(margin.reason);
+    const marginPct = margin.marginPct;
+
+    /**
+     * Handling times the caller supplied, validated once here.
+     *
+     * Checked up front rather than per channel so a single bad figure is reported as itself — "9.5
+     * is not a whole number of days" — instead of surfacing eighteen times as a channel that
+     * mysteriously will not list.
+     */
+    const perChannel = new Map<string, number>();
+    for (const [integrationId, raw] of Object.entries(handling.perChannel ?? {})) {
+      if (raw === '' || raw == null) continue;
+      const parsed = parseHandlingDays(raw);
+      if (!parsed.ok) throw new BadRequestException(`Days to dispatch: ${parsed.reason}`);
+      perChannel.set(integrationId, parsed.days);
+    }
+    let suppliedForAll: number | null = null;
+    if (handling.applyToAll !== '' && handling.applyToAll != null) {
+      const parsed = parseHandlingDays(handling.applyToAll);
+      if (!parsed.ok) throw new BadRequestException(`Days to dispatch: ${parsed.reason}`);
+      suppliedForAll = parsed.days;
+    }
+
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, deletedAt: null },
+      select: { id: true, mainSku: true, title: true, brandId: true, brand: { select: { name: true } } },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+
+    const integrations = await this.prisma.channelIntegration.findMany({
+      where: {
+        deletedAt: null,
+        channelType: 'amazon',
+        ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
+        ...(await fullScopeIntegrationWhere(this.prisma)),
+      },
+      select: { id: true, name: true, marketplace: true },
+      orderBy: { marketplace: 'asc' },
+    });
+    const ids = integrations.map((i) => i.id);
+
+    const [listings, availability, plans, brandRestrictions] = await Promise.all([
+      this.prisma.channelListing.findMany({
+        where: { productId, integrationId: { in: ids } },
+        select: { integrationId: true, asin: true },
+      }),
+      this.prisma.productChannelAvailability.findMany({
+        where: { productId, integrationId: { in: ids } },
+        select: { integrationId: true, found: true, restricted: true, asin: true, checkedAt: true },
+      }),
+      this.prisma.productChannelPlan.findMany({
+        where: { productId, deletedAt: null, integrationId: { in: ids } },
+        select: { integrationId: true, handlingTimeDays: true, aspects: true },
+      }),
+      product.brandId
+        ? this.prisma.brandChannelRestriction.findMany({
+            where: { brandId: product.brandId, deletedAt: null },
+            select: { channelType: true, marketplace: true, note: true },
+          })
+        : Promise.resolve([] as Array<{ channelType: string; marketplace: string; note: string | null }>),
+    ]);
+
+    /**
+     * A handling time borrowed from any Amazon plan for this product.
+     *
+     * Amazon requires one and there is no honest default to invent - "2 days" chosen by us is a
+     * promise made to a customer on our behalf. Copying the figure already in use on another
+     * marketplace is a different thing: somebody decided it, for this product. Where none exists
+     * anywhere, the channel is blocked and says so rather than being quietly given a number.
+     */
+    const fallbackHandling = plans.map((p) => p.handlingTimeDays).find((h) => h != null) ?? null;
+
+    const rows: Array<{
+      integrationId: string; name: string; marketplace: string; currency: string;
+      asin: string | null; priceCents: number | null; profitCents: number | null;
+      profitEurCents: number | null; handlingTimeDays: number | null;
+      handlingTimeSource: 'entered' | 'all' | 'plan' | 'borrowed' | 'none';
+      checkedAt: Date | null; canList: boolean; blockers: string[]; warnings: string[];
+      blockedOnlyByHandlingTime: boolean;
+    }> = [];
+
+    for (const integration of integrations) {
+      const listing = listings.find((l) => l.integrationId === integration.id) ?? null;
+      const avail = availability.find((a) => a.integrationId === integration.id) ?? null;
+      const plan = plans.find((pl) => pl.integrationId === integration.id) ?? null;
+      const planAsin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin ?? null;
+      const asin = planAsin ?? listing?.asin ?? avail?.asin ?? null;
+      const currency = currencyForMarketplace(integration.marketplace);
+
+      // Worth pricing only where an offer is actually on the table: a quote costs a live fee
+      // estimate per marketplace, and there is nothing to price for one we already sell on.
+      const worthPricing = !!asin && !listing && avail?.found === true && avail?.restricted === false;
+      let priceCents: number | null = null;
+      let priceReason: string | null = null;
+      let profitCents: number | null = null;
+      let profitEurCents: number | null = null;
+      let built: Awaited<ReturnType<AmazonListingService['buildFromPlan']>> | null = null;
+
+      if (worthPricing) {
+        const quote = await this.quote(productId, integration.id, [], marginPct / 100).catch((e) => ({
+          ok: false as const,
+          reason: (e as Error)?.message ?? 'Could not price this marketplace',
+        }));
+        if (quote.ok) {
+          priceCents = quote.suggestedCents;
+          const at = await this.quote(productId, integration.id, [quote.suggestedCents], marginPct / 100).catch(() => null);
+          profitCents = at && at.ok ? at.at[0]?.profitCents ?? null : null;
+          profitEurCents = at && at.ok ? at.at[0]?.profitEurCents ?? null : null;
+        } else {
+          priceReason = quote.reason;
+        }
+        built = await this.buildFromPlan(productId, integration.id).catch(() => null);
+      }
+
+      /**
+       * Where this channel's handling time comes from, in order of who decided it.
+       *
+       * A value typed for THIS channel wins, then one typed for all of them, then the plan this
+       * channel already has, then one copied from another marketplace's plan for this product. The
+       * order is deliberate: the most recent, most specific human decision beats an older or more
+       * general one, and a borrowed figure is the last resort rather than the first.
+       *
+       * The source travels with the number so the screen can say a figure was copied. A handling
+       * time is a promise to a customer, and one arriving from a marketplace nobody was looking at
+       * deserves to be seen before it is agreed to.
+       */
+      const resolvedHandling =
+        perChannel.get(integration.id) ?? suppliedForAll ?? plan?.handlingTimeDays ?? fallbackHandling;
+      const handlingTimeSource: 'entered' | 'all' | 'plan' | 'borrowed' | 'none' =
+        perChannel.has(integration.id) ? 'entered'
+          : suppliedForAll != null ? 'all'
+          : plan?.handlingTimeDays != null ? 'plan'
+          : fallbackHandling != null ? 'borrowed'
+          : 'none';
+
+      const restriction = restrictionFor({ channelType: 'amazon', marketplace: integration.marketplace }, brandRestrictions);
+      const facts: BulkChannelFacts = {
+        // No stored check is NOT "found". Nobody has asked Amazon, and creating offers in bulk is
+        // the last place to assume the answer would have been yes.
+        found: avail?.found ?? false,
+        restricted: avail ? avail.restricted : null,
+        alreadyListed: !!listing,
+        eligible: built ? built.eligible : true,
+        eligibilityReasons: built?.eligibilityReasons ?? [],
+        asin,
+        priceCents,
+        priceReason: priceReason ?? (avail ? null : 'Availability here has not been checked yet'),
+        quantity: built ? this.quantityFromBuilt(built) : null,
+        handlingTimeDays: resolvedHandling,
+        brandRestriction: restriction
+          ? restrictionReason(product.brand?.name ?? null, { channelType: 'amazon', marketplace: integration.marketplace }, restriction)
+          : null,
+      };
+
+      rows.push({
+        integrationId: integration.id,
+        name: integration.name,
+        marketplace: integration.marketplace ?? '',
+        currency,
+        asin,
+        priceCents,
+        profitCents,
+        profitEurCents,
+        handlingTimeDays: resolvedHandling,
+        handlingTimeSource,
+        checkedAt: avail?.checkedAt ?? null,
+        ...verdictFor(facts),
+      });
+    }
+
+    return {
+      productId,
+      sku: product.mainSku,
+      title: product.title,
+      marginPct,
+      liveWritesEnabled: await this.liveWritesEnabled(),
+      rows,
+      summary: {
+        total: rows.length,
+        ready: rows.filter((r) => r.canList).length,
+        blocked: rows.filter((r) => !r.canList).length,
+        warned: rows.filter((r) => r.canList && r.warnings.length > 0).length,
+      },
+    };
+  }
+
+  /** Sellable units the built plan resolved. Zero is a real answer; only absence is missing. */
+  private quantityFromBuilt(built: { attributes: Record<string, unknown> }): number | null {
+    const fulfilment = (built.attributes as Record<string, any>)?.fulfillment_availability?.[0];
+    const q = fulfilment?.quantity;
+    return typeof q === 'number' ? q : null;
+  }
+
+  /**
+   * Create the offers, on the marketplaces the caller accepted and no others.
+   *
+   * `integrationIds` is required rather than implied. Re-deriving the list here would mean the set
+   * shown on screen and the set acted on were computed at different moments from data that moves:
+   * a marketplace could become listable between reading and pressing, and nobody would have agreed
+   * to it.
+   *
+   * The preview is taken again, now, and anything it will not clear is refused outright rather than
+   * skipped. Between looking and pressing, stock runs out and Amazon gates brands, and a bulk
+   * create that silently drops a marketplace leaves someone believing they listed on it.
+   *
+   * Every gate the single-listing flow enforces is enforced again per channel, because submit() is
+   * what actually writes and checks them itself. This adds no shortcut past any of them.
+   */
+  async listEverywhere(
+    productId: string,
+    rawMargin: unknown,
+    integrationIds: string[],
+    opts: { confirm?: boolean } = {},
+    companyIds?: string[],
+    ctx?: { setTotal(n: number): void; tick(ok?: boolean): void; note(m: string): void },
+    handling: BulkHandlingInput = {},
+  ) {
+    if (!opts.confirm) {
+      throw new BadRequestException('Creating offers on several marketplaces needs an explicit confirmation.');
+    }
+    if (!Array.isArray(integrationIds) || integrationIds.length === 0) {
+      throw new BadRequestException('Choose at least one marketplace to list on');
+    }
+
+    // Re-previewed WITH the same handling times, so what is validated is what will be written. A
+    // preview taken without them would refuse every channel the caller has just supplied one for.
+    const preview = await this.listEverywherePreview(productId, rawMargin, companyIds, handling);
+    const byId = new Map(preview.rows.map((r) => [r.integrationId, r]));
+
+    const unknown = integrationIds.filter((id) => !byId.has(id));
+    if (unknown.length > 0) throw new BadRequestException('One of the chosen marketplaces is not available to this account');
+
+    const chosen = integrationIds.map((id) => byId.get(id)!);
+    const refused = chosen.filter((r) => !r.canList);
+    if (refused.length > 0) {
+      throw new BadRequestException(
+        `${refused.length} of the chosen marketplaces can no longer be listed on: ${refused
+          .map((r) => `${r.name} (${r.blockers[0]})`)
+          .join('; ')}`,
+      );
+    }
+
+    ctx?.setTotal(chosen.length);
+    const results: Array<{ integrationId: string; name: string; ok: boolean; priceCents: number | null; message: string }> = [];
+    for (const row of chosen) {
+      ctx?.note(row.name);
+      try {
+        // The price is written to the plan first, so what submit() sends is the figure the preview
+        // showed rather than whatever the plan happened to hold from an earlier session.
+        await this.listing.upsertPlan(
+          productId,
+          row.integrationId,
+          {
+            ...(row.priceCents != null ? { offerPriceCents: row.priceCents } : {}),
+            ...(row.handlingTimeDays != null ? { handlingTimeDays: row.handlingTimeDays } : {}),
+          },
+          undefined,
+          companyIds,
+        );
+        const submitted = await this.submit(productId, row.integrationId, { confirm: true });
+        results.push({
+          integrationId: row.integrationId,
+          name: row.name,
+          ok: (submitted as { ok?: boolean }).ok !== false,
+          priceCents: row.priceCents,
+          message: (submitted as { message?: string }).message ?? 'Submitted',
+        });
+        ctx?.tick(true);
+      } catch (e) {
+        // One marketplace refusing must not abandon the rest, and it must be reported rather than
+        // folded into a count that reads as success.
+        results.push({
+          integrationId: row.integrationId,
+          name: row.name,
+          ok: false,
+          priceCents: row.priceCents,
+          message: (e as Error)?.message ?? 'Failed',
+        });
+        ctx?.tick(false);
+      }
+    }
+
+    return {
+      productId,
+      marginPct: preview.marginPct,
+      results,
+      summary: {
+        attempted: results.length,
+        submitted: results.filter((r) => r.ok).length,
+        failed: results.filter((r) => !r.ok).length,
+      },
     };
   }
 }

@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw, Search, RotateCw, Tag } from 'lucide-react';
-import { amazonListingApi, listingApi, salesTransactionsApi, type AmazonSweep, type ProductListingSyncResult, channelListingsApi } from '../lib/api';
+import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw, Rocket, Search, RotateCw, Tag } from 'lucide-react';
+import { amazonListingApi, listingApi, salesTransactionsApi, type AmazonSweep, type AmazonSweepRow, type ChannelListingDetailChannel, type ProductListingSyncResult, channelListingsApi } from '../lib/api';
 import { DateRangePicker, ProgressButton, type DateRangeValue } from '@masquare/ui';
 import { formatAmount } from '../lib/format';
 import { listingUrl } from '../lib/channelUrls';
@@ -13,6 +13,7 @@ import { ListOnChannelModal } from '../components/channel-listings/ListOnChannel
 import { NotListedPanel } from '../components/channel-listings/NotListedPanel';
 import { PageHeader } from '../components/common/PageHeader';
 import { EditPriceModal } from '../components/channel-listings/EditPriceModal';
+import { ListEverywhereModal } from '../components/channel-listings/ListEverywhereModal';
 
 const STATUS: Record<string, { label: string; color: string; bg: string }> = {
   live: { label: 'Live', color: '#0E7A73', bg: '#E1F3F1' },
@@ -33,9 +34,21 @@ const money = (v: number | null, ccy: string | null) => (v == null ? '—' : for
 const eur = (v: number | null) => (v == null ? '—' : formatAmount(v, 'EUR'));
 const pct = (v: number | null) => (v == null ? '—' : `${v.toFixed(1)}%`);
 
+/**
+ * The channel to name on a "View on …" button.
+ *
+ * Deliberately the channel and not the marketplace. The card header already says "Amazon AU" beside
+ * its flag, and repeating the AU on the button is what pushed the label onto a second line once
+ * "Edit price" took its share of the width. Dropping the part that is already on screen costs
+ * nothing and buys the whole label back.
+ */
+const marketplaceName = (channelType: string | null, fallback: string): string =>
+  ({ amazon: 'Amazon', ebay: 'eBay', onbuy: 'OnBuy' })[(channelType ?? '').toLowerCase()] ?? fallback;
+
 export function ChannelListingDetailPage() {
   const { productId = '' } = useParams();
   const qc = useQueryClient();
+  const [listingEverywhere, setListingEverywhere] = useState(false);
   const { data, isLoading } = useQuery({ queryKey: ['channel-listing-detail', productId], queryFn: () => channelListingsApi.detail(productId) });
 
   // Whether a channel CAN be listed on is a different question from what it currently sells, so it
@@ -72,6 +85,43 @@ export function ChannelListingDetailPage() {
   const analysis = useJobProgress(`listing.amazon.sweep.${productId}`);
   const sweepResult = analysis.result as AmazonSweep | null;
   const sweepByIntegration = new Map((sweepResult?.results ?? []).map((r) => [r.integrationId, r]));
+
+  /**
+   * The answer for one channel: this session's sweep if it ran, otherwise the stored one.
+   *
+   * The stored answer carries no competitive read — that costs two more calls per marketplace and
+   * the background sweep does not spend them — so those fields stay null and the panel simply does
+   * not show that block. What it does carry is the part that decides whether the button should be
+   * live at all: catalogue presence and brand gating.
+   */
+  const availabilityFor = (c: ChannelListingDetailChannel): AmazonSweepRow | null => {
+    if (!c.integrationId) return null;
+    const live = sweepByIntegration.get(c.integrationId);
+    if (live) return live;
+    const a = c.availability;
+    if (!a) return null;
+    return {
+      integrationId: c.integrationId,
+      name: c.name,
+      marketplace: c.countryIso ?? '',
+      found: a.found,
+      asin: a.asin,
+      productType: null,
+      title: null,
+      restricted: a.restricted,
+      restrictionReason: a.restrictionReason,
+      error: a.error,
+      alreadyListed: false,
+      listedSku: null,
+      currency: c.currency ?? 'EUR',
+      featuredPriceCents: null,
+      featuredProfitCents: null,
+      featuredProfitEurCents: null,
+      featuredMarginPct: null,
+      lowestPriceCents: null,
+      competitive: null,
+    };
+  };
 
   const [listing, setListing] = useState<{ integrationId: string; name: string } | null>(null);
   /** The channel whose price is being edited. A card showing a loss should be able to fix it. */
@@ -171,6 +221,15 @@ export function ChannelListingDetailPage() {
             >
               <Search size={15} /> Check Amazon availability
             </ProgressButton>
+            {/* Opens a preview, not the action. The button that creates the offers is inside, after
+                every marketplace has been shown with its price and its blockers. */}
+            <button
+              onClick={() => setListingEverywhere(true)}
+              className="hbtn"
+              title="Price this product for every marketplace it can be listed on at one profit percentage, then create the listings. Shows exactly what it would do first."
+            >
+              <Rocket size={15} /> List everywhere
+            </button>
             <button
               onClick={() => { qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] }); toast.success('Refreshed'); }}
               className="hbtn"
@@ -214,6 +273,13 @@ export function ChannelListingDetailPage() {
           {sweepResult.summary.restricted > 0 && (
             <span className="text-danger"><b>{sweepResult.summary.restricted}</b> need approval</span>
           )}
+          {/* The one number that says the run is incomplete. Without it a throttled sweep looks
+              like a finished one that simply found fewer opportunities. */}
+          {(sweepResult.summary.competitionUnavailable ?? 0) > 0 && (
+            <span className="text-amber-700">
+              <b>{sweepResult.summary.competitionUnavailable}</b> competition unknown
+            </span>
+          )}
           {sweepResult.summary.notFound > 0 && (
             <span className="text-n-500"><b>{sweepResult.summary.notFound}</b> not in the catalogue</span>
           )}
@@ -241,6 +307,21 @@ export function ChannelListingDetailPage() {
           onClose={() => {
             setListing(null);
             qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] });
+          }}
+        />
+      )}
+
+      {listingEverywhere && (
+        <ListEverywhereModal
+          productId={productId as string}
+          sku={data.sku}
+          onClose={() => setListingEverywhere(false)}
+          onDone={() => {
+            setListingEverywhere(false);
+            // The cards say "Not listed" until a sync finds the new offers, so the page is refreshed
+            // rather than left showing the state from before the run.
+            qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] });
+            qc.invalidateQueries({ queryKey: ['listing', 'product-channels', productId] });
           }}
         />
       )}
@@ -347,7 +428,7 @@ export function ChannelListingDetailPage() {
                           type="button"
                           onClick={() => setPricing({ integrationId: c.integrationId, name: c.name })}
                           title={`Change this product's price on ${c.name}`}
-                          className="inline-flex h-[34px] items-center justify-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-teal-300 hover:text-teal-700"
+                          className="inline-flex h-[34px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-teal-300 hover:text-teal-700"
                         >
                           <Tag size={14} /> Edit price
                         </button>
@@ -355,18 +436,18 @@ export function ChannelListingDetailPage() {
                       {viewUrl
                         ? (
                           <a
-                            className="inline-flex h-[34px] flex-1 items-center justify-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:bg-n-50"
+                            className="inline-flex h-[34px] min-w-0 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:bg-n-50"
                             href={viewUrl}
                             target="_blank"
                             rel="noreferrer"
                             title={`Open this listing on ${c.name}`}
                           >
-                            <ExternalLink size={14} /> View on {c.name}
+                            <ExternalLink size={14} /> View on {marketplaceName(c.channelType, c.name)}
                           </a>
                         )
                         : (
                           <span
-                            className="inline-flex h-[34px] flex-1 items-center justify-center rounded-md border border-dashed border-n-200 px-3 text-[12px] text-n-400"
+                            className="inline-flex h-[34px] min-w-0 flex-1 items-center justify-center whitespace-nowrap rounded-md border border-dashed border-n-200 px-3 text-[12px] text-n-400"
                             title="The channel has not given us an id for this listing yet, so there is nothing to open."
                           >
                             No public link yet
@@ -379,8 +460,12 @@ export function ChannelListingDetailPage() {
                     channelName={c.name}
                     integrationId={c.integrationId ?? null}
                     plan={c.integrationId ? planByIntegration.get(c.integrationId) ?? null : null}
-                    sweep={c.integrationId ? sweepByIntegration.get(c.integrationId) ?? null : null}
-                    analysed={!!analysis.result}
+                    sweep={availabilityFor(c)}
+                    // Per channel, not per page: a stored answer for THIS marketplace is as much an
+                    // analysis as a sweep run a moment ago, and the prompt to go and run one should
+                    // not appear on a card that already has its answer.
+                    analysed={!!analysis.result || !!c.availability}
+                    checkedAt={sweepByIntegration.get(c.integrationId ?? '') ? null : c.availability?.checkedAt ?? null}
                     onList={(integrationId) => setListing({ integrationId, name: c.name })}
                   />
                 )}

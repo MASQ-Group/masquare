@@ -53,23 +53,24 @@ model Company {
   /// this is a migration, which is the point.
   amazonScope String @default("full") @map("amazon_scope")
 
-  vatRegistrations   CompanyVatRegistration[]
-  contactPersons     CompanyContactPerson[]
-  companyModules     CompanyModule[]
-  moduleSharings     ModuleSharing[]
-  userCompanyAccess  UserCompanyAccess[]
-  productCompanies   ProductCompany[]
-  salesTransactions  SalesTransaction[]
-  purchaseOrders     PurchaseOrder[]
-  expenses           Expense[]
-  warehouses         Warehouse[]
-  fbaShipments       FbaShipment[]
-  channelListings    ChannelListing[]
-  goodsReceipts      GoodsReceipt[]
-  vendorReturns      VendorReturn[]
-  salesChannels      SalesChannel[]
-  fbaFulfilmentPools FbaFulfilmentPool[]
-  stockTransfers     StockTransfer[]
+  vatRegistrations    CompanyVatRegistration[]
+  contactPersons      CompanyContactPerson[]
+  companyModules      CompanyModule[]
+  moduleSharings      ModuleSharing[]
+  userCompanyAccess   UserCompanyAccess[]
+  productCompanies    ProductCompany[]
+  salesTransactions   SalesTransaction[]
+  purchaseOrders      PurchaseOrder[]
+  expenses            Expense[]
+  warehouses          Warehouse[]
+  fbaShipments        FbaShipment[]
+  channelListings     ChannelListing[]
+  channelAvailability ProductChannelAvailability[]
+  goodsReceipts       GoodsReceipt[]
+  vendorReturns       VendorReturn[]
+  salesChannels       SalesChannel[]
+  fbaFulfilmentPools  FbaFulfilmentPool[]
+  stockTransfers      StockTransfer[]
 
   @@map("company")
 }
@@ -177,7 +178,7 @@ model User {
   isAdmin      Boolean    @default(false) @map("is_admin")
 
   /// Starting point for this user's access. Null means they hold only their overrides.
-  roleId       String?    @map("role_id") @db.Uuid
+  roleId          String? @map("role_id") @db.Uuid
   /// Per-user deltas ON TOP of the role, shaped like a role's grants. A key present here REPLACES
   /// the role's value, which is what lets an override revoke as well as grant.
   accessOverrides Json?   @map("access_overrides")
@@ -188,10 +189,10 @@ model User {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  role          Role?              @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  role          Role?               @relation(fields: [roleId], references: [id], onDelete: SetNull)
   companyAccess UserCompanyAccess[]
   moduleAccess  UserModuleAccess[]
-  activity      Activity[]         @relation("ActivityActor")
+  activity      Activity[]          @relation("ActivityActor")
 
   @@index([roleId])
   @@map("user")
@@ -200,7 +201,6 @@ model User {
 /**
  * A named set of grants — Warehouse, Buyer, Finance — assigned to people and then adjusted per
  * person where the job differs.
- *
  * The grants are JSON against a catalogue that lives in code, because the catalogue has to be
  * versioned with the guards that read it: a permission key stored as a row can outlive the route it
  * protected, and nothing would fail. Unknown keys are dropped on read and refused on write.
@@ -488,7 +488,7 @@ model Brand {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  products Product[]
+  products            Product[]
   channelRestrictions BrandChannelRestriction[]
 
   @@map("brand")
@@ -514,7 +514,7 @@ model ProductClass {
 }
 
 model ProductType {
-  id   String @id @default(uuid()) @db.Uuid
+  id   String  @id @default(uuid()) @db.Uuid
   name String
   /// Stable handle from the catalogue taxonomy (kebab-case). Used as the filter/URL handle on
   /// the storefront and as the match key when the taxonomy is re-imported, so a re-run updates
@@ -576,16 +576,16 @@ model VatClass {
 }
 
 model ProductCategory {
-  id        String  @id @default(uuid()) @db.Uuid
-  name      String
-  parentId  String? @map("parent_id") @db.Uuid
-  sortOrder Int     @default(0) @map("sort_order")
+  id               String  @id @default(uuid()) @db.Uuid
+  name             String
+  parentId         String? @map("parent_id") @db.Uuid
+  sortOrder        Int     @default(0) @map("sort_order")
   /// The leaf segment of the URL ("ovens"). Unique only within a parent, like the name.
-  slug      String?
+  slug             String?
   /// The full path from the root ("home-appliances/large-kitchen-appliances/ovens"). This is the
   /// taxonomy's stable identity: names get edited and rows get moved, so re-importing matches on
   /// this rather than on name + parent.
-  path      String? @unique
+  path             String? @unique
   /// False hides a branch from the customer-facing menu without deleting it — the Services & Fees
   /// branch holds shipping charges, repairs and internal placeholder SKUs, which are real products
   /// but must never appear in the storefront navigation.
@@ -675,6 +675,33 @@ model PlatformSettings {
 
   /// Margin a new listing launches at, as a percentage. Separate from the repricing floor margin
   /// on purpose: listing at the floor only makes sense once the repricer is live to raise it.
+  /// Whether the platform keeps checking, in the background, where each product COULD be listed.
+  ///
+  /// Off by default. Once on it runs continuously rather than in a nightly burst: a nightly pass
+  /// over every product on every marketplace is tens of thousands of SP-API calls in one window,
+  /// which is exactly the shape that gets an account throttled. A small batch on a steady interval
+  /// costs the same calls spread thinly, and can be stopped mid-pass without losing what it learnt.
+  availabilitySweepEnabled Boolean @default(false) @map("availability_sweep_enabled")
+
+  /// Product x marketplace pairs checked per run. Each pair is roughly two SP-API calls.
+  /// 60 every two hours is 720 a day, which clears the ~6,500 unlisted pairs in about 9 days —
+  /// inside the 30-day re-check window, so the window is a promise the rate can actually keep.
+  availabilitySweepBatchSize Int @default(60) @map("availability_sweep_batch_size")
+
+  /// Minutes between runs. With the defaults that is 480 pairs a day.
+  availabilitySweepIntervalMinutes Int @default(120) @map("availability_sweep_interval_minutes")
+
+  /// How old a stored answer may be before it is asked again.
+  ///
+  /// Catalogue presence and brand gating change on the order of months, not hours, so re-asking
+  /// daily would spend the whole budget re-confirming answers that have not moved and never reach
+  /// the pairs nobody has ever checked.
+  availabilityRecheckDays Int @default(30) @map("availability_recheck_days")
+
+  /// When the last batch started. The interval is measured from this, so it survives a restart —
+  /// an in-memory timer would run a fresh batch on every deploy, and deploys are frequent.
+  availabilitySweepLastRunAt DateTime? @map("availability_sweep_last_run_at")
+
   launchMarginPct        Decimal           @default(20) @map("launch_margin_pct") @db.Decimal(5, 2)
   id                     String            @id @default(uuid()) @db.Uuid
   measurementSystem      MeasurementSystem @default(metric) @map("measurement_system")
@@ -797,6 +824,7 @@ model Product {
   // Cost & pricing (amount + currency)
   /**
    * /**
+   * /**
    * Individual units of this product are tracked by serial number.
    * Opt-in: only products where it matters carry the receiving and dispatch burden.
    * Once on, a goods receipt must name a serial for every unit, and a sales transaction
@@ -825,18 +853,19 @@ model Product {
   // catalogue entry and show their own copy, so `title` above stays what it has always been: a name
   // for our own people, not a marketplace field.
   /**
+   * /**
    * /** eBay's title, capped at 80 characters by eBay itself. Written for search, not for us.
    */
-  ebayTitle       String?  @map("ebay_title")
+  ebayTitle        String?  @map("ebay_title")
   /// One or two sentences: what this is, for a buyer deciding in seconds. Sits above the full
   /// description on the B2B store, which most products will never have — 37 of 1,174 carry one.
-  shortDescription String? @map("short_description")
-  descriptionHtml String?  @map("description_html")
+  shortDescription String?  @map("short_description")
+  descriptionHtml  String?  @map("description_html")
   /**
    * Ordered selling points. Rendered as bullets by every channel that takes them.
    */
-  keyFeatures     String[] @map("key_features")
-  searchKeywords  String?  @map("search_keywords")
+  keyFeatures      String[] @map("key_features")
+  searchKeywords   String?  @map("search_keywords")
 
   // ---- Technical facts (drive channel eligibility) ------------------------
   // Chosen from a controlled vocabulary, never typed. A rule cannot reliably read "220-240V ~50Hz"
@@ -896,6 +925,7 @@ model Product {
   vendorImportChanges   VendorImportChange[]
   availabilityLedger    AvailabilityLedger[]
   channelListings       ChannelListing[]
+  channelAvailability   ProductChannelAvailability[]
 
   voltageRating  ComplianceOption?    @relation("ProductVoltageRating", fields: [voltageRatingId], references: [id], onDelete: SetNull)
   frequency      ComplianceOption?    @relation("ProductFrequency", fields: [frequencyId], references: [id], onDelete: SetNull)
@@ -1109,7 +1139,7 @@ model ProductChannelPlan {
   /// mint one that already exists elsewhere (error 100398), so a product already sold under its
   /// mainSku on another marketplace needs a distinct SKU here. Null means use the product's mainSku,
   /// which is the normal case and keeps one identity across marketplaces.
-  channelSku        String?   @map("channel_sku")
+  channelSku String? @map("channel_sku")
 
   /// DRAFT | READY | LISTED | ARCHIVED. A human moves it to LISTED; nothing publishes itself.
   status            String    @default("DRAFT")
@@ -1242,18 +1272,19 @@ model StockMovement {
 
   /**
    * Which individual units moved, for serial-tracked products. Empty for everything else.
-   *
    * Held here rather than only on SerialNumber because that row records where a unit is NOW —
    * repointing it to a new warehouse leaves no trace of where it came from. The movement is the
    * only place the journey survives, so a transfer or a write-off can still be explained a year
    * later. Codes rather than ids, so retiring a serial never blanks the history that mentions it.
    */
-  serials      String[] @default([])
+  serials String[] @default([])
 
   createdAt   DateTime @default(now()) @map("created_at")
   createdById String?  @map("created_by") @db.Uuid
 
-  /** Set on both legs of an internal transfer, which is what pairs them. */
+  /**
+   * Set on both legs of an internal transfer, which is what pairs them.
+   */
   transferId String? @map("transfer_id") @db.Uuid
 
   product   Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -1269,11 +1300,9 @@ model StockMovement {
 
 /**
  * An internal move of stock from one warehouse to another.
- *
  * Deliberately has no lines of its own: the two StockMovements per product ARE the lines. Making
  * them the only record means a transfer cannot claim to have moved something the balances disagree
  * with. The header exists to give the pair a reference, an author and a reason.
- *
  * Transfers land in one step — stock leaves the source and arrives at the destination in the same
  * transaction. There is no in-transit state, because a warehouse already models one: anyone needing
  * it can create an "In Transit" warehouse with include_in_inventory off and transfer through it,
@@ -1281,9 +1310,11 @@ model StockMovement {
  * maintain here.
  */
 model StockTransfer {
-  id        String @id @default(uuid()) @db.Uuid
-  /** TRF-YYYY-NNNNN, unique and short enough to quote in a message. */
-  reference String @unique
+  id        String  @id @default(uuid()) @db.Uuid
+  /**
+   * TRF-YYYY-NNNNN, unique and short enough to quote in a message.
+   */
+  reference String  @unique
   /**
    * Denormalised from the warehouses, which must both belong to it. Stock crossing between
    * companies is a sale, not a transfer, and is refused — so one column is always correct.
@@ -1746,17 +1777,14 @@ model PurchaseOrderUnlockRequest {
  */
 /**
  * Who changed what, and when.
- *
  * The per-row `createdBy`/`updatedBy` stamps answer "who touched this last" and nothing more: the
  * previous editor is overwritten on every save, and neither stamp says WHICH field moved. That is
  * the question worth answering — "someone edited this product" locates nothing, while "the
  * purchase cost went from 12.50 to 1250.00" is the mistake itself, already found.
- *
  * Deliberately generic in `entityType`/`entityId` rather than a products-only table. Products are
  * wired first because that is where the editing happens, but sales transactions, availability,
  * pricing and settings all want the same treatment, and a second table per entity would mean a
  * second UI and a second retention rule each time.
- *
  * `source` separates a person from a machine, and it is the field that makes retention workable.
  * A nightly sync writes thousands of rows; a person writes a handful. Purging both on one clock
  * forces a choice between a table that grows without bound and losing the human record that the
@@ -1767,8 +1795,8 @@ model Activity {
 
   /// What kind of thing changed — "product" today; sales transaction, availability and the rest
   /// join later without a schema change.
-  entityType String @map("entity_type")
-  entityId   String @map("entity_id") @db.Uuid
+  entityType  String  @map("entity_type")
+  entityId    String  @map("entity_id") @db.Uuid
   /// How the row identified itself at the time (a product's main SKU). Denormalised on purpose:
   /// the record has to stay readable after the thing it describes is renamed or deleted.
   entityLabel String? @map("entity_label")
@@ -2167,10 +2195,11 @@ model ChannelIntegration {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  secrets         IntegrationSecret[]
-  audits          IntegrationAudit[]
-  channelListings ChannelListing[]
-  productPlans    ProductChannelPlan[]
+  secrets             IntegrationSecret[]
+  audits              IntegrationAudit[]
+  channelListings     ChannelListing[]
+  channelAvailability ProductChannelAvailability[]
+  productPlans        ProductChannelPlan[]
 
   @@map("channel_integration")
 }
@@ -3142,4 +3171,58 @@ model BrandChannelRestriction {
   @@unique([brandId, channelType, marketplace])
   @@index([channelType, marketplace])
   @@map("brand_channel_restriction")
+}
+
+/// What Amazon said about listing this product here, the last time we asked.
+///
+/// The answer to "could we sell this on Amazon ES" costs two SP-API calls and changes on the order
+/// of months. Holding it makes the question answerable instantly on a page that would otherwise
+/// have to say nothing, and lets the asking be spread thinly over time instead of run on demand
+/// across the whole catalogue.
+///
+/// Every row is a real reply from Amazon with the date it arrived. Nothing is inferred here: a pair
+/// with no row has not been checked, which is a different statement from "cannot be listed" and is
+/// shown as such.
+model ProductChannelAvailability {
+  id            String @id @default(uuid()) @db.Uuid
+  /// The company whose seller account was asked. A marketplace answers per account, so the same
+  /// product on the same marketplace can legitimately differ between our two companies.
+  companyId     String @map("company_id") @db.Uuid
+  productId     String @map("product_id") @db.Uuid
+  integrationId String @map("integration_id") @db.Uuid
+  /// ISO-2, carried so a marketplace can be reported without joining the integration.
+  marketplace   String @default("")
+
+  /// Whether Amazon's catalogue holds an entry for our EAN/UPC at all. False means there is nothing
+  /// to attach an offer to, which no amount of approval would fix.
+  found             Boolean
+  asin              String?
+  productType       String?  @map("product_type")
+  title             String?
+  /// Amazon's own approval gating for this ASIN. Null means the restrictions call itself failed —
+  /// unknown, which must not be read as unrestricted.
+  restricted        Boolean?
+  restrictionReason String?  @map("restriction_reason")
+  /// Why the check produced no answer, in our words. Null when it worked.
+  error             String?
+
+  checkedAt DateTime @map("checked_at")
+  /// 'scheduled' or 'manual'. A manual check is someone standing at the screen wanting an answer
+  /// now; both write here so the two never disagree about what Amazon said.
+  source    String   @default("scheduled")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  product     Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  integration ChannelIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  company     Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  /// One current answer per pair. The history is not kept: what matters is what is true now, and a
+  /// row per check over 6,500 pairs would grow without anyone ever reading it.
+  @@unique([productId, integrationId])
+  /// The queue order — oldest first within a marketplace.
+  @@index([integrationId, checkedAt])
+  @@index([companyId])
+  @@map("product_channel_availability")
 }
