@@ -374,8 +374,24 @@ export interface ChannelListingChannel {
   salesChannelId: string | null; countryIso: string | null;
   currency: string | null; color: string; listingCount: number; lastPulledAt: string | null;
 }
+/**
+ * A cell that is NOT a listing: what a check found about listing there.
+ *
+ * Present only where the product is not on that marketplace. The grid used to say "Not listed" and
+ * stop, which is the same three words for a marketplace we could open tomorrow and one Amazon does
+ * not stock the product in.
+ */
+export interface CellAvailability {
+  found: boolean;
+  /** null means the restrictions call failed — unknown, not permitted. */
+  restricted: boolean | null;
+  restrictionReason: string | null;
+  checkedAt: string;
+}
 export interface ChannelListingCell {
   integrationId: string; channelSku: string; asin: string | null; listed: boolean;
+  /** Set instead of the listing fields when there is no listing here. */
+  availability?: CellAvailability;
   price: number | null; currency: string | null; quantity: number | null; fulfilmentChannel: string | null; status: string;
   profitEur: number | null; marginPct: number | null; loss: boolean;
 }
@@ -1492,6 +1508,15 @@ export interface AmazonSweepRow {
   restricted: boolean | null;
   restrictionReason: string | null;
   error: string | null;
+  /**
+   * Amazon was asked what the competition charges and would not say.
+   *
+   * Distinct from `competitive: null`, which also covers "not asked". Without the distinction a
+   * throttled price lookup renders as a card with no competitive read — indistinguishable from a
+   * marketplace where we simply have nothing to warn about.
+   */
+  competitionUnavailable?: boolean;
+  competitionMessage?: string | null;
   /** We already sell here. Not an opportunity, and not something to list again. */
   alreadyListed: boolean;
   listedSku: string | null;
@@ -1519,6 +1544,8 @@ export interface AmazonSweep {
     sellable: number;
     restricted: number;
     notFound: number;
+    /** Marketplaces where Amazon refused the price lookup — the number that says the run is incomplete. */
+    competitionUnavailable?: number;
     failed: number;
     competitive: number;
     uncompetitive: number;
@@ -1617,8 +1644,44 @@ export interface AmazonListingState {
 }
 
 /** Amazon's own reference prices, each with what it would make or lose us. */
+export interface ListEverywhereRow {
+  integrationId: string;
+  name: string;
+  marketplace: string;
+  currency: string;
+  asin: string | null;
+  priceCents: number | null;
+  profitCents: number | null;
+  profitEurCents: number | null;
+  handlingTimeDays: number | null;
+  /** No handling time of its own — copied from another marketplace's plan for this product. */
+  handlingTimeBorrowed: boolean;
+  checkedAt: string | null;
+  canList: boolean;
+  /** Every reason it would be skipped, not just the first. */
+  blockers: string[];
+  /** Worth knowing, but not preventing. */
+  warnings: string[];
+}
+export interface ListEverywherePreview {
+  productId: string;
+  sku: string;
+  title: string;
+  marginPct: number;
+  liveWritesEnabled: boolean;
+  rows: ListEverywhereRow[];
+  summary: { total: number; ready: number; blocked: number; warned: number };
+}
+export interface ListEverywhereResult {
+  productId: string;
+  marginPct: number;
+  results: Array<{ integrationId: string; name: string; ok: boolean; priceCents: number | null; message: string }>;
+  summary: { attempted: number; submitted: number; failed: number };
+}
+
 export type AmazonCompetition =
-  | { ok: false; reason: string }
+  /** `throttled` means the answer exists and Amazon would not hand it over yet — worth another go. */
+  | { ok: false; reason: string; throttled?: boolean }
   | {
       ok: true;
       currency: string;
@@ -1658,6 +1721,12 @@ export const amazonListingApi = {
   /** The launch price here, and what a given price would earn. */
   quote: (productId: string, integrationId: string, atPricesCents?: number[]) =>
     api.post<AmazonQuote>(`/listing/amazon/products/${productId}/channels/${integrationId}/quote`, { atPricesCents }).then((r) => r.data),
+  /** What listing on every eligible marketplace at one margin would do. Read-only. */
+  listEverywherePreview: (productId: string, marginPct: number) =>
+    api.post<ListEverywherePreview>(`/listing/amazon/products/${productId}/list-everywhere/preview`, { marginPct }).then((r) => r.data),
+  /** Creates the offers. A job, because it fans out across marketplaces. */
+  listEverywhere: (productId: string, marginPct: number, integrationIds: string[]) =>
+    api.post<JobView>(`/listing/amazon/products/${productId}/list-everywhere`, { marginPct, integrationIds, confirm: true }).then((r) => r.data),
   /** What the competition charges, and what each of those prices would earn us. Read-only. */
   competition: (productId: string, integrationId: string) =>
     api.get<AmazonCompetition>(`/listing/amazon/products/${productId}/channels/${integrationId}/competition`).then((r) => r.data),

@@ -14,6 +14,7 @@ import { MARKETPLACE_TO_ISO, REPRICING_DEFAULTS, toCountryIso } from '../config/
 import { assertValidSchedule, referralScheduleFor, scheduleFromChannelFee } from '../config/referral-schedule';
 import type { ReferralBracket } from './floor-solver';
 import { fullScopeIntegrationWhere } from '../../common/amazon-scope';
+import { roundPriceCents } from '../../common/currency-precision';
 
 // floor-service (spec §4.3): recompute breakeven + strategy floors per SKU × marketplace, mark
 // stale floors, exclude SKUs whose inputs are missing/unknown. It is the ONLY writer of the
@@ -358,8 +359,19 @@ export class FloorService {
 
     return {
       ok: true,
-      breakevenCents: solved.breakevenCents,
-      suggestedCents: solved.strategyFloorCents,
+      /**
+       * Rounded UP to something the currency can express.
+       *
+       * The solver works in minor units, which for yen describes prices that cannot exist: 5687.57
+       * yen is not a price, and Amazon JP refuses it outright. Suggesting a number the marketplace
+       * will reject wastes the trip, and the rejection arrives in Amazon's words about decimal
+       * places rather than as anything anyone can act on.
+       *
+       * Up rather than nearest, because both of these are floors. Rounding a breakeven down puts it
+       * below breakeven — under a yen, but a breakeven that is under by any amount is not one.
+       */
+      breakevenCents: roundPriceCents(solved.breakevenCents, ccy, 'up'),
+      suggestedCents: roundPriceCents(solved.strategyFloorCents, ccy, 'up'),
       currency: ccy,
       marginPct: Math.round(args.marginPct * 1000) / 10,
       at,
@@ -474,10 +486,15 @@ export class FloorService {
 
     // Per-SKU override, then the named preset the SKU follows, then the global default.
     const minMarginPct = resolveParams(row, (row as any).preset).minMarginPct;
-    const { breakevenCents, strategyFloorCents } = solveFloors(inputs, minMarginPct);
-    if (breakevenCents == null || strategyFloorCents == null) {
+    const solvedFloors = solveFloors(inputs, minMarginPct);
+    if (solvedFloors.breakevenCents == null || solvedFloors.strategyFloorCents == null) {
       return this.exclude(row.id, 'FLOOR_INFEASIBLE', humanControlled);
     }
+    // Stored at the currency's own precision, rounded UP. These are the floors the repricer prices
+    // against, so a yen floor carrying two decimals is both unsendable and — once rounded down at
+    // the write — no longer a floor. Up by at most 99 minor units, well under a yen.
+    const breakevenCents = roundPriceCents(solvedFloors.breakevenCents, ccy, 'up');
+    const strategyFloorCents = roundPriceCents(solvedFloors.strategyFloorCents, ccy, 'up');
 
     const now = new Date();
     const staleAfter = new Date(now.getTime() + REPRICING_DEFAULTS.floorStalenessDays * 24 * 60 * 60 * 1000);

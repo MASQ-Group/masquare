@@ -1136,6 +1136,44 @@ export class ChannelListingsService {
         cell.loss = e?.loss ?? false;
       }
     }
+
+    /**
+     * Where a product is NOT listed but could be.
+     *
+     * The grid held one word — "Not listed" — for every empty cell, whether that meant a marketplace
+     * we could open tomorrow or one Amazon does not stock the product in. We have the answer already:
+     * the availability sweep and the manual check both file it, and a page load costs nothing to
+     * read it. Leaving the cell blank threw away the entire point of collecting it.
+     *
+     * Only for the products on this page, so the query stays proportional to what is on screen
+     * rather than to the catalogue.
+     */
+    const availability = await this.prisma.productChannelAvailability.findMany({
+      where: {
+        productId: { in: rows.map((r) => r.productId) },
+        ...(query.companyIds ? { companyId: { in: query.companyIds } } : {}),
+      },
+      select: {
+        productId: true, integrationId: true, found: true, restricted: true,
+        restrictionReason: true, checkedAt: true,
+      },
+    });
+    for (const a of availability) {
+      const row = rows.find((r) => r.productId === a.productId);
+      // Never overwrite a real listing. A live cell answers the question this was asked to fill in,
+      // and an availability row can outlive the moment the product was listed.
+      if (!row || row.cells[a.integrationId]) continue;
+      row.cells[a.integrationId] = {
+        listed: false,
+        availability: {
+          found: a.found,
+          restricted: a.restricted,
+          restrictionReason: a.restrictionReason,
+          checkedAt: a.checkedAt,
+        },
+      } as any;
+    }
+
     return { items: rows, total, page, pageSize };
   }
 

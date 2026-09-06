@@ -53,7 +53,25 @@ export function CompetitorPrices({ productId, integrationId }: { productId: stri
       {c && !c.ok && (
         <div className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
           <Ban size={12} className="mt-0.5 shrink-0 text-amber-600" />
-          <span>{c.reason}</span>
+          <span>
+            {c.reason}
+            {/* Amazon's price endpoint allows half a request a second and answers a burst with a
+                refusal. The server already waits it out several times; when it still cannot get
+                through, saying so beats a bare failure that reads like the listing is at fault. */}
+            {c.throttled && (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  onClick={() => load.mutate()}
+                  disabled={load.isPending}
+                  className="font-semibold underline underline-offset-2 hover:no-underline disabled:opacity-50"
+                >
+                  Try again
+                </button>
+              </>
+            )}
+          </span>
         </div>
       )}
 

@@ -78,10 +78,34 @@ function ChannelCell({ cell, solo, fields }: { cell?: ChannelListingCell; solo?:
   const [open, setOpen] = useState<null | 'status' | 'profit'>(null);
   const show = (f: CellField) => fields.has(f);
 
-  if (!cell) {
+  /**
+   * No listing here.
+   *
+   * Two cases that must not be confused: nothing is known, or a check has an answer. The second
+   * arrives as a cell carrying `availability` and no listing fields, so it is settled BEFORE any of
+   * the listing rendering below — a cell with no status would otherwise fall through to the default
+   * and draw as a healthy live listing, which is the worst possible thing for this grid to say.
+   */
+  if (!cell || cell.listed === false) {
+    const a = cell?.availability;
+    if (!a) {
+      return (
+        <div className="chc flex flex-col justify-center gap-1 border-l border-n-100 px-3 py-3">
+          <span className="text-[12px] text-n-300">Not listed</span>
+        </div>
+      );
+    }
+    const canList = a.found && a.restricted === false;
     return (
-      <div className="chc flex flex-col justify-center gap-1 border-l border-n-100 px-3 py-3">
-        <span className="text-[12px] text-n-300">Not listed</span>
+      <div className="chc flex flex-col justify-center gap-0.5 border-l border-n-100 px-3 py-3">
+        <span className={`text-[12px] font-semibold ${canList ? 'text-teal-700' : 'text-n-400'}`}>
+          {canList ? 'Can be listed' : a.restricted ? 'Needs approval' : 'Not in catalogue'}
+        </span>
+        {/* The date is what makes it actionable. "Cannot list here" from three months ago and the
+            same words from this morning are not the same claim. */}
+        <span className="text-[11px] text-n-300" title={`Checked with Amazon ${new Date(a.checkedAt).toLocaleString()}`}>
+          checked {new Date(a.checkedAt).toLocaleDateString()}
+        </span>
       </div>
     );
   }
@@ -363,7 +387,10 @@ export function ChannelListingsPage() {
 
   // Status filter is applied client-side over the loaded page (server does search + channel).
   const matchStatus = (cell?: ChannelListingCell) => {
-    if (!cell) return false;
+    // An availability cell is not a listing, so no listing-status filter can match it. Without
+    // this, `cell.status` is undefined and "issues" would quietly include every unlisted
+    // marketplace we happen to have checked.
+    if (!cell || cell.listed === false) return false;
     if (statusFilter === 'all') return true;
     if (statusFilter === 'loss') return cell.loss;
     if (statusFilter === 'issues') return cell.loss || ['error', 'oos', 'low', 'paused'].includes(cell.status);
@@ -575,7 +602,12 @@ export function ChannelListingsPage() {
                   </div>
                   <div className="mt-3.5 grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))' }}>
                     {shownChannels.map((c) => {
-                      const cell = r.cells[c.id];
+                      // An availability row is not a listing. Narrowed to undefined here so every
+                      // branch below — badge, quantity, price, profit, the action buttons — is
+                      // unreachable for it, rather than each having to remember.
+                      const raw = r.cells[c.id];
+                      const cell = raw && raw.listed === false ? undefined : raw;
+                      const avail = raw && raw.listed === false ? raw.availability : undefined;
                       const st = cell ? STATUS[cell.status] ?? STATUS.live : null;
                       return (
                         <div key={c.id} className="rounded-xl border p-3" style={cell ? (cell.loss ? { borderColor: '#F0B3A2', background: '#FDF1EE' } : { borderColor: 'var(--n-200)' }) : { borderStyle: 'dashed', borderColor: 'var(--n-200)', background: 'var(--n-25)' }}>
@@ -614,7 +646,22 @@ export function ChannelListingsPage() {
                               </div>
                             </>
                           ) : (
-                            <div className="pt-1.5 text-[12.5px] font-semibold text-n-300">Not listed on {c.name}</div>
+                            avail ? (
+                              <div className="pt-1.5">
+                                <div className={`text-[12.5px] font-semibold ${avail.found && avail.restricted === false ? 'text-teal-700' : 'text-n-400'}`}>
+                                  {avail.found && avail.restricted === false
+                                    ? `Can be listed on ${c.name}`
+                                    : avail.restricted
+                                      ? 'Needs approval to list here'
+                                      : 'Not in Amazon’s catalogue here'}
+                                </div>
+                                <div className="mt-0.5 text-[11px] text-n-300">
+                                  checked {new Date(avail.checkedAt).toLocaleDateString()}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="pt-1.5 text-[12.5px] font-semibold text-n-300">Not listed on {c.name}</div>
+                            )
                           )}
                         </div>
                       );

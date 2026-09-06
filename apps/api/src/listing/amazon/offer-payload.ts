@@ -1,3 +1,4 @@
+import { priceAmountFor } from '../../common/currency-precision';
 // The attributes an offer-only submission carries, and the check that we have them.
 //
 // PURE: no network, no database. The submission is the one irreversible step in the whole flow, so
@@ -82,7 +83,9 @@ export function buildOfferAttributes(input: OfferInput): OfferPayload {
     attributes.purchasable_offer = [
       stamp(m, {
         currency: input.currency,
-        our_price: [{ schedule: [{ value_with_tax: round2(input.priceCents / 100) }] }],
+        // At the currency's own precision, not always two places. Amazon JP refuses a price with
+        // decimals outright, so a yen listing built with round2 could never be created at all.
+        our_price: [{ schedule: [{ value_with_tax: priceAmountFor(input.priceCents, input.currency) }] }],
       }),
     ];
   }

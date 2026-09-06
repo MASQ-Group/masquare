@@ -1,4 +1,4 @@
-import { Ban, Clock, Lock, Search, TrendingDown, TrendingUp } from 'lucide-react';
+import { AlertTriangle, Ban, Clock, Lock, Search, TrendingDown, TrendingUp } from 'lucide-react';
 import type { AmazonSweepRow, ProductChannelRow } from '../../lib/api';
 import { eurAside } from '../../lib/format';
 
@@ -93,6 +93,19 @@ export function NotListedPanel({
                 is only answerable against the others once the figure is in euro. */}
             {eurAside(sweep.featuredProfitEurCents == null ? null : Math.abs(sweep.featuredProfitEurCents), sweep.currency)
               && ` = ${sweep.competitive ? '' : '−'}${eurAside(Math.abs(sweep.featuredProfitEurCents!), sweep.currency)}`}
+          </span>
+        </div>
+      )}
+
+      {/* Amazon was asked and refused. Said plainly, because a card that shows nothing here reads as
+          "nothing to worry about" — which is how a listing gets started against a featured offer
+          40% below our suggestion, discovered only once the flow is already open. */}
+      {sweep?.competitionUnavailable && !restricted && (
+        <div className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0 text-amber-600" />
+          <span>
+            <b>Competition unknown here.</b> {sweep.competitionMessage ?? 'Amazon would not return offers.'}{' '}
+            Nobody has said this is worth listing on — only that we could not find out.
           </span>
         </div>
       )}

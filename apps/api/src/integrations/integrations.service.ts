@@ -29,6 +29,7 @@ export interface RoleProbe {
   message: string;
 }
 import type { MappedOrder } from './mappings/types';
+import { isZeroDecimal, priceAmountFor } from '../common/currency-precision';
 
 /**
  * The language Amazon returns issue messages in.
@@ -40,6 +41,15 @@ import type { MappedOrder } from './mappings/types';
 const ISSUE_LOCALE = 'en_GB';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Statuses that mean "ask again", not "this failed".
+ *
+ * 429 is the documented throttle. 503 is what the Product Pricing endpoints actually return when a
+ * burst exceeds their 0.5-per-second limit, and 500 is transient often enough to be worth one more
+ * attempt. None of the three says anything about the request being wrong.
+ */
+const RETRYABLE_STATUS = new Set([429, 500, 503]);
 const num = (v: any) => { const x = Number(String(v ?? '').trim()); return Number.isFinite(x) ? x : 0; };
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
@@ -981,13 +991,28 @@ export class IntegrationsService implements OnModuleInit {
     return { endpoint, marketplaceId, defaultCountry };
   }
 
-  /** SP-API GET with the LWA access token. Retries on 429 (rate limit) with backoff.
-   *  SP-API no longer requires AWS SigV4 signing — the access token alone authorises. */
-  private async amzFetch(url: string, token: string): Promise<Response> {
+  /**
+   * SP-API GET with the LWA access token, retrying while Amazon is refusing to answer.
+   *
+   * SP-API no longer requires AWS SigV4 signing — the access token alone authorises.
+   *
+   * 503 is retried alongside 429 because Amazon uses both for the same thing. The Product Pricing
+   * endpoints in particular answer a burst with 503 QuotaExceeded rather than 429, and treating
+   * that as a hard failure is why "check competition" had to be pressed three times before it
+   * worked: each press was one more attempt at a limit that only needed waiting out.
+   *
+   * Retry-After is honoured when Amazon sends it. Amazon knows how long its own limit has left to
+   * run; our backoff is only a guess at it.
+   */
+  private async amzFetch(url: string, token: string, opts: { attempts?: number; baseDelayMs?: number } = {}): Promise<Response> {
+    const attempts = opts.attempts ?? 3;
+    const base = opts.baseDelayMs ?? 2000;
     for (let attempt = 0; ; attempt++) {
       const res = await fetch(url, { headers: { 'x-amz-access-token': token, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
-      if (res.status !== 429 || attempt >= 3) return res;
-      await sleep(2000 * 2 ** attempt); // 2s, 4s, 8s
+      if (!RETRYABLE_STATUS.has(res.status) || attempt >= attempts) return res;
+      const retryAfter = Number(res.headers.get('Retry-After'));
+      const wait = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : base * 2 ** attempt;
+      await sleep(Math.min(wait, 20_000));
     }
   }
 
@@ -995,8 +1020,9 @@ export class IntegrationsService implements OnModuleInit {
     for (let attempt = 0; ; attempt++) {
       // DELETE carries no body — sending one makes some SP-API endpoints reject the request.
       const res = await fetch(url, { method, headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json', Accept: 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(20000) });
-      if (res.status !== 429 || attempt >= 3) return res;
-      await sleep(2000 * 2 ** attempt);
+      if (!RETRYABLE_STATUS.has(res.status) || attempt >= 3) return res;
+      const retryAfter = Number(res.headers.get('Retry-After'));
+      await sleep(Math.min(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 2000 * 2 ** attempt, 20_000));
     }
   }
 
@@ -1082,15 +1108,26 @@ export class IntegrationsService implements OnModuleInit {
     integrationId: string,
     asin: string,
     itemCondition = 'New',
-  ): Promise<{ ok: boolean; status?: number; message?: string; summary?: unknown; offerCount?: number }> {
+  ): Promise<{ ok: boolean; status?: number; message?: string; summary?: unknown; offerCount?: number; throttled?: boolean }> {
     const { meta, token } = await this.amazonCtx(integrationId);
     const params = new URLSearchParams({ MarketplaceId: meta.marketplaceId, ItemCondition: itemCondition });
     const url = `${meta.endpoint}/products/pricing/v0/items/${encodeURIComponent(asin)}/offers?${params.toString()}`;
 
-    const res = await this.amzFetch(url, token);
+    // The most throttled endpoint we call: 0.5 requests a second, burst of 1. A longer leash here
+    // than the default, because the alternative is telling a person to press the button again —
+    // which is the same wait, spent by them instead of by us, and with no guarantee they will.
+    const res = await this.amzFetch(url, token, { attempts: 5, baseDelayMs: 1500 });
     const json: any = await res.json().catch(() => null);
     if (!res.ok) {
-      return { ok: false, status: res.status, message: IntegrationsService.amzErr(json) || `getItemOffers ${res.status}` };
+      const throttled = RETRYABLE_STATUS.has(res.status);
+      return {
+        ok: false,
+        status: res.status,
+        throttled,
+        message: throttled
+          ? 'Amazon is rate-limiting price lookups right now. The figures are unavailable, not zero — try again shortly.'
+          : IntegrationsService.amzErr(json) || `getItemOffers ${res.status}`,
+      };
     }
     const payload = json?.payload ?? json;
     return {
@@ -1340,7 +1377,7 @@ export class IntegrationsService implements OnModuleInit {
     currencyCode: string,
     backstops: { minAmount?: number | null; maxAmount?: number | null },
     dryRun = true,
-  ): Promise<{ ok: boolean; status: string; message: string }> {
+  ): Promise<{ ok: boolean; status: string; message: string; sentAmount?: number }> {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
     if (!row) return { ok: false, status: 'ERROR', message: 'Integration not found' };
     if (row.channelType !== 'amazon') return { ok: false, status: 'ERROR', message: 'Not an Amazon integration' };
@@ -1358,20 +1395,37 @@ export class IntegrationsService implements OnModuleInit {
     const productType = getJson?.summaries?.[0]?.productType;
     if (!productType) return { ok: false, status: 'ERROR', message: 'Could not resolve productType' };
 
+    /**
+     * The currency's own precision, applied at the last point before Amazon sees the number.
+     *
+     * Amazon JP refuses any price carrying decimals — "has 2 decimal places but the maximum allowed
+     * is '0'" — and every price the platform can send passes through here: the repricer, a person
+     * editing one listing, a bulk push. Fixing it at each caller would leave the next caller to
+     * rediscover it, so it is done once, here, where being wrong is impossible rather than unlikely.
+     *
+     * The backstops go through the same rounding. A price Amazon accepts sitting between two
+     * backstops it rejects would fail the whole PATCH on the backstop, which reads as a price
+     * problem and is not one.
+     */
+    const fix = (amount: number) => (isZeroDecimal(currencyCode) ? priceAmountFor(Math.round(amount * 100), currencyCode) : amount);
+    const sentAmount = fix(priceAmount);
+
     const priceAttr = (amount: number) => [{ marketplace_id: meta.marketplaceId, currency: currencyCode, our_price: [{ schedule: [{ value_with_tax: amount }] }] }];
     const allowed = (amount: number) => [{ marketplace_id: meta.marketplaceId, currency: currencyCode, schedule: [{ value_with_tax: amount }] }];
     const patches: Array<{ op: string; path: string; value: unknown }> = [
-      { op: 'replace', path: '/attributes/purchasable_offer', value: priceAttr(priceAmount) },
+      { op: 'replace', path: '/attributes/purchasable_offer', value: priceAttr(sentAmount) },
     ];
-    if (backstops.minAmount != null) patches.push({ op: 'replace', path: '/attributes/minimum_seller_allowed_price', value: allowed(backstops.minAmount) });
-    if (backstops.maxAmount != null) patches.push({ op: 'replace', path: '/attributes/maximum_seller_allowed_price', value: allowed(backstops.maxAmount) });
+    if (backstops.minAmount != null) patches.push({ op: 'replace', path: '/attributes/minimum_seller_allowed_price', value: allowed(fix(backstops.minAmount)) });
+    if (backstops.maxAmount != null) patches.push({ op: 'replace', path: '/attributes/maximum_seller_allowed_price', value: allowed(fix(backstops.maxAmount)) });
 
     const url = `${meta.endpoint}/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sellerSku)}?marketplaceIds=${meta.marketplaceId}&issueLocale=${ISSUE_LOCALE}${dryRun ? '&mode=VALIDATION_PREVIEW' : ''}`;
     const res = await this.amzWrite(url, token, 'PATCH', { productType, patches });
     const json: any = await res.json().catch(() => null);
     if (!res.ok) return { ok: false, status: 'ERROR', message: `PATCH ${res.status}${IntegrationsService.amzErr(json) ? ': ' + IntegrationsService.amzErr(json) : ''}` };
-    if (json?.status === 'INVALID') return { ok: false, status: 'INVALID', message: (json?.issues?.[0]?.message ?? 'INVALID').toString().slice(0, 200) };
-    return { ok: true, status: json?.status ?? 'ACCEPTED', message: dryRun ? 'validated (VALIDATION_PREVIEW)' : (json?.status ?? 'ACCEPTED') };
+    if (json?.status === 'INVALID') return { ok: false, status: 'INVALID', message: (json?.issues?.[0]?.message ?? 'INVALID').toString().slice(0, 200), sentAmount };
+    // The amount actually sent, not the one asked for. A caller that records the request rather
+    // than the send would leave our price record disagreeing with the marketplace by up to a yen.
+    return { ok: true, status: json?.status ?? 'ACCEPTED', message: dryRun ? 'validated (VALIDATION_PREVIEW)' : (json?.status ?? 'ACCEPTED'), sentAmount };
   }
 
   /** LWA grantless token (client_credentials + scope) for grantless SP-API ops (createDestination). */

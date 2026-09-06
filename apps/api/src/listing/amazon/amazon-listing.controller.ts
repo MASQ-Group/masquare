@@ -98,6 +98,44 @@ export class AmazonListingController {
     return this.svc.preview(productId, integrationId);
   }
 
+  /**
+   * What "list on every eligible marketplace at N%" would do, before it does anything.
+   *
+   * Read-only, and POST because it takes a margin. Company-scoped: without it, a product could be
+   * previewed — and then listed — against the other company's seller accounts.
+   */
+  @Post('products/:productId/list-everywhere/preview')
+  @Requires('view')
+  listEverywherePreview(
+    @Param('productId') productId: string,
+    @VisibleCompanies() companyIds: string[],
+    @Body() body: { marginPct?: number } = {},
+  ) {
+    return this.svc.listEverywherePreview(productId, body.marginPct, companyIds);
+  }
+
+  /**
+   * Create the offers, on the marketplaces named and no others.
+   *
+   * A job, because it fans out across marketplaces and each one is a validate-then-write round trip.
+   * The marketplaces are sent explicitly rather than re-derived, so what is acted on is what
+   * somebody agreed to.
+   */
+  @Post('products/:productId/list-everywhere')
+  @RequireCapability('marketplace_write')
+  listEverywhere(
+    @Param('productId') productId: string,
+    @VisibleCompanies() companyIds: string[],
+    @Body() body: { marginPct?: number; integrationIds?: string[]; confirm?: boolean } = {},
+  ) {
+    const count = body.integrationIds?.length ?? 0;
+    return this.jobs.start(
+      'listing.amazon.listEverywhere',
+      `Listing on ${count} marketplace${count === 1 ? '' : 's'}`,
+      (ctx) => this.svc.listEverywhere(productId, body.marginPct, body.integrationIds ?? [], { confirm: body.confirm }, companyIds, ctx),
+    );
+  }
+
   /** The only call in this module that creates an offer. Gated three ways. */
   @Post('products/:productId/channels/:integrationId/submit')
   @RequireCapability('marketplace_write')

@@ -70,7 +70,19 @@ const DATE_PRESET_OPTS: { value: DatePreset; label: string }[] = [
 const STATUS_OPTS = [{ id: 'draft', name: 'Draft' }, { id: 'submitted', name: 'Submitted' }];
 const SHIPMENT_OPTS = [{ id: 'shipped', name: 'Shipped' }, { id: 'not_shipped', name: 'Not shipped' }];
 // Defective-order states, for the "Resolution" filter facet.
-const RESOLUTION_OPTS = [{ id: 'cancelled', name: 'Cancelled' }, { id: 'returned', name: 'Returned / refunded' }, { id: 'replaced', name: 'Replaced' }];
+/**
+ * Never placed is its own option, not a kind of cancellation.
+ *
+ * The badge has told Npl from Cxl for a while; the filter could not, so "Cancelled" returned both
+ * and any count taken from it included orders that never existed. Selecting Cancelled now means
+ * orders that were placed and then cancelled.
+ */
+const RESOLUTION_OPTS = [
+  { id: 'cancelled', name: 'Cancelled (placed, then cancelled)' },
+  { id: 'npl', name: 'Never placed (Npl)' },
+  { id: 'returned', name: 'Returned / refunded' },
+  { id: 'replaced', name: 'Replaced' },
+];
 const FULFILMENT_OPTS = [{ id: 'FBA', name: 'FBA' }, { id: 'FBM', name: 'FBM' }];
 const FEE_OPTS = [{ id: 'actual', name: 'Actual (posted)' }, { id: 'estimated', name: 'Estimated (~)' }];
 
