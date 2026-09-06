@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { AlertTriangle, Ban, Check, ChevronDown, ChevronRight, ClipboardCheck, Lock, RefreshCw, Rocket } from 'lucide-react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { AlertTriangle, Ban, Check, ChevronDown, ChevronRight, ClipboardCheck, Lock, RefreshCw, Rocket, Tag } from 'lucide-react';
 import { toast } from 'sonner';
 import { amazonListingApi, type AmazonListingState, type AmazonOfferPreview as Preview, type AmazonSubmitResult } from '../../lib/api';
 import { useConfirm } from '../ConfirmProvider';
@@ -13,7 +13,7 @@ import { useConfirm } from '../ConfirmProvider';
  * Creates nothing: it is the same call as a submission with `mode=VALIDATION_PREVIEW`.
  */
 export function AmazonOfferPreview({
-  productId, integrationId, asin, quantity, onListed, savePlan,
+  productId, integrationId, asin, quantity, onListed, savePlan, onUseSku,
 }: {
   productId: string;
   integrationId: string;
@@ -30,9 +30,33 @@ export function AmazonOfferPreview({
    * plainly means "validate what I am looking at", so the plan is written first.
    */
   savePlan?: () => Promise<unknown>;
+  /** Adopt a different seller SKU for this listing. Persisted on the plan by the caller. */
+  onUseSku?: (sku: string) => Promise<unknown> | void;
 }) {
   const [showPayload, setShowPayload] = useState(false);
   const [submitted, setSubmitted] = useState<AmazonSubmitResult | null>(null);
+
+  /**
+   * Is the SKU this would be created under already taken elsewhere in the account?
+   *
+   * Asked as soon as there is an ASIN to attach to, not on pressing Validate. Amazon refuses a SKU
+   * that exists on another marketplace (error 100398), and until now that refusal arrived only
+   * after someone had matched the product, set a price, set stock and dispatch, and pressed
+   * Validate — every one of those steps done for a listing that could not be created under that
+   * name. Knowing at the top costs one instant query against listings we have already pulled.
+   */
+  const skuCheck = useQuery({
+    queryKey: ['amazon-sku-check', productId, integrationId],
+    queryFn: () => amazonListingApi.skuCheck(productId, integrationId),
+    enabled: !!asin,
+  });
+  const clash = skuCheck.data && skuCheck.data.conflicts.length > 0 ? skuCheck.data : null;
+
+  const useSuggestion = useMutation({
+    mutationFn: async (sku: string) => { await onUseSku?.(sku); },
+    onSuccess: () => { toast.success('SKU updated'); skuCheck.refetch(); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not set the SKU'),
+  });
 
   /**
    * What Amazon actually thinks of the listing now.
@@ -113,6 +137,47 @@ export function AmazonOfferPreview({
       {!asin && (
         <p className="mt-1.5 text-[11.5px] text-n-400">
           Match an Amazon listing above first — validation needs the ASIN the offer would attach to.
+        </p>
+      )}
+
+      {/* Before the effort, not after it. Amazon treats a seller SKU as one identity across the
+          whole account, so a name in use anywhere else is refused here. */}
+      {clash && (
+        <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
+          <div className="flex items-start gap-1.5">
+            <Tag size={13} className="mt-0.5 shrink-0 text-amber-600" />
+            <span>
+              <b>SKU {clash.sku} is already in use</b> on{' '}
+              {clash.conflicts.map((c) => c.marketplace || c.name).join(', ')}. Amazon treats a seller SKU as one
+              listing across the whole account, so it will refuse to create it here under that name.
+            </span>
+          </div>
+          {clash.suggestion && (
+            <div className="flex flex-wrap items-center gap-2 pl-[18px]">
+              <span>List as</span>
+              <span className="mono rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 font-semibold">{clash.suggestion}</span>
+              <button
+                type="button"
+                onClick={() => useSuggestion.mutate(clash.suggestion!)}
+                disabled={useSuggestion.isPending || !onUseSku}
+                title={onUseSku ? `Use ${clash.suggestion} for this marketplace` : 'Open this channel from the product card to change the SKU'}
+                className="inline-flex h-6 items-center rounded border border-amber-300 bg-n-0 px-2 text-[11.5px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+              >
+                {useSuggestion.isPending ? 'Saving…' : 'Use this SKU'}
+              </button>
+            </div>
+          )}
+          {!clash.suggestion && (
+            <span className="pl-[18px]">Choose a different SKU for this marketplace before listing.</span>
+          )}
+        </div>
+      )}
+
+      {/* Already carrying a chosen name — worth stating, or the SKU on screen looks like a typo. */}
+      {skuCheck.data && !clash && skuCheck.data.source === 'plan' && (
+        <p className="mt-1.5 text-[11.5px] text-n-500">
+          Listing as <span className="mono font-semibold">{skuCheck.data.sku}</span> here, because the product's own SKU is
+          used on another marketplace.
         </p>
       )}
 

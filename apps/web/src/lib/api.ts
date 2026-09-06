@@ -1307,6 +1307,8 @@ export interface ChannelPlan {
   boostPct: number;
   /** DRAFT | READY | SUBMITTED | ARCHIVED. SUBMITTED means sent to the channel, not yet confirmed. */
   status: string;
+  /** Set only where the product's own SKU is taken elsewhere in the Amazon account. */
+  channelSku: string | null;
   externalListingId: string | null;
   listedAt: string | null;
 }
@@ -1484,6 +1486,23 @@ export type AmazonQuote =
       };
     };
 
+/** Whether the SKU a listing would be created under is already spoken for in this account. */
+export interface AmazonSkuCheck {
+  sku: string;
+  /** Where the SKU came from: an existing listing here, a choice on the plan, or the product. */
+  source: 'listing' | 'plan' | 'product';
+  /** Marketplaces already carrying this SKU. Empty is the ordinary case. */
+  conflicts: Array<{
+    integrationId: string;
+    name: string;
+    marketplace: string | null;
+    asin: string | null;
+    status: string | null;
+  }>;
+  /** A free alternative, or null when the SKU is fine as it is. */
+  suggestion: string | null;
+}
+
 export interface AmazonSubmitResult {
   ok: boolean;
   sku: string;
@@ -1561,6 +1580,9 @@ export const amazonListingApi = {
   submit: (productId: string, integrationId: string) =>
     api.post<AmazonSubmitResult>(`/listing/amazon/products/${productId}/channels/${integrationId}/submit`, { confirm: true }).then((r) => r.data),
   /** What Amazon says about the listing now. Accepted is not the same as live. */
+  /** Read-only: is this SKU already used on another marketplace in the account? */
+  skuCheck: (productId: string, integrationId: string) =>
+    api.get<AmazonSkuCheck>(`/listing/amazon/products/${productId}/channels/${integrationId}/sku-check`).then((r) => r.data),
   state: (productId: string, integrationId: string) =>
     api.get<AmazonListingState>(`/listing/amazon/products/${productId}/channels/${integrationId}/state`).then((r) => r.data),
   /** Builds the offer and has Amazon validate it. Creates nothing. */

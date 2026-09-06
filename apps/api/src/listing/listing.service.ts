@@ -22,6 +22,11 @@ export interface ChannelPlanPatch {
   deliveryTemplate?: string | null;
   boostPct?: number;
   status?: string;
+  /**
+   * The seller SKU to list under, where the product's own is already taken elsewhere in the
+   * Amazon account. Null clears the override and returns to the product's mainSku.
+   */
+  channelSku?: string | null;
 }
 
 @Injectable()
@@ -196,6 +201,7 @@ export class ListingService {
               deliveryTemplate: plan.deliveryTemplate,
               boostPct: Number(plan.boostPct),
               status: plan.status,
+              channelSku: plan.channelSku,
               externalListingId: plan.externalListingId,
               listedAt: plan.listedAt,
             }
@@ -291,8 +297,14 @@ export class ListingService {
       deliveryTemplate: patch.deliveryTemplate,
       boostPct: patch.boostPct,
       status: patch.status,
+      // Trimmed, and an empty string means 'clear it' rather than 'list under no name at all'.
+      // Amazon caps a seller SKU at 40 characters and silently rejects longer ones.
+      channelSku: patch.channelSku === undefined
+        ? undefined
+        : (patch.channelSku ?? '').trim().slice(0, 40) || null,
     };
     // Undefined keys must not reach Prisma as explicit nulls, or a partial edit clears the rest.
+    // An explicit null survives on purpose: that is how a field is deliberately cleared.
     const clean = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));
 
     return this.prisma.productChannelPlan.upsert({

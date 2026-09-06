@@ -5,6 +5,7 @@ import { buildOfferAttributes, CONDITION_CODES, mergeOverLiveAttributes, type Of
 import { evaluateEligibility, type MarketProfile } from '../eligibility';
 import { FloorService } from '../../amazon-repricing/floor/floor.service';
 import { fullScopeIntegrationWhere, isOrdersOnlyCompany } from '../../common/amazon-scope';
+import { suggestSku } from './sku-suggestion';
 
 /**
  * Creating an offer on an existing Amazon listing.
@@ -313,6 +314,97 @@ export class AmazonListingService {
     });
   }
 
+
+  /**
+   * Is the SKU we would list under already spoken for elsewhere in this Amazon account?
+   *
+   * Amazon treats a seller SKU as the listing's identity across the whole account, so creating
+   * IT33136 on Amazon AU while it is live on AE, SA and SG is refused outright (error 100398).
+   * Nothing on our side predicted that: the product genuinely is not on AU, so the platform
+   * correctly offered it, and the collision only appeared once a person had filled in the whole
+   * plan and pressed Validate.
+   *
+   * Answered from the listings the channel sync has already pulled rather than by asking eighteen
+   * marketplaces: instant, free of rate limits, and the same data the rest of this module is built
+   * on. A record we happen to be missing only costs the old behaviour — Amazon's own rejection —
+   * so the check can never leave anyone worse off than before it existed.
+   *
+   * The target marketplace is excluded on purpose. A SKU already listed THERE is not a collision;
+   * it is the listing we would be replacing, and replacing it is the correct thing to do.
+   */
+  async skuCheck(productId: string, integrationId: string, companyIds?: string[]) {
+    const [product, integration] = await Promise.all([
+      this.prisma.product.findFirst({ where: { id: productId, deletedAt: null }, select: { id: true, mainSku: true } }),
+      this.prisma.channelIntegration.findFirst({
+        where: { id: integrationId, deletedAt: null, channelType: 'amazon', ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}) },
+        select: { id: true, marketplace: true },
+      }),
+    ]);
+    if (!product) throw new NotFoundException('Product not found');
+    if (!integration) throw new NotFoundException('Channel not found');
+
+    const [plan, here] = await Promise.all([
+      this.prisma.productChannelPlan.findFirst({
+        where: { productId, integrationId, deletedAt: null },
+        select: { channelSku: true },
+      }),
+      this.prisma.channelListing.findFirst({
+        where: { productId, integrationId },
+        select: { channelSku: true },
+      }),
+    ]);
+
+    // The same precedence the submission uses, so this reports on the SKU that would actually be
+    // sent rather than on a guess at it.
+    const sku = here?.channelSku ?? plan?.channelSku ?? product.mainSku;
+    const source: 'listing' | 'plan' | 'product' = here?.channelSku ? 'listing' : plan?.channelSku ? 'plan' : 'product';
+
+    // Company-scoped: the other company's seller account is a different Amazon account, and its
+    // SKUs cannot collide with ours.
+    const amazonInThisAccount = {
+      channelType: 'amazon',
+      deletedAt: null,
+      ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
+    };
+
+    const rows = await this.prisma.channelListing.findMany({
+      where: { channelSku: { equals: sku, mode: 'insensitive' }, integration: amazonInThisAccount },
+      select: {
+        integrationId: true, asin: true, listingStatus: true,
+        integration: { select: { name: true, marketplace: true } },
+      },
+    });
+
+    const conflicts = rows
+      .filter((r) => r.integrationId !== integrationId)
+      .map((r) => ({
+        integrationId: r.integrationId,
+        name: r.integration.name,
+        marketplace: r.integration.marketplace,
+        asin: r.asin,
+        status: r.listingStatus,
+      }));
+
+    // Candidates are checked against every SKU in the account sharing the stem, so the suggestion
+    // cannot collide in turn — a second rejection, on a name we proposed ourselves, would be worse
+    // than never having suggested one.
+    const neighbours = conflicts.length
+      ? await this.prisma.channelListing.findMany({
+          where: { channelSku: { startsWith: sku, mode: 'insensitive' }, integration: amazonInThisAccount },
+          select: { channelSku: true },
+        })
+      : [];
+
+    return {
+      sku,
+      source,
+      conflicts,
+      /** Null when the SKU is free, which is the ordinary case. */
+      suggestion: conflicts.length
+        ? suggestSku(sku, integration.marketplace ?? '', neighbours.map((n) => n.channelSku))
+        : null,
+    };
+  }
 
   /**
    * Could we win this listing at a profit?
@@ -712,8 +804,10 @@ export class AmazonListingService {
     });
 
     // Our own SKU is the listing's identity on Amazon. An existing channel listing wins, because
-    // re-listing under a new SKU would create a second offer beside the one already there.
-    const sku = listing?.channelSku ?? product.mainSku;
+    // re-listing under a new SKU would create a second offer beside the one already there. Next
+    // comes a SKU chosen on the plan, which is how a product already sold under its mainSku
+    // elsewhere gets a name Amazon will accept here (see skuCheck).
+    const sku = listing?.channelSku ?? plan.channelSku ?? product.mainSku;
     const availability = await this.prisma.productAvailability.findUnique({
       where: { productId },
       select: { quantity: true },

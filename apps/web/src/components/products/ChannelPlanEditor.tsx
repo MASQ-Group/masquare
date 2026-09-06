@@ -101,6 +101,15 @@ export function PlanEditor({
   const isEbay = row.channelType === 'ebay';
   const isOnBuy = row.channelType === 'onbuy';
 
+  /**
+   * Adopt a different seller SKU for this marketplace.
+   *
+   * Sent on its own rather than through the plan save above: the offer panel can raise this
+   * before anyone has filled the form in, and writing the half-finished fields alongside it
+   * would save a price nobody typed.
+   */
+  const useSku = (channelSku: string) =>
+    listingApi.upsertPlan(productId, row.integrationId, { channelSku }).then(() => { onSaved(); });
   const save = useMutation({
     mutationFn: () =>
       listingApi.upsertPlan(productId, row.integrationId, {
@@ -180,6 +189,7 @@ export function PlanEditor({
             quantity={row.quantity.value}
             onListed={onSaved}
             savePlan={() => save.mutateAsync()}
+            onUseSku={useSku}
           />
         )}
       </div>
@@ -343,6 +353,7 @@ export function PlanEditor({
             quantity={row.quantity.value}
             onListed={onSaved}
             savePlan={() => save.mutateAsync()}
+            onUseSku={useSku}
           />
         ) : (
           <div className="rounded-md border border-n-200 bg-n-0 px-3 py-2.5 text-[12px] text-n-500">

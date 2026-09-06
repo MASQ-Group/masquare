@@ -1093,6 +1093,13 @@ model ProductChannelPlan {
   /// revenue, so it is never inherited from them and never set by automation.
   boostPct         Decimal @default(0) @map("boost_pct") @db.Decimal(5, 2)
 
+  /// The seller SKU this listing will be created under, when it must differ from the product's own.
+  /// Amazon treats a seller SKU as the listing's identity across the whole account and refuses to
+  /// mint one that already exists elsewhere (error 100398), so a product already sold under its
+  /// mainSku on another marketplace needs a distinct SKU here. Null means use the product's mainSku,
+  /// which is the normal case and keeps one identity across marketplaces.
+  channelSku        String?   @map("channel_sku")
+
   /// DRAFT | READY | LISTED | ARCHIVED. A human moves it to LISTED; nothing publishes itself.
   status            String    @default("DRAFT")
   /// Set once the channel confirms the listing: ASIN, eBay ItemID, OnBuy OPC.

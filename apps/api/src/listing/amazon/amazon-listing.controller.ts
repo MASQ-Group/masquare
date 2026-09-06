@@ -103,6 +103,16 @@ export class AmazonListingController {
   }
 
   /** What Amazon says about the listing now — accepted is not the same as live. */
+  /** Whether the SKU we would list under is already taken elsewhere in this Amazon account. */
+  @Get('products/:productId/channels/:integrationId/sku-check')
+  skuCheck(
+    @Param('productId') productId: string,
+    @Param('integrationId') integrationId: string,
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    return this.svc.skuCheck(productId, integrationId, companyIds);
+  }
+
   @Get('products/:productId/channels/:integrationId/state')
   state(@Param('productId') productId: string, @Param('integrationId') integrationId: string) {
     return this.svc.state(productId, integrationId);
