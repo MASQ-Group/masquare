@@ -110,6 +110,56 @@ describe('routing an SP-API notification', () => {
     expect(r.status === 'PARSE_ERROR' && r.detail).toMatch(/keys=\[Payload,EventTime\]/);
   });
 
+  describe('the envelope Amazon actually sends', () => {
+    /**
+     * Taken verbatim from a production message that would not parse, 6 Sep 2026:
+     *
+     *   keys=[notificationVersion,notificationType,payloadVersion,eventTime,
+     *         notificationMetadata,payload]
+     *
+     * camelCase throughout, where every reader here expected PascalCase. NotificationType was
+     * undefined on EVERY message, so every message fell through to the ANY_OFFER_CHANGED parser
+     * and died on a missing Payload. Not a noisy heartbeat — the repricer was receiving nothing.
+     */
+    it('reads a camelCase envelope', async () => {
+      const r = await router.ingestRaw(body({
+        notificationVersion: '2020-09-04',
+        notificationType: 'ORDER_CHANGE',
+        payloadVersion: '1.0',
+        eventTime: '2026-09-06T12:36:39Z',
+        notificationMetadata: { notificationId: 'abc' },
+        payload: { OrderChangeNotification: {} },
+      }));
+      expect(r.status).toBe('IGNORED');
+      expect(r.status === 'IGNORED' && r.reason).toMatch(/heartbeat/i);
+    });
+
+    it('routes a camelCase ANY_OFFER_CHANGED to the parser rather than discarding it', async () => {
+      // The one that matters: this is the notification the repricer exists to consume.
+      const r = await router.ingestRaw(body({
+        notificationType: 'ANY_OFFER_CHANGED',
+        eventTime: '2026-09-06T12:36:39Z',
+        payload: { AnyOfferChangedNotification: { SellerId: 'A1', OfferChangeTrigger: { ASIN: 'B000' } } },
+      }));
+      // Reaches the parser and fails on ITS OWN missing field, not on a missing Payload.
+      expect(r.status).toBe('PARSE_ERROR');
+      expect(r.status === 'PARSE_ERROR' && r.detail).toMatch(/missing MarketplaceId/);
+      expect(r.status === 'PARSE_ERROR' && r.detail).toMatch(/type=ANY_OFFER_CHANGED/);
+    });
+
+    it('still reads the PascalCase envelope', async () => {
+      // Amazon has used it before and the recorded fixtures are in it. A parser that only knows
+      // today's spelling is the same bug facing the other way.
+      const r = await router.ingestRaw(body({ NotificationType: 'ORDER_CHANGE', Payload: {} }));
+      expect(r.status).toBe('IGNORED');
+    });
+
+    it('reports the payload keys too, so an inner change identifies itself', async () => {
+      const r = await router.ingestRaw(body({ notificationType: 'ANY_OFFER_CHANGED', payload: { somethingElse: {} } }));
+      expect(r.status === 'PARSE_ERROR' && r.detail).toMatch(/payload=\[somethingElse\]/);
+    });
+  });
+
   it('reports invalid JSON as such', async () => {
     const r = await router.ingestRaw('not json at all');
     expect(r.status).toBe('PARSE_ERROR');

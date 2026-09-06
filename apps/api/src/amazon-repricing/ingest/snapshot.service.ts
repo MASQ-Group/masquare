@@ -5,6 +5,7 @@ import { ParseError, ParsedNotification, isStaleEvent, parseAnyOfferChanged, par
 import { RawNotificationEnvelope } from './any-offer-changed.types';
 import { FloorService } from '../floor/floor.service';
 import { RepriceSchedulerService } from './reprice-scheduler.service';
+import { normaliseEnvelope } from './envelope';
 
 // notif-ingest persistence + routing (spec §2.2–2.3): dedupe on NotificationId, then dispatch by
 // notification type — ANY_OFFER_CHANGED → snapshot + shadow evaluate; PRICING_HEALTH → mark the
@@ -68,6 +69,10 @@ export class SnapshotService {
       return { status: 'IGNORED', reason: `SNS ${sns.Type} — confirm it in the AWS console, not here` };
     }
 
+    // Amazon sends the envelope in camelCase; everything below was written for PascalCase. One
+    // shape from here on, whichever spelling arrived.
+    envelope = normaliseEnvelope(envelope);
+
     try {
       const type = envelope.NotificationType ?? '';
       if (type === 'PricingHealth' || type === 'PRICING_HEALTH') return await this.ingestPricingHealth(envelope);
@@ -107,7 +112,12 @@ export class SnapshotService {
         // order or customer data into the log.
         const keys = Object.keys(envelope ?? {}).slice(0, 12).join(',');
         const named = envelope?.NotificationType ? ` type=${envelope.NotificationType}` : ' type=(absent)';
-        return { status: 'PARSE_ERROR', detail: `${e.message}${named} keys=[${keys}]` };
+        // The payload's keys too: the envelope casing is settled, but if Amazon ever changes the
+        // shape INSIDE it, this says so on the first occurrence instead of the third deploy.
+        const inner = envelope?.Payload && typeof envelope.Payload === 'object'
+          ? ` payload=[${Object.keys(envelope.Payload).slice(0, 8).join(',')}]`
+          : '';
+        return { status: 'PARSE_ERROR', detail: `${e.message}${named} keys=[${keys}]${inner}` };
       }
       throw e;
     }
