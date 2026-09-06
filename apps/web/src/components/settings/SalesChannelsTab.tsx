@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Download, Trash2, Upload } from 'lucide-react';
+import { ArrowRight, Ban, Download, Trash2, Upload } from 'lucide-react';
 import { ModalShell, downloadSheet, downloadTemplate } from '@masquare/ui';
 import { countriesApi, salesChannelsApi, type SalesChannel } from '../../lib/api';
 
@@ -12,6 +12,7 @@ import { CountryTag } from '../common/Flag';
 import { ChannelChip, chipForCountry, NEUTRAL_CHIP } from '../common/ChannelChip';
 import { AddButton, RefTable, SectionHeader } from './shared';
 import { SalesChannelImportModal } from './SalesChannelImportModal';
+import { Link } from 'react-router-dom';
 
 const EXPORT_HEADERS = ['Name', 'Description', 'Native Country', 'Native Currency', 'General Sales Fee (%)', 'Fee In Native Currency', 'Fee Currency', 'Email', 'Website', 'Contact Name'];
 
@@ -65,6 +66,23 @@ export function SalesChannelsTab() {
         <button className="btn btn-ghost" onClick={() => setImportOpen(true)}><Upload size={16} /> Import</button>
         <AddButton label="Add sales channel" onClick={() => setEditing(null)} />
       </SectionHeader>
+
+      {/* Where people actually look for it.
+          Brand restrictions are filed under Products, because a restriction belongs to a brand and
+          one rule covers Amazon, eBay and OnBuy at once. But "which channels can I sell this on" is
+          a sales-channel question, so this is the page people open first — and finding nothing here
+          reads as the feature not existing. */}
+      <Link
+        to="/settings?tab=products&section=brand-restrictions"
+        className="mb-3 flex items-start gap-2 rounded-md border border-n-200 bg-n-25 px-3 py-2 text-[12.5px] text-n-600 hover:border-teal-300 hover:text-teal-700"
+      >
+        <Ban size={13} className="mt-0.5 shrink-0 text-n-400" />
+        <span className="flex-1">
+          Looking for <b>brand restrictions</b> — channels a brand has asked us not to sell them on? They live under
+          Products, because one rule covers every channel at once.
+        </span>
+        <ArrowRight size={13} className="mt-0.5 shrink-0" />
+      </Link>
 
       {selected.size > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-3 py-2">

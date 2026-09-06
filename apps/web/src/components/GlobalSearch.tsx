@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Building2, ChevronDown, Flag, Globe, LayoutGrid, Lightbulb, Package,
+  Ban, Building2, ChevronDown, Flag, Globe, LayoutGrid, Lightbulb, Package,
   Receipt, Search, Settings, Store, Truck, Users, type LucideIcon,
 } from 'lucide-react';
 import { searchApi, type SearchHit, type SearchScope } from '../lib/api';
@@ -19,6 +19,9 @@ const PAGES = [
   { label: 'Products', to: '/products', icon: Package, admin: false },
   { label: 'Sales transactions', to: '/sales-transactions', icon: Receipt, admin: false },
   { label: 'Global settings', to: '/settings', icon: Settings, admin: false },
+  // Named here because the section itself is three clicks deep and filed under Products, which is
+  // not where anyone looks for a rule about channels.
+  { label: 'Brand restrictions', to: '/settings?tab=products&section=brand-restrictions', icon: Ban, admin: false },
   { label: 'Companies', to: '/companies', icon: Building2, admin: true },
   { label: 'Users & roles', to: '/users', icon: Users, admin: true },
   { label: 'Modules & sharing', to: '/modules', icon: Settings, admin: true },

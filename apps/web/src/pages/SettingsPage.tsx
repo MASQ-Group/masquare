@@ -43,13 +43,34 @@ const PRODUCT_SECTIONS = [
 
 const isTopTab = (v: string | null): v is TopTab => TOP_TABS.some(([key]) => key === v);
 
+const isSection = (v: string | null): boolean => PRODUCT_SECTIONS.some((s) => s.key === v);
+
 export function SettingsPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const urlTab = searchParams.get('tab');
+  const urlSection = searchParams.get('section');
   const [top, setTop] = useState<TopTab>(isTopTab(urlTab) ? urlTab : 'products');
-  const [section, setSection] = useState<string>('vendors');
+  /**
+   * The sub-section, in the URL as well as in state.
+   *
+   * Without it every link into Products landed on Vendors and the reader had to hunt down a list of
+   * ten for the one they were sent to — which is exactly how Brand Restrictions turned out to be
+   * unfindable. A section reachable only by clicking is a section nobody can be pointed at.
+   */
+  const [section, setSection] = useState<string>(isSection(urlSection) ? urlSection! : 'vendors');
   // Deep link from the global search: /settings?tab=… selects (and re-selects) the tab.
   useEffect(() => { if (isTopTab(urlTab)) setTop(urlTab); }, [urlTab]);
+  useEffect(() => { if (isSection(urlSection)) setSection(urlSection!); }, [urlSection]);
+
+  /**
+   * Clicking a section rewrites the URL, so the address bar always describes what is on screen and
+   * can be copied to somebody else. `replace` because moving between sections is browsing, not a
+   * step worth a separate entry in the back button.
+   */
+  const chooseSection = (key: string) => {
+    setSection(key);
+    setSearchParams({ tab: 'products', section: key }, { replace: true });
+  };
 
   const ActiveSection = PRODUCT_SECTIONS.find((s) => s.key === section)?.Component ?? VendorsSection;
 
@@ -77,7 +98,7 @@ export function SettingsPage() {
             {PRODUCT_SECTIONS.map((s) => (
               <button
                 key={s.key}
-                onClick={() => setSection(s.key)}
+                onClick={() => chooseSection(s.key)}
                 className={`whitespace-nowrap rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors ${
                   section === s.key ? 'bg-teal-50 text-teal-700' : 'text-n-600 hover:bg-n-100'
                 }`}

@@ -345,8 +345,12 @@ export interface BrandRestriction {
 export const brandRestrictionsApi = {
   list: (brandId?: string) =>
     api.get<BrandRestriction[]>('/brand-restrictions', { params: brandId ? { brandId } : {} }).then((r) => r.data),
-  create: (dto: { brandId: string; channelType: string; marketplace?: string | null; note?: string | null }) =>
-    api.post<BrandRestriction>('/brand-restrictions', dto).then((r) => r.data),
+  /** Several channels in one submission — a brand letter usually names more than one. */
+  create: (dto: {
+    brandId: string;
+    channels: Array<{ channelType: string; marketplace?: string | null }>;
+    note?: string | null;
+  }) => api.post<BrandRestriction[]>('/brand-restrictions', dto).then((r) => r.data),
   remove: (id: string) => api.delete(`/brand-restrictions/${id}`).then((r) => r.data),
 };
 export interface AvailabilitySweepStatus {
