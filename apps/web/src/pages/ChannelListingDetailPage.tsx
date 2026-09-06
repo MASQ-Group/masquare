@@ -58,7 +58,10 @@ export function ChannelListingDetailPage() {
     const r = job.result as ProductListingSyncResult;
     const failed = r.failed ? ` · ${r.failed} could not be checked` : '';
     const removed = r.removed ? ` · ${r.removed} stale record${r.removed === 1 ? '' : 's'} cleared` : '';
-    toast.success(`Listed on ${r.listed} of ${r.checked} Amazon marketplace${r.checked === 1 ? '' : 's'}${removed}${failed}`);
+    // Names what was NOT covered as well as what was: a button called "all channels" that quietly
+    // skips one is worse than a button that admits the gap.
+    const skipped = r.skipped?.length ? ` · ${r.skipped.join('; ')}` : '';
+    toast.success(`Listed on ${r.listed} of ${r.checked} channel${r.checked === 1 ? '' : 's'}${removed}${failed}${skipped}`);
     // Everything on this page reads those records, so all of it is now out of date.
     qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] });
     qc.invalidateQueries({ queryKey: ['listing', 'product-channels', productId] });
@@ -134,7 +137,7 @@ export function ChannelListingDetailPage() {
     <div className="w-full">
       <PageHeader
         module="Sales channels"
-        moduleHref="/channel-listings"
+        parent={{ label: 'Channel Listings', href: '/channel-listings' }}
         title={data.title}
         actions={
           <>
@@ -147,12 +150,12 @@ export function ChannelListingDetailPage() {
               running={listingSync.running}
               value={listingSync.value}
               detail={listingSync.detail}
-              onClick={() => listingSync.start(() => channelListingsApi.syncProduct(productId as string))}
+              onClick={() => listingSync.start(() => channelListingsApi.syncProduct(productId as string, true))}
               runningLabel={<><RotateCw size={15} /> Syncing</>}
               className="!h-8 !text-[13px]"
-              title="Asks every Amazon marketplace whether this product's SKUs are listed there, and refreshes its records. Seconds, rather than the full-account sync."
+              title="Asks every connected channel whether this product's SKUs are listed there, and refreshes its records. Seconds, rather than the full-account sync."
             >
-              <RotateCw size={15} /> Sync Amazon listings
+              <RotateCw size={15} /> Sync all channels
             </ProgressButton>
             <ProgressButton
               running={analysis.running}

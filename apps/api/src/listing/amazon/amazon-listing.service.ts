@@ -6,6 +6,7 @@ import { evaluateEligibility, type MarketProfile } from '../eligibility';
 import { FloorService } from '../../amazon-repricing/floor/floor.service';
 import { fullScopeIntegrationWhere, isOrdersOnlyCompany } from '../../common/amazon-scope';
 import { suggestSku } from './sku-suggestion';
+import { isSkuInUseRejection } from './sku-collision';
 
 /**
  * Creating an offer on an existing Amazon listing.
@@ -316,23 +317,49 @@ export class AmazonListingService {
 
 
   /**
-   * Is the SKU we would list under already spoken for elsewhere in this Amazon account?
+   * Every seller SKU this company already uses on Amazon, plus the catalogue's own names.
    *
-   * Amazon treats a seller SKU as the listing's identity across the whole account, so creating
-   * IT33136 on Amazon AU while it is live on AE, SA and SG is refused outright (error 100398).
-   * Nothing on our side predicted that: the product genuinely is not on AU, so the platform
-   * correctly offered it, and the collision only appeared once a person had filled in the whole
-   * plan and pressed Validate.
-   *
-   * Answered from the listings the channel sync has already pulled rather than by asking eighteen
-   * marketplaces: instant, free of rate limits, and the same data the rest of this module is built
-   * on. A record we happen to be missing only costs the old behaviour — Amazon's own rejection —
-   * so the check can never leave anyone worse off than before it existed.
-   *
-   * The target marketplace is excluded on purpose. A SKU already listed THERE is not a collision;
-   * it is the listing we would be replacing, and replacing it is the correct thing to do.
+   * Used ONLY to keep a proposed alternative from colliding in turn - being refused twice, the
+   * second time on a name the platform chose itself, would be worse than offering nothing. It is
+   * not evidence about what Amazon will accept, and nothing reads it that way.
    */
-  async skuCheck(productId: string, integrationId: string, companyIds?: string[]) {
+  private async skusInUse(integrationId: string): Promise<string[]> {
+    const integration = await this.prisma.channelIntegration.findFirst({
+      where: { id: integrationId, deletedAt: null },
+      select: { targetCompanyId: true },
+    });
+    const companyId = integration?.targetCompanyId ?? undefined;
+    const [listings, aliases] = await Promise.all([
+      this.prisma.channelListing.findMany({
+        where: { integration: { channelType: 'amazon', deletedAt: null, ...(companyId ? { targetCompanyId: companyId } : {}) } },
+        select: { channelSku: true },
+      }),
+      this.prisma.productSkuAlias.findMany({ where: { deletedAt: null }, select: { skuValue: true } }),
+    ]);
+    return [...listings.map((l) => l.channelSku), ...aliases.map((a) => a.skuValue)].filter(Boolean);
+  }
+  /**
+   * Adopt a different seller SKU for this marketplace, and record it as an alias of the product.
+   *
+   * Only ever reached after Amazon has actually refused the product's own SKU. Nothing here decides
+   * that a new name is needed — Amazon does, in validation, and the operator chooses whether to
+   * accept the name offered or type their own.
+   *
+   * The alias is the point of doing this server-side. A listing created as RE-S8540-AU is a real
+   * SKU that Amazon will quote in orders, reports and returns, and a SKU the catalogue does not
+   * recognise is a sale that cannot be matched to a product. Creating the alias in the same
+   * transaction as the plan means the two can never disagree: there is no window where a listing
+   * exists under a name the platform has never heard of.
+   *
+   * Recorded as FBM because that is what this flow creates — an offer we ship ourselves. An FBA
+   * offer for the same SKU is a separate decision, made when stock is actually sent to Amazon.
+   */
+  async useSku(productId: string, integrationId: string, sku: string, actorId?: string, companyIds?: string[]) {
+    const clean = (sku ?? '').trim();
+    if (!clean) throw new BadRequestException('A SKU is required');
+    // Amazon's own limit. Longer is silently rejected, which reads as the listing simply failing.
+    if (clean.length > 40) throw new BadRequestException('Amazon seller SKUs are at most 40 characters');
+
     const [product, integration] = await Promise.all([
       this.prisma.product.findFirst({ where: { id: productId, deletedAt: null }, select: { id: true, mainSku: true } }),
       this.prisma.channelIntegration.findFirst({
@@ -343,66 +370,56 @@ export class AmazonListingService {
     if (!product) throw new NotFoundException('Product not found');
     if (!integration) throw new NotFoundException('Channel not found');
 
-    const [plan, here] = await Promise.all([
-      this.prisma.productChannelPlan.findFirst({
-        where: { productId, integrationId, deletedAt: null },
-        select: { channelSku: true },
-      }),
-      this.prisma.channelListing.findFirst({
-        where: { productId, integrationId },
-        select: { channelSku: true },
-      }),
-    ]);
+    // A SKU is unique across the catalogue. Claimed by a DIFFERENT product it must not be taken —
+    // two products sharing a SKU is how a sale gets attributed to the wrong one.
+    const claimed = await this.prisma.productSkuAlias.findFirst({
+      where: { skuValue: { equals: clean, mode: 'insensitive' } },
+      select: { id: true, productId: true, deletedAt: true },
+    });
+    if (claimed && claimed.productId !== productId) {
+      throw new BadRequestException(`${clean} is already an alias of another product`);
+    }
+    const takenAsMain = await this.prisma.product.findFirst({
+      where: { mainSku: { equals: clean, mode: 'insensitive' }, id: { not: productId }, deletedAt: null },
+      select: { id: true },
+    });
+    if (takenAsMain) throw new BadRequestException(`${clean} is another product's main SKU`);
 
-    // The same precedence the submission uses, so this reports on the SKU that would actually be
-    // sent rather than on a guess at it.
-    const sku = here?.channelSku ?? plan?.channelSku ?? product.mainSku;
-    const source: 'listing' | 'plan' | 'product' = here?.channelSku ? 'listing' : plan?.channelSku ? 'plan' : 'product';
-
-    // Company-scoped: the other company's seller account is a different Amazon account, and its
-    // SKUs cannot collide with ours.
-    const amazonInThisAccount = {
-      channelType: 'amazon',
-      deletedAt: null,
-      ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
-    };
-
-    const rows = await this.prisma.channelListing.findMany({
-      where: { channelSku: { equals: sku, mode: 'insensitive' }, integration: amazonInThisAccount },
-      select: {
-        integrationId: true, asin: true, listingStatus: true,
-        integration: { select: { name: true, marketplace: true } },
-      },
+    // FBM by code, so a renamed fulfilment type does not silently break the link.
+    const fbm = await this.prisma.fulfilmentType.findFirst({
+      where: { code: { equals: 'FBM', mode: 'insensitive' }, deletedAt: null },
+      select: { id: true },
     });
 
-    const conflicts = rows
-      .filter((r) => r.integrationId !== integrationId)
-      .map((r) => ({
-        integrationId: r.integrationId,
-        name: r.integration.name,
-        marketplace: r.integration.marketplace,
-        asin: r.asin,
-        status: r.listingStatus,
-      }));
+    const label = integration.marketplace ? `Amazon ${integration.marketplace}` : 'Amazon';
 
-    // Candidates are checked against every SKU in the account sharing the stem, so the suggestion
-    // cannot collide in turn — a second rejection, on a name we proposed ourselves, would be worse
-    // than never having suggested one.
-    const neighbours = conflicts.length
-      ? await this.prisma.channelListing.findMany({
-          where: { channelSku: { startsWith: sku, mode: 'insensitive' }, integration: amazonInThisAccount },
-          select: { channelSku: true },
-        })
-      : [];
+    await this.prisma.$transaction(async (tx) => {
+      await tx.productChannelPlan.updateMany({
+        where: { productId, integrationId, deletedAt: null },
+        data: { channelSku: clean, updatedById: actorId ?? null },
+      });
+
+      if (clean.toLowerCase() === product.mainSku.toLowerCase()) return; // the main SKU needs no alias
+
+      if (claimed) {
+        // Revives a previously removed alias rather than colliding with its unique skuValue.
+        await tx.productSkuAlias.update({
+          where: { id: claimed.id },
+          data: { productId, label, fulfilmentTypeId: fbm?.id ?? null, deletedAt: null },
+        });
+        return;
+      }
+      await tx.productSkuAlias.create({
+        data: { productId, skuValue: clean, label, fulfilmentTypeId: fbm?.id ?? null },
+      });
+    });
 
     return {
-      sku,
-      source,
-      conflicts,
-      /** Null when the SKU is free, which is the ordinary case. */
-      suggestion: conflicts.length
-        ? suggestSku(sku, integration.marketplace ?? '', neighbours.map((n) => n.channelSku))
-        : null,
+      sku: clean,
+      aliasCreated: clean.toLowerCase() !== product.mainSku.toLowerCase(),
+      fulfilment: fbm ? 'FBM' : null,
+      /** Said plainly: without a configured FBM type the alias is created without one. */
+      warning: fbm ? null : 'No FBM fulfilment type is configured, so the alias was saved without one.',
     };
   }
 
@@ -616,6 +633,10 @@ export class AmazonListingService {
       validated: result.ok,
       submissionStatus: result.submissionStatus,
       issues: result.issues,
+      // Offered only because Amazon actually refused the name, never in anticipation of it.
+      skuSuggestion: isSkuInUseRejection(result.issues)
+        ? suggestSku(built.sku, built.marketplace ?? '', await this.skusInUse(integrationId))
+        : null,
       message: result.message ?? null,
     };
   }
@@ -758,6 +779,10 @@ export class AmazonListingService {
       carriedFulfilmentChannels: payload.carriedFulfilmentChannels,
       submissionStatus: result.submissionStatus,
       issues: result.issues,
+      // Offered only because Amazon actually refused the name, never in anticipation of it.
+      skuSuggestion: isSkuInUseRejection(result.issues)
+        ? suggestSku(built.sku, built.marketplace ?? '', await this.skusInUse(integrationId))
+        : null,
       message: result.message ?? null,
     };
   }

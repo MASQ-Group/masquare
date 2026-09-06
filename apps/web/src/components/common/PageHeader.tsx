@@ -31,10 +31,17 @@ export interface PageHeaderOverflowItem {
 export interface PageHeaderProps {
   /** Breadcrumb module label (the sidebar group), e.g. "Products". */
   module: string;
-  /** Where the module crumb navigates. Detail pages pass their list route so the crumb keeps the
-   *  back affordance their bespoke "‹ Purchase orders" button used to provide. Omitted on list
-   *  pages, where the crumb names the section you are already in and has nowhere to go. */
+  /** Where the module crumb navigates. Normally omitted: a sidebar GROUP is not a page, so the
+   *  crumb names the section you are in and has nowhere to go. */
   moduleHref?: string;
+  /**
+   * The list page a record belongs to, for detail pages: SECTION › Page › Record.
+   *
+   * Without it a detail page reads SALES CHANNELS › Victorinox Swiss Army Knife, which skips the
+   * page the record actually lives on and leaves no way back to it. The trail should say where you
+   * are by naming every level you passed through.
+   */
+  parent?: { label: string; href: string };
   title: string;
   /** Page description — shown in the ⓘ tooltip instead of a full paragraph. */
   info?: ReactNode;
@@ -92,7 +99,7 @@ function OverflowMenu({ items }: { items: PageHeaderOverflowItem[] }) {
   );
 }
 
-export function PageHeader({ module, moduleHref, title, info, tabs, activeTab, onTabChange, actions, overflow, primary, toolbar, summary }: PageHeaderProps) {
+export function PageHeader({ module, moduleHref, parent, title, info, tabs, activeTab, onTabChange, actions, overflow, primary, toolbar, summary }: PageHeaderProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
   // `hidden` = scrolled down past the threshold. Desktop slides the whole bar out of view; mobile
@@ -154,6 +161,17 @@ export function PageHeader({ module, moduleHref, title, info, tabs, activeTab, o
             <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-n-400">{module}</span>
           )}
           <span className="text-[12px] text-n-300">›</span>
+          {parent && (
+            <>
+              <Link
+                to={parent.href}
+                className="rounded text-[11px] font-semibold uppercase tracking-[0.07em] text-n-400 hover:text-teal-700"
+              >
+                {parent.label}
+              </Link>
+              <span className="text-[12px] text-n-300">›</span>
+            </>
+          )}
           {/* Title + ⓘ in their own centered group so the icon sits on the title's vertical axis.
               min-w-0 on the title lets it ellipsize; the ⓘ never shrinks — so neither can spill
               into the right-hand actions on a narrow screen. */}

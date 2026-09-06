@@ -1939,6 +1939,88 @@ export class IntegrationsService implements OnModuleInit {
     return out;
   }
 
+  /**
+   * What eBay is carrying for these SKUs, without walking the whole account.
+   *
+   * The account pull merges the Inventory API with the Trading API on purpose: classic listings do
+   * not appear in the Inventory API, and on 29 Aug 2026 trusting it alone deleted 4,709 records.
+   * A per-SKU lookup can only ask the Inventory API, so it inherits exactly that blind spot.
+   *
+   * Which is why this returns what it FOUND and never implies what it did not: the caller must
+   * upsert these rows and delete nothing. A SKU absent from this reply may simply be a classic
+   * listing, and treating that absence as "not listed" is how the August incident happened.
+   *
+   * One offer lookup per SKU per marketplace; eBay has no batch form of either call.
+   */
+  async fetchEbayListingsBySku(integrationId: string, skus: string[]): Promise<
+    | { ok: true; rows: Array<{
+        sku: string; asin: string | null; externalId: string | null; title: string | null; quantity: number | null;
+        price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+        marketplace: string | null;
+      }> }
+    | { ok: false; message: string }
+  > {
+    const wanted = [...new Set(skus.map((s) => s.trim()).filter(Boolean))];
+    if (!wanted.length) return { ok: true, rows: [] };
+
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+    if (!row) return { ok: false, message: 'Integration not found' };
+
+    try {
+      const config = (row.config ?? {}) as Record<string, string>;
+      const token = await this.ebayAccessToken(config, await this.decryptedSecrets(row.id));
+      const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        'Accept-Language': 'en-US',
+        'Content-Language': 'en-US',
+      };
+
+      const rows: Array<Record<string, unknown>> = [];
+      for (const sku of wanted) {
+        const itemRes = await fetch(`${base}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, { headers, signal: AbortSignal.timeout(15000) });
+        // 404 is a real answer for this SKU, not a failure of the call: eBay simply does not manage
+        // it through the Inventory API. Every other bad status is a failure and must say so.
+        if (itemRes.status === 404) continue;
+        if (!itemRes.ok) {
+          const j: any = await itemRes.json().catch(() => null);
+          return { ok: false, message: j?.errors?.[0]?.message ?? `eBay returned ${itemRes.status}` };
+        }
+        const item: any = await itemRes.json().catch(() => null);
+        const title = item?.product?.title ?? null;
+        const quantity = item?.availability?.shipToLocationAvailability?.quantity ?? null;
+
+        // One row per marketplace: an eBay SKU is offered separately on each site it sells in.
+        const offerRes = await fetch(`${base}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}`, { headers, signal: AbortSignal.timeout(15000) });
+        const offerJson: any = offerRes.ok ? await offerRes.json().catch(() => null) : null;
+        const offers: any[] = offerJson?.offers ?? [];
+        if (!offers.length) {
+          rows.push({ sku, asin: null, externalId: null, title, quantity, price: null, currency: null, fulfilmentChannel: null, status: null, marketplace: null });
+          continue;
+        }
+        for (const offer of offers) {
+          const p = offer?.pricingSummary?.price;
+          rows.push({
+            sku,
+            asin: null,
+            externalId: offer?.listing?.listingId ?? null, // the eBay ItemID
+            title,
+            quantity,
+            price: p?.value != null ? Number(p.value) : null,
+            currency: p?.currency ?? null,
+            fulfilmentChannel: null,
+            status: offer?.status ?? offer?.listing?.listingStatus ?? null,
+            marketplace: ebayMarketplaceToIso(offer?.marketplaceId ?? null),
+          });
+        }
+      }
+      return { ok: true, rows: rows as any };
+    } catch (e: any) {
+      return { ok: false, message: (e?.message ?? 'Lookup failed').toString().slice(0, 200) };
+    }
+  }
+
   /** eBay Trading API GetMyeBaySelling (ActiveList) — covers ALL active listings, including
    *  classic ones the Inventory API doesn't surface. XML in/out; the OAuth user token is passed
    *  via X-EBAY-API-IAF-TOKEN. Iterates the seller's sites (config.ebaySiteIds, default UK/AU/US)

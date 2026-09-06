@@ -6,6 +6,7 @@ import { AmazonListingService } from './amazon-listing.service';
 import { JobsService } from '../../jobs/jobs.service';
 import { AccessArea, RequireCapability, Requires } from '../../access/access.decorators';
 import { VisibleCompanies } from '../../common/active-company.decorator';
+import { CurrentUser, type AuthUser } from '../../common/current-user.decorator';
 
 /**
  * Creating an Amazon offer on an existing listing.
@@ -103,14 +104,21 @@ export class AmazonListingController {
   }
 
   /** What Amazon says about the listing now — accepted is not the same as live. */
-  /** Whether the SKU we would list under is already taken elsewhere in this Amazon account. */
-  @Get('products/:productId/channels/:integrationId/sku-check')
-  skuCheck(
+  /**
+   * Adopt a seller SKU for this marketplace and record it as an alias of the product.
+   *
+   * Reached only after Amazon has refused the product's own SKU in validation. The name is the
+   * operator's to choose - ours is a starting point they can edit.
+   */
+  @Post('products/:productId/channels/:integrationId/use-sku')
+  useSku(
     @Param('productId') productId: string,
     @Param('integrationId') integrationId: string,
+    @Body() body: { sku: string },
+    @CurrentUser() user: AuthUser,
     @VisibleCompanies() companyIds: string[],
   ) {
-    return this.svc.skuCheck(productId, integrationId, companyIds);
+    return this.svc.useSku(productId, integrationId, body?.sku, user.sub, companyIds);
   }
 
   @Get('products/:productId/channels/:integrationId/state')
