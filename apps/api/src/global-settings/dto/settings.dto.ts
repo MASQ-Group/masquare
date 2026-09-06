@@ -20,6 +20,8 @@ export class UpdateSettingsDto {
   @IsOptional() @IsNumber() launchMarginPct?: number;
   /** Whether creating real marketplace listings is permitted. */
   @IsOptional() @IsBoolean() listingLiveWrites?: boolean;
+  /** Its own switch: sharing one with listing creation or the repricer would defeat the point. */
+  @IsOptional() @IsBoolean() channelPriceWrites?: boolean;
   /**
    * Whether the platform may CHANGE quantities and prices on the marketplaces.
    *

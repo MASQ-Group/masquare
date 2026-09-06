@@ -27,6 +27,7 @@ export function GeneralTab() {
   const [autoAdjustAvailabilityOnSale, setAutoAdjustAvailabilityOnSale] = useState(false);
   const [launchMarginPct, setLaunchMarginPct] = useState('20');
   const [listingLiveWrites, setListingLiveWrites] = useState(false);
+  const [channelPriceWrites, setChannelPriceWrites] = useState(false);
   // Default TRUE so a failed load never reads as "pushes are off" and quietly stops outbound writes.
   const [channelQuantityPushEnabled, setChannelQuantityPushEnabled] = useState(true);
   const [channelPricePushEnabled, setChannelPricePushEnabled] = useState(true);
@@ -42,6 +43,7 @@ export function GeneralTab() {
       setAutoAdjustAvailabilityOnSale(data.autoAdjustAvailabilityOnSale ?? false);
       setLaunchMarginPct(String(data.launchMarginPct ?? 20));
       setListingLiveWrites(data.listingLiveWrites ?? false);
+      setChannelPriceWrites(data.channelPriceWrites ?? false);
       setChannelQuantityPushEnabled(data.channelQuantityPushEnabled ?? true);
       setChannelPricePushEnabled(data.channelPricePushEnabled ?? true);
     }
@@ -52,7 +54,7 @@ export function GeneralTab() {
   const previewFonts = (body: string, mono: string) => { setBodyFont(body); setMonoFont(mono); applyFonts(body, mono); };
 
   const save = useMutation({
-    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions, autoAdjustAvailabilityOnSale, launchMarginPct: Number(launchMarginPct) || 0, listingLiveWrites, channelQuantityPushEnabled, channelPricePushEnabled }),
+    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions, autoAdjustAvailabilityOnSale, launchMarginPct: Number(launchMarginPct) || 0, listingLiveWrites, channelPriceWrites, channelQuantityPushEnabled, channelPricePushEnabled }),
     onSuccess: () => { toast.success('Settings saved'); qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Save failed'),
   });
@@ -248,6 +250,32 @@ export function GeneralTab() {
               <span>⚠</span>
               <span>Offers created from now on are real and visible to customers at the price on the product card.
                 Validate first — it asks Amazon the same question and creates nothing.</span>
+            </p>
+          )}
+        </div>
+
+        <div className="border-t border-n-100 pt-4">
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-[var(--teal-500)]"
+              checked={channelPriceWrites}
+              onChange={(e) => setChannelPriceWrites(e.target.checked)}
+            />
+            <span>
+              <span className="block text-[13.5px] font-semibold text-n-800">Change listing prices</span>
+              <span className="mt-0.5 block text-[12.5px] text-n-500">
+                Lets a person change one listing's price from its channel card. Its own switch on purpose: it
+                shares nothing with creating listings above, or with the repricing engine's bulk price writes.
+                Turning any one of the three on leaves the other two exactly as they were.
+              </span>
+            </span>
+          </label>
+          {channelPriceWrites && (
+            <p className="mt-2 flex items-start gap-2 rounded-md border border-warning-bd bg-warning-bg px-3 py-2 text-[12px] text-warning">
+              <span>⚠</span>
+              <span>A price changed from a channel card now reaches the marketplace, one listing at a time and
+                confirmed each time. Every attempt is recorded, sent or not.</span>
             </p>
           )}
         </div>

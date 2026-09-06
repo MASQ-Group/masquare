@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { AdminGuard } from '../../auth/admin.guard';
@@ -29,7 +29,13 @@ export class AmazonListingController {
   /** Whether a real offer could be created at all, so the UI can say so before anyone tries. */
   @Get('status')
   async status() {
-    return { liveWritesEnabled: await this.svc.liveWritesEnabled() };
+    // Two independent gates, reported separately: listing creation and changing one price are
+    // different acts, and a screen must be able to tell which of them it may perform.
+    const [liveWritesEnabled, priceWritesEnabled] = await Promise.all([
+      this.svc.liveWritesEnabled(),
+      this.svc.priceWritesEnabled(),
+    ]);
+    return { liveWritesEnabled, priceWritesEnabled };
   }
 
   /** Search Amazon's catalogue by our EAN/UPC and report what may be offered on. Read-only. */
@@ -119,6 +125,35 @@ export class AmazonListingController {
     @VisibleCompanies() companyIds: string[],
   ) {
     return this.svc.useSku(productId, integrationId, body?.sku, user.sub, companyIds);
+  }
+
+  /** What a price would earn, and what we would suggest. Read-only. */
+  @Get('products/:productId/channels/:integrationId/price-check')
+  priceCheck(
+    @Param('productId') productId: string,
+    @Param('integrationId') integrationId: string,
+    @VisibleCompanies() companyIds: string[],
+    @Query('atPriceCents') atPriceCents?: string,
+  ) {
+    const at = atPriceCents ? Number(atPriceCents) : null;
+    return this.svc.priceCheck(productId, integrationId, Number.isFinite(at) ? at : null, companyIds);
+  }
+
+  /**
+   * Change one listing's price on the channel.
+   *
+   * Its own gate (channelPriceWrites / CHANNEL_PRICE_WRITES), independent of listing creation and
+   * of the repricing engine's bulk writes. Without `confirm` it validates and changes nothing.
+   */
+  @Post('products/:productId/channels/:integrationId/price')
+  updatePrice(
+    @Param('productId') productId: string,
+    @Param('integrationId') integrationId: string,
+    @VisibleCompanies() companyIds: string[],
+    @Body() body: { priceCents: number; confirm?: boolean },
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.svc.updatePrice(productId, integrationId, Number(body?.priceCents), { confirm: body?.confirm }, user.sub, companyIds);
   }
 
   @Get('products/:productId/channels/:integrationId/state')

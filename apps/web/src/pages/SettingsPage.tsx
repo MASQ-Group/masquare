@@ -11,6 +11,7 @@ import { VendorsSection } from '../components/settings/VendorsSection';
 import { BrandsSection, ProductTypesSection, FulfilmentTypesSection } from '../components/settings/SimpleSections';
 import { CategoriesSection } from '../components/settings/CategoriesSection';
 import { AttributesSection } from '../components/settings/AttributesSection';
+import { BrandRestrictionsSection } from '../components/settings/BrandRestrictionsSection';
 import { VatClassesSection } from '../components/settings/VatClassesSection';
 import { ProductClassesSection } from '../components/settings/ProductClassesSection';
 import { ComplianceSection } from '../components/settings/ComplianceSection';
@@ -30,6 +31,7 @@ const TOP_TABS: [TopTab, string][] = [
 const PRODUCT_SECTIONS = [
   { key: 'vendors', label: 'Vendors', Component: VendorsSection },
   { key: 'brands', label: 'Brands', Component: BrandsSection },
+  { key: 'brand-restrictions', label: 'Brand Restrictions', Component: BrandRestrictionsSection },
   { key: 'product-classes', label: 'Product Classes', Component: ProductClassesSection },
   { key: 'product-types', label: 'Product Types', Component: ProductTypesSection },
   { key: 'fulfilment-types', label: 'Fulfilment Types', Component: FulfilmentTypesSection },

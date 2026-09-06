@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw, Search, RotateCw } from 'lucide-react';
+import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw, Search, RotateCw, Tag } from 'lucide-react';
 import { amazonListingApi, listingApi, salesTransactionsApi, type AmazonSweep, type ProductListingSyncResult, channelListingsApi } from '../lib/api';
 import { DateRangePicker, ProgressButton, type DateRangeValue } from '@masquare/ui';
 import { formatAmount } from '../lib/format';
@@ -12,6 +12,7 @@ import { useJobProgress } from '../lib/useJobProgress';
 import { ListOnChannelModal } from '../components/channel-listings/ListOnChannelModal';
 import { NotListedPanel } from '../components/channel-listings/NotListedPanel';
 import { PageHeader } from '../components/common/PageHeader';
+import { EditPriceModal } from '../components/channel-listings/EditPriceModal';
 
 const STATUS: Record<string, { label: string; color: string; bg: string }> = {
   live: { label: 'Live', color: '#0E7A73', bg: '#E1F3F1' },
@@ -73,6 +74,8 @@ export function ChannelListingDetailPage() {
   const sweepByIntegration = new Map((sweepResult?.results ?? []).map((r) => [r.integrationId, r]));
 
   const [listing, setListing] = useState<{ integrationId: string; name: string } | null>(null);
+  /** The channel whose price is being edited. A card showing a loss should be able to fix it. */
+  const [pricing, setPricing] = useState<{ integrationId: string; name: string } | null>(null);
 
   // Real performance, from booked sales. Keyed by SKU because that is what a sale records.
   // Empty means the default twelve months, which is what makes a stale import legible rather than
@@ -217,6 +220,19 @@ export function ChannelListingDetailPage() {
         </div>
       )}
 
+      {pricing && (
+        <EditPriceModal
+          productId={productId as string}
+          integrationId={pricing.integrationId}
+          channelName={pricing.name}
+          onClose={() => setPricing(null)}
+          onSaved={() => {
+            setPricing(null);
+            qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] });
+          }}
+        />
+      )}
+
       {listing && (
         <ListOnChannelModal
           productId={productId as string}
@@ -323,6 +339,19 @@ export function ChannelListingDetailPage() {
                         worse than no button. Prices are set in Pricing; the repricer is what sends
                         them. */}
                     <div className="mt-auto flex items-center gap-2 pt-3.5">
+                      {/* The number the card just called a loss is the number this changes. Going
+                          through the full listing flow to edit it is six steps about a listing
+                          that already exists. */}
+                      {c.integrationId && c.channelType === 'amazon' && (
+                        <button
+                          type="button"
+                          onClick={() => setPricing({ integrationId: c.integrationId, name: c.name })}
+                          title={`Change this product's price on ${c.name}`}
+                          className="inline-flex h-[34px] items-center justify-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-teal-300 hover:text-teal-700"
+                        >
+                          <Tag size={14} /> Edit price
+                        </button>
+                      )}
                       {viewUrl
                         ? (
                           <a

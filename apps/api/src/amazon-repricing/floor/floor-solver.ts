@@ -97,7 +97,7 @@ const SEARCH_HI_COST_MULTIPLE = 25;
 // (unrounded) function so its bisection is provably correct.
 
 /** Net-of-VAT revenue for a gross (VAT-inclusive) price, in exact cents. */
-function grossToNet(priceCents: number, vatRate: number): number {
+export function grossToNet(priceCents: number, vatRate: number): number {
   return priceCents / (1 + vatRate);
 }
 

@@ -18,11 +18,13 @@ import { VatClassesController } from './vat-classes.controller';
 import { ProductClassesService } from './product-classes.service';
 import { ProductClassesController } from './product-classes.controller';
 import { ComplianceOptionsController, ComplianceOptionsService } from './compliance-options';
+import { BrandRestrictionsController, BrandRestrictionsService } from './brand-restrictions.controller';
 
 @Module({
   controllers: [
     VendorsController,
     BrandsController,
+    BrandRestrictionsController,
     ProductTypesController,
     FulfilmentTypesController,
     CategoriesController,
@@ -36,6 +38,7 @@ import { ComplianceOptionsController, ComplianceOptionsService } from './complia
     VendorsService,
     ViesService,
     BrandsService,
+    BrandRestrictionsService,
     ProductTypesService,
     FulfilmentTypesService,
     CategoriesService,
@@ -48,6 +51,7 @@ import { ComplianceOptionsController, ComplianceOptionsService } from './complia
   exports: [
     VendorsService,
     BrandsService,
+    BrandRestrictionsService,
     ProductTypesService,
     FulfilmentTypesService,
     CategoriesService,
