@@ -69,6 +69,47 @@ describe('routing an SP-API notification', () => {
     expect(r.status === 'PARSE_ERROR' && r.detail).toMatch(/missing MarketplaceId/);
   });
 
+  describe('delivered through SNS rather than straight to SQS', () => {
+    it('unwraps the notification from the SNS Message string', async () => {
+      // SP-API can publish to an SNS topic that fans out to the queue. The body is then SNS's own
+      // envelope with the real notification as a JSON STRING inside `Message` — no NotificationType
+      // and no Payload at the top level, so it fell through to the ANY_OFFER_CHANGED parser and
+      // failed with `missing MarketplaceId`, naming a type the message never claimed to be.
+      const inner = JSON.stringify({ NotificationType: 'ORDER_CHANGE', Payload: { OrderChangeNotification: {} } });
+      const r = await router.ingestRaw(body({ Type: 'Notification', TopicArn: 'arn:aws:sns:…', Message: inner }));
+      expect(r.status).toBe('IGNORED');
+      expect(r.status === 'IGNORED' && r.reason).toMatch(/heartbeat/i);
+    });
+
+    it('leaves a direct SP-API body untouched', async () => {
+      // Unwrapping must be a no-op when it does not apply, or it breaks the working path.
+      const r = await router.ingestRaw(body({ NotificationType: 'ORDER_CHANGE', Payload: {} }));
+      expect(r.status).toBe('IGNORED');
+    });
+
+    it('ignores an SNS subscription handshake', async () => {
+      const r = await router.ingestRaw(body({ Type: 'SubscriptionConfirmation', Token: 'abc', TopicArn: 'arn:…' }));
+      expect(r.status).toBe('IGNORED');
+      expect(r.status === 'IGNORED' && r.reason).toMatch(/SubscriptionConfirmation/);
+    });
+
+    it('says so when the SNS Message is not JSON', async () => {
+      const r = await router.ingestRaw(body({ Type: 'Notification', Message: 'plain text' }));
+      expect(r.status).toBe('PARSE_ERROR');
+      expect(r.status === 'PARSE_ERROR' && r.detail).toMatch(/SNS Message is not JSON/);
+    });
+  });
+
+  it('names the shape it could not read, so the next one identifies itself', async () => {
+    // The previous fix was deployed on a wrong diagnosis and the error came straight back with
+    // nothing new to go on. A parse failure now carries the type and the top-level keys — the
+    // shape, never the contents, so no order or customer data reaches the log.
+    const r = await router.ingestRaw(body({ Payload: {}, EventTime: '2026-09-06T12:00:00Z' }));
+    expect(r.status).toBe('PARSE_ERROR');
+    expect(r.status === 'PARSE_ERROR' && r.detail).toMatch(/type=\(absent\)/);
+    expect(r.status === 'PARSE_ERROR' && r.detail).toMatch(/keys=\[Payload,EventTime\]/);
+  });
+
   it('reports invalid JSON as such', async () => {
     const r = await router.ingestRaw('not json at all');
     expect(r.status).toBe('PARSE_ERROR');

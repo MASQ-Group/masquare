@@ -38,6 +38,36 @@ export class SnapshotService {
     } catch (e) {
       return { status: 'PARSE_ERROR', detail: `invalid JSON: ${(e as Error).message}` };
     }
+
+    /**
+     * Unwrap an SNS delivery.
+     *
+     * SP-API can publish to SQS directly, or to an SNS topic that fans out to one. Through SNS the
+     * body is SNS's own envelope and the notification is a JSON STRING inside `Message`:
+     *
+     *   { "Type": "Notification", "TopicArn": "...", "Message": "{\"NotificationType\":...}" }
+     *
+     * Read as-is that has no NotificationType and no Payload, so it fell through to the
+     * ANY_OFFER_CHANGED parser and failed with `missing MarketplaceId` — an error naming a
+     * notification type the message never claimed to be.
+     *
+     * Unwrapping is safe whether or not it applies: a direct SP-API body has no `Type: Notification`
+     * and is left exactly as it was.
+     */
+    const sns = envelope as unknown as { Type?: string; Message?: unknown };
+    if (sns.Type === 'Notification' && typeof sns.Message === 'string') {
+      try {
+        envelope = JSON.parse(sns.Message);
+      } catch (e) {
+        return { status: 'PARSE_ERROR', detail: `SNS Message is not JSON: ${(e as Error).message}` };
+      }
+    }
+
+    // SNS subscription handshakes arrive on the same queue and are not notifications at all.
+    if (sns.Type === 'SubscriptionConfirmation' || sns.Type === 'UnsubscribeConfirmation') {
+      return { status: 'IGNORED', reason: `SNS ${sns.Type} — confirm it in the AWS console, not here` };
+    }
+
     try {
       const type = envelope.NotificationType ?? '';
       if (type === 'PricingHealth' || type === 'PRICING_HEALTH') return await this.ingestPricingHealth(envelope);
@@ -72,7 +102,13 @@ export class SnapshotService {
 
       return await this.ingest(parseAnyOfferChanged(envelope));
     } catch (e) {
-      if (e instanceof ParseError) return { status: 'PARSE_ERROR', detail: e.message };
+      if (e instanceof ParseError) {
+        // The shape, not the contents: enough to identify what arrived next time without putting
+        // order or customer data into the log.
+        const keys = Object.keys(envelope ?? {}).slice(0, 12).join(',');
+        const named = envelope?.NotificationType ? ` type=${envelope.NotificationType}` : ' type=(absent)';
+        return { status: 'PARSE_ERROR', detail: `${e.message}${named} keys=[${keys}]` };
+      }
       throw e;
     }
   }
