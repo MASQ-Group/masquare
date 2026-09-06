@@ -76,7 +76,7 @@ describe('access declarations', () => {
     // missing entirely — a floor cannot notice an omission above it. If this number moves, a
     // controller was added or removed and somebody should say which.
     const classes = FILES.reduce((n, f) => n + declarations(readFileSync(f, 'utf8')).length, 0);
-    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(57);
+    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(58);
   });
 
   it('declares an area or an explicit exemption on every controller', () => {
@@ -149,6 +149,10 @@ describe('access declarations', () => {
       '/integrations/ebay-notifications.controller.ts',
       // Progress of a job the caller already started; the work was authorised when it began.
       '/jobs/jobs.controller.ts',
+      // The availability sweep: the READ is exempt because the product page shows how old its
+      // stored answers are, which is the same question this reports, asked from a screen that
+      // nobody needs Global settings to open. Changing the schedule still requires it.
+      '/listing/availability/availability-sweep.controller.ts',
     ]);
   });
 });

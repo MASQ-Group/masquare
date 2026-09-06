@@ -24,7 +24,7 @@ const ago = (iso: string | null | undefined) => {
  * who fills one in twice stops trusting the rest of the screen.
  */
 export function NotListedPanel({
-  channelName, integrationId, plan, sweep, analysed, onList,
+  channelName, integrationId, plan, sweep, analysed, checkedAt, onList,
 }: {
   channelName: string;
   integrationId: string | null;
@@ -33,6 +33,14 @@ export function NotListedPanel({
   /** The competitive read, once the analysis has run. */
   sweep: AmazonSweepRow | null;
   analysed: boolean;
+  /**
+   * When this answer was stored, if it came from an earlier check rather than from this session.
+   *
+   * Shown because an availability answer has a shelf life. "Cannot list here" from a check three
+   * months ago and the same words from one minute ago carry very different weight, and a card that
+   * does not say which is inviting someone to act on the wrong one.
+   */
+  checkedAt?: string | null;
   onList: (integrationId: string) => void;
 }) {
   // Four reasons the button stays down, and each says which one applies. "Disabled" without a
@@ -112,6 +120,14 @@ export function NotListedPanel({
       {!analysed && !blocked && !submitted && (
         <span className="text-center text-[11px] text-n-400">
           Run “Check Amazon availability” above to see whether this one is worth listing on.
+        </span>
+      )}
+
+      {/* The age of a stored answer, and only for a stored one — a sweep run seconds ago needs no
+          date, and stamping one on it would just be noise on every card. */}
+      {checkedAt && !submitted && (
+        <span className="text-center text-[11px] text-n-400" title={new Date(checkedAt).toLocaleString()}>
+          Checked with Amazon {ago(checkedAt)}
         </span>
       )}
 

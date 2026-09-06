@@ -349,6 +349,23 @@ export const brandRestrictionsApi = {
     api.post<BrandRestriction>('/brand-restrictions', dto).then((r) => r.data),
   remove: (id: string) => api.delete(`/brand-restrictions/${id}`).then((r) => r.data),
 };
+export interface AvailabilitySweepStatus {
+  enabled: boolean; batchSize: number; intervalMinutes: number; recheckDays: number;
+  lastRunAt: string | null; nextDueAt: string | null;
+  totalPairs: number; checkedPairs: number; neverChecked: number; oldestCheckedAt: string | null;
+  pairsPerDay: number;
+  /** null when the configured rate would never finish a pass. */
+  fullPassDays: number | null;
+  /** True when a full pass cannot finish inside the re-check window. */
+  behind: boolean;
+}
+export const availabilitySweepApi = {
+  status: () => api.get<AvailabilitySweepStatus>('/availability-sweep').then((r) => r.data),
+  update: (dto: { enabled?: boolean; batchSize?: number; intervalMinutes?: number; recheckDays?: number }) =>
+    api.post<AvailabilitySweepStatus>('/availability-sweep', dto).then((r) => r.data),
+  run: () => api.post<{ ran: boolean; reason?: string; checked?: number; failed?: number }>('/availability-sweep/run').then((r) => r.data),
+};
+
 export const productTypesApi = crud<ProductType>('/product-types');
 
 // ---- Channel listings (what's live on each marketplace) ----
@@ -373,6 +390,23 @@ export interface ChannelListingDetailChannel {
   channelType: string | null; asin: string | null; channelSku: string | null; externalListingId: string | null;
   price: number | null; priceCurrency: string | null; quantity: number | null; fulfilmentChannel: string | null; status: string | null;
   profitEur: number | null; marginPct: number | null; loss: boolean; lastPulledAt: string | null;
+  /**
+   * The last stored answer to "could we list this here", or null if nobody has asked.
+   *
+   * Null and `found: false` are different facts and must stay distinguishable: one means nobody
+   * has checked, the other means Amazon has nothing to attach an offer to.
+   */
+  availability: StoredAvailability | null;
+}
+export interface StoredAvailability {
+  found: boolean;
+  asin: string | null;
+  /** null means the restrictions call failed — unknown, not unrestricted. */
+  restricted: boolean | null;
+  restrictionReason: string | null;
+  error: string | null;
+  checkedAt: string;
+  source: 'scheduled' | 'manual';
 }
 export interface ChannelListingDetail {
   productId: string; sku: string; title: string; brand: string | null;

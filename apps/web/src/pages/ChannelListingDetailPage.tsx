@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw, Search, RotateCw, Tag } from 'lucide-react';
-import { amazonListingApi, listingApi, salesTransactionsApi, type AmazonSweep, type ProductListingSyncResult, channelListingsApi } from '../lib/api';
+import { amazonListingApi, listingApi, salesTransactionsApi, type AmazonSweep, type AmazonSweepRow, type ChannelListingDetailChannel, type ProductListingSyncResult, channelListingsApi } from '../lib/api';
 import { DateRangePicker, ProgressButton, type DateRangeValue } from '@masquare/ui';
 import { formatAmount } from '../lib/format';
 import { listingUrl } from '../lib/channelUrls';
@@ -72,6 +72,43 @@ export function ChannelListingDetailPage() {
   const analysis = useJobProgress(`listing.amazon.sweep.${productId}`);
   const sweepResult = analysis.result as AmazonSweep | null;
   const sweepByIntegration = new Map((sweepResult?.results ?? []).map((r) => [r.integrationId, r]));
+
+  /**
+   * The answer for one channel: this session's sweep if it ran, otherwise the stored one.
+   *
+   * The stored answer carries no competitive read — that costs two more calls per marketplace and
+   * the background sweep does not spend them — so those fields stay null and the panel simply does
+   * not show that block. What it does carry is the part that decides whether the button should be
+   * live at all: catalogue presence and brand gating.
+   */
+  const availabilityFor = (c: ChannelListingDetailChannel): AmazonSweepRow | null => {
+    if (!c.integrationId) return null;
+    const live = sweepByIntegration.get(c.integrationId);
+    if (live) return live;
+    const a = c.availability;
+    if (!a) return null;
+    return {
+      integrationId: c.integrationId,
+      name: c.name,
+      marketplace: c.countryIso ?? '',
+      found: a.found,
+      asin: a.asin,
+      productType: null,
+      title: null,
+      restricted: a.restricted,
+      restrictionReason: a.restrictionReason,
+      error: a.error,
+      alreadyListed: false,
+      listedSku: null,
+      currency: c.currency ?? 'EUR',
+      featuredPriceCents: null,
+      featuredProfitCents: null,
+      featuredProfitEurCents: null,
+      featuredMarginPct: null,
+      lowestPriceCents: null,
+      competitive: null,
+    };
+  };
 
   const [listing, setListing] = useState<{ integrationId: string; name: string } | null>(null);
   /** The channel whose price is being edited. A card showing a loss should be able to fix it. */
@@ -379,8 +416,12 @@ export function ChannelListingDetailPage() {
                     channelName={c.name}
                     integrationId={c.integrationId ?? null}
                     plan={c.integrationId ? planByIntegration.get(c.integrationId) ?? null : null}
-                    sweep={c.integrationId ? sweepByIntegration.get(c.integrationId) ?? null : null}
-                    analysed={!!analysis.result}
+                    sweep={availabilityFor(c)}
+                    // Per channel, not per page: a stored answer for THIS marketplace is as much an
+                    // analysis as a sweep run a moment ago, and the prompt to go and run one should
+                    // not appear on a card that already has its answer.
+                    analysed={!!analysis.result || !!c.availability}
+                    checkedAt={sweepByIntegration.get(c.integrationId ?? '') ? null : c.availability?.checkedAt ?? null}
                     onList={(integrationId) => setListing({ integrationId, name: c.name })}
                   />
                 )}

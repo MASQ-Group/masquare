@@ -7,6 +7,7 @@ import { FloorService } from '../../amazon-repricing/floor/floor.service';
 import { fullScopeIntegrationWhere, isOrdersOnlyCompany } from '../../common/amazon-scope';
 import { suggestSku } from './sku-suggestion';
 import { isSkuInUseRejection } from './sku-collision';
+import { recordAvailability } from '../availability/availability-record';
 
 /**
  * Creating an offer on an existing Amazon listing.
@@ -156,7 +157,7 @@ export class AmazonListingService {
         ...(opts.companyIds ? { targetCompanyId: { in: opts.companyIds } } : {}),
         ...(await fullScopeIntegrationWhere(this.prisma)),
       },
-      select: { id: true, name: true, marketplace: true },
+      select: { id: true, name: true, marketplace: true, targetCompanyId: true },
       orderBy: { marketplace: 'asc' },
     });
     ctx?.setTotal(integrations.length);
@@ -232,6 +233,16 @@ export class AmazonListingService {
       }
     }
 
+    // The same answers the background sweep stores, stored by the same function.
+    //
+    // Someone pressing the button is asking Amazon the question the schedule asks; leaving the reply
+    // only in this response would mean the page forgets it on reload AND the scheduler re-asks it
+    // tomorrow, spending the call twice for one fact. Best-effort: a failure to file the answer must
+    // not lose the answer the caller is waiting for.
+    await this.storeSweep(productId, integrations, results).catch((e) =>
+      this.logger.warn(`Could not store availability from the manual sweep: ${(e as Error)?.message ?? e}`),
+    );
+
     return {
       productId,
       results,
@@ -250,6 +261,43 @@ export class AmazonListingService {
         failed: results.filter((r) => r.error && !r.found && !r.alreadyListed).length,
       },
     };
+  }
+
+  /**
+   * File what a manual sweep learnt, so it counts as a check.
+   *
+   * Marketplaces we are already listed on are skipped: the sweep does not ask Amazon about those —
+   * `alreadyListed` is read from our own listings table — so there is no reply to store, and writing
+   * a fabricated "not found" for them would be worse than writing nothing.
+   */
+  private async storeSweep(
+    productId: string,
+    integrations: Array<{ id: string; marketplace: string | null; targetCompanyId: string | null }>,
+    results: Array<{
+      integrationId: string; found: boolean; asin: string | null; productType: string | null;
+      title: string | null; restricted: boolean | null; restrictionReason: string | null;
+      error: string | null; alreadyListed: boolean;
+    }>,
+  ): Promise<void> {
+    for (const r of results) {
+      if (r.alreadyListed) continue;
+      const integration = integrations.find((i) => i.id === r.integrationId);
+      if (!integration?.targetCompanyId) continue;
+      await recordAvailability(
+        this.prisma,
+        {
+          productId,
+          integrationId: r.integrationId,
+          companyId: integration.targetCompanyId,
+          marketplace: integration.marketplace ?? '',
+        },
+        {
+          found: r.found, asin: r.asin, productType: r.productType, title: r.title,
+          restricted: r.restricted, restrictionReason: r.restrictionReason, error: r.error,
+        },
+        'manual',
+      );
+    }
   }
 
   /**

@@ -1180,6 +1180,23 @@ export class ChannelListingsService {
     });
     if (!p) throw new NotFoundException('Product not found');
     const channels = await this.channels(companyIds);
+
+    /**
+     * What Amazon last said about the marketplaces this product is NOT on.
+     *
+     * Stored by the background sweep and by the manual check, so a card that would otherwise say
+     * nothing can say when it was last asked. Read here rather than fetched: the answer costs two
+     * SP-API calls and changes on the order of months, and a page load is neither the time nor the
+     * budget to ask again.
+     */
+    const availability = await this.prisma.productChannelAvailability.findMany({
+      where: { productId, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: {
+        integrationId: true, found: true, asin: true, restricted: true,
+        restrictionReason: true, error: true, checkedAt: true, source: true,
+      },
+    });
+    const availabilityByInt = new Map(availability.map((a) => [a.integrationId, a]));
     // Keyed the way channels() identifies a column, not by integration.
     //
     // One eBay connection serves eight marketplaces, so an integration id names a column only for
@@ -1214,6 +1231,26 @@ export class ChannelListingsService {
         marginPct: e?.marginPct ?? null,
         loss: e?.loss ?? false,
         lastPulledAt: l?.lastPulledAt ?? null,
+        /**
+         * The stored answer to "could we list this here", or null if nobody has asked yet.
+         *
+         * Null is deliberately distinct from a stored `found: false`. "Not checked" and "Amazon has
+         * no catalogue entry" look identical on a card that only shows what it can offer, and they
+         * call for completely different actions — wait, versus stop waiting.
+         */
+        availability: (() => {
+          const a = availabilityByInt.get(ch.id);
+          if (!a) return null;
+          return {
+            found: a.found,
+            asin: a.asin,
+            restricted: a.restricted,
+            restrictionReason: a.restrictionReason,
+            error: a.error,
+            checkedAt: a.checkedAt,
+            source: a.source,
+          };
+        })(),
       };
     });
     return {

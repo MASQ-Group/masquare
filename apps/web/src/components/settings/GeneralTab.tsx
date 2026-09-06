@@ -7,6 +7,7 @@ import { useAuth } from '../../lib/auth';
 import { applyFonts, BODY_FONTS, DEFAULT_BODY_FONT, DEFAULT_MONO_FONT, MONO_FONTS } from '../../lib/fonts';
 import { SectionHeader } from './shared';
 import { ActivityRetentionCard } from './ActivityRetentionCard';
+import { AvailabilityScheduleSection } from './AvailabilityScheduleSection';
 
 const DATE_FORMATS: { value: PlatformSettings['dateFormat']; label: string }[] = [
   { value: 'ddmmyyyy', label: 'dd/mm/yyyy' },
@@ -301,6 +302,12 @@ export function GeneralTab() {
             price, so a listing launched at its floor would stay there. Set this to 12% once repricing writes live.
           </p>
         </div>
+      </div>
+
+      {/* Sits with the other channel-wide switches rather than on the listings page it feeds: it
+          spends one shared SP-API budget across both companies, so it is not a per-page preference. */}
+      <div className="mt-6 card p-5">
+        <AvailabilityScheduleSection />
       </div>
 
       <div className="mt-6">
