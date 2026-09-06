@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Injectable, NotFoundException, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Injectable, NotFoundException, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -25,28 +25,79 @@ export class BrandRestrictionsService {
     });
   }
 
-  async create(dto: { brandId: string; channelType: string; marketplace?: string | null; note?: string | null }, actorId?: string) {
+  /**
+   * Record a brand's restriction on one or more channels.
+   *
+   * Several at once because that is how the letters arrive: a brand writes once and names four
+   * marketplaces. Making somebody repeat the form per channel meant retyping the same note four
+   * times — and a note is the thing that makes the warning actionable months later, so four
+   * slightly different versions of it is a worse outcome than one.
+   *
+   * `channels` is the real input; a single channelType/marketplace is still accepted so the older
+   * shape keeps working.
+   */
+  async create(
+    dto: {
+      brandId: string;
+      channelType?: string;
+      marketplace?: string | null;
+      channels?: Array<{ channelType: string; marketplace?: string | null }>;
+      note?: string | null;
+    },
+    actorId?: string,
+  ) {
     const brand = await this.prisma.brand.findFirst({ where: { id: dto.brandId, deletedAt: null }, select: { id: true } });
     if (!brand) throw new NotFoundException('Brand not found');
 
-    const channelType = (dto.channelType ?? '').trim().toLowerCase();
-    // Empty marketplace is meaningful — it covers the whole channel type — so it is normalised
-    // rather than rejected.
-    const marketplace = (dto.marketplace ?? '').trim().toUpperCase();
+    const requested = dto.channels?.length
+      ? dto.channels
+      : dto.channelType
+        ? [{ channelType: dto.channelType, marketplace: dto.marketplace }]
+        : [];
+    if (requested.length === 0) throw new BadRequestException('Pick at least one channel');
 
-    // Re-adding a restriction that was removed should revive it, not collide with the unique key.
-    const existing = await this.prisma.brandChannelRestriction.findFirst({
-      where: { brandId: dto.brandId, channelType, marketplace },
-      select: { id: true },
-    });
-    if (existing) {
-      return this.prisma.brandChannelRestriction.update({
-        where: { id: existing.id },
-        data: { note: dto.note ?? null, deletedAt: null, createdById: actorId },
-      });
+    // Normalised, then deduplicated. "Amazon (all marketplaces)" alongside "Amazon US" is a
+    // reasonable thing to click by accident, and two rows for the same pair would collide on the
+    // unique key and lose the whole submission over a duplicate the person did not intend.
+    const seen = new Map<string, { channelType: string; marketplace: string }>();
+    for (const c of requested) {
+      const channelType = (c.channelType ?? '').trim().toLowerCase();
+      if (!channelType) continue;
+      // Empty marketplace is meaningful — it covers the whole channel type — so it is normalised
+      // rather than rejected.
+      const marketplace = (c.marketplace ?? '').trim().toUpperCase();
+      seen.set(`${channelType}|${marketplace}`, { channelType, marketplace });
     }
-    return this.prisma.brandChannelRestriction.create({
-      data: { brandId: dto.brandId, channelType, marketplace, note: dto.note ?? null, createdById: actorId },
+    const channels = [...seen.values()];
+    if (channels.length === 0) throw new BadRequestException('Pick at least one channel');
+
+    /**
+     * All of them, or none.
+     *
+     * A brand letter is one instruction. Half of it recorded and half refused is the worst outcome
+     * available: the screen would show a partial rule that reads as complete, and nobody would know
+     * which marketplaces were missing.
+     */
+    return this.prisma.$transaction(async (tx) => {
+      const saved: Awaited<ReturnType<typeof tx.brandChannelRestriction.create>>[] = [];
+      for (const { channelType, marketplace } of channels) {
+        // Re-adding a restriction that was removed should revive it, not collide with the unique key.
+        const existing = await tx.brandChannelRestriction.findFirst({
+          where: { brandId: dto.brandId, channelType, marketplace },
+          select: { id: true },
+        });
+        saved.push(
+          existing
+            ? await tx.brandChannelRestriction.update({
+                where: { id: existing.id },
+                data: { note: dto.note ?? null, deletedAt: null, createdById: actorId },
+              })
+            : await tx.brandChannelRestriction.create({
+                data: { brandId: dto.brandId, channelType, marketplace, note: dto.note ?? null, createdById: actorId },
+              }),
+        );
+      }
+      return saved;
     });
   }
 
@@ -71,7 +122,16 @@ export class BrandRestrictionsController {
   @NoAccessCheck() @Get() list(@Query('brandId') brandId?: string) { return this.svc.list(brandId); }
 
   @Post() create(
-    @Body() dto: { brandId: string; channelType: string; marketplace?: string | null; note?: string | null },
+    @Body()
+    dto: {
+      brandId: string;
+      /** Several at once — a brand letter usually names more than one marketplace. */
+      channels?: Array<{ channelType: string; marketplace?: string | null }>;
+      /** The older single-channel shape, still accepted. */
+      channelType?: string;
+      marketplace?: string | null;
+      note?: string | null;
+    },
     @CurrentUser() u: AuthUser,
   ) { return this.svc.create(dto, u.sub); }
 

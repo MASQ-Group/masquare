@@ -82,7 +82,14 @@ const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s
 
 function AddRestrictionModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [brandId, setBrandId] = useState('');
-  const [channelKey, setChannelKey] = useState('');
+  /**
+   * Several channels, because that is how a brand letter arrives.
+   *
+   * One letter naming four marketplaces used to mean filling this form four times — and retyping
+   * the note each time. The note is what makes the warning actionable months later, so four
+   * slightly different versions of it was a worse outcome than one.
+   */
+  const [channelKeys, setChannelKeys] = useState<Set<string>>(new Set());
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -104,18 +111,55 @@ function AddRestrictionModal({ onClose, onSaved }: { onClose: () => void; onSave
     return [...whole, ...each];
   }, [channels]);
 
+  /**
+   * The options grouped under their channel, so a long list of marketplaces reads as three short
+   * lists rather than one of twenty-six. "eBay — all marketplaces" sits inside the eBay group with
+   * the rest, where it can be compared against them.
+   */
+  const byType = useMemo(() => {
+    const groups = new Map<string, typeof options>();
+    for (const o of options) {
+      const type = o.value.split('|')[0];
+      groups.set(type, [...(groups.get(type) ?? []), o]);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [options]);
+
   const save = async () => {
-    if (!brandId || !channelKey) { toast.error('Pick a brand and a channel'); return; }
-    const [channelType, marketplace] = channelKey.split('|');
+    if (!brandId || channelKeys.size === 0) { toast.error('Pick a brand and at least one channel'); return; }
+    const channels = [...channelKeys].map((key) => {
+      const [channelType, marketplace] = key.split('|');
+      return { channelType, marketplace };
+    });
     setBusy(true);
     try {
-      await brandRestrictionsApi.create({ brandId, channelType, marketplace, note: note.trim() || null });
-      toast.success('Restriction added');
+      // One call, one transaction. Half a brand letter recorded is worse than none: the screen
+      // would show a partial rule that reads as complete.
+      await brandRestrictionsApi.create({ brandId, channels, note: note.trim() || null });
+      toast.success(channels.length === 1 ? 'Restriction added' : `${channels.length} restrictions added`);
       onSaved();
     } catch (e: any) {
       toast.error(e?.response?.data?.message ?? 'Could not save');
     } finally { setBusy(false); }
   };
+
+  const toggle = (value: string) =>
+    setChannelKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(value)) next.delete(value); else next.add(value);
+      return next;
+    });
+
+  /** Every marketplace of one channel type, for the "all of these" shortcut. */
+  const typeOf = (value: string) => value.split('|')[0];
+  const selectType = (channelType: string) =>
+    setChannelKeys((prev) => {
+      const next = new Set(prev);
+      const marketplaces = options.filter((o) => typeOf(o.value) === channelType && o.value !== `${channelType}|`);
+      const allOn = marketplaces.every((o) => next.has(o.value));
+      marketplaces.forEach((o) => (allOn ? next.delete(o.value) : next.add(o.value)));
+      return next;
+    });
 
   return (
     <ModalShell open title="Add brand restriction" primaryLabel={busy ? 'Saving…' : 'Add restriction'} onPrimary={save} onClose={onClose} initialSize={{ w: 560, h: 420 }}>
@@ -126,10 +170,47 @@ function AddRestrictionModal({ onClose, onSaved }: { onClose: () => void; onSave
             options={brands.map((b) => ({ value: b.id, label: b.name }))} />
         </label>
 
-        <label className="flex flex-col gap-1">
-          <span className="text-[12px] font-semibold text-n-600">Restricted channel *</span>
-          <Select value={channelKey} onChange={setChannelKey} placeholder="Pick a channel" options={options} />
-        </label>
+        <div className="flex flex-col gap-1">
+          <span className="text-[12px] font-semibold text-n-600">
+            Restricted channels * <span className="font-normal text-n-400">— pick as many as the letter names</span>
+          </span>
+          <div className="max-h-[210px] overflow-y-auto rounded-md border border-n-200">
+            {byType.map(([channelType, entries]) => (
+              <div key={channelType} className="border-b border-n-100 last:border-b-0">
+                <div className="flex items-center gap-2 bg-n-25 px-2.5 py-1.5">
+                  <span className="flex-1 text-[11.5px] font-bold uppercase tracking-wide text-n-500">
+                    {titleCase(channelType)}
+                  </span>
+                  {/* One click for "the whole of Amazon", which is the common case for a brand
+                      that has withdrawn from a channel entirely. */}
+                  <button
+                    type="button"
+                    onClick={() => selectType(channelType)}
+                    className="text-[11px] font-semibold text-teal-700 hover:underline"
+                  >
+                    All marketplaces
+                  </button>
+                </div>
+                {entries.map((o) => (
+                  <label key={o.value} className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 hover:bg-n-25">
+                    <input
+                      type="checkbox"
+                      checked={channelKeys.has(o.value)}
+                      onChange={() => toggle(o.value)}
+                      className="h-3.5 w-3.5 accent-teal-600"
+                    />
+                    <span className="text-[12.5px] text-n-700">{o.label}</span>
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+          <span className="text-[11.5px] text-n-400">
+            {channelKeys.size === 0
+              ? 'None selected yet.'
+              : `${channelKeys.size} selected — one restriction will be recorded for each, sharing this note.`}
+          </span>
+        </div>
 
         <label className="flex flex-col gap-1">
           <span className="text-[12px] font-semibold text-n-600">Reason / reference</span>
