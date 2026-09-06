@@ -120,7 +120,7 @@ export function PurchaseOrderDetailPage() {
     <div className="w-full">
       <PageHeader
         module="Purchasing"
-        moduleHref="/purchase-orders"
+        parent={{ label: 'Purchase Orders', href: '/purchase-orders' }}
         title={po.poNumber}
         // The status chip rides in the toolbar slot: it is the one piece of state that decides
         // which actions are even possible, so it belongs beside them rather than down the page.

@@ -81,7 +81,7 @@ export function ActivityPage() {
   return (
     <div className="w-full">
       <PageHeader
-        module="Platform"
+        module="Setup"
         title="Activity"
         info="Every change to a product or an order, with what it was before."
         summary={data ? `${data.total.toLocaleString()} entr${data.total === 1 ? 'y' : 'ies'}` : ''}

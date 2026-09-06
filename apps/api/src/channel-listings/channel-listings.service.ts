@@ -244,7 +244,12 @@ export class ChannelListingsService {
    * A marketplace that errors is left exactly as it was. "We could not ask" and "it is not there"
    * are different answers, and only one of them justifies deleting a record.
    */
-  async syncProduct(productId: string, companyIds?: string[], progress?: ProgressSink) {
+  async syncProduct(
+    productId: string,
+    companyIds?: string[],
+    progress?: ProgressSink,
+    opts: { allChannels?: boolean } = {},
+  ) {
     const product = await this.prisma.product.findFirst({
       where: { id: productId, ...ACTIVE },
       select: { id: true, mainSku: true, aliases: { where: ACTIVE, select: { skuValue: true } } },
@@ -278,10 +283,17 @@ export class ChannelListingsService {
       select: { id: true, name: true, marketplace: true, targetCompanyId: true },
       orderBy: { name: 'asc' },
     });
-    progress?.setTotal(ints.length);
+    const ebayCount = opts.allChannels
+      ? await this.prisma.channelIntegration.count({
+          where: { ...ACTIVE, status: 'active', channelType: 'ebay', ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}) },
+        })
+      : 0;
+    progress?.setTotal(ints.length + ebayCount);
 
     const now = new Date();
     const results: Array<{ integrationId: string; name: string; marketplace: string | null; ok: boolean; listed: boolean; status?: string | null; message?: string }> = [];
+    /** Channels we could not answer for per product, said plainly rather than left blank. */
+    const skipped: string[] = [];
     let listedCount = 0;
     let removed = 0;
 
@@ -339,13 +351,79 @@ export class ChannelListingsService {
       progress?.tick(true);
     }
 
+    // ---- eBay ------------------------------------------------------------------------------
+    //
+    // Upsert only, never delete. The account pull merges the Inventory API with the Trading API
+    // because classic listings are invisible to the first; a per-SKU lookup can only ask the
+    // Inventory API and so inherits that blind spot. Absence there is not evidence of absence on
+    // eBay, and acting on it is what deleted 4,709 records on 29 Aug 2026.
+    if (opts.allChannels) {
+      const ebayInts = await this.prisma.channelIntegration.findMany({
+        where: {
+          ...ACTIVE,
+          status: 'active',
+          channelType: 'ebay',
+          ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
+        },
+        select: { id: true, name: true, targetCompanyId: true },
+        orderBy: { name: 'asc' },
+      });
+
+      for (const intg of ebayInts) {
+        progress?.note(intg.name);
+        const res = await this.integrations.fetchEbayListingsBySku(intg.id, skus);
+        if (!res.ok) {
+          results.push({ integrationId: intg.id, name: intg.name, marketplace: null, ok: false, listed: false, message: res.message });
+          progress?.tick(false);
+          continue;
+        }
+        for (const l of res.rows) {
+          const marketplace = (l.marketplace ?? '').toString();
+          await this.prisma.channelListing.upsert({
+            where: { integrationId_channelSku_marketplace: { integrationId: intg.id, channelSku: l.sku, marketplace } },
+            create: {
+              integrationId: intg.id, companyId: intg.targetCompanyId, channelSku: l.sku, marketplace,
+              productId: product.id, asin: null, externalListingId: l.externalId ?? null, title: l.title,
+              listedQuantity: l.quantity, listedPrice: l.price, currency: l.currency,
+              fulfilmentChannel: null, listingStatus: l.status, lastPulledAt: now,
+            },
+            update: {
+              productId: product.id, externalListingId: l.externalId ?? null, title: l.title,
+              listedQuantity: l.quantity, listedPrice: l.price, currency: l.currency,
+              listingStatus: l.status, lastPulledAt: now,
+            },
+          });
+        }
+        if (res.rows.length) listedCount++;
+        else {
+          // Nothing came back, which on eBay does NOT mean nothing is there: classic listings are
+          // invisible to the Inventory API. Reporting a bare "not listed" would contradict the
+          // eBay rows already on the page and teach people to distrust the count.
+          skipped.push(`${intg.name}: no Inventory-API listing found (classic listings are not visible per product)`);
+        }
+        results.push({
+          integrationId: intg.id, name: intg.name, marketplace: null,
+          ok: true, listed: res.rows.length > 0, status: res.rows[0]?.status ?? null,
+        });
+        progress?.tick(true);
+      }
+
+      // OnBuy has no per-SKU lookup in its API, so there is nothing honest to report per product.
+      // Said out loud rather than left as a silent gap in a button called "all channels".
+      const onbuy = await this.prisma.channelIntegration.count({
+        where: { ...ACTIVE, status: 'active', channelType: 'onbuy', ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}) },
+      });
+      if (onbuy) skipped.push('OnBuy has no per-product lookup — use the channel sync for it');
+    }
+
     return {
       productId: product.id,
       mainSku: product.mainSku,
-      checked: ints.length,
+      checked: results.length,
       listed: listedCount,
       removed,
       failed: results.filter((r) => !r.ok).length,
+      skipped,
       results,
     };
   }

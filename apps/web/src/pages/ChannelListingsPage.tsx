@@ -380,7 +380,7 @@ export function ChannelListingsPage() {
     <div className="w-full">
       <PageHeader
         module="Sales channels"
-        title="Channel listings"
+        title="Channel Listings"
         info="Everything live across your connected marketplaces — quantities, prices and listing health in one place."
         tabs={[{ key: 'analytics', label: 'Analytics' }, { key: 'listings', label: 'Listings', count: total }]}
         activeTab={tab}

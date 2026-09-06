@@ -372,6 +372,8 @@ export interface ProductListingSyncResult {
   listed: number;
   removed: number;
   failed: number;
+  /** Channels with no per-product lookup, named rather than silently omitted. */
+  skipped?: string[];
   results: Array<{
     integrationId: string;
     name: string;
@@ -392,8 +394,8 @@ export const channelListingsApi = {
   sync: (integrationIds?: string[]) =>
     api.post<JobView>('/channel-listings/sync', integrationIds?.length ? { integrationIds } : {}).then((r) => r.data),
   /** One product's Amazon listings, refreshed in seconds rather than a full-account walk. */
-  syncProduct: (productId: string) =>
-    api.post<JobView>(`/channel-listings/product/${productId}/sync`, {}).then((r) => r.data),
+  syncProduct: (productId: string, allChannels = false) =>
+    api.post<JobView>(`/channel-listings/product/${productId}/sync`, { allChannels }).then((r) => r.data),
   detail: (productId: string) => api.get<ChannelListingDetail>(`/channel-listings/product/${productId}`).then((r) => r.data),
   identifiers: (productId: string) => api.get<ChannelIdentifier[]>(`/channel-listings/product/${productId}/identifiers`).then((r) => r.data),
   push: (productIds: string[], dryRun: boolean, channels?: string[]) =>
@@ -1416,6 +1418,11 @@ export interface AmazonOfferPreview {
   validated: boolean;
   submissionStatus: string | null;
   issues: AmazonIssue[];
+  /**
+   * A free SKU to try, present ONLY when Amazon itself refused the name in validation.
+   * Never offered in anticipation: the same SKU is normally accepted across marketplaces.
+   */
+  skuSuggestion?: string | null;
   message: string | null;
 }
 
@@ -1486,21 +1493,12 @@ export type AmazonQuote =
       };
     };
 
-/** Whether the SKU a listing would be created under is already spoken for in this account. */
-export interface AmazonSkuCheck {
+/** Adopting a SKU also records it as an alias, so an order under that name still matches. */
+export interface AmazonUseSkuResult {
   sku: string;
-  /** Where the SKU came from: an existing listing here, a choice on the plan, or the product. */
-  source: 'listing' | 'plan' | 'product';
-  /** Marketplaces already carrying this SKU. Empty is the ordinary case. */
-  conflicts: Array<{
-    integrationId: string;
-    name: string;
-    marketplace: string | null;
-    asin: string | null;
-    status: string | null;
-  }>;
-  /** A free alternative, or null when the SKU is fine as it is. */
-  suggestion: string | null;
+  aliasCreated: boolean;
+  fulfilment: string | null;
+  warning: string | null;
 }
 
 export interface AmazonSubmitResult {
@@ -1580,9 +1578,10 @@ export const amazonListingApi = {
   submit: (productId: string, integrationId: string) =>
     api.post<AmazonSubmitResult>(`/listing/amazon/products/${productId}/channels/${integrationId}/submit`, { confirm: true }).then((r) => r.data),
   /** What Amazon says about the listing now. Accepted is not the same as live. */
-  /** Read-only: is this SKU already used on another marketplace in the account? */
-  skuCheck: (productId: string, integrationId: string) =>
-    api.get<AmazonSkuCheck>(`/listing/amazon/products/${productId}/channels/${integrationId}/sku-check`).then((r) => r.data),
+  /** Adopt a SKU for this marketplace and alias it on the product. Reached only after a real
+   *  Amazon rejection, never on a prediction. */
+  useSku: (productId: string, integrationId: string, sku: string) =>
+    api.post<AmazonUseSkuResult>(`/listing/amazon/products/${productId}/channels/${integrationId}/use-sku`, { sku }).then((r) => r.data),
   state: (productId: string, integrationId: string) =>
     api.get<AmazonListingState>(`/listing/amazon/products/${productId}/channels/${integrationId}/state`).then((r) => r.data),
   /** Builds the offer and has Amazon validate it. Creates nothing. */

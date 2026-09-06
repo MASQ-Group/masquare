@@ -35,28 +35,14 @@ export function AmazonOfferPreview({
 }) {
   const [showPayload, setShowPayload] = useState(false);
   const [submitted, setSubmitted] = useState<AmazonSubmitResult | null>(null);
-
   /**
-   * Is the SKU this would be created under already taken elsewhere in the account?
+   * The SKU to list under, when Amazon has refused the product's own.
    *
-   * Asked as soon as there is an ASIN to attach to, not on pressing Validate. Amazon refuses a SKU
-   * that exists on another marketplace (error 100398), and until now that refusal arrived only
-   * after someone had matched the product, set a price, set stock and dispatch, and pressed
-   * Validate — every one of those steps done for a listing that could not be created under that
-   * name. Knowing at the top costs one instant query against listings we have already pulled.
+   * Editable, because the name is the operator's decision and will be read by people for years:
+   * ours is a starting point, not a verdict. RE-S8540-AU may well want to be RE-S8540-AUS.
    */
-  const skuCheck = useQuery({
-    queryKey: ['amazon-sku-check', productId, integrationId],
-    queryFn: () => amazonListingApi.skuCheck(productId, integrationId),
-    enabled: !!asin,
-  });
-  const clash = skuCheck.data && skuCheck.data.conflicts.length > 0 ? skuCheck.data : null;
+  const [altSku, setAltSku] = useState('');
 
-  const useSuggestion = useMutation({
-    mutationFn: async (sku: string) => { await onUseSku?.(sku); },
-    onSuccess: () => { toast.success('SKU updated'); skuCheck.refetch(); },
-    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not set the SKU'),
-  });
 
   /**
    * What Amazon actually thinks of the listing now.
@@ -70,6 +56,24 @@ export function AmazonOfferPreview({
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not read the listing from Amazon'),
   });
   const confirm = useConfirm();
+  /**
+   * Adopt the SKU and immediately re-validate.
+   *
+   * Re-running is the point: the operator asked Amazon a question and got a refusal, so the answer
+   * they want is whether the new name clears it. Leaving them to press Validate again would be
+   * leaving the job half done.
+   */
+  const useSku = useMutation({
+    mutationFn: (sku: string) => amazonListingApi.useSku(productId, integrationId, sku),
+    onSuccess: (r) => {
+      toast.success(r.aliasCreated ? `Listing as ${r.sku} — added as an ${r.fulfilment ?? ''} alias`.trim() : `Listing as ${r.sku}`);
+      if (r.warning) toast.warning(r.warning);
+      setAltSku('');
+      run.mutate();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not set the SKU'),
+  });
+
 
   const run = useMutation({
     mutationFn: async () => {
@@ -140,53 +144,6 @@ export function AmazonOfferPreview({
         </p>
       )}
 
-      {/* Before the effort, not after it. Amazon treats a seller SKU as one identity across the
-          whole account, so a name in use anywhere else is refused here. */}
-      {clash && (
-        <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
-          <div className="flex items-start gap-1.5">
-            <Tag size={13} className="mt-0.5 shrink-0 text-amber-600" />
-            <span>
-              <b>SKU {clash.sku} is already in use</b> on{' '}
-              {clash.conflicts.map((c) => c.marketplace || c.name).join(', ')}. Amazon treats a seller SKU as one
-              listing across the whole account, so it will refuse to create it here under that name.
-            </span>
-          </div>
-          {clash.suggestion && (
-            <div className="flex flex-wrap items-center gap-2 pl-[18px]">
-              <span>List as</span>
-              <span className="mono rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 font-semibold">{clash.suggestion}</span>
-              <button
-                type="button"
-                onClick={() => useSuggestion.mutate(clash.suggestion!)}
-                disabled={useSuggestion.isPending || !onUseSku}
-                title={onUseSku ? `Use ${clash.suggestion} for this marketplace` : 'Open this channel from the product card to change the SKU'}
-                className="inline-flex h-6 items-center rounded border border-amber-300 bg-n-0 px-2 text-[11.5px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
-              >
-                {useSuggestion.isPending ? 'Saving…' : 'Use this SKU'}
-              </button>
-            </div>
-          )}
-          {!clash.suggestion && (
-            <span className="pl-[18px]">Choose a different SKU for this marketplace before listing.</span>
-          )}
-        </div>
-      )}
-
-      {/* Already carrying a chosen name — worth stating, or the SKU on screen looks like a typo. */}
-      {skuCheck.data && !clash && skuCheck.data.source === 'plan' && (
-        <p className="mt-1.5 text-[11.5px] text-n-500">
-          Listing as <span className="mono font-semibold">{skuCheck.data.sku}</span> here, because the product's own SKU is
-          used on another marketplace.
-        </p>
-      )}
-
-      {asin && !p && !run.isPending && (
-        <p className="mt-1.5 text-[11.5px] text-n-400">
-          Builds the offer from this product and asks Amazon whether it would be accepted. Nothing is created —
-          this is the same submission run in validation mode.
-        </p>
-      )}
 
       {/* Available whether or not a preview has been run: after a submission this is the question
           worth asking, and it does not depend on anything on screen. */}
@@ -251,6 +208,43 @@ export function AmazonOfferPreview({
                   )}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Amazon has actually refused the name — the ONLY moment a different SKU is offered.
+              The same SKU is normally accepted across marketplaces, so predicting this would have
+              split SKUs that never needed splitting. */}
+          {p.skuSuggestion && (
+            <div className="flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
+              <div className="flex items-start gap-1.5">
+                <Tag size={13} className="mt-0.5 shrink-0 text-amber-600" />
+                <span>
+                  Amazon will not create <span className="mono font-semibold">{p.sku}</span> here. Listing it under a
+                  different SKU is the way through — it is recorded as an alias of the product, so orders under that
+                  name still match.
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pl-[19px]">
+                <input
+                  value={altSku || p.skuSuggestion}
+                  onChange={(e) => setAltSku(e.target.value)}
+                  maxLength={40}
+                  spellCheck={false}
+                  aria-label="Seller SKU to list under"
+                  className="mono h-7 w-[240px] rounded border border-amber-300 bg-n-0 px-2 text-[12px] text-n-900 outline-none focus:border-amber-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => useSku.mutate((altSku || p.skuSuggestion || '').trim())}
+                  disabled={useSku.isPending || !(altSku || p.skuSuggestion || '').trim()}
+                  className="inline-flex h-7 items-center rounded border border-amber-300 bg-n-0 px-2.5 text-[11.5px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                >
+                  {useSku.isPending ? 'Saving…' : 'Use this SKU and re-validate'}
+                </button>
+              </div>
+              <span className="pl-[19px] text-[11px] opacity-80">
+                Saved as an FBM alias of {p.sku}. Edit the name first if you would rather it read differently.
+              </span>
             </div>
           )}
 

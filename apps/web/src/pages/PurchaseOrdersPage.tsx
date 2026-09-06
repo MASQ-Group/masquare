@@ -123,7 +123,7 @@ export function PurchaseOrdersPage() {
     <div className="w-full">
       <PageHeader
         module="Purchasing"
-        title="Purchase orders"
+        title="Purchase Orders"
         info="Orders raised to your vendors. Draft, submit, then receive against them."
         actions={isAdmin ? (
           <button onClick={() => setReqOpen(true)} className="hbtn">

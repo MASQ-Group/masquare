@@ -96,9 +96,16 @@ export class ChannelListingsController {
    * same, because it still fans out across every connected marketplace.
    */
   @Post('product/:productId/sync')
-  syncProduct(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
-    return this.jobs.start('channel-listings.syncProduct', 'Checking every Amazon marketplace for this product', (ctx) =>
-      this.svc.syncProduct(productId, companyIds, ctx),
+  syncProduct(
+    @Param('productId') productId: string,
+    @VisibleCompanies() companyIds: string[],
+    @Body() body?: { allChannels?: boolean },
+  ) {
+    const all = body?.allChannels === true;
+    return this.jobs.start(
+      'channel-listings.syncProduct',
+      all ? 'Checking every channel for this product' : 'Checking every Amazon marketplace for this product',
+      (ctx) => this.svc.syncProduct(productId, companyIds, ctx, { allChannels: all }),
     );
   }
 

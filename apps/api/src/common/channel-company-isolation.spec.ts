@@ -19,7 +19,8 @@ import { join } from 'path';
  * must NOT be scoped by anyone's company list. Scope at the edge, never in the engine.
  *
  * ── Why there is a debt list below ──────────────────────────────────────────────────────────────
- * Thirty-four routes predate the rule. Fixing them is real work — each needs its service changed
+ * Twenty-eight routes predate the rule (the list began at 34; two of those turned out to be
+ * scoped all along, hidden by a signature scan that stopped at the first brace). Fixing them is real work — each needs its service changed
  * too, and several are genuinely platform-wide — so they are written down rather than either
  * silently tolerated or mass-annotated in one careless sweep, which is precisely how the access
  * guard came to miss eight controllers.
@@ -59,9 +60,7 @@ const EXEMPT: Record<string, string> = {
  * seller accounts. Nothing may be added; each is removed as it is fixed.
  */
 const KNOWN_UNSCOPED = [
-  'channel-listings/channel-listings.controller.ts → restoreQuantities()',
   'integrations/integrations.controller.ts → backfillCancelStages()',
-  'integrations/integrations.controller.ts → bulkSetAutoSync()',
   'integrations/integrations.controller.ts → createEbaySigningKey()',
   'integrations/integrations.controller.ts → ebayOrderMoney()',
   'integrations/integrations.controller.ts → ebayOrderMoneyDefault()',
@@ -99,9 +98,12 @@ function handlersOf(source: string): { name: string; signature: string }[] {
     let j = i + 1;
     while (j < lines.length && /^\s*@/.test(lines[j])) j++;
     const sig: string[] = [];
-    for (let k = j; k < lines.length && k < j + 14; k++) {
+    // To the END of the parameter list, not the first '{'. A parameter typed inline —
+    // `@Body() body: { sku: string }` — contains a brace, and stopping there hid every decorator
+    // after it, reporting a properly scoped route as unscoped.
+    for (let k = j; k < lines.length && k < j + 20; k++) {
       sig.push(lines[k]);
-      if (lines[k].includes('{')) break;
+      if (/\)\s*(:[^{]*)?\{\s*$/.test(lines[k])) break;
     }
     const name = /^\s*(?:async\s+)?(\w+)\s*\(/.exec(sig[0] ?? '')?.[1];
     if (name) out.push({ name, signature: sig.join(' ') });
@@ -153,7 +155,7 @@ describe('channel endpoints name a company', () => {
   });
 
   it('states how much is left, so the debt is a number and not a feeling', () => {
-    expect(KNOWN_UNSCOPED.length).toBe(30);
+    expect(KNOWN_UNSCOPED.length).toBe(28);
   });
 
   it('gives every permanent exemption a real reason', () => {
