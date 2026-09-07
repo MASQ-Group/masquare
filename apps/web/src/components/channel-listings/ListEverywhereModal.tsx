@@ -3,7 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { AlertTriangle, Ban, Check, ChevronRight, Link2, Link2Off, Rocket, Search, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
-import { amazonListingApi, type AmazonCandidates, type ListEverywherePreview, type ListEverywhereRow } from '../../lib/api';
+import { amazonListingApi, type AmazonCandidates, type ListEverywherePreview, type ListEverywhereResultRow, type ListEverywhereRow } from '../../lib/api';
 import { eurAside } from '../../lib/format';
 import { isZeroDecimalCurrency, limitPriceInput } from '../../lib/currencies';
 import { sortByChannelCanonical } from '../../lib/channelGroups';
@@ -107,7 +107,14 @@ export function ListEverywhereModal({
     );
   };
 
-  const result = job.result as { summary?: { submitted: number; failed: number }; results?: Array<{ name: string; ok: boolean; message: string }> } | null;
+  const result = job.result as { summary?: { submitted: number; failed: number; skuRefused?: number }; results?: ListEverywhereResultRow[] } | null;
+  /**
+   * Rows resolved here after the run, so a retried channel stops reading as failed.
+   *
+   * Held beside the job result rather than folded into it: the job is what the server reported and
+   * should stay that, while this records what has happened since on this screen.
+   */
+  const [resolved, setResolved] = useState<Record<string, { ok: boolean; message: string }>>({});
 
   return (
     <ModalShell
@@ -151,6 +158,9 @@ export function ListEverywhereModal({
             priceFor={priceFor} handlingFor={handlingFor}
             liveWritesEnabled={p?.liveWritesEnabled ?? false}
             job={job} result={result} onDone={onDone}
+            productId={productId}
+            resolved={resolved}
+            onResolved={(id, outcome) => setResolved((prev) => ({ ...prev, [id]: outcome }))}
           />
         )}
       </div>
@@ -599,6 +609,7 @@ function PriceRow({
 
 function ReviewStep({
   rows, chosen, setChosen, selected, priceFor, handlingFor, liveWritesEnabled, job, result, onDone,
+  productId, resolved, onResolved,
 }: {
   rows: ListEverywhereRow[];
   chosen: Set<string>;
@@ -608,8 +619,11 @@ function ReviewStep({
   handlingFor: (r: ListEverywhereRow) => string;
   liveWritesEnabled: boolean;
   job: { running: boolean; detail: string; error: unknown };
-  result: { summary?: { submitted: number; failed: number }; results?: Array<{ name: string; ok: boolean; message: string }> } | null;
+  result: { summary?: { submitted: number; failed: number; skuRefused?: number }; results?: ListEverywhereResultRow[] } | null;
   onDone: () => void;
+  productId: string;
+  resolved: Record<string, { ok: boolean; message: string }>;
+  onResolved: (integrationId: string, outcome: { ok: boolean; message: string }) => void;
 }) {
   if (rows.length === 0) return <Hint>Nothing is ready to list yet.</Hint>;
   const toggle = (id: string) => {
@@ -670,13 +684,21 @@ function ReviewStep({
         <div className="rounded-lg border border-n-200">
           <div className="border-b border-n-100 px-3 py-2 text-[12.5px] font-semibold text-n-800">
             {result.summary.submitted} submitted{result.summary.failed > 0 ? `, ${result.summary.failed} failed` : ''}
+            {/* Named separately because it is the only failure with a remedy on this screen. */}
+            {(result.summary.skuRefused ?? 0) > 0 && (
+              <span className="ml-2 font-normal text-amber-700">
+                {result.summary.skuRefused} refused the SKU — fixable below
+              </span>
+            )}
           </div>
           {(result.results ?? []).map((r) => (
-            <div key={r.name} className="flex items-start gap-2 border-b border-n-50 px-3 py-1.5 text-[12px] last:border-b-0">
-              {r.ok ? <Check size={13} className="mt-0.5 shrink-0 text-teal-600" /> : <Ban size={13} className="mt-0.5 shrink-0 text-danger" />}
-              <span className="w-[130px] shrink-0 font-semibold text-n-700">{r.name}</span>
-              <span className={r.ok ? 'text-n-500' : 'text-danger'}>{r.message}</span>
-            </div>
+            <ResultRow
+              key={r.integrationId}
+              productId={productId}
+              row={r}
+              resolved={resolved[r.integrationId]}
+              onResolved={(o) => onResolved(r.integrationId, o)}
+            />
           ))}
           <div className="px-3 py-2 text-[11.5px] text-n-400">
             Submitted is not the same as live — Amazon publishes these over the next few minutes and can still reject one.
@@ -688,6 +710,89 @@ function ReviewStep({
         </div>
       )}
     </>
+  );
+}
+
+
+/**
+ * One marketplace's outcome, and — where Amazon refused the SKU — the way out of it.
+ *
+ * A refused SKU is the one failure here that is not really a failure: Amazon will take the listing
+ * under a different name. Sending somebody to the single-channel flow to rename it, then back, was
+ * the last thing in this modal that could not be finished where it started.
+ *
+ * The suggestion is editable, as it is in the single-channel flow. Ours is a starting point; the
+ * name is the operator's to choose, and it is permanent — the platform carries it from here on.
+ */
+function ResultRow({
+  productId, row, resolved, onResolved,
+}: {
+  productId: string;
+  row: ListEverywhereResultRow;
+  resolved?: { ok: boolean; message: string };
+  onResolved: (outcome: { ok: boolean; message: string }) => void;
+}) {
+  const [sku, setSku] = useState(row.skuSuggestion ?? '');
+
+  const retry = useMutation({
+    mutationFn: async (chosenSku: string) => {
+      // Adopt the name first — it creates the FBM alias, so the platform knows this SKU is ours
+      // before a marketplace starts using it — then list under it.
+      await amazonListingApi.useSku(productId, row.integrationId, chosenSku);
+      return amazonListingApi.submit(productId, row.integrationId);
+    },
+    onSuccess: (r) => {
+      const ok = (r as { ok?: boolean }).ok !== false;
+      const message = (r as { message?: string }).message ?? (ok ? 'Submitted' : 'Refused again');
+      onResolved({ ok, message });
+      if (ok) toast.success(`${row.name} listed as ${sku}`);
+      else toast.error(`${row.name}: ${message}`);
+    },
+    onError: (e: any) => {
+      const message = e?.response?.data?.message ?? 'Could not list under that SKU';
+      onResolved({ ok: false, message });
+      toast.error(message);
+    },
+  });
+
+  const state = resolved ?? { ok: row.ok, message: row.message };
+  // Once resolved here, the row stops offering a fix it has already applied.
+  const offerFix = row.skuInUse && !resolved?.ok;
+
+  return (
+    <div className="border-b border-n-50 px-3 py-1.5 text-[12px] last:border-b-0">
+      <div className="flex items-start gap-2">
+        {state.ok ? <Check size={13} className="mt-0.5 shrink-0 text-teal-600" /> : <Ban size={13} className="mt-0.5 shrink-0 text-danger" />}
+        <span className="w-[130px] shrink-0 font-semibold text-n-700">{row.name}</span>
+        <span className={state.ok ? 'text-n-500' : 'text-danger'}>{state.message}</span>
+      </div>
+
+      {offerFix && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2">
+          <span className="text-[11.5px] text-amber-900">
+            Amazon will not take <b className="mono">{row.sku}</b> here. List under:
+          </span>
+          <input
+            value={sku}
+            onChange={(e) => setSku(e.target.value.toUpperCase().slice(0, 40))}
+            aria-label={`SKU for ${row.name}`}
+            className="mono h-7 w-[170px] rounded-md border border-n-200 bg-n-0 px-2 text-[12px] outline-none focus:border-teal-400"
+          />
+          <button
+            type="button"
+            disabled={retry.isPending || !sku.trim()}
+            onClick={() => retry.mutate(sku.trim())}
+            className="inline-flex h-7 items-center rounded-md bg-teal-600 px-2.5 text-[12px] font-semibold text-white hover:bg-teal-700 disabled:opacity-40"
+          >
+            {retry.isPending ? 'Listing…' : 'Use this SKU and list'}
+          </button>
+          {/* Said before it is pressed: the alias is permanent and the platform carries it. */}
+          <span className="w-full text-[11px] text-amber-800">
+            This becomes an FBM alias of {row.sku} on the product, so orders under it are recognised. It is permanent.
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 
