@@ -193,8 +193,9 @@ export class ChannelListingsService {
    *  - Missing -> the submission did not become a listing. The plan is released back to DRAFT so
    *               the button returns and a person can try again.
    *
-   * Only ever called where absence is EVIDENCE. A pull that came back short says nothing about
-   * what it did not return, and releasing a plan on that would undo a submission that succeeded.
+   * Only ever called where absence is EVIDENCE — in both senses. A pull that came back short says
+   * nothing about what it did not return, and neither does a pull made before Amazon has published.
+   * The first is the caller's responsibility; the second is planTransition's, from listedAt.
    */
   private async settleSubmittedPlan(args: {
     productId: string;
@@ -204,11 +205,14 @@ export class ChannelListingsService {
   }) {
     const plan = await this.prisma.productChannelPlan.findFirst({
       where: { productId: args.productId, integrationId: args.integrationId, deletedAt: null },
-      select: { id: true, status: true },
+      select: { id: true, status: true, listedAt: true },
     });
     if (!plan) return;
 
-    const move = planTransition({ status: plan.status, found: args.found });
+    // listedAt goes in because absence is only evidence once Amazon has had time to publish. A sync
+    // run a minute after listing is asking about an offer Amazon has accepted and not yet made
+    // visible; "not yet" must not be read as "never".
+    const move = planTransition({ status: plan.status, found: args.found, listedAt: plan.listedAt });
     if (move === 'none') return;
 
     if (move === 'confirm') {

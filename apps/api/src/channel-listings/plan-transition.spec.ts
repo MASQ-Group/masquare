@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planTransition } from './plan-transition';
+import { planTransition, SUBMISSION_GRACE_MS } from './plan-transition';
 
 /**
  * What a sync does to a plan that was submitted to a channel.
@@ -51,6 +51,51 @@ describe('settling a submitted plan', () => {
     it('ignores a status it does not recognise', () => {
       expect(planTransition({ status: 'ARCHIVED', found: false })).toBe('none');
       expect(planTransition({ status: '', found: false })).toBe('none');
+    });
+  });
+
+  describe('a submission Amazon has not published yet', () => {
+    const NOW = new Date('2026-09-06T12:00:00Z');
+    const agoMs = (ms: number) => new Date(NOW.getTime() - ms);
+
+    it('leaves a submission made moments ago alone', () => {
+      // The bug this exists for. Listing a product and then syncing — the obvious next thing, and
+      // the button sits right beside the one that just listed — asks Amazon about an offer it has
+      // accepted and not yet published. "Not yet" was being read as "never": the plan went back to
+      // DRAFT, the amber "Listing requested" never appeared, and the green button returned, so the
+      // same offer could be sent twice.
+      expect(planTransition({ status: 'SUBMITTED', found: false, listedAt: agoMs(60_000), now: NOW })).toBe('none');
+    });
+
+    it('still releases one that has had its time', () => {
+      // The wait cannot be indefinite, or a genuinely failed submission blocks the channel forever.
+      expect(planTransition({
+        status: 'SUBMITTED', found: false, listedAt: agoMs(SUBMISSION_GRACE_MS + 1_000), now: NOW,
+      })).toBe('release');
+    });
+
+    it('holds right up to the boundary and releases just past it', () => {
+      const inside = planTransition({ status: 'SUBMITTED', found: false, listedAt: agoMs(SUBMISSION_GRACE_MS - 1), now: NOW });
+      const outside = planTransition({ status: 'SUBMITTED', found: false, listedAt: agoMs(SUBMISSION_GRACE_MS), now: NOW });
+      expect(inside).toBe('none');
+      expect(outside).toBe('release');
+    });
+
+    it('confirms a fresh submission the moment the channel has it', () => {
+      // The grace period delays only the RELEASE. Good news is never held back.
+      expect(planTransition({ status: 'SUBMITTED', found: true, listedAt: agoMs(1_000), now: NOW })).toBe('confirm');
+    });
+
+    it('treats a missing submission time as long ago, not as recent', () => {
+      // A SUBMITTED plan with no listedAt is already inconsistent. Reading it as "just now" would
+      // strand the channel at SUBMITTED forever and it could never be offered again.
+      expect(planTransition({ status: 'SUBMITTED', found: false, listedAt: null, now: NOW })).toBe('release');
+      expect(planTransition({ status: 'SUBMITTED', found: false, now: NOW })).toBe('release');
+    });
+
+    it('does not hold a DRAFT just because it has a stale listedAt', () => {
+      // Only a plan actually waiting on a submission is subject to any of this.
+      expect(planTransition({ status: 'DRAFT', found: false, listedAt: agoMs(1_000), now: NOW })).toBe('none');
     });
   });
 
