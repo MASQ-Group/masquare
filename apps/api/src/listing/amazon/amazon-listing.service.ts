@@ -180,6 +180,7 @@ export class AmazonListingService {
     const results: Array<{
       integrationId: string; name: string; marketplace: string;
       found: boolean; asin: string | null; productType: string | null; title: string | null;
+      imageUrl: string | null;
       restricted: boolean | null; restrictionReason: string | null; error: string | null;
       alreadyListed: boolean; listedSku: string | null;
       /** The currency every money figure on this row is in. A marketplace has exactly one. */
@@ -215,6 +216,7 @@ export class AmazonListingService {
           asin: top?.asin ?? null,
           productType: top?.productType ?? null,
           title: top?.title ?? null,
+          imageUrl: top?.imageUrl ?? null,
           restricted: top?.restricted ?? null,
           restrictionReason: top?.restrictionReasons?.[0]?.message ?? null,
           error: top ? null : (found.message ?? 'No catalogue entry for this identifier'),
@@ -237,7 +239,7 @@ export class AmazonListingService {
         // One marketplace failing must not lose the seventeen that worked.
         results.push({
           integrationId: integration.id, name: integration.name, marketplace: integration.marketplace ?? '',
-          found: false, asin: null, productType: null, title: null,
+          found: false, asin: null, productType: null, title: null, imageUrl: null,
           restricted: null, restrictionReason: null, error: (e as Error)?.message ?? 'Search failed',
           alreadyListed: !!live,
           listedSku: live?.channelSku ?? null,
@@ -299,8 +301,8 @@ export class AmazonListingService {
     integrations: Array<{ id: string; marketplace: string | null; targetCompanyId: string | null }>,
     results: Array<{
       integrationId: string; found: boolean; asin: string | null; productType: string | null;
-      title: string | null; restricted: boolean | null; restrictionReason: string | null;
-      error: string | null; alreadyListed: boolean;
+      title: string | null; imageUrl: string | null; restricted: boolean | null;
+      restrictionReason: string | null; error: string | null; alreadyListed: boolean;
     }>,
   ): Promise<void> {
     for (const r of results) {
@@ -316,7 +318,7 @@ export class AmazonListingService {
           marketplace: integration.marketplace ?? '',
         },
         {
-          found: r.found, asin: r.asin, productType: r.productType, title: r.title,
+          found: r.found, asin: r.asin, productType: r.productType, title: r.title, imageUrl: r.imageUrl,
           restricted: r.restricted, restrictionReason: r.restrictionReason, error: r.error,
         },
         'manual',
@@ -1348,7 +1350,10 @@ export class AmazonListingService {
       }),
       this.prisma.productChannelAvailability.findMany({
         where: { productId, integrationId: { in: ids } },
-        select: { integrationId: true, found: true, restricted: true, asin: true, productType: true, title: true, checkedAt: true },
+        select: {
+          integrationId: true, found: true, restricted: true, asin: true,
+          productType: true, title: true, imageUrl: true, checkedAt: true,
+        },
       }),
       this.prisma.productChannelPlan.findMany({
         where: { productId, deletedAt: null, integrationId: { in: ids } },
@@ -1442,8 +1447,11 @@ export class AmazonListingService {
       handlingTimeSource: 'entered' | 'all' | 'plan' | 'borrowed' | 'none';
       checkedAt: Date | null; canList: boolean; blockers: string[]; warnings: string[];
       blockedOnlyByHandlingTime: boolean; blockedOnlyByMatch: boolean;
-      matched: boolean; matchedAsin: string | null; matchable: boolean;
-      candidate: { asin: string; productType: string | null; title: string | null; conflictsWithBound: boolean } | null;
+      matched: boolean; matchedAsin: string | null; matchable: boolean; readyToPrice: boolean;
+      candidate: {
+        asin: string; productType: string | null; title: string | null;
+        imageUrl: string | null; conflictsWithBound: boolean;
+      } | null;
     }> = [];
 
     for (const integration of integrations) {
@@ -1519,6 +1527,7 @@ export class AmazonListingService {
             asin: avail.asin,
             productType: avail.productType ?? null,
             title: avail.title ?? null,
+            imageUrl: avail.imageUrl ?? null,
             conflictsWithBound: !!boundAsin && avail.asin !== boundAsin,
           }
         : null;
@@ -1572,6 +1581,15 @@ export class AmazonListingService {
          * list, not in a queue of things to confirm.
          */
         matchable: !listing && avail?.found === true && avail?.restricted === false && elig.eligible && !matched,
+        /**
+         * Nothing structural stands in the way — only a price, a dispatch time or stock might.
+         *
+         * The price step needs this rather than `canList`. A row blocked solely by a missing
+         * handling time cannot be listed, but the handling time is entered IN the price step, so
+         * showing only listable rows there meant a row could never acquire the one thing it was
+         * missing. That deadlock is what this flag exists to break.
+         */
+        readyToPrice: matched && !listing && avail?.found === true && avail?.restricted === false && elig.eligible && !!asin,
         ...verdictFor(facts),
       });
     }
@@ -1591,6 +1609,8 @@ export class AmazonListingService {
         warned: rows.filter((r) => r.canList && r.warnings.length > 0).length,
         /** Waiting on somebody to confirm which Amazon listing they are. */
         awaitingMatch: rows.filter((r) => r.matchable).length,
+        /** Matched, and needing only a price and a dispatch time. */
+        readyToPrice: rows.filter((r) => r.readyToPrice).length,
       },
     };
   }

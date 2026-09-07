@@ -825,6 +825,7 @@ model Product {
   /**
    * /**
    * /**
+   * /**
    * Individual units of this product are tracked by serial number.
    * Opt-in: only products where it matters carry the receiving and dispatch burden.
    * Once on, a goods receipt must name a serial for every unit, and a sales transaction
@@ -853,6 +854,7 @@ model Product {
   // catalogue entry and show their own copy, so `title` above stays what it has always been: a name
   // for our own people, not a marketplace field.
   /**
+   * /**
    * /**
    * /** eBay's title, capped at 80 characters by eBay itself. Written for search, not for us.
    */
@@ -3199,6 +3201,8 @@ model ProductChannelAvailability {
   asin              String?
   productType       String?  @map("product_type")
   title             String?
+  /// The catalogue image, so a match can be judged by looking rather than by reading an identifier.
+  imageUrl          String?  @map("image_url")
   /// Amazon's own approval gating for this ASIN. Null means the restrictions call itself failed —
   /// unknown, which must not be read as unrestricted.
   restricted        Boolean?

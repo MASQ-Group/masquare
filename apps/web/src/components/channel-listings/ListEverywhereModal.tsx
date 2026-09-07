@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { AlertTriangle, Ban, Check, ChevronRight, Link2, Link2Off, Rocket, Search, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, Ban, Check, ChevronRight, Link2, Link2Off, Loader2, Rocket, Search, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
 import { amazonListingApi, type AmazonCandidates, type ListEverywherePreview, type ListEverywhereResultRow, type ListEverywhereRow } from '../../lib/api';
@@ -51,11 +51,22 @@ export function ListEverywhereModal({
   const [priceBy, setPriceBy] = useState<Record<string, string>>({});
   const job = useJobProgress(`listing.amazon.listEverywhere.${productId}`);
 
+  /**
+   * The last preview that actually arrived.
+   *
+   * Held separately because a mutation clears its own data the moment it re-runs, and this preview
+   * is re-run after every match. The whole step therefore emptied to "Run step one first" for the
+   * length of an Amazon round trip — a blank modal in the middle of a sequence somebody is halfway
+   * through. Keeping the previous answer on screen while a new one is fetched means the view never
+   * goes away; only the numbers change, when there are new ones.
+   */
+  const [lastPreview, setLastPreview] = useState<ListEverywherePreview | null>(null);
   const preview = useMutation({
     mutationFn: (pct: number) => amazonListingApi.listEverywherePreview(productId, pct),
+    onSuccess: setLastPreview,
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not work out where this can be listed'),
   });
-  const p = preview.data;
+  const p = lastPreview;
   const run = () => preview.mutate(Number(margin));
 
   const rows = useMemo(
@@ -74,8 +85,17 @@ export function ListEverywhereModal({
   const matched = rows.filter((r) => r.matched);
   // Ready once matched, priced and given a dispatch time.
   const offerable = (r: ListEverywhereRow) => r.canList || (r.blockedOnlyByHandlingTime && handlingFor(r) !== '');
+  /**
+   * What the price step shows: everything matched and structurally fine.
+   *
+   * NOT the listable set. A row missing only a dispatch time is not listable, and the dispatch time
+   * is entered here — so filtering this step by listability meant such a row could never acquire
+   * the one thing it lacked, and the step reported "match the marketplaces first" about
+   * marketplaces that were already matched.
+   */
+  const priceable = rows.filter((r) => r.readyToPrice);
   const ready = rows.filter(offerable);
-  const blocked = rows.filter((r) => !offerable(r) && !r.matchable);
+  const blocked = rows.filter((r) => !offerable(r) && !r.matchable && !r.readyToPrice);
   const selected = ready.filter((r) => chosen.has(r.integrationId));
 
   const afterMatch = () => {
@@ -139,13 +159,13 @@ export function ListEverywhereModal({
         {step === 'match' && (
           <MatchStep
             productId={productId} rows={toMatch} matched={matched}
-            boundAsin={p?.boundAsin ?? null} onChanged={afterMatch} loaded={!!p}
+            boundAsin={p?.boundAsin ?? null} onChanged={afterMatch} loaded={!!p} refreshing={preview.isPending}
           />
         )}
 
         {step === 'price' && (
           <PriceStep
-            productId={productId} rows={ready}
+            productId={productId} rows={priceable} anyMatched={matched.length > 0}
             handlingAll={handlingAll} setHandlingAll={(v) => setHandlingAll(wholeDays(v))}
             handlingFor={handlingFor} onHandling={(id, v) => setHandlingBy((prev) => ({ ...prev, [id]: wholeDays(v) }))}
             priceFor={priceFor} onPrice={(id, v, ccy) => setPriceBy((prev) => ({ ...prev, [id]: limitPriceInput(v, ccy) }))}
@@ -206,7 +226,7 @@ function ScopeStep({
   margin, setMargin, onRun, running, preview, blocked, boundAsin,
 }: {
   margin: string; setMargin: (v: string) => void; onRun: () => void; running: boolean;
-  preview: ListEverywherePreview | undefined; blocked: ListEverywhereRow[]; boundAsin: string | null;
+  preview: ListEverywherePreview | null; blocked: ListEverywhereRow[]; boundAsin: string | null;
 }) {
   return (
     <>
@@ -295,7 +315,7 @@ function ScopeStep({
 // ---------------------------------------------------------------------------------------------
 
 function MatchStep({
-  productId, rows, matched, boundAsin, onChanged, loaded,
+  productId, rows, matched, boundAsin, onChanged, loaded, refreshing,
 }: {
   productId: string;
   rows: ListEverywhereRow[];
@@ -303,6 +323,7 @@ function MatchStep({
   boundAsin: string | null;
   onChanged: () => void;
   loaded: boolean;
+  refreshing: boolean;
 }) {
   if (!loaded) return <Hint>Run step one first.</Hint>;
   if (rows.length === 0 && matched.length === 0) return <Hint>No marketplace here needs matching.</Hint>;
@@ -317,8 +338,11 @@ function MatchStep({
 
       {rows.length > 0 && (
         <div className="rounded-lg border border-n-200">
-          <div className="border-b border-n-100 px-3 py-2 text-[12px] font-semibold text-n-700">
-            Waiting to be matched ({rows.length})
+          <div className="flex items-center gap-2 border-b border-n-100 px-3 py-2">
+            <span className="flex-1 text-[12px] font-semibold text-n-700">Waiting to be matched ({rows.length})</span>
+            {/* The list is a moment behind while the verdicts refresh. Said rather than left for
+                somebody to wonder why a row they just matched is still sitting there. */}
+            {refreshing && <span className="text-[11.5px] text-n-400">updating…</span>}
           </div>
           {rows.map((r) => (
             <MatchRow key={r.integrationId} productId={productId} row={r} boundAsin={boundAsin} onChanged={onChanged} />
@@ -361,7 +385,22 @@ function MatchRow({ productId, row, boundAsin, onChanged }: { productId: string;
         <span className="w-[120px] shrink-0 pt-0.5 text-[12.5px] font-semibold text-n-800">{row.name}</span>
         <div className="min-w-[240px] flex-1">
           {c ? (
-            <>
+            <div className="flex items-start gap-2.5">
+              {/* The image is the fastest way to tell a match from a near-miss. Absent for rows
+                  checked before it was stored — their next availability check fills it in. */}
+              {c.imageUrl ? (
+                <img
+                  src={c.imageUrl}
+                  alt=""
+                  className="h-14 w-14 shrink-0 rounded-md border border-n-100 bg-n-0 object-contain"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="grid h-14 w-14 shrink-0 place-items-center rounded-md border border-dashed border-n-200 text-[10px] text-n-300">
+                  no image
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
               <div className="mono text-[12.5px] font-semibold text-n-900">{c.asin}</div>
               {/* The title is what makes a match judgeable. An ASIN on its own is a string nobody
                   can check, and confirming strings is how the wrong product gets an offer. */}
@@ -373,7 +412,8 @@ function MatchRow({ productId, row, boundAsin, onChanged }: { productId: string;
                   <span>Different from the ASIN this SKU is bound to ({boundAsin}). Amazon will refuse this.</span>
                 </div>
               )}
-            </>
+              </div>
+            </div>
           ) : (
             <span className="text-[12px] text-n-500">No suggestion stored — search Amazon to find the listing.</span>
           )}
@@ -383,9 +423,12 @@ function MatchRow({ productId, row, boundAsin, onChanged }: { productId: string;
             type="button"
             disabled={!c || match.isPending}
             onClick={() => c && match.mutate({ asin: c.asin, productType: c.productType })}
-            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md bg-teal-600 px-3 text-[12.5px] font-semibold text-white hover:bg-teal-700 disabled:opacity-40"
+            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md bg-teal-600 px-3 text-[12.5px] font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
           >
-            <Check size={14} /> This is it
+            {/* The progress belongs in the button that was pressed. Somebody who presses a thing is
+                owed an answer from that thing, not from the screen going blank around it. */}
+            {match.isPending ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            {match.isPending ? 'Matching…' : 'This is it'}
           </button>
           <button
             type="button"
@@ -452,10 +495,11 @@ function MatchedRow({ productId, row, onChanged }: { productId: string; row: Lis
 // ---------------------------------------------------------------------------------------------
 
 function PriceStep({
-  productId, rows, handlingAll, setHandlingAll, handlingFor, onHandling, priceFor, onPrice,
+  productId, rows, anyMatched, handlingAll, setHandlingAll, handlingFor, onHandling, priceFor, onPrice,
 }: {
   productId: string;
   rows: ListEverywhereRow[];
+  anyMatched: boolean;
   handlingAll: string;
   setHandlingAll: (v: string) => void;
   handlingFor: (r: ListEverywhereRow) => string;
@@ -463,7 +507,18 @@ function PriceStep({
   priceFor: (r: ListEverywhereRow) => string;
   onPrice: (id: string, v: string, ccy: string) => void;
 }) {
-  if (rows.length === 0) return <Hint>Nothing is ready to price yet — match the marketplaces in step two first.</Hint>;
+  // Two different situations, and telling them apart matters: nothing matched yet is a step-two
+  // problem, while everything matched and still nothing here is a real fault worth saying plainly
+  // rather than sending somebody back to a step they have already finished.
+  if (rows.length === 0) {
+    return (
+      <Hint>
+        {anyMatched
+          ? 'Everything matched here is already listed, or cannot be priced on this marketplace. Step one lists the reasons.'
+          : 'Nothing is matched yet — confirm the listings in step two first.'}
+      </Hint>
+    );
+  }
   return (
     <>
       <div className="flex flex-wrap items-end gap-2 rounded-md border border-n-200 bg-n-25 px-3 py-2">
@@ -489,6 +544,7 @@ function PriceStep({
         {rows.map((r) => (
           <PriceRow
             key={r.integrationId} productId={productId} row={r}
+            outstanding={r.canList ? [] : r.blockers}
             price={priceFor(r)} onPrice={(v) => onPrice(r.integrationId, v, r.currency)}
             handling={handlingFor(r)} onHandling={(v) => onHandling(r.integrationId, v)}
           />
@@ -499,11 +555,13 @@ function PriceStep({
 }
 
 function PriceRow({
-  productId, row, price, onPrice, handling, onHandling,
+  productId, row, price, onPrice, handling, onHandling, outstanding,
 }: {
   productId: string; row: ListEverywhereRow;
   price: string; onPrice: (v: string) => void;
   handling: string; onHandling: (v: string) => void;
+  /** What still stands between this row and being listable. Shown, not hidden behind a filter. */
+  outstanding: string[];
 }) {
   const [comp, setComp] = useState<null | Awaited<ReturnType<typeof amazonListingApi.competition>>>(null);
   const load = useMutation({
@@ -571,6 +629,18 @@ function PriceRow({
           {load.isPending ? 'Asking…' : comp ? 'Refresh' : 'Competition'}
         </button>
       </div>
+
+      {/* Named here rather than left to the review step to omit the row silently. A missing dispatch
+          time is fixed by the box two inches to the left; a missing quantity is not, and the reader
+          should learn which they are looking at. */}
+      {outstanding.length > 0 && handling !== '' && (
+        <div className="mt-1 text-[11.5px] text-amber-700">
+          {outstanding.filter((b) => !/handling time/i.test(b)).join(' · ')}
+        </div>
+      )}
+      {outstanding.length > 0 && handling === '' && (
+        <div className="mt-1 text-[11.5px] text-amber-700">{outstanding.join(' · ')}</div>
+      )}
 
       {comp && !comp.ok && (
         <div className="mt-1.5 text-[11.5px] text-amber-700">{comp.reason}</div>
