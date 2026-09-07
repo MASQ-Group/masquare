@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { ModalShell, Select } from '@masquare/ui';
 import { brandsApi, brandRestrictionsApi, channelListingsApi, type BrandRestriction } from '../../lib/api';
 import { AddButton, RefTable, SectionHeader, SectionSearch } from './shared';
+import { sortChannelsCanonical } from '../../lib/channelGroups';
 
 /**
  * Channels a brand has told us not to sell them on.
@@ -105,9 +106,17 @@ function AddRestrictionModal({ onClose, onSaved }: { onClose: () => void; onSave
   const options = useMemo(() => {
     const types = [...new Set(channels.map((c) => c.channelType))].sort();
     const whole = types.map((t) => ({ value: `${t}|`, label: `${titleCase(t)} — all marketplaces` }));
-    const each = channels
-      .map((c) => ({ value: `${c.channelType}|${c.marketplace ?? ''}`, label: c.name }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+    // Canonical order, not alphabetical: this list is read alongside the same channels everywhere
+    // else, and two orders for one set of things is how somebody ticks the wrong row.
+    const each = sortChannelsCanonical(
+      channels.map((c) => ({
+        value: `${c.channelType}|${c.marketplace ?? ''}`,
+        label: c.name,
+        name: c.name,
+        countryIso: c.countryIso ?? c.marketplace ?? null,
+        channelType: c.channelType,
+      })),
+    ).map(({ value, label }) => ({ value, label }));
     return [...whole, ...each];
   }, [channels]);
 

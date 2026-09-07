@@ -7,6 +7,7 @@ import { amazonListingApi, type ListEverywherePreview, type ListEverywhereRow } 
 import { eurAside } from '../../lib/format';
 import { useConfirm } from '../ConfirmProvider';
 import { useJobProgress } from '../../lib/useJobProgress';
+import { sortByChannelCanonical } from '../../lib/channelGroups';
 
 const SYMBOL: Record<string, string> = { EUR: '€', GBP: '£', USD: '$', CAD: 'CA$', AUD: 'A$', JPY: '¥', SEK: 'kr', PLN: 'zł', AED: 'AED ', SAR: 'SAR ', MXN: 'MX$', TRY: '₺', SGD: 'S$' };
 const money = (cents: number, ccy: string) =>
@@ -72,8 +73,11 @@ export function ListEverywhereModal({
    * cannot reach, and the server refuses the run outright if this optimism turns out to be wrong.
    */
   const offerable = (r: ListEverywhereRow) => r.canList || (r.blockedOnlyByHandlingTime && handlingFor(r) !== '');
-  const ready = p?.rows.filter(offerable) ?? [];
-  const blocked = p?.rows.filter((r) => !offerable(r)) ?? [];
+  // The canonical channel sequence, same as every other list. The API returns these by marketplace
+  // code, which reads as an arbitrary jumble next to the cards on the page behind this modal.
+  const rows = sortByChannelCanonical(p?.rows ?? [], (r) => ({ name: r.name, countryIso: r.marketplace, channelType: 'amazon' }));
+  const ready = rows.filter(offerable);
+  const blocked = rows.filter((r) => !offerable(r));
   const selected = ready.filter((r) => chosen.has(r.integrationId));
 
   const toggle = (id: string) =>

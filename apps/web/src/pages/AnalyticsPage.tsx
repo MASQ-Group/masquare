@@ -5,6 +5,7 @@ import { DateRangePicker, Select } from '@masquare/ui';
 import { analyticsApi, type AnalyticsChannelRow, type AnalyticsSkuRow, type AnalyticsTotals } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { compareRange, presetRange, prettyRange, type ComparePreset, type DateRange, type RangePreset } from '../lib/analyticsRange';
+import { sortChannelsCanonical } from '../lib/channelGroups';
 
 const eur = (v: number | null | undefined) =>
   v == null ? '—' : new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
@@ -228,7 +229,11 @@ export function AnalyticsPage() {
               dense className="w-56"
               value={skuChannel}
               onChange={setSkuChannel}
-              options={[{ value: '', label: 'All channels (global)' }, ...data!.channels.map((ch) => ({ value: ch.id, label: ch.name }))]}
+              options={[
+                { value: '', label: 'All channels (global)' },
+                // Same sequence as every other channel list on the platform.
+                ...sortChannelsCanonical(data!.channels).map((ch) => ({ value: ch.id, label: ch.name })),
+              ]}
             />
           </div>
           <div className="mb-6"><SkuTable rows={data!.bySku} incVat={incVat} /></div>
