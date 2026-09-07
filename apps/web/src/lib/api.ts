@@ -1685,11 +1685,21 @@ export interface ListEverywhereRow {
   matchedAsin: string | null;
   /** Worth offering in the match step — Amazon has it, we may sell it, nobody has said which it is. */
   matchable: boolean;
+  /**
+   * Matched, and needing only a price and a dispatch time.
+   *
+   * What the price step shows, rather than `canList`. A row blocked solely by a missing handling
+   * time is not listable, but the handling time is entered in that step — so showing only listable
+   * rows there meant such a row could never acquire the one thing it lacked.
+   */
+  readyToPrice: boolean;
   /** What the availability check saw. A suggestion; never applied on its own. */
   candidate: {
     asin: string;
     productType: string | null;
     title: string | null;
+    /** The catalogue image. A match is a judgement, and an identifier is thin evidence for one. */
+    imageUrl: string | null;
     /** Amazon refuses one SKU pointing at two ASINs within an account. This one would. */
     conflictsWithBound: boolean;
   } | null;
@@ -1703,7 +1713,7 @@ export interface ListEverywherePreview {
   rows: ListEverywhereRow[];
   /** The ASIN this SKU is already bound to in these accounts, if any. */
   boundAsin: string | null;
-  summary: { total: number; ready: number; blocked: number; warned: number; awaitingMatch: number };
+  summary: { total: number; ready: number; blocked: number; warned: number; awaitingMatch: number; readyToPrice: number };
 }
 export interface ListEverywhereResultRow {
   integrationId: string;

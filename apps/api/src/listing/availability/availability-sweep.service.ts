@@ -208,7 +208,7 @@ export class AvailabilitySweepService {
           integration.targetCompanyId,
           marketplace,
           {
-            found: false, asin: null, productType: null, title: null,
+            found: false, asin: null, productType: null, title: null, imageUrl: null,
             restricted: null, restrictionReason: null,
             error: (e as Error)?.message ?? 'Check failed',
           },
@@ -249,6 +249,7 @@ export class AvailabilitySweepService {
         asin: top?.asin ?? null,
         productType: top?.productType ?? null,
         title: top?.title ?? null,
+        imageUrl: top?.imageUrl ?? null,
         restricted: top?.restricted ?? null,
         restrictionReason: top?.restrictionReasons?.[0]?.message ?? null,
         error: top ? null : (found.message ?? 'No catalogue entry for this identifier'),

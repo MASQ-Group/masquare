@@ -17,6 +17,13 @@ export interface AvailabilityResult {
   asin: string | null;
   productType: string | null;
   title: string | null;
+  /**
+   * The catalogue image Amazon returned.
+   *
+   * Stored because a match is a judgement, and an ASIN with a title is thin evidence for one. The
+   * sweep was already receiving this and throwing it away.
+   */
+  imageUrl: string | null;
   /** Null means the restrictions call itself failed — unknown, not unrestricted. */
   restricted: boolean | null;
   restrictionReason: string | null;
