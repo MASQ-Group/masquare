@@ -1,4 +1,4 @@
-import { AlertTriangle, Ban, Clock, Lock, Search, TrendingDown, TrendingUp } from 'lucide-react';
+import { AlertTriangle, Ban, Clock, Lock, Search, TriangleAlert, TrendingDown, TrendingUp } from 'lucide-react';
 import type { AmazonSweepRow, ProductChannelRow } from '../../lib/api';
 import { eurAside } from '../../lib/format';
 
@@ -51,6 +51,20 @@ export function NotListedPanel({
     : null;
   const restricted = sweep?.restricted === true;
   const notInCatalogue = analysed && sweep != null && !sweep.found;
+
+  /**
+   * Warnings that do not stop the listing — a brand restriction, above all.
+   *
+   * These were being collected and thrown away. The eligibility check attaches a brand's channel
+   * restriction as a `warn` finding, and this panel rendered only `block` findings, so a brand we
+   * have been asked not to sell on a marketplace looked exactly like one we had never heard of.
+   * The listing flow showed it and the card did not, which is the worse half: the card is where
+   * somebody decides whether to open the flow at all.
+   *
+   * Shown, not enforced. The restriction is a commercial matter recorded from a letter, and the
+   * person listing may know it was withdrawn.
+   */
+  const warnings = plan?.eligibility.findings.filter((f) => f.severity === 'warn').map((f) => f.reason) ?? [];
 
   /**
    * Already sent to the channel, and not yet seen by a sync.
@@ -128,6 +142,16 @@ export function NotListedPanel({
           <span>{blockReason}</span>
         </div>
       )}
+
+      {/* Amber rather than red, and the button stays up: this is something to know before listing,
+          not a refusal. Kept visually distinct from Amazon's own gating above, because the two have
+          different remedies — an approval request to Amazon, or a conversation with the brand. */}
+      {warnings.map((w) => (
+        <div key={w} className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
+          <TriangleAlert size={12} className="mt-0.5 shrink-0 text-amber-600" />
+          <span>{w}</span>
+        </div>
+      ))}
 
       {/* The prompt to run the analysis is pointless once a request is already in flight. */}
       {!analysed && !blocked && !submitted && (
