@@ -137,17 +137,32 @@ export function PlanEditor({
   });
 
   const match = useMutation({
-    mutationFn: (picked: { asin: string; productType: string | null }) =>
-      listingApi.upsertPlan(productId, row.integrationId, {
+    mutationFn: (picked: { asin: string; productType: string | null }) => {
+      /**
+       * Both halves, or neither.
+       *
+       * Writing the ASIN while skipping the product type produced a plan that passes every "is it
+       * matched?" test and then fails at listing time with "The plan has no Amazon product type
+       * set" — a message about a field nobody was asked for, on a marketplace that looked matched.
+       * Refusing here is far kinder than a half-match sitting in the record until somebody tries to
+       * use it.
+       */
+      if (!picked.productType) {
+        return Promise.reject(new Error(
+          'Amazon gave no product type for this listing, and one is required. Re-run the availability check for this marketplace, or pick a different candidate.',
+        ));
+      }
+      return listingApi.upsertPlan(productId, row.integrationId, {
         aspects: { ...((plan?.aspects as Record<string, unknown>) ?? {}), asin: picked.asin },
-        ...(picked.productType ? { categoryRef: picked.productType } : {}),
-      }),
+        categoryRef: picked.productType,
+      });
+    },
     onSuccess: (_r, picked) => {
       if (picked.productType) setCategoryRef(picked.productType);
       toast.success(`Matched to ${picked.asin}`);
       onSaved();
     },
-    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save the match'),
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? e?.message ?? 'Could not save the match'),
   });
 
   // What each step needs, in the order it is needed. Amazon attaches to a catalogue entry, so the

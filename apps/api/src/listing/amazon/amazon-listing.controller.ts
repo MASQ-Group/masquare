@@ -109,12 +109,21 @@ export class AmazonListingController {
   listEverywherePreview(
     @Param('productId') productId: string,
     @VisibleCompanies() companyIds: string[],
-    @Body() body: { marginPct?: number; handlingForAll?: number | string | null; handlingByChannel?: Record<string, number | string | null> } = {},
+    @Body()
+    body: {
+      marginPct?: number;
+      handlingForAll?: number | string | null;
+      handlingByChannel?: Record<string, number | string | null>;
+      priceByChannel?: Record<string, number | string | null>;
+    } = {},
   ) {
-    return this.svc.listEverywherePreview(productId, body.marginPct, companyIds, {
-      applyToAll: body.handlingForAll,
-      perChannel: body.handlingByChannel,
-    });
+    return this.svc.listEverywherePreview(
+      productId,
+      body.marginPct,
+      companyIds,
+      { applyToAll: body.handlingForAll, perChannel: body.handlingByChannel },
+      { perChannel: body.priceByChannel },
+    );
   }
 
   /**
