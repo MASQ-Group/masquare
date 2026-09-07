@@ -136,3 +136,23 @@ export function sortByChannelCanonical<T>(items: T[], toChannel: (item: T) => Ch
     return d !== 0 ? d : toChannel(a).name.localeCompare(toChannel(b).name);
   });
 }
+
+/**
+ * A sales channel, in the shape the canonical sort understands.
+ *
+ * Sales channels are a different record from channel integrations — they carry no connector key and
+ * no marketplace code, only a name and the country they trade in. That country is the one reliable
+ * part: every marketplace channel has it, and it is correct where the name is not. "Amazon JPN" and
+ * "Ebay AUS" would both defeat a name parser; their native countries are plainly JP and AU.
+ *
+ * So the country comes from the record and only the platform is read from the name. Channels that
+ * are not marketplaces at all — our own local sales, retail — resolve to 'other' and sort after
+ * every marketplace, alphabetically among themselves, which is where they belong in a picker.
+ */
+export function salesChannelAsChannel(sc: {
+  name: string;
+  nativeCountry?: { isoCode: string } | null;
+  nativeCountryIso?: string | null;
+}): ChannelLike {
+  return { name: sc.name, countryIso: sc.nativeCountry?.isoCode ?? sc.nativeCountryIso ?? null };
+}

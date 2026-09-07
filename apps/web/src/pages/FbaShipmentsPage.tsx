@@ -16,6 +16,7 @@ import { FbaShipmentModal } from '../components/fba-shipments/FbaShipmentModal';
 import { FbaShipmentSummaryModal } from '../components/fba-shipments/FbaShipmentSummaryModal';
 import { FbaActualCostModal } from '../components/fba-shipments/FbaActualCostModal';
 import { FulfilmentPools } from '../components/fba-shipments/FulfilmentPools';
+import { salesChannelAsChannel, sortByChannelCanonical } from '../lib/channelGroups';
 
 const eur = (v: number | null | undefined) => (v != null ? `€${v.toFixed(2)}` : '—');
 const kg = (v: number | null | undefined) => (v != null ? `${v.toFixed(2)} kg` : '—');
@@ -187,7 +188,11 @@ export function FbaShipmentsPage() {
               dense className="w-40"
               value={filterChannel}
               onChange={(v) => { setFilterChannel(v); setPage(1); }}
-              options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]}
+              options={[{ value: '', label: 'All channels' }, 
+                // Canonical channel sequence, same as everywhere else. The country comes from the record
+                // rather than the name: "Amazon JPN" and "Ebay AUS" would both defeat a name parser.
+                ...sortByChannelCanonical(channels, salesChannelAsChannel).map((c) => ({ value: c.id, label: c.name })),
+              ]}
             />
             )}
             {view === 'shipments' && (

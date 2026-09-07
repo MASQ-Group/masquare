@@ -4,6 +4,7 @@ import {
   channelGroupOf,
   channelPlatform,
   channelSortIndex,
+  salesChannelAsChannel,
   sortByChannelCanonical,
   sortChannelsCanonical,
 } from './channelGroups';
@@ -132,5 +133,46 @@ describe('sorting things that merely reference a channel', () => {
     ];
     const sorted = sortByChannelCanonical(rows, (r) => ({ name: r.name, countryIso: r.marketplace, channelType: 'amazon' }));
     expect(sorted.map((r) => r.marketplace)).toEqual(['DE', 'AU', 'JP']);
+  });
+});
+
+describe('sales channels, which are a different record entirely', () => {
+  /**
+   * These carry no connector key and no marketplace code — only a name and the country they trade
+   * in. The country is the reliable half, and the real data proves it: the channels are named
+   * "Amazon JPN" and "Ebay AUS" while their native countries are plainly JP and AU.
+   */
+  const sc = (name: string, isoCode: string | null) => ({ name, nativeCountry: isoCode ? { isoCode } : null });
+
+  it('takes the country from the record, not from the name', () => {
+    expect(salesChannelAsChannel(sc('Amazon JPN', 'JP')).countryIso).toBe('JP');
+    expect(salesChannelAsChannel(sc('Ebay AUS', 'AU')).countryIso).toBe('AU');
+  });
+
+  it('orders the real channel list correctly despite those names', () => {
+    // A name parser would read "JPN" and "AUS" as unknown and sink both to the bottom.
+    const sorted = sortByChannelCanonical(
+      [sc('Ebay AUS', 'AU'), sc('Amazon JPN', 'JP'), sc('Amazon UK', 'GB'), sc('Amazon US', 'US')],
+      salesChannelAsChannel,
+    );
+    expect(sorted.map((c) => c.name)).toEqual(['Amazon UK', 'Amazon US', 'Amazon JPN', 'Ebay AUS']);
+  });
+
+  it('puts our own non-marketplace channels after every marketplace', () => {
+    // Local Sales, Retail, Dizzle and the rest are real channels but not marketplaces; they belong
+    // at the end of a picker, alphabetically among themselves.
+    const sorted = sortByChannelCanonical(
+      [sc('Retail', 'CY'), sc('Amazon DE', 'DE'), sc('Dizzle', 'CY'), sc('Local Sales', 'CY')],
+      salesChannelAsChannel,
+    );
+    expect(sorted.map((c) => c.name)).toEqual(['Amazon DE', 'Dizzle', 'Local Sales', 'Retail']);
+  });
+
+  it('accepts the flatter shape some responses use', () => {
+    expect(salesChannelAsChannel({ name: 'Amazon UK', nativeCountryIso: 'GB' }).countryIso).toBe('GB');
+  });
+
+  it('survives a channel with no country recorded', () => {
+    expect(salesChannelAsChannel(sc('Amazon UK', null)).countryIso).toBeNull();
   });
 });

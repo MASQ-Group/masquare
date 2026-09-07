@@ -2,10 +2,10 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowDownRight, ArrowUpRight, TrendingUp } from 'lucide-react';
 import { DateRangePicker, Select } from '@masquare/ui';
-import { analyticsApi, type AnalyticsChannelRow, type AnalyticsSkuRow, type AnalyticsTotals } from '../lib/api';
+import { analyticsApi, salesChannelsApi, type AnalyticsChannelRow, type AnalyticsSkuRow, type AnalyticsTotals } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { compareRange, presetRange, prettyRange, type ComparePreset, type DateRange, type RangePreset } from '../lib/analyticsRange';
-import { sortChannelsCanonical } from '../lib/channelGroups';
+import { salesChannelAsChannel, sortByChannelCanonical } from '../lib/channelGroups';
 
 const eur = (v: number | null | undefined) =>
   v == null ? '—' : new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
@@ -40,6 +40,17 @@ export function AnalyticsPage() {
     skuCountryId: skuCountry || undefined,
   };
   const { data, isLoading } = useQuery({ queryKey: ['analytics-sales', params], queryFn: () => analyticsApi.sales(params) });
+  /**
+   * The country each sales channel trades in, for the canonical ordering below.
+   *
+   * The same cached query the rest of the platform uses, so this costs nothing on a warm cache.
+   * Analytics returns channels as id and name only; the country has to come from the record.
+   */
+  const { data: salesChannels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
+  const channelIsoById = useMemo(
+    () => new Map(salesChannels.map((c) => [c.id, salesChannelAsChannel(c).countryIso ?? null])),
+    [salesChannels],
+  );
 
   const t = data?.totals;
   const c = data?.compareTotals;
@@ -231,8 +242,14 @@ export function AnalyticsPage() {
               onChange={setSkuChannel}
               options={[
                 { value: '', label: 'All channels (global)' },
-                // Same sequence as every other channel list on the platform.
-                ...sortChannelsCanonical(data!.channels).map((ch) => ({ value: ch.id, label: ch.name })),
+                // Same sequence as every other channel list on the platform. The analytics response
+                // carries only id and name — no country — so the ISO comes from the sales-channel
+                // record, which is the authority and is already cached for other screens. Reading
+                // the country out of the name would get "Amazon JPN" and "Ebay AUS" wrong.
+                ...sortByChannelCanonical(data!.channels, (ch) => ({
+                  name: ch.name,
+                  countryIso: channelIsoById.get(ch.id) ?? null,
+                })).map((ch) => ({ value: ch.id, label: ch.name })),
               ]}
             />
           </div>

@@ -8,6 +8,7 @@ import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
 import { formatDate } from '../lib/format';
 import { GenerateOrdersModal } from '../components/procurement/GenerateOrdersModal';
+import { salesChannelAsChannel, sortByChannelCanonical } from '../lib/channelGroups';
 
 const STATUS_FILTER = [
   { value: 'all', label: 'All demand' },
@@ -83,7 +84,11 @@ export function ProcurementPage() {
           </div>
           <div className="w-[190px]">
             <Select value={channelId} onChange={(v) => { setChannelId(v); setPage(1); }} placeholder="All channels"
-              options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]} />
+              options={[{ value: '', label: 'All channels' }, 
+                // Canonical channel sequence, same as everywhere else. The country comes from the record
+                // rather than the name: "Amazon JPN" and "Ebay AUS" would both defeat a name parser.
+                ...sortByChannelCanonical(channels, salesChannelAsChannel).map((c) => ({ value: c.id, label: c.name })),
+              ]} />
           </div>
           <DateRangePicker value={range} onChange={(v) => { setRange(v); setPage(1); }} />
         </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ArrowRight, Ban, Download, Trash2, Upload } from 'lucide-react';
@@ -13,6 +13,7 @@ import { ChannelChip, chipForCountry, NEUTRAL_CHIP } from '../common/ChannelChip
 import { AddButton, RefTable, SectionHeader } from './shared';
 import { SalesChannelImportModal } from './SalesChannelImportModal';
 import { Link } from 'react-router-dom';
+import { salesChannelAsChannel, sortByChannelCanonical } from '../../lib/channelGroups';
 
 const EXPORT_HEADERS = ['Name', 'Description', 'Native Country', 'Native Currency', 'General Sales Fee (%)', 'Fee In Native Currency', 'Fee Currency', 'Email', 'Website', 'Contact Name'];
 
@@ -26,6 +27,7 @@ export function SalesChannelsTab() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = useState(false);
 
+  const ordered = useMemo(() => sortByChannelCanonical(data, salesChannelAsChannel), [data]);
   const allSelected = data.length > 0 && data.every((c) => selected.has(c.id));
   const toggleAll = () => setSelected((prev) => { const n = new Set(prev); if (data.every((c) => n.has(c.id))) data.forEach((c) => n.delete(c.id)); else data.forEach((c) => n.add(c.id)); return n; });
   const toggleOne = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -97,7 +99,10 @@ export function SalesChannelsTab() {
       <RefTable<SalesChannel>
         loading={isLoading}
         empty="No sales channels yet."
-        rows={data}
+        // The table people edit, in the same order as every screen that reads from it. Sorting the
+        // definitions differently from the lists they feed makes the two hard to check against
+        // each other.
+        rows={ordered}
         selection={{ selected, toggleOne, toggleAll, allSelected }}
         columns={[
           { key: 'name', header: 'Name', render: (r) => <ChannelChip name={r.name} bg={r.chipBgColor} text={r.chipTextColor} /> },
