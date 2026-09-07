@@ -1357,7 +1357,10 @@ export class AmazonListingService {
       }),
       this.prisma.productChannelPlan.findMany({
         where: { productId, deletedAt: null, integrationId: { in: ids } },
-        select: { integrationId: true, handlingTimeDays: true, aspects: true, categoryRef: true, updatedAt: true },
+        select: {
+          integrationId: true, handlingTimeDays: true, aspects: true, categoryRef: true,
+          updatedAt: true, updatedById: true,
+        },
       }),
       product.brandId
         ? this.prisma.brandChannelRestriction.findMany({
@@ -1422,6 +1425,26 @@ export class AmazonListingService {
     const fallbackHandling = plans.map((p) => p.handlingTimeDays).find((h) => h != null) ?? null;
 
     /**
+     * Who last wrote each plan.
+     *
+     * Looked up so a matched row can say who confirmed it, not merely when. The question "did the
+     * system match these by itself?" should be answerable by reading the screen; it took a database
+     * query to answer the first time it was asked, and nobody should have to remember what they
+     * clicked two days ago to be sure.
+     */
+    const authorIds = [...new Set(plans.map((pl) => pl.updatedById).filter((id): id is string => !!id))];
+    const authors = new Map(
+      authorIds.length
+        ? (
+            await this.prisma.user.findMany({
+              where: { id: { in: authorIds } },
+              select: { id: true, fullName: true },
+            })
+          ).map((u) => [u.id, u.fullName])
+        : [],
+    );
+
+    /**
      * The ASIN this product's SKU is already bound to elsewhere in these accounts.
      *
      * Amazon enforces one SKU to one ASIN within a seller account and refuses a submission that
@@ -1447,7 +1470,7 @@ export class AmazonListingService {
       handlingTimeSource: 'entered' | 'all' | 'plan' | 'borrowed' | 'none';
       checkedAt: Date | null; canList: boolean; blockers: string[]; warnings: string[];
       blockedOnlyByHandlingTime: boolean; blockedOnlyByMatch: boolean;
-      matched: boolean; matchedAsin: string | null; matchedAt: Date | null;
+      matched: boolean; matchedAsin: string | null; matchedAt: Date | null; matchedBy: string | null;
       matchable: boolean; readyToPrice: boolean;
       candidate: {
         asin: string; productType: string | null; title: string | null;
@@ -1583,6 +1606,11 @@ export class AmazonListingService {
          * is the evidence for that, on the row.
          */
         matchedAt: matched ? plan?.updatedAt ?? null : null,
+        /**
+         * Who confirmed it. Null where the plan predates author tracking, which is stated on screen
+         * as "author not recorded" rather than left blank — a blank reads as nobody.
+         */
+        matchedBy: matched ? authors.get(plan?.updatedById ?? '') ?? null : null,
         /** Offered for confirmation in the match step. Applying it is always a deliberate act. */
         candidate,
         /**
