@@ -1705,11 +1705,23 @@ export interface ListEverywherePreview {
   boundAsin: string | null;
   summary: { total: number; ready: number; blocked: number; warned: number; awaitingMatch: number };
 }
+export interface ListEverywhereResultRow {
+  integrationId: string;
+  name: string;
+  ok: boolean;
+  priceCents: number | null;
+  message: string;
+  /** Amazon refused the SKU name. The one failure with a fix available on the same screen. */
+  skuInUse: boolean;
+  /** The SKU Amazon refused, and one it would take. Offered for editing, never applied on its own. */
+  sku: string | null;
+  skuSuggestion: string | null;
+}
 export interface ListEverywhereResult {
   productId: string;
   marginPct: number;
-  results: Array<{ integrationId: string; name: string; ok: boolean; priceCents: number | null; message: string }>;
-  summary: { attempted: number; submitted: number; failed: number };
+  results: ListEverywhereResultRow[];
+  summary: { attempted: number; submitted: number; failed: number; skuRefused: number };
 }
 
 export type AmazonCompetition =

@@ -1076,7 +1076,26 @@ export class AmazonListingService {
       true,
     );
     if (!check.ok) {
-      throw new BadRequestException(`Amazon rejected the offer in validation: ${check.issues[0]?.message ?? check.message ?? 'unknown reason'}`);
+      /**
+       * A refused SKU is a recoverable refusal, and the way out has to survive the throw.
+       *
+       * Amazon reports "SKU already exists in other Amazon marketplace(s)" at validation, so this is
+       * where a collision is found. Thrown as a plain sentence, the suggestion computed a line later
+       * was lost and the caller was left with prose to parse — which is why a bulk run could report
+       * the failure but never offer the fix.
+       *
+       * The message stays first so every existing reader is unaffected: Nest takes an exception's
+       * `.message` from a `message` property on the payload.
+       */
+      const skuInUse = isSkuInUseRejection(check.issues);
+      throw new BadRequestException({
+        message: `Amazon rejected the offer in validation: ${check.issues[0]?.message ?? check.message ?? 'unknown reason'}`,
+        sku: built.sku,
+        skuInUse,
+        skuSuggestion: skuInUse
+          ? suggestSku(built.sku, built.marketplace ?? '', await this.skusInUse(integrationId))
+          : null,
+      });
     }
 
     const result = await this.integrations.putAmazonOffer(
@@ -1775,7 +1794,14 @@ export class AmazonListingService {
     }
 
     ctx?.setTotal(chosen.length);
-    const results: Array<{ integrationId: string; name: string; ok: boolean; priceCents: number | null; message: string }> = [];
+    const results: Array<{
+      integrationId: string; name: string; ok: boolean; priceCents: number | null; message: string;
+      /** Amazon refused the SKU name. Recoverable here rather than only in the single-channel flow. */
+      skuInUse: boolean;
+      /** The SKU Amazon refused, and one it would accept. Offered for editing, never applied alone. */
+      sku: string | null;
+      skuSuggestion: string | null;
+    }> = [];
     for (const row of chosen) {
       ctx?.note(row.name);
       try {
@@ -1798,23 +1824,37 @@ export class AmazonListingService {
           companyIds,
         );
         const submitted = await this.submit(productId, row.integrationId, { confirm: true });
+        const sent = submitted as { ok?: boolean; message?: string; sku?: string; skuSuggestion?: string | null };
         results.push({
           integrationId: row.integrationId,
           name: row.name,
-          ok: (submitted as { ok?: boolean }).ok !== false,
+          ok: sent.ok !== false,
           priceCents,
-          message: (submitted as { message?: string }).message ?? 'Submitted',
+          message: sent.message ?? 'Submitted',
+          // A collision can also surface on the real submit rather than in validation.
+          skuInUse: !!sent.skuSuggestion,
+          sku: sent.sku ?? null,
+          skuSuggestion: sent.skuSuggestion ?? null,
         });
         ctx?.tick(true);
       } catch (e) {
         // One marketplace refusing must not abandon the rest, and it must be reported rather than
         // folded into a count that reads as success.
+        //
+        // The refusal's payload is read where there is one: a rejected SKU carries the name Amazon
+        // would take, which is the difference between a dead end and a row somebody can fix.
+        const payload = (typeof (e as { getResponse?: () => unknown })?.getResponse === 'function'
+          ? (e as { getResponse: () => unknown }).getResponse()
+          : null) as { skuInUse?: boolean; sku?: string; skuSuggestion?: string | null } | null;
         results.push({
           integrationId: row.integrationId,
           name: row.name,
           ok: false,
           priceCents: row.priceCents,
           message: (e as Error)?.message ?? 'Failed',
+          skuInUse: payload?.skuInUse === true,
+          sku: payload?.sku ?? null,
+          skuSuggestion: payload?.skuSuggestion ?? null,
         });
         ctx?.tick(false);
       }
@@ -1828,6 +1868,8 @@ export class AmazonListingService {
         attempted: results.length,
         submitted: results.filter((r) => r.ok).length,
         failed: results.filter((r) => !r.ok).length,
+        /** Refused only because the SKU name is taken — the one failure with a fix on this screen. */
+        skuRefused: results.filter((r) => !r.ok && r.skuInUse).length,
       },
     };
   }
