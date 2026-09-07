@@ -1685,6 +1685,8 @@ export interface ListEverywhereRow {
   matchedAsin: string | null;
   /** When the match was last written — a match from two days ago is not one made a moment ago. */
   matchedAt: string | null;
+  /** Who confirmed it. Null on plans predating author tracking. */
+  matchedBy: string | null;
   /** Worth offering in the match step — Amazon has it, we may sell it, nobody has said which it is. */
   matchable: boolean;
   /**

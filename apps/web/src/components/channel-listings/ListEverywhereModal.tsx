@@ -368,8 +368,8 @@ function MatchStep({
       {/* Said where the matches are listed, because a screen already full of them is exactly where
           somebody would wonder whether the platform had been matching on its own. */}
       <p className="text-[11.5px] text-n-400">
-        Marketplaces below the fold are already matched — from this session or from earlier work on the product's
-        channel plan. Nothing is ever matched automatically; each one was confirmed by somebody, and the date says when.
+        Marketplaces below are already matched — from this session or from earlier work on the product's channel plan.
+        Nothing is ever matched automatically: each row names who confirmed it and when.
       </p>
 
       {rows.length > 0 && (
@@ -516,8 +516,16 @@ function MatchedRow({ productId, row, onChanged }: { productId: string; row: Lis
       {/* When, because a match made two days ago and one made a moment ago look identical
           otherwise — which is what made a screen of pre-existing matches read as though the system
           had done them by itself. Nothing here matches automatically. */}
+      {/* Who and when, together. "Did the system match these by itself?" is a fair question to ask
+          of a screen full of pre-filled matches, and it should be answerable by reading the row
+          rather than by anybody remembering what they clicked two days ago. */}
       <span className="flex-1 text-[11.5px] text-n-400">
-        {row.matchedAt ? `matched ${new Date(row.matchedAt).toLocaleDateString()}` : ''}
+        {row.matchedAt && (
+          <>
+            matched {new Date(row.matchedAt).toLocaleDateString()}
+            {row.matchedBy ? ` by ${row.matchedBy}` : ' — author not recorded'}
+          </>
+        )}
       </span>
       {/* A wrong match should be correctable here rather than somewhere else. */}
       <button
