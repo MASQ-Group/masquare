@@ -1653,6 +1653,8 @@ export interface BulkHandling {
   forAll?: number | string | null;
   byChannel?: Record<string, number | string | null>;
 }
+/** Prices chosen per marketplace, overriding the margin-derived suggestion. */
+export type BulkPrices = Record<string, number | string | null>;
 export interface ListEverywhereRow {
   integrationId: string;
   name: string;
@@ -1676,6 +1678,21 @@ export interface ListEverywhereRow {
   warnings: string[];
   /** Nothing wrong except a missing handling time — the one blocker the reader can clear here. */
   blockedOnlyByHandlingTime: boolean;
+  /** Nothing wrong except that nobody has confirmed which Amazon listing this is. */
+  blockedOnlyByMatch: boolean;
+  /** Somebody has confirmed the listing here: the plan carries both an ASIN and a product type. */
+  matched: boolean;
+  matchedAsin: string | null;
+  /** Worth offering in the match step — Amazon has it, we may sell it, nobody has said which it is. */
+  matchable: boolean;
+  /** What the availability check saw. A suggestion; never applied on its own. */
+  candidate: {
+    asin: string;
+    productType: string | null;
+    title: string | null;
+    /** Amazon refuses one SKU pointing at two ASINs within an account. This one would. */
+    conflictsWithBound: boolean;
+  } | null;
 }
 export interface ListEverywherePreview {
   productId: string;
@@ -1684,7 +1701,9 @@ export interface ListEverywherePreview {
   marginPct: number;
   liveWritesEnabled: boolean;
   rows: ListEverywhereRow[];
-  summary: { total: number; ready: number; blocked: number; warned: number };
+  /** The ASIN this SKU is already bound to in these accounts, if any. */
+  boundAsin: string | null;
+  summary: { total: number; ready: number; blocked: number; warned: number; awaitingMatch: number };
 }
 export interface ListEverywhereResult {
   productId: string;
@@ -1741,11 +1760,35 @@ export const amazonListingApi = {
       marginPct, handlingForAll: handling.forAll ?? null, handlingByChannel: handling.byChannel ?? {},
     }).then((r) => r.data),
   /** Creates the offers. A job, because it fans out across marketplaces. */
-  listEverywhere: (productId: string, marginPct: number, integrationIds: string[], handling: BulkHandling = {}) =>
+  listEverywhere: (
+    productId: string,
+    marginPct: number,
+    integrationIds: string[],
+    handling: BulkHandling = {},
+    prices: BulkPrices = {},
+  ) =>
     api.post<JobView>(`/listing/amazon/products/${productId}/list-everywhere`, {
       marginPct, integrationIds, confirm: true,
       handlingForAll: handling.forAll ?? null, handlingByChannel: handling.byChannel ?? {},
+      // Sent, not implied: without these the server would price from the margin and the manual
+      // price field would be decorative.
+      priceByChannel: prices,
     }).then((r) => r.data),
+  /**
+   * Confirm which Amazon listing this product is, on ONE marketplace.
+   *
+   * Deliberately per channel. There is no bulk form of this and there should not be — the check it
+   * represents is a person looking at a title and saying "yes, that one".
+   */
+  matchChannel: (productId: string, integrationId: string, asin: string, productType?: string | null) =>
+    api.post<{ ok: true; integrationId: string; name: string; asin: string; productType: string }>(
+      `/listing/amazon/products/${productId}/channels/${integrationId}/match`, { asin, productType }).then((r) => r.data),
+  /** Undo a match, so a wrong one can be corrected. */
+  unmatchChannel: (productId: string, integrationId: string) =>
+    api.post<{ ok: true }>(`/listing/amazon/products/${productId}/channels/${integrationId}/unmatch`).then((r) => r.data),
+  /** The alternatives, when the stored suggestion is not the right listing. */
+  matchCandidates: (productId: string, integrationId: string) =>
+    api.get<AmazonCandidates>(`/listing/amazon/products/${productId}/channels/${integrationId}/match-candidates`).then((r) => r.data),
   /** What the competition charges, and what each of those prices would earn us. Read-only. */
   competition: (productId: string, integrationId: string) =>
     api.get<AmazonCompetition>(`/listing/amazon/products/${productId}/channels/${integrationId}/competition`).then((r) => r.data),

@@ -21,6 +21,15 @@ export interface BulkChannelFacts {
   eligibilityReasons: string[];
   /** The ASIN to offer on. */
   asin: string | null;
+  /**
+   * Somebody has confirmed WHICH Amazon listing this product is, on this marketplace.
+   *
+   * Not the same as having an ASIN to hand. The availability sweep records the first candidate it
+   * saw, which is a suggestion; a match is a person saying that suggestion is right. Amazon needs
+   * both the ASIN and its product type, and an offer attached to a similar-looking listing sells
+   * the wrong thing at our price.
+   */
+  matched: boolean;
   /** What the requested margin works out to here. Null when it could not be priced. */
   priceCents: number | null;
   priceReason: string | null;
@@ -48,9 +57,12 @@ export interface BulkChannelVerdict {
    * that cannot help is worse than offering none.
    */
   blockedOnlyByHandlingTime: boolean;
+  /** Nothing wrong except that nobody has confirmed the match. Step one of the stepped flow. */
+  blockedOnlyByMatch: boolean;
 }
 
 const HANDLING_BLOCKER = 'No handling time set — enter days to dispatch above';
+const MATCH_BLOCKER = 'Not matched to an Amazon listing yet';
 
 export function verdictFor(f: BulkChannelFacts): BulkChannelVerdict {
   const blockers: string[] = [];
@@ -65,6 +77,9 @@ export function verdictFor(f: BulkChannelFacts): BulkChannelVerdict {
   if (f.restricted == null && f.found) blockers.push('Could not check whether this brand needs approval here');
   if (!f.eligible) blockers.push(f.eligibilityReasons[0] ?? 'Not permitted on this marketplace');
   if (!f.asin) blockers.push('No ASIN to offer on');
+  // Only worth saying once there is something to match to. Where Amazon has no catalogue entry at
+  // all, that is already the blocker and "not matched" adds nothing but noise.
+  if (f.found && f.asin && !f.matched) blockers.push(MATCH_BLOCKER);
   if (f.priceCents == null || f.priceCents <= 0) blockers.push(f.priceReason ?? 'Could not work out a price at this margin');
   if (f.quantity == null) blockers.push('No sellable quantity recorded');
   if (f.handlingTimeDays == null) blockers.push(HANDLING_BLOCKER);
@@ -84,6 +99,7 @@ export function verdictFor(f: BulkChannelFacts): BulkChannelVerdict {
     blockers,
     warnings,
     blockedOnlyByHandlingTime: blockers.length === 1 && blockers[0] === HANDLING_BLOCKER,
+    blockedOnlyByMatch: blockers.length === 1 && blockers[0] === MATCH_BLOCKER,
   };
 }
 
@@ -128,4 +144,31 @@ export function parseMarginPct(raw: unknown): { ok: true; marginPct: number } | 
 export interface BulkHandlingInput {
   applyToAll?: number | string | null;
   perChannel?: Record<string, number | string | null>;
+}
+
+/**
+ * Prices a caller chose per channel, overriding the margin-derived suggestion.
+ *
+ * Keyed by integration because each marketplace has its own currency and its own deductions; one
+ * number across all of them would mean something different everywhere it landed.
+ */
+export interface BulkPriceInput {
+  perChannel?: Record<string, number | string | null>;
+}
+
+/**
+ * A price somebody typed, in the marketplace's own currency, as minor units.
+ *
+ * Refuses rather than rounds. This price becomes a live offer, and a figure quietly adjusted on the
+ * way through is one the person never agreed to — they would find out from the listing.
+ */
+export function parseChannelPrice(raw: unknown): { ok: true; cents: number } | { ok: false; reason: string } {
+  if (raw === '' || raw == null) return { ok: false, reason: 'Enter a price' };
+  const n = Number(String(raw).replace(',', '.'));
+  if (!Number.isFinite(n)) return { ok: false, reason: 'The price must be a number' };
+  if (n <= 0) return { ok: false, reason: 'The price must be above zero' };
+  const cents = Math.round(n * 100);
+  // Guards a mistyped decimal reaching a marketplace as a five-figure sum.
+  if (cents > 100_000_00) return { ok: false, reason: 'A price above 100,000 is almost certainly a typo' };
+  return { ok: true, cents };
 }

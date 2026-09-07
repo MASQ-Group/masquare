@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseHandlingDays, parseMarginPct, verdictFor, type BulkChannelFacts } from './bulk-listing';
+import { parseChannelPrice, parseHandlingDays, parseMarginPct, verdictFor, type BulkChannelFacts } from './bulk-listing';
 
 const ok = (over: Partial<BulkChannelFacts> = {}): BulkChannelFacts => ({
   found: true,
@@ -8,6 +8,8 @@ const ok = (over: Partial<BulkChannelFacts> = {}): BulkChannelFacts => ({
   eligible: true,
   eligibilityReasons: [],
   asin: 'B00X',
+  // A channel that is ready to list is, by definition, one somebody has matched.
+  matched: true,
   priceCents: 5000,
   priceReason: null,
   quantity: 4,
@@ -79,6 +81,38 @@ describe('which channels a bulk listing may touch', () => {
   it('refuses a product not permitted on the marketplace, quoting the reason', () => {
     const v = verdictFor(ok({ eligible: false, eligibilityReasons: ['230V product cannot be sold in the US'] }));
     expect(v.blockers).toContain('230V product cannot be sold in the US');
+  });
+});
+
+describe('matching, which has to happen before anything is listed', () => {
+  it('refuses a channel nobody has confirmed the listing for', () => {
+    // The gap that made list-everywhere fail outright: the ASIN and product type reach the plan
+    // only from a person confirming a match, and without them the submission cannot be built.
+    const v = verdictFor(ok({ matched: false }));
+    expect(v.canList).toBe(false);
+    expect(v.blockers).toContain('Not matched to an Amazon listing yet');
+  });
+
+  it('flags a channel held up only by the match, so the step can offer it', () => {
+    expect(verdictFor(ok({ matched: false })).blockedOnlyByMatch).toBe(true);
+  });
+
+  it('says nothing about matching where Amazon has no catalogue entry', () => {
+    // "Not in the catalogue" is already the blocker. Adding "not matched" beside it is noise about
+    // a match that could not be made.
+    const v = verdictFor(ok({ matched: false, found: false, asin: null }));
+    expect(v.blockers.join(' ')).not.toMatch(/not matched/i);
+  });
+
+  it('does not flag the match step for a channel with other problems too', () => {
+    const v = verdictFor(ok({ matched: false, quantity: null }));
+    expect(v.blockedOnlyByMatch).toBe(false);
+  });
+
+  it('is not enough on its own — a matched channel can still be blocked', () => {
+    // Matching answers one question. It does not make a restricted or unpriceable channel listable.
+    expect(verdictFor(ok({ matched: true, restricted: true })).canList).toBe(false);
+    expect(verdictFor(ok({ matched: true, priceCents: null })).canList).toBe(false);
   });
 });
 
@@ -154,5 +188,44 @@ describe('the profit percentage someone types', () => {
     expect(parseMarginPct('').ok).toBe(false);
     expect(parseMarginPct('twenty').ok).toBe(false);
     expect(parseMarginPct(null).ok).toBe(false);
+  });
+});
+
+describe('a price typed for one marketplace', () => {
+  it('takes a normal price', () => {
+    expect(parseChannelPrice('64.99')).toEqual({ ok: true, cents: 6499 });
+    expect(parseChannelPrice(5688)).toEqual({ ok: true, cents: 568800 });
+  });
+
+  it('accepts a comma as the decimal separator', () => {
+    // Most of these marketplaces are in countries that write it that way.
+    expect(parseChannelPrice('64,99')).toEqual({ ok: true, cents: 6499 });
+  });
+
+  it('refuses zero, negatives and nonsense', () => {
+    // Amazon would accept a zero price and sell the goods for nothing.
+    expect(parseChannelPrice(0).ok).toBe(false);
+    expect(parseChannelPrice(-5).ok).toBe(false);
+    expect(parseChannelPrice('free').ok).toBe(false);
+    expect(parseChannelPrice('').ok).toBe(false);
+    expect(parseChannelPrice(null).ok).toBe(false);
+  });
+
+  it('refuses a figure that reads as a mistyped decimal', () => {
+    // 649900 instead of 64.99 is a live offer at six figures.
+    expect(parseChannelPrice(200000).ok).toBe(false);
+    expect(parseChannelPrice(99999).ok).toBe(true);
+  });
+
+  it('rounds to the nearest minor unit, which is the finest thing it can store', () => {
+    // Not a policy, a consequence: prices are held in minor units, so a third decimal has nowhere
+    // to go. The box on screen only accepts two in the first place.
+    //
+    // The precision that DOES get refused rather than corrected is the currency's own — Amazon JP
+    // takes whole yen, and listEverywhere rejects a fractional yen price by name instead of
+    // adjusting a figure somebody agreed to. That rule lives in currency-precision and is tested
+    // there; this parser is only about the number.
+    expect(parseChannelPrice('64.994')).toEqual({ ok: true, cents: 6499 });
+    expect(parseChannelPrice('64.996')).toEqual({ ok: true, cents: 6500 });
   });
 });

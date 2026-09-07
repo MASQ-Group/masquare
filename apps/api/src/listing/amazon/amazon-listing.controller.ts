@@ -136,6 +136,8 @@ export class AmazonListingController {
       confirm?: boolean;
       handlingForAll?: number | string | null;
       handlingByChannel?: Record<string, number | string | null>;
+      /** A price chosen for one marketplace, overriding the margin-derived suggestion. */
+      priceByChannel?: Record<string, number | string | null>;
     } = {},
   ) {
     const count = body.integrationIds?.length ?? 0;
@@ -154,8 +156,48 @@ export class AmazonListingController {
           // shown. Sent rather than remembered server-side: nothing here is stateful between the
           // two calls, and a remembered value is one that can go stale between them.
           { applyToAll: body.handlingForAll, perChannel: body.handlingByChannel },
+          { perChannel: body.priceByChannel },
         ),
     );
+  }
+
+  /**
+   * Confirm which Amazon listing this product is, on one marketplace.
+   *
+   * One channel per call, on purpose. There is no bulk equivalent and there should not be: the
+   * check this represents is a person looking at a title and an image and saying "yes, that one".
+   */
+  @Post('products/:productId/channels/:integrationId/match')
+  matchChannel(
+    @Param('productId') productId: string,
+    @Param('integrationId') integrationId: string,
+    @VisibleCompanies() companyIds: string[],
+    @CurrentUser() user: AuthUser,
+    @Body() body: { asin: string; productType?: string | null },
+  ) {
+    return this.svc.matchChannel(productId, integrationId, body, user.sub, companyIds);
+  }
+
+  /** Undo a match, so a wrong one can be corrected. */
+  @Post('products/:productId/channels/:integrationId/unmatch')
+  unmatchChannel(
+    @Param('productId') productId: string,
+    @Param('integrationId') integrationId: string,
+    @VisibleCompanies() companyIds: string[],
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.svc.unmatchChannel(productId, integrationId, user.sub, companyIds);
+  }
+
+  /** The alternatives, when the stored suggestion is not the right listing. Read-only. */
+  @Get('products/:productId/channels/:integrationId/match-candidates')
+  @Requires('view')
+  matchCandidates(
+    @Param('productId') productId: string,
+    @Param('integrationId') integrationId: string,
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    return this.svc.matchCandidates(productId, integrationId, companyIds);
   }
 
   /** The only call in this module that creates an offer. Gated three ways. */
