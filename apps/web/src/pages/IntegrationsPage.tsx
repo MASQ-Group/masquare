@@ -18,6 +18,7 @@ import { GroupBackfillModal } from '../components/integrations/GroupBackfillModa
 import { ChannelLogoTile } from '../components/integrations/ChannelLogoTile';
 import { Flag } from '../components/common/Flag';
 import { useAuth } from '../lib/auth';
+import { sortByChannelCanonical } from '../lib/channelGroups';
 
 const fmtDateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
@@ -235,7 +236,12 @@ export function IntegrationsPage() {
   const matchesTab = (i: ChannelIntegration) =>
     tab === 'all' || (tab === 'healthy' && isHealthy(i)) || (tab === 'attention' && needsAttention(i)) || (tab === 'errors' && hasError(i));
 
-  const visible = integrations.filter((i) => matchesQuery(i) && matchesTab(i));
+  // The same channel sequence as every other list. This page is read alongside Channel Listings,
+  // and two orders for one set of connections makes them hard to check against each other.
+  const visible = sortByChannelCanonical(
+    integrations.filter((i) => matchesQuery(i) && matchesTab(i)),
+    (i) => ({ name: i.name, countryIso: i.marketplace, channelType: i.channelType }),
+  );
   const groups = groupByFamily(integrations)
     .map(([family, all]) => ({ family, all, rows: all.filter((i) => visible.includes(i)) }))
     .filter((g) => (q || tab !== 'all' ? g.rows.length > 0 : true));

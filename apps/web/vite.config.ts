@@ -1,4 +1,6 @@
-import { defineConfig } from 'vite';
+// From vitest, not vite: the same defineConfig plus the `test` block below. Importing vite's own
+// leaves `test` an unknown property and the type check fails on a config that works perfectly.
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 
@@ -16,6 +18,17 @@ const ENV_LABEL = process.env.VITE_ENV_LABEL ?? '';
 
 export default defineConfig({
   plugins: [react()],
+  /**
+   * Unit tests for the web app's pure logic — the canonical channel order, currency precision, and
+   * anything else that is a rule rather than a rendering.
+   *
+   * Node environment and no DOM: this is deliberately not a component-test setup. The things worth
+   * pinning here are decisions the UI makes, and those live in plain functions that need no browser.
+   */
+  test: {
+    include: ['src/**/*.spec.ts'],
+    environment: 'node',
+  },
   build: {
     rollupOptions: {
       output: {

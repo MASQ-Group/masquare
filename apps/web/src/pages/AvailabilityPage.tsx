@@ -6,7 +6,7 @@ import { ModalShell, Pagination, Select } from '@masquare/ui';
 import { availabilityApi, brandsApi, channelListingsApi, productTypesApi, vendorsApi, type AvailabilityRow, type ChannelPushResult } from '../lib/api';
 import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
-import { CHANNEL_GROUPS, channelGroupOf, channelPlatform, type ChannelPlatform } from '../lib/channelGroups';
+import { CHANNEL_GROUPS, channelGroupOf, channelPlatform, sortByChannelCanonical, type ChannelPlatform } from '../lib/channelGroups';
 import { MissingFromAvailability } from '../components/availability/MissingFromAvailability';
 
 // The three ways a quantity can move: a person, a vendor file, or a sale. There is no Return —
@@ -323,7 +323,15 @@ function PushModal({ productIds, titles, onClose, onDone }: {
         ...P,
         groups: [...P.groups.values()]
           .sort((a, b) => groupOrder(a.key) - groupOrder(b.key))
-          .map((g) => ({ ...g, channels: [...g.channels].sort((a, b) => (a.marketplace || '').localeCompare(b.marketplace || '') || a.label.localeCompare(b.label)) })),
+          // Canonical inside the group too, not alphabetical by marketplace code. Sorting by code
+          // put Amazon BE and DE ahead of UK, which is neither the order these appear in anywhere
+          // else nor the order anyone thinks of them in.
+          .map((g) => ({
+            ...g,
+            channels: sortByChannelCanonical(g.channels, (c) => ({
+              name: c.label, countryIso: c.countryIso ?? c.marketplace, channelType: c.channelType,
+            })),
+          })),
       }));
   }, [channels]);
 

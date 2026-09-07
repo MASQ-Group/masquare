@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -8,6 +8,7 @@ import { DateRangePicker, ProgressButton, type DateRangeValue } from '@masquare/
 import { formatAmount } from '../lib/format';
 import { listingUrl } from '../lib/channelUrls';
 import { Flag } from '../components/common/Flag';
+import { sortChannelsCanonical } from '../lib/channelGroups';
 import { useJobProgress } from '../lib/useJobProgress';
 import { ListOnChannelModal } from '../components/channel-listings/ListOnChannelModal';
 import { NotListedPanel } from '../components/channel-listings/NotListedPanel';
@@ -138,10 +139,17 @@ export function ChannelListingDetailPage() {
     placeholderData: (prev) => prev,
   });
 
+  /**
+   * The one order channels are ever shown in — Amazon Europe, Americas, AU, AE, SA, JP, SG, then
+   * eBay, then OnBuy. Defined once in channelGroups and applied at every list; the API returns them
+   * alphabetically, which put Amazon AE before Amazon Europe on the page most used to read them.
+   */
+  const orderedChannels = useMemo(() => sortChannelsCanonical(data?.channels ?? []), [data]);
+
   if (isLoading) return <div className="card p-10 text-center text-[13px] text-n-500">Loading…</div>;
   if (!data) return <div className="card p-10 text-center text-[13px] text-n-500">Product not found.</div>;
 
-  const listedChannels = data.channels.filter((c) => c.listed);
+  const listedChannels = orderedChannels.filter((c) => c.listed);
   const maxPrice = Math.max(1, ...listedChannels.map((c) => c.price ?? 0));
 
   // Placeholder KPIs (real metrics wire up later).
@@ -362,7 +370,7 @@ export function ChannelListingDetailPage() {
           <div className="text-[12.5px] text-n-400">Price, stock and status on each connected channel</div>
         </div>
         <div className="mt-3 grid gap-3.5" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' }}>
-          {data.channels.map((c) => {
+          {orderedChannels.map((c) => {
             const st = c.status ? STATUS[c.status] ?? STATUS.live : null;
             // Null whenever we cannot build an honest link — a "View" that lands on the wrong
             // storefront reads as a missing listing.
