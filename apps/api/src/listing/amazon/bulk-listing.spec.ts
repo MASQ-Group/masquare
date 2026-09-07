@@ -84,6 +84,37 @@ describe('which channels a bulk listing may touch', () => {
   });
 });
 
+describe('a marketplace we already sell on', () => {
+  it('gives that as the only reason, not as one of three', () => {
+    // The sweep skips a marketplace we are already on, so no stored check exists for it. Every
+    // downstream test then read that absence as its own failure, and Amazon UK — visibly listed at
+    // GBP 1495 — came back saying Amazon had no catalogue entry for it and that nobody had checked.
+    // Both untrue, and printed beside the one reason that was correct.
+    const v = verdictFor(ok({ alreadyListed: true, found: false, matched: false, asin: null, quantity: null, handlingTimeDays: null }));
+    expect(v.blockers).toEqual(['Already listed here']);
+  });
+
+  it('says nothing about matching, catalogue entries or stock for it', () => {
+    const joined = verdictFor(ok({ alreadyListed: true, found: false, asin: null, matched: false })).blockers.join(' ');
+    expect(joined).not.toMatch(/catalogue/i);
+    expect(joined).not.toMatch(/checked yet/i);
+    expect(joined).not.toMatch(/not matched/i);
+    expect(joined).not.toMatch(/quantity/i);
+  });
+
+  it('carries no warnings either, since there is nothing to act on', () => {
+    const v = verdictFor(ok({ alreadyListed: true, brandRestriction: 'Delonghi restricted on Amazon US', quantity: 0 }));
+    expect(v.warnings).toEqual([]);
+  });
+
+  it('is still not listable, and offers no fix on the screen', () => {
+    const v = verdictFor(ok({ alreadyListed: true }));
+    expect(v.canList).toBe(false);
+    expect(v.blockedOnlyByMatch).toBe(false);
+    expect(v.blockedOnlyByHandlingTime).toBe(false);
+  });
+});
+
 describe('matching, which has to happen before anything is listed', () => {
   it('refuses a channel nobody has confirmed the listing for', () => {
     // The gap that made list-everywhere fail outright: the ASIN and product type reach the plan

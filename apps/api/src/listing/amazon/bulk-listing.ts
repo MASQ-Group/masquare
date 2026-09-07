@@ -68,7 +68,30 @@ export function verdictFor(f: BulkChannelFacts): BulkChannelVerdict {
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  if (f.alreadyListed) blockers.push('Already listed here');
+  /**
+   * Already selling here is the whole answer, and the only true thing we know.
+   *
+   * The availability sweep deliberately skips a marketplace we are already on — there is nothing to
+   * decide — so no stored check exists for it. Every downstream test then read that absence as its
+   * own kind of failure and the row came back with three reasons, two of them false:
+   *
+   *   Amazon UK — Already listed here
+   *             — Amazon has no catalogue entry for this product here   (untrue; we sell on it)
+   *             — Availability here has not been checked yet            (untrue as a criticism)
+   *
+   * Stating things about a marketplace we never asked about is worse than saying nothing. One
+   * reason, and it is the correct one.
+   */
+  if (f.alreadyListed) {
+    return {
+      canList: false,
+      blockers: ['Already listed here'],
+      warnings: [],
+      blockedOnlyByHandlingTime: false,
+      blockedOnlyByMatch: false,
+    };
+  }
+
   if (!f.found) blockers.push('Amazon has no catalogue entry for this product here');
   // Unknown gating is a blocker, not a shrug. The only way to find out whether we may sell a brand
   // is to ask, and a bulk action is the worst possible place to guess: the answer arrives as a
