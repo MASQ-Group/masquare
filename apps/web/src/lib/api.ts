@@ -1790,9 +1790,11 @@ export const amazonListingApi = {
   quote: (productId: string, integrationId: string, atPricesCents?: number[]) =>
     api.post<AmazonQuote>(`/listing/amazon/products/${productId}/channels/${integrationId}/quote`, { atPricesCents }).then((r) => r.data),
   /** What listing on every eligible marketplace at one margin would do. Read-only. */
-  listEverywherePreview: (productId: string, marginPct: number, handling: BulkHandling = {}) =>
+  listEverywherePreview: (productId: string, marginPct: number, handling: BulkHandling = {}, prices: BulkPrices = {}) =>
     api.post<ListEverywherePreview>(`/listing/amazon/products/${productId}/list-everywhere/preview`, {
       marginPct, handlingForAll: handling.forAll ?? null, handlingByChannel: handling.byChannel ?? {},
+      // A price already known is not re-derived; a quote costs a live fee estimate per marketplace.
+      priceByChannel: prices,
     }).then((r) => r.data),
   /** Creates the offers. A job, because it fans out across marketplaces. */
   listEverywhere: (

@@ -1169,7 +1169,44 @@ export class AmazonListingService {
     if (!integration) throw new NotFoundException('Channel not found');
     if (integration.channelType !== 'amazon') throw new BadRequestException('This flow is for Amazon channels');
     if (!plan) throw new BadRequestException('Prepare the channel plan on the product card first');
-    if (!plan.categoryRef) throw new BadRequestException('The plan has no Amazon product type set');
+
+    /**
+     * A plan holding an ASIN but no product type is a half-match, and it is repairable.
+     *
+     * The product card writes the ASIN unconditionally and the product type only when Amazon's
+     * search happened to return one, so a candidate without a type left a plan that passes every
+     * "is it matched?" test and then fails here — with a message about a field nobody was ever
+     * asked for.
+     *
+     * Amazon's product type is its own classification OF the chosen ASIN, not a second choice, so
+     * completing it from the stored availability check for this exact pair decides nothing on
+     * anyone's behalf. Where no stored type exists either, the refusal now says what to do.
+     */
+    let categoryRef = plan.categoryRef;
+    if (!categoryRef) {
+      const planAsin = (plan.aspects as Record<string, string> | null)?.asin ?? null;
+      const stored = planAsin
+        ? await this.prisma.productChannelAvailability.findFirst({
+            where: { productId, integrationId, asin: planAsin },
+            select: { productType: true },
+          })
+        : null;
+      categoryRef = stored?.productType ?? null;
+      if (categoryRef) {
+        await this.prisma.productChannelPlan.updateMany({
+          where: { id: plan.id },
+          data: { categoryRef },
+        });
+        this.logger.log(`Completed a half-matched plan for ${integration.name}: product type ${categoryRef}`);
+      }
+    }
+    if (!categoryRef) {
+      throw new BadRequestException(
+        (plan.aspects as Record<string, string> | null)?.asin
+          ? 'This marketplace is matched to an ASIN but Amazon gave no product type for it. Re-run the availability check for this marketplace, then match it again.'
+          : 'This marketplace is not matched to an Amazon listing yet.',
+      );
+    }
 
     const listing = await this.prisma.channelListing.findFirst({
       where: { integrationId, productId },
@@ -1262,7 +1299,7 @@ export class AmazonListingService {
     return {
       sku,
       asin: input.asin,
-      productType: plan.categoryRef,
+      productType: categoryRef,
       marketplace: integration.marketplace ?? '',
       channelName: integration.name,
       attributes,
@@ -1292,6 +1329,7 @@ export class AmazonListingService {
     rawMargin: unknown,
     companyIds?: string[],
     handling: BulkHandlingInput = {},
+    prices: BulkPriceInput = {},
   ) {
     const margin = parseMarginPct(rawMargin);
     if (!margin.ok) throw new BadRequestException(margin.reason);
@@ -1311,6 +1349,26 @@ export class AmazonListingService {
       if (!parsed.ok) throw new BadRequestException(`Days to dispatch: ${parsed.reason}`);
       perChannel.set(integrationId, parsed.days);
     }
+    /**
+     * Prices the caller already has, used instead of asking Amazon again.
+     *
+     * The commit re-runs this preview so it acts on facts rather than on what a screen remembered.
+     * That was re-quoting every marketplace, and a quote costs a live fee estimate — eleven of them
+     * within a few seconds, against an endpoint that allows about one. Amazon refused four, those
+     * rows lost their price, and the whole run was refused with "Amazon would not estimate fees for
+     * this listing" about marketplaces that listed perfectly well by hand a minute later.
+     *
+     * A price that is already known does not need deriving twice. Supplying it makes the commit
+     * cheap, deterministic, and identical to what was on screen.
+     */
+    const suppliedPrice = new Map<string, number>();
+    for (const [integrationId, raw] of Object.entries(prices.perChannel ?? {})) {
+      if (raw === '' || raw == null) continue;
+      const parsed = parseChannelPrice(raw);
+      if (!parsed.ok) throw new BadRequestException(`Price: ${parsed.reason}`);
+      suppliedPrice.set(integrationId, parsed.cents);
+    }
+
     let suppliedForAll: number | null = null;
     if (handling.applyToAll !== '' && handling.applyToAll != null) {
       const parsed = parseHandlingDays(handling.applyToAll);
@@ -1488,8 +1546,11 @@ export class AmazonListingService {
 
       // Worth pricing only where an offer is actually on the table: a quote costs a live fee
       // estimate per marketplace, and there is nothing to price for one we already sell on.
-      const worthPricing = !!asin && !listing && avail?.found === true && avail?.restricted === false;
-      let priceCents: number | null = null;
+      const given = suppliedPrice.get(integration.id) ?? null;
+      // Nothing to work out where the caller already knows the price. This is also the only reason
+      // the commit no longer needs a live call per marketplace.
+      const worthPricing = given == null && !!asin && !listing && avail?.found === true && avail?.restricted === false;
+      let priceCents: number | null = given;
       let priceReason: string | null = null;
       let profitCents: number | null = null;
       let profitEurCents: number | null = null;
@@ -1828,7 +1889,7 @@ export class AmazonListingService {
 
     // Re-previewed WITH the same handling times, so what is validated is what will be written. A
     // preview taken without them would refuse every channel the caller has just supplied one for.
-    const preview = await this.listEverywherePreview(productId, rawMargin, companyIds, handling);
+    const preview = await this.listEverywherePreview(productId, rawMargin, companyIds, handling, prices);
     const byId = new Map(preview.rows.map((r) => [r.integrationId, r]));
 
     const unknown = integrationIds.filter((id) => !byId.has(id));

@@ -1016,13 +1016,21 @@ export class IntegrationsService implements OnModuleInit {
     }
   }
 
-  private async amzWrite(url: string, token: string, method: string, body?: unknown): Promise<Response> {
+  private async amzWrite(
+    url: string,
+    token: string,
+    method: string,
+    body?: unknown,
+    opts: { attempts?: number; baseDelayMs?: number } = {},
+  ): Promise<Response> {
+    const maxAttempts = opts.attempts ?? 3;
     for (let attempt = 0; ; attempt++) {
       // DELETE carries no body — sending one makes some SP-API endpoints reject the request.
       const res = await fetch(url, { method, headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json', Accept: 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(20000) });
-      if (!RETRYABLE_STATUS.has(res.status) || attempt >= 3) return res;
+      if (!RETRYABLE_STATUS.has(res.status) || attempt >= maxAttempts) return res;
       const retryAfter = Number(res.headers.get('Retry-After'));
-      await sleep(Math.min(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 2000 * 2 ** attempt, 20_000));
+      const base = opts.baseDelayMs ?? 2000;
+      await sleep(Math.min(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : base * 2 ** attempt, 20_000));
     }
   }
 
@@ -1083,7 +1091,15 @@ export class IntegrationsService implements OnModuleInit {
         Identifier: `masq-${sellerSku}-${meta.marketplaceId}`,
       },
     };
-    const res = await this.amzWrite(url, token, 'POST', body);
+    /**
+     * A longer leash, because this is the other endpoint Amazon throttles hard.
+     *
+     * getMyFeesEstimate allows about one request a second. Pricing eleven marketplaces asks for
+     * eleven of them within a few seconds, and the ones Amazon refuses came back as "Amazon would
+     * not estimate fees for this listing" — which reads as a fact about the listing and is nothing
+     * of the sort. Listing those same marketplaces by hand worked immediately.
+     */
+    const res = await this.amzWrite(url, token, 'POST', body, { attempts: 5, baseDelayMs: 1200 });
     const json: any = await res.json().catch(() => null);
     if (!res.ok) return { ok: false, status: res.status, message: IntegrationsService.amzErr(json) || `feesEstimate ${res.status}` };
     const result = json?.payload?.FeesEstimateResult ?? json?.FeesEstimateResult;

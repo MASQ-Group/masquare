@@ -129,9 +129,17 @@ export function ListEverywhereModal({
         p.marginPct,
         selected.map((r) => r.integrationId),
         { forAll: handlingAll || null, byChannel: handlingBy },
-        // Only the prices actually typed. An untouched row keeps the suggestion the server computed,
-        // rather than having it round-tripped back as though somebody had chosen it.
-        Object.fromEntries(selected.map((r) => [r.integrationId, priceBy[r.integrationId] ?? null]).filter(([, v]) => v != null)),
+        /**
+         * The effective price for EVERY selected row, not only the typed ones.
+         *
+         * These are the figures shown and agreed to. Sending them means the commit does not have to
+         * derive them again — and deriving them again was the fault: eleven live fee estimates in a
+         * few seconds against an endpoint allowing about one, four refused, and the whole run
+         * abandoned over marketplaces that listed by hand a minute later.
+         */
+        Object.fromEntries(
+          selected.map((r) => [r.integrationId, priceFor(r)]).filter(([, v]) => v !== ''),
+        ),
       ),
     );
   };
