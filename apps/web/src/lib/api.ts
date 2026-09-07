@@ -1683,6 +1683,8 @@ export interface ListEverywhereRow {
   /** Somebody has confirmed the listing here: the plan carries both an ASIN and a product type. */
   matched: boolean;
   matchedAsin: string | null;
+  /** When the match was last written — a match from two days ago is not one made a moment ago. */
+  matchedAt: string | null;
   /** Worth offering in the match step — Amazon has it, we may sell it, nobody has said which it is. */
   matchable: boolean;
   /**
@@ -1713,7 +1715,16 @@ export interface ListEverywherePreview {
   rows: ListEverywhereRow[];
   /** The ASIN this SKU is already bound to in these accounts, if any. */
   boundAsin: string | null;
-  summary: { total: number; ready: number; blocked: number; warned: number; awaitingMatch: number; readyToPrice: number };
+  /** Five buckets that partition the rows: they sum to `total`, with nothing counted twice. */
+  summary: {
+    total: number;
+    alreadyListed: number;
+    awaitingMatch: number;
+    readyToPrice: number;
+    ready: number;
+    warned: number;
+    blocked: number;
+  };
 }
 export interface ListEverywhereResultRow {
   integrationId: string;

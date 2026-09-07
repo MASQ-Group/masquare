@@ -95,7 +95,16 @@ export function ListEverywhereModal({
    */
   const priceable = rows.filter((r) => r.readyToPrice);
   const ready = rows.filter(offerable);
-  const blocked = rows.filter((r) => !offerable(r) && !r.matchable && !r.readyToPrice);
+  /**
+   * Already selling here is a fact, not a failure, and belongs in its own list.
+   *
+   * Mixed into "cannot be listed" it read as seven problems on a product that is simply already
+   * on those marketplaces — and it crowded out the rows that genuinely cannot go anywhere.
+   */
+  const alreadyListed = rows.filter((r) => r.blockers.includes('Already listed here'));
+  const blocked = rows.filter(
+    (r) => !alreadyListed.includes(r) && !r.matchable && !r.readyToPrice && !offerable(r),
+  );
   const selected = ready.filter((r) => chosen.has(r.integrationId));
 
   const afterMatch = () => {
@@ -152,7 +161,7 @@ export function ListEverywhereModal({
         {step === 'scope' && (
           <ScopeStep
             margin={margin} setMargin={setMargin} onRun={run} running={preview.isPending}
-            preview={p} blocked={blocked} boundAsin={p?.boundAsin ?? null}
+            preview={p} blocked={blocked} alreadyListed={alreadyListed} boundAsin={p?.boundAsin ?? null}
           />
         )}
 
@@ -223,10 +232,11 @@ function Steps({ step, onStep, disabled, awaitingMatch }: { step: Step; onStep: 
 // ---------------------------------------------------------------------------------------------
 
 function ScopeStep({
-  margin, setMargin, onRun, running, preview, blocked, boundAsin,
+  margin, setMargin, onRun, running, preview, blocked, alreadyListed, boundAsin,
 }: {
   margin: string; setMargin: (v: string) => void; onRun: () => void; running: boolean;
-  preview: ListEverywherePreview | null; blocked: ListEverywhereRow[]; boundAsin: string | null;
+  preview: ListEverywherePreview | null; blocked: ListEverywhereRow[];
+  alreadyListed: ListEverywhereRow[]; boundAsin: string | null;
 }) {
   return (
     <>
@@ -264,12 +274,21 @@ function ScopeStep({
 
       {preview && (
         <>
+          {/* Five figures that add up to the total, said so plainly that a reader can check.
+              They used to sum to fifteen of eighteen and nobody could see where the rest went. */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-n-200 bg-n-25 px-3 py-2 text-[12.5px]">
+            <span className="font-semibold text-n-700">{preview.summary.total} marketplaces</span>
+            {preview.summary.alreadyListed > 0 && (
+              <span className="text-n-500"><b>{preview.summary.alreadyListed}</b> already listed</span>
+            )}
             {preview.summary.awaitingMatch > 0 && (
               <span className="text-amber-700"><b>{preview.summary.awaitingMatch}</b> need matching</span>
             )}
+            {preview.summary.readyToPrice > 0 && (
+              <span className="text-n-600"><b>{preview.summary.readyToPrice}</b> need a price or dispatch time</span>
+            )}
             <span className="text-teal-700"><b>{preview.summary.ready}</b> ready to list</span>
-            <span className="text-n-500"><b>{blocked.length}</b> cannot be listed</span>
+            <span className="text-n-500"><b>{preview.summary.blocked}</b> cannot be listed</span>
             <span className="text-n-400">at {preview.marginPct}% profit</span>
           </div>
 
@@ -281,6 +300,17 @@ function ScopeStep({
                 This SKU is already bound to ASIN <b className="mono">{boundAsin}</b> in these accounts. Amazon requires one
                 SKU to point at one ASIN across a seller account, so matching a different one will be refused at validation.
               </span>
+            </div>
+          )}
+
+          {alreadyListed.length > 0 && (
+            <div className="rounded-lg border border-n-200">
+              <div className="border-b border-n-100 px-3 py-2 text-[12px] font-semibold text-n-500">
+                Already listed ({alreadyListed.length}) — nothing to do
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 px-3 py-2 text-[12px] text-n-500">
+                {alreadyListed.map((r) => <span key={r.integrationId}>{r.name}</span>)}
+              </div>
             </div>
           )}
 
@@ -334,6 +364,12 @@ function MatchStep({
         Confirm which Amazon listing this product is, on each marketplace. The suggestion below is the first candidate the
         availability check saw — it is a suggestion, not an answer, and there is deliberately no button to accept them all.
         An offer attached to a similar-looking listing sells the wrong thing at our price.
+      </p>
+      {/* Said where the matches are listed, because a screen already full of them is exactly where
+          somebody would wonder whether the platform had been matching on its own. */}
+      <p className="text-[11.5px] text-n-400">
+        Marketplaces below the fold are already matched — from this session or from earlier work on the product's
+        channel plan. Nothing is ever matched automatically; each one was confirmed by somebody, and the date says when.
       </p>
 
       {rows.length > 0 && (
@@ -476,7 +512,13 @@ function MatchedRow({ productId, row, onChanged }: { productId: string; row: Lis
     <div className="flex items-center gap-2 border-b border-n-50 px-3 py-2 last:border-b-0">
       <Check size={13} className="shrink-0 text-teal-600" />
       <span className="w-[120px] shrink-0 text-[12.5px] font-semibold text-n-800">{row.name}</span>
-      <span className="mono flex-1 text-[12.5px] text-n-700">{row.matchedAsin}</span>
+      <span className="mono text-[12.5px] text-n-700">{row.matchedAsin}</span>
+      {/* When, because a match made two days ago and one made a moment ago look identical
+          otherwise — which is what made a screen of pre-existing matches read as though the system
+          had done them by itself. Nothing here matches automatically. */}
+      <span className="flex-1 text-[11.5px] text-n-400">
+        {row.matchedAt ? `matched ${new Date(row.matchedAt).toLocaleDateString()}` : ''}
+      </span>
       {/* A wrong match should be correctable here rather than somewhere else. */}
       <button
         type="button"

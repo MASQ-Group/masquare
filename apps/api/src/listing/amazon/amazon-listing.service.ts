@@ -1357,7 +1357,7 @@ export class AmazonListingService {
       }),
       this.prisma.productChannelPlan.findMany({
         where: { productId, deletedAt: null, integrationId: { in: ids } },
-        select: { integrationId: true, handlingTimeDays: true, aspects: true, categoryRef: true },
+        select: { integrationId: true, handlingTimeDays: true, aspects: true, categoryRef: true, updatedAt: true },
       }),
       product.brandId
         ? this.prisma.brandChannelRestriction.findMany({
@@ -1447,7 +1447,8 @@ export class AmazonListingService {
       handlingTimeSource: 'entered' | 'all' | 'plan' | 'borrowed' | 'none';
       checkedAt: Date | null; canList: boolean; blockers: string[]; warnings: string[];
       blockedOnlyByHandlingTime: boolean; blockedOnlyByMatch: boolean;
-      matched: boolean; matchedAsin: string | null; matchable: boolean; readyToPrice: boolean;
+      matched: boolean; matchedAsin: string | null; matchedAt: Date | null;
+      matchable: boolean; readyToPrice: boolean;
       candidate: {
         asin: string; productType: string | null; title: string | null;
         imageUrl: string | null; conflictsWithBound: boolean;
@@ -1573,6 +1574,15 @@ export class AmazonListingService {
         checkedAt: avail?.checkedAt ?? null,
         matched,
         matchedAsin: planAspects.asin ?? null,
+        /**
+         * When this match was last written.
+         *
+         * Shown because a match made two days ago and one made a moment ago look identical
+         * otherwise — which is exactly what made a screen full of pre-existing matches read as
+         * though the system had done them automatically. Nothing here matches automatically; this
+         * is the evidence for that, on the row.
+         */
+        matchedAt: matched ? plan?.updatedAt ?? null : null,
         /** Offered for confirmation in the match step. Applying it is always a deliberate act. */
         candidate,
         /**
@@ -1602,15 +1612,34 @@ export class AmazonListingService {
       liveWritesEnabled: await this.liveWritesEnabled(),
       rows,
       boundAsin,
+      /**
+       * Every marketplace counted exactly once.
+       *
+       * These buckets partition the rows, and `total` is asserted against their sum below. The
+       * previous set overlapped and left gaps — a matched row waiting only on a dispatch time
+       * belonged to none of them — so the figures on screen added up to fifteen of eighteen and
+       * three marketplaces simply vanished. A reader cannot audit a screen whose numbers do not
+       * reconcile, and will not trust the ones that remain.
+       */
       summary: {
         total: rows.length,
-        ready: rows.filter((r) => r.canList).length,
-        blocked: rows.filter((r) => !r.canList).length,
-        warned: rows.filter((r) => r.canList && r.warnings.length > 0).length,
+        /** Nothing to decide: we already sell here. */
+        alreadyListed: rows.filter((r) => r.blockers.includes('Already listed here')).length,
         /** Waiting on somebody to confirm which Amazon listing they are. */
         awaitingMatch: rows.filter((r) => r.matchable).length,
         /** Matched, and needing only a price and a dispatch time. */
-        readyToPrice: rows.filter((r) => r.readyToPrice).length,
+        readyToPrice: rows.filter((r) => r.readyToPrice && !r.canList).length,
+        /** Everything present; the list button would take it. */
+        ready: rows.filter((r) => r.canList).length,
+        warned: rows.filter((r) => r.canList && r.warnings.length > 0).length,
+        /** Everything else — and it is genuinely everything else, by subtraction. */
+        blocked: rows.filter(
+          (r) =>
+            !r.blockers.includes('Already listed here') &&
+            !r.matchable &&
+            !(r.readyToPrice && !r.canList) &&
+            !r.canList,
+        ).length,
       },
     };
   }
