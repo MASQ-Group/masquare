@@ -10,7 +10,7 @@ import { isSkuInUseRejection } from './sku-collision';
 import { ListingService } from '../listing.service';
 import { recordAvailability } from '../availability/availability-record';
 import { decimalsFor, isExpressible, priceAmountFor, roundPriceCents } from '../../common/currency-precision';
-import { parseHandlingDays, parseMarginPct, verdictFor, type BulkChannelFacts, type BulkHandlingInput } from './bulk-listing';
+import { parseChannelPrice, parseHandlingDays, parseMarginPct, verdictFor, type BulkChannelFacts, type BulkHandlingInput, type BulkPriceInput } from './bulk-listing';
 import { restrictionFor, restrictionReason } from '../brand-restrictions';
 
 /**
@@ -1299,7 +1299,14 @@ export class AmazonListingService {
 
     const product = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
-      select: { id: true, mainSku: true, title: true, brandId: true, brand: { select: { name: true } } },
+      select: {
+        id: true, mainSku: true, title: true, brandId: true, batteryRequired: true,
+        brand: { select: { name: true } },
+        hazmatClassRef: { select: { code: true } },
+        voltageRating: { select: { numericMin: true, numericMax: true } },
+        frequency: { select: { code: true } },
+        plugTypeRef: { select: { code: true } },
+      },
     });
     if (!product) throw new NotFoundException('Product not found');
 
@@ -1322,11 +1329,11 @@ export class AmazonListingService {
       }),
       this.prisma.productChannelAvailability.findMany({
         where: { productId, integrationId: { in: ids } },
-        select: { integrationId: true, found: true, restricted: true, asin: true, checkedAt: true },
+        select: { integrationId: true, found: true, restricted: true, asin: true, productType: true, title: true, checkedAt: true },
       }),
       this.prisma.productChannelPlan.findMany({
         where: { productId, deletedAt: null, integrationId: { in: ids } },
-        select: { integrationId: true, handlingTimeDays: true, aspects: true },
+        select: { integrationId: true, handlingTimeDays: true, aspects: true, categoryRef: true },
       }),
       product.brandId
         ? this.prisma.brandChannelRestriction.findMany({
@@ -1335,6 +1342,50 @@ export class AmazonListingService {
           })
         : Promise.resolve([] as Array<{ channelType: string; marketplace: string; note: string | null }>),
     ]);
+
+    /**
+     * Eligibility and stock, resolved WITHOUT buildFromPlan.
+     *
+     * The preview used to read both out of buildFromPlan inside a catch, and buildFromPlan throws
+     * the moment a plan is missing or has no product type — which is the normal state of a channel
+     * nobody has listed on. Its quantity then came back null and the row was blocked with "No
+     * sellable quantity recorded": a false statement about stock, standing in for the true one
+     * about an unconfirmed match. Whatever is wrong here, the reader is now told which thing.
+     */
+    const profiles = await this.prisma.marketplaceProfile.findMany({ where: { channelType: 'amazon', active: true } });
+    const technical = {
+      voltageMinV: product.voltageRating?.numericMin ?? null,
+      voltageMaxV: product.voltageRating?.numericMax ?? null,
+      frequencyHz: product.frequency?.code ?? null,
+      plugType: product.plugTypeRef?.code ?? null,
+      batteryRequired: product.batteryRequired,
+      hazmatClass: product.hazmatClassRef?.code ?? null,
+    };
+
+    /**
+     * Sellable units, by the same rule the single-channel flow uses.
+     *
+     * Availability owns the number. Where a product has none recorded, fall back to what we are
+     * already publishing on another Amazon marketplace — the last figure we told Amazon we held.
+     * Resolved once for the product: every channel here is one we do NOT already sell on, so the
+     * "not this integration" part of the rule is satisfied for all of them.
+     */
+    const availabilityRow = await this.prisma.productAvailability.findUnique({
+      where: { productId },
+      select: { quantity: true },
+    });
+    const siblingListing = availabilityRow
+      ? null
+      : await this.prisma.channelListing.findFirst({
+          where: {
+            productId,
+            listedQuantity: { not: null },
+            integration: { channelType: 'amazon', deletedAt: null, ...(await fullScopeIntegrationWhere(this.prisma)) },
+          },
+          orderBy: { lastPulledAt: 'desc' },
+          select: { listedQuantity: true },
+        });
+    const sellableQuantity = availabilityRow?.quantity ?? siblingListing?.listedQuantity ?? null;
 
     /**
      * A handling time borrowed from any Amazon plan for this product.
@@ -1346,13 +1397,34 @@ export class AmazonListingService {
      */
     const fallbackHandling = plans.map((p) => p.handlingTimeDays).find((h) => h != null) ?? null;
 
+    /**
+     * The ASIN this product's SKU is already bound to elsewhere in these accounts.
+     *
+     * Amazon enforces one SKU to one ASIN within a seller account and refuses a submission that
+     * breaks it, in a message naming two ASINs and leaving the reader to work out which is which.
+     * We hold the answer, so a suggestion that would break it is flagged before it is confirmed.
+     */
+    const boundAsin =
+      (
+        await this.prisma.channelListing.findFirst({
+          where: {
+            channelSku: product.mainSku,
+            asin: { not: null },
+            integration: { channelType: 'amazon', deletedAt: null, ...(await fullScopeIntegrationWhere(this.prisma)) },
+          },
+          select: { asin: true },
+        })
+      )?.asin ?? null;
+
     const rows: Array<{
       integrationId: string; name: string; marketplace: string; currency: string;
       asin: string | null; priceCents: number | null; profitCents: number | null;
       profitEurCents: number | null; handlingTimeDays: number | null;
       handlingTimeSource: 'entered' | 'all' | 'plan' | 'borrowed' | 'none';
       checkedAt: Date | null; canList: boolean; blockers: string[]; warnings: string[];
-      blockedOnlyByHandlingTime: boolean;
+      blockedOnlyByHandlingTime: boolean; blockedOnlyByMatch: boolean;
+      matched: boolean; matchedAsin: string | null; matchable: boolean;
+      candidate: { asin: string; productType: string | null; title: string | null; conflictsWithBound: boolean } | null;
     }> = [];
 
     for (const integration of integrations) {
@@ -1370,8 +1442,6 @@ export class AmazonListingService {
       let priceReason: string | null = null;
       let profitCents: number | null = null;
       let profitEurCents: number | null = null;
-      let built: Awaited<ReturnType<AmazonListingService['buildFromPlan']>> | null = null;
-
       if (worthPricing) {
         const quote = await this.quote(productId, integration.id, [], marginPct / 100).catch((e) => ({
           ok: false as const,
@@ -1385,7 +1455,6 @@ export class AmazonListingService {
         } else {
           priceReason = quote.reason;
         }
-        built = await this.buildFromPlan(productId, integration.id).catch(() => null);
       }
 
       /**
@@ -1409,6 +1478,39 @@ export class AmazonListingService {
           : fallbackHandling != null ? 'borrowed'
           : 'none';
 
+      /**
+       * Matched = a person has confirmed which Amazon listing this is here.
+       *
+       * Both halves are required, and they are written together by the match step: the ASIN, and
+       * the product type Amazon files it under. A plan carrying one without the other is not a
+       * match, and submitting it fails at validation.
+       */
+      const planAspects = (plan?.aspects as Record<string, string> | null) ?? {};
+      const matched = !!planAspects.asin && !!plan?.categoryRef;
+
+      /**
+       * What the sweep saw, offered as a suggestion for the match step. Never applied by itself.
+       *
+       * `conflictsWithBound` matters more than it looks: Amazon requires one seller SKU to map to
+       * one ASIN across every marketplace in an account, and refuses a submission that breaks it.
+       * A suggestion that would break it has to say so before somebody confirms it.
+       */
+      const candidate = avail?.asin
+        ? {
+            asin: avail.asin,
+            productType: avail.productType ?? null,
+            title: avail.title ?? null,
+            conflictsWithBound: !!boundAsin && avail.asin !== boundAsin,
+          }
+        : null;
+
+      // Judged directly, not inferred from a plan that may not exist. No profile for a market
+      // means nothing was checked, which is reported as ineligible rather than waved through.
+      const profile = profiles.find((pr) => pr.marketplace === (integration.marketplace ?? '').toUpperCase());
+      const elig = profile
+        ? evaluateEligibility(technical, profile as unknown as MarketProfile)
+        : { eligible: false, findings: [{ severity: 'block' as const, reason: `No marketplace profile for Amazon ${integration.marketplace ?? '?'} — nothing could be checked` }] };
+
       const restriction = restrictionFor({ channelType: 'amazon', marketplace: integration.marketplace }, brandRestrictions);
       const facts: BulkChannelFacts = {
         // No stored check is NOT "found". Nobody has asked Amazon, and creating offers in bulk is
@@ -1416,12 +1518,13 @@ export class AmazonListingService {
         found: avail?.found ?? false,
         restricted: avail ? avail.restricted : null,
         alreadyListed: !!listing,
-        eligible: built ? built.eligible : true,
-        eligibilityReasons: built?.eligibilityReasons ?? [],
+        eligible: elig.eligible,
+        eligibilityReasons: elig.findings.filter((f) => f.severity === 'block').map((f) => f.reason),
         asin,
+        matched,
         priceCents,
         priceReason: priceReason ?? (avail ? null : 'Availability here has not been checked yet'),
-        quantity: built ? this.quantityFromBuilt(built) : null,
+        quantity: sellableQuantity,
         handlingTimeDays: resolvedHandling,
         brandRestriction: restriction
           ? restrictionReason(product.brand?.name ?? null, { channelType: 'amazon', marketplace: integration.marketplace }, restriction)
@@ -1440,6 +1543,16 @@ export class AmazonListingService {
         handlingTimeDays: resolvedHandling,
         handlingTimeSource,
         checkedAt: avail?.checkedAt ?? null,
+        matched,
+        matchedAsin: planAspects.asin ?? null,
+        /** Offered for confirmation in the match step. Applying it is always a deliberate act. */
+        candidate,
+        /**
+         * Worth showing in the match step at all: Amazon has it, we may sell it, and nobody has
+         * said which listing it is. A channel failing for any other reason belongs in the skipped
+         * list, not in a queue of things to confirm.
+         */
+        matchable: !listing && avail?.found === true && avail?.restricted === false && elig.eligible && !matched,
         ...verdictFor(facts),
       });
     }
@@ -1451,20 +1564,138 @@ export class AmazonListingService {
       marginPct,
       liveWritesEnabled: await this.liveWritesEnabled(),
       rows,
+      boundAsin,
       summary: {
         total: rows.length,
         ready: rows.filter((r) => r.canList).length,
         blocked: rows.filter((r) => !r.canList).length,
         warned: rows.filter((r) => r.canList && r.warnings.length > 0).length,
+        /** Waiting on somebody to confirm which Amazon listing they are. */
+        awaitingMatch: rows.filter((r) => r.matchable).length,
       },
     };
   }
 
-  /** Sellable units the built plan resolved. Zero is a real answer; only absence is missing. */
-  private quantityFromBuilt(built: { attributes: Record<string, unknown> }): number | null {
-    const fulfilment = (built.attributes as Record<string, any>)?.fulfillment_availability?.[0];
-    const q = fulfilment?.quantity;
-    return typeof q === 'number' ? q : null;
+
+  /**
+   * Record that somebody has confirmed which Amazon listing this product is, on one marketplace.
+   *
+   * The ONLY way an ASIN reaches a plan. Deliberately one channel per call and never derived from a
+   * sweep: the availability check records the first candidate Amazon returned, which is a
+   * suggestion. Treating a suggestion as a decision is how an offer lands on a similar-looking
+   * product and sells the wrong thing at our price — and in bulk it would do so across eighteen
+   * marketplaces before anyone noticed.
+   *
+   * Writes the product type alongside the ASIN, because Amazon needs both and a plan carrying one
+   * without the other fails at validation with a message about neither.
+   */
+  async matchChannel(
+    productId: string,
+    integrationId: string,
+    dto: { asin: string; productType?: string | null },
+    actorId?: string,
+    companyIds?: string[],
+  ) {
+    await this.assertListingAllowed(integrationId);
+
+    const asin = (dto.asin ?? '').trim().toUpperCase();
+    // Amazon ASINs are ten characters. Checked because this value ends up in a live submission, and
+    // a typo here attaches our offer to whatever it happens to spell.
+    if (!/^[A-Z0-9]{10}$/.test(asin)) throw new BadRequestException('An ASIN is ten letters or digits');
+
+    const integration = await this.prisma.channelIntegration.findFirst({
+      where: {
+        id: integrationId,
+        deletedAt: null,
+        channelType: 'amazon',
+        ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
+      },
+      select: { id: true, name: true, marketplace: true },
+    });
+    if (!integration) throw new NotFoundException('Amazon channel not found');
+
+    /**
+     * The product type Amazon files this ASIN under.
+     *
+     * Taken from the caller where the match came with one, otherwise from what the availability
+     * check stored for this exact pair. Never invented: submitting under the wrong product type is
+     * rejected, and guessing would turn a clear refusal into a puzzling one.
+     */
+    let productType = (dto.productType ?? '').trim() || null;
+    if (!productType) {
+      const stored = await this.prisma.productChannelAvailability.findFirst({
+        where: { productId, integrationId, asin },
+        select: { productType: true },
+      });
+      productType = stored?.productType ?? null;
+    }
+    if (!productType) {
+      throw new BadRequestException(
+        'No Amazon product type for this listing. Re-run the availability check for this marketplace, or match it from the channel plan where the type can be chosen.',
+      );
+    }
+
+    const existing = await this.prisma.productChannelPlan.findFirst({
+      where: { productId, integrationId, deletedAt: null },
+      select: { aspects: true },
+    });
+
+    await this.listing.upsertPlan(
+      productId,
+      integrationId,
+      {
+        // Merged, not replaced: aspects carry more than the ASIN and a match must not drop the rest.
+        aspects: { ...(((existing?.aspects as Record<string, unknown> | null) ?? {})), asin },
+        categoryRef: productType,
+      },
+      actorId,
+      companyIds,
+    );
+
+    return { ok: true as const, integrationId, name: integration.name, asin, productType };
+  }
+
+  /**
+   * Undo a match, so a wrong one can be corrected rather than lived with.
+   *
+   * Clears the ASIN and the product type together — half a match is not a state worth holding, and
+   * leaving the product type behind would let the next match inherit a type chosen for a different
+   * listing.
+   */
+  async unmatchChannel(productId: string, integrationId: string, actorId?: string, companyIds?: string[]) {
+    await this.assertListingAllowed(integrationId);
+    const existing = await this.prisma.productChannelPlan.findFirst({
+      where: { productId, integrationId, deletedAt: null },
+      select: { aspects: true },
+    });
+    const aspects = { ...(((existing?.aspects as Record<string, unknown> | null) ?? {})) };
+    delete aspects.asin;
+    await this.listing.upsertPlan(productId, integrationId, { aspects, categoryRef: null }, actorId, companyIds);
+    return { ok: true as const, integrationId };
+  }
+
+  /**
+   * The Amazon listings that could be this product, on one marketplace.
+   *
+   * The live version of what the availability sweep stored — used when somebody wants to see the
+   * alternatives rather than confirm the suggestion. One marketplace at a time, because it is two
+   * SP-API calls and the whole point is that a person is looking at this one.
+   */
+  async matchCandidates(productId: string, integrationId: string, companyIds?: string[]) {
+    await this.assertListingAllowed(integrationId);
+    // Company-scoped like every other channel read: an integration id is enough to reach a seller
+    // account, so without this anyone holding one could search the other company's catalogue.
+    const integration = await this.prisma.channelIntegration.findFirst({
+      where: {
+        id: integrationId,
+        deletedAt: null,
+        channelType: 'amazon',
+        ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
+      },
+      select: { id: true },
+    });
+    if (!integration) throw new NotFoundException('Amazon channel not found');
+    return this.findCandidates(productId, integrationId);
   }
 
   /**
@@ -1490,6 +1721,7 @@ export class AmazonListingService {
     companyIds?: string[],
     ctx?: { setTotal(n: number): void; tick(ok?: boolean): void; note(m: string): void },
     handling: BulkHandlingInput = {},
+    prices: BulkPriceInput = {},
   ) {
     if (!opts.confirm) {
       throw new BadRequestException('Creating offers on several marketplaces needs an explicit confirmation.');
@@ -1506,6 +1738,32 @@ export class AmazonListingService {
     const unknown = integrationIds.filter((id) => !byId.has(id));
     if (unknown.length > 0) throw new BadRequestException('One of the chosen marketplaces is not available to this account');
 
+    /**
+     * Prices somebody typed, validated before anything is written.
+     *
+     * Checked here rather than per channel inside the loop so a single bad figure is reported as
+     * itself, before any marketplace has been listed on. Half a run committed and half refused over
+     * a typo is the worst outcome available.
+     */
+    const chosenPrice = new Map<string, number>();
+    for (const [integrationId, raw] of Object.entries(prices.perChannel ?? {})) {
+      if (raw === '' || raw == null) continue;
+      const parsed = parseChannelPrice(raw);
+      if (!parsed.ok) {
+        const name = byId.get(integrationId)?.name ?? 'a marketplace';
+        throw new BadRequestException(`Price for ${name}: ${parsed.reason}`);
+      }
+      const currency = byId.get(integrationId)?.currency;
+      // The currency's own precision, checked not corrected — Amazon JP takes whole yen only.
+      if (currency && !isExpressible(parsed.cents, currency)) {
+        const name = byId.get(integrationId)?.name ?? 'a marketplace';
+        throw new BadRequestException(
+          `Price for ${name}: ${currency} has no decimal places — try ${priceAmountFor(parsed.cents, currency)}.`,
+        );
+      }
+      chosenPrice.set(integrationId, parsed.cents);
+    }
+
     const chosen = integrationIds.map((id) => byId.get(id)!);
     const refused = chosen.filter((r) => !r.canList);
     if (refused.length > 0) {
@@ -1521,13 +1779,19 @@ export class AmazonListingService {
     for (const row of chosen) {
       ctx?.note(row.name);
       try {
-        // The price is written to the plan first, so what submit() sends is the figure the preview
-        // showed rather than whatever the plan happened to hold from an earlier session.
+        /**
+         * The price written to the plan is the one that will be sent.
+         *
+         * A price typed for this channel wins over the margin-derived suggestion. Without this the
+         * manual price field would be decorative: somebody would type a figure, agree to it in the
+         * confirmation, and the marketplace would receive the suggestion instead.
+         */
+        const priceCents = chosenPrice.get(row.integrationId) ?? row.priceCents;
         await this.listing.upsertPlan(
           productId,
           row.integrationId,
           {
-            ...(row.priceCents != null ? { offerPriceCents: row.priceCents } : {}),
+            ...(priceCents != null ? { offerPriceCents: priceCents } : {}),
             ...(row.handlingTimeDays != null ? { handlingTimeDays: row.handlingTimeDays } : {}),
           },
           undefined,
@@ -1538,7 +1802,7 @@ export class AmazonListingService {
           integrationId: row.integrationId,
           name: row.name,
           ok: (submitted as { ok?: boolean }).ok !== false,
-          priceCents: row.priceCents,
+          priceCents,
           message: (submitted as { message?: string }).message ?? 'Submitted',
         });
         ctx?.tick(true);
