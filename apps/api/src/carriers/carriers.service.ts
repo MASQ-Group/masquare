@@ -6,7 +6,8 @@ import {
   type CachedToken,
 } from './fedex-token';
 import {
-  RATE_PATH, buildRateRequest, derivedWeightKg, describeRateFailure, missingForQuote, needsCustoms, rateHeaders,
+  RATE_PATH, buildRateRequest, derivedWeightKg, describeRateFailure, missingForQuote, needsCustoms,
+  rateHeaders, resolveQuoteDestination,
   type RateQuoteInput, type RateEndpoint, type RateParcel,
 } from './fedex-rate';
 import { parseRateReply } from './fedex-rate-parse';
@@ -578,16 +579,29 @@ export class CarriersService {
     const account = accounts[0];
 
     const addr = tx.deliveryAddress;
-    const postalCode = addr?.purgedAt ? null : addr?.postalCode ?? null;
-    const countryIso = (addr?.purgedAt ? null : addr?.countryIso) ?? tx.destinationCountry?.isoCode ?? null;
+    // Typed first, then the order's address, then the order's destination country. See
+    // resolveQuoteDestination for why that order, and for the tests that keep it.
+    const { postalCode, countryIso } = resolveQuoteDestination({
+      typedPostalCode: opts.postalCode,
+      typedCountryIso: opts.countryIso,
+      addressPostalCode: addr?.postalCode,
+      addressCountryIso: addr?.countryIso,
+      addressPurged: !!addr?.purgedAt,
+      orderCountryIso: tx.destinationCountry?.isoCode,
+    });
+
     if (!postalCode || !countryIso) {
       return {
         ok: false as const,
         // Named precisely, because the two gaps have different fixes.
         reason: !countryIso
           ? 'This order has no destination country, so there is nothing to quote against.'
-          : 'A postcode is needed to quote, and this order\'s delivery address has none. Add it on the order.',
-        quote: null, weightKg: null, accounts,
+          : 'A postcode is needed to quote. This order has no delivery address — enter a postcode here for a one-off quote, or add the full address on the order.',
+        quote: null,
+        weightKg: null,
+        accounts,
+        /** So the screen can say which half is missing rather than implying both are. */
+        destination: { postalCode: null, countryIso },
       };
     }
 

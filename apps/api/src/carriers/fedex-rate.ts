@@ -298,3 +298,40 @@ export function derivedWeightKg(lines: WeighableLine[]): { weightKg: number; lin
   // Grams. Below that a rate does not move, and a long float in a request is noise.
   return { weightKg: Math.round(weightKg * 1000) / 1000, linesWithoutWeight };
 }
+
+/**
+ * Which destination a quote should use.
+ *
+ * Three sources, in a deliberate order. A postcode typed for this quote wins, because somebody is
+ * looking at the order and knows better than anything stored. Then the order's own delivery
+ * address. Then, for the country only, the order's destination — which every order carries even
+ * where no address was ever captured, and which is why the postcode is usually the sole gap.
+ *
+ * Its own function because the previous version of this lived inline, was silently not applied by a
+ * failed edit, and the endpoint went on accepting a typed postcode and ignoring it. Nothing failed;
+ * the refusal simply never changed. A rule with a test cannot go missing that quietly.
+ */
+export function resolveQuoteDestination(
+  sources: {
+    typedPostalCode?: string | null;
+    typedCountryIso?: string | null;
+    addressPostalCode?: string | null;
+    addressCountryIso?: string | null;
+    /** True when the stored address has been erased under the retention policy. */
+    addressPurged?: boolean;
+    orderCountryIso?: string | null;
+  },
+): { postalCode: string | null; countryIso: string | null } {
+  const t = (v: string | null | undefined) => {
+    const s = (v ?? '').trim();
+    return s === '' ? null : s;
+  };
+  // A purged address holds no values, so it contributes nothing rather than nulls that look stored.
+  const storedPostal = sources.addressPurged ? null : t(sources.addressPostalCode);
+  const storedCountry = sources.addressPurged ? null : t(sources.addressCountryIso);
+  const countryIso = t(sources.typedCountryIso) ?? storedCountry ?? t(sources.orderCountryIso);
+  return {
+    postalCode: t(sources.typedPostalCode) ?? storedPostal,
+    countryIso: countryIso ? countryIso.toUpperCase() : null,
+  };
+}

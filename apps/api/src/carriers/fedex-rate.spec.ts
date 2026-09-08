@@ -7,6 +7,7 @@ import {
   derivedWeightKg,
   missingForQuote,
   needsCustoms,
+  resolveQuoteDestination,
   rateHeaders,
   type RateQuoteInput,
 } from './fedex-rate';
@@ -290,5 +291,46 @@ describe('working out what a parcel weighs', () => {
 
   it('returns zero for an empty order rather than throwing', () => {
     expect(derivedWeightKg([])).toEqual({ weightKg: 0, linesWithoutWeight: 0 });
+  });
+});
+
+describe('choosing the destination for a quote', () => {
+  it('prefers a postcode typed for this quote', () => {
+    // Somebody is looking at the order and knows better than anything stored.
+    expect(resolveQuoteDestination({ typedPostalCode: 'M1 1AA', addressPostalCode: 'LS1 1AA', addressCountryIso: 'GB' }))
+      .toEqual({ postalCode: 'M1 1AA', countryIso: 'GB' });
+  });
+
+  it('falls back to the order\'s stored address', () => {
+    expect(resolveQuoteDestination({ addressPostalCode: 'LS1 1AA', addressCountryIso: 'GB' }))
+      .toEqual({ postalCode: 'LS1 1AA', countryIso: 'GB' });
+  });
+
+  it('takes the country from the order when no address was ever captured', () => {
+    // The common case on the back catalogue: addresses only began accumulating recently, so the
+    // postcode is genuinely the only thing missing — and saying so beats implying both are.
+    expect(resolveQuoteDestination({ orderCountryIso: 'gb' }))
+      .toEqual({ postalCode: null, countryIso: 'GB' });
+  });
+
+  it('lets a typed postcode complete an order that has only a country', () => {
+    // The whole point of accepting one: this is what makes rating usable on old orders.
+    expect(resolveQuoteDestination({ typedPostalCode: 'M11AA', orderCountryIso: 'GB' }))
+      .toEqual({ postalCode: 'M11AA', countryIso: 'GB' });
+  });
+
+  it('ignores a purged address rather than reading its emptied fields', () => {
+    // A purged row holds nulls. Treated as stored values they would mask the order's own country.
+    expect(resolveQuoteDestination({ addressPostalCode: null, addressCountryIso: null, addressPurged: true, orderCountryIso: 'CY' }))
+      .toEqual({ postalCode: null, countryIso: 'CY' });
+  });
+
+  it('treats blank input as absent, not as an answer', () => {
+    expect(resolveQuoteDestination({ typedPostalCode: '   ', addressPostalCode: 'LS1 1AA', orderCountryIso: 'GB' }).postalCode)
+      .toBe('LS1 1AA');
+  });
+
+  it('upper-cases the country, which carriers insist on', () => {
+    expect(resolveQuoteDestination({ typedCountryIso: 'ca', typedPostalCode: 'M4B 1B4' }).countryIso).toBe('CA');
   });
 });
