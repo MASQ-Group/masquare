@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Select } from '@masquare/ui';
-import { carriersApi, companiesApi, type CarrierAccount } from '../../lib/api';
+import { carriersApi, type CarrierAccount } from '../../lib/api';
+import { useAuth } from '../../lib/auth';
 
 interface Props {
   /** An existing account to edit, or null to add one. */
@@ -21,10 +22,19 @@ interface Props {
  */
 export function CarrierAccountModal({ account, onClose, onSaved }: Props) {
   const editing = !!account;
-  const { data: companies = [] } = useQuery({ queryKey: ['companies'], queryFn: () => companiesApi.list() });
+  /**
+   * The companies the signed-in user may actually reach, not every company in the platform.
+   *
+   * The first build listed all of them, which offered choices the API then refused with "That
+   * company is not available in the current scope" — a form should never present an option that
+   * cannot be saved.
+   */
+  const { user, activeCompanyId } = useAuth();
+  const companies = user?.companies ?? [];
 
   const [name, setName] = useState(account?.name ?? '');
-  const [companyId, setCompanyId] = useState(account?.companyId ?? '');
+  // Defaults to the company being worked in, which is nearly always the right one.
+  const [companyId, setCompanyId] = useState(account?.companyId ?? activeCompanyId ?? '');
   const [accountNumber, setAccountNumber] = useState(account?.accountNumber ?? '');
   const [environment, setEnvironment] = useState<'sandbox' | 'production'>(account?.environment ?? 'sandbox');
   const [apiKey, setApiKey] = useState('');

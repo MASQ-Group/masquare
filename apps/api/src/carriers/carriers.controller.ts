@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CarriersService, type CarrierAccountInput } from './carriers.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
-import { VisibleCompanies } from '../common/active-company.decorator';
+import { AllowedCompanies, VisibleCompanies } from '../common/active-company.decorator';
 import { AccessArea, RequireCapability } from '../access/access.decorators';
 
 /**
@@ -34,9 +34,18 @@ export class CarriersController {
     return this.svc.get(id, companyIds);
   }
 
+  /**
+   * Writes are checked against every company the user MAY reach, not the one they are looking at.
+   *
+   * `visibleIds` narrows to the active company — it is a view filter, and reads use it so a list
+   * respects the company switcher. Using it here confused a filter with a permission: it refused to
+   * create an account for a company the user is perfectly entitled to, purely because a different
+   * one happened to be selected in the switcher. `allowedIds` is the permission, and it is what a
+   * write has to be measured against.
+   */
   @Post('accounts')
   @RequireCapability('manage_credentials')
-  create(@Body() body: CarrierAccountInput, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+  create(@Body() body: CarrierAccountInput, @CurrentUser() user: AuthUser, @AllowedCompanies() companyIds: string[]) {
     return this.svc.create(body, user.sub, companyIds);
   }
 
@@ -46,14 +55,14 @@ export class CarriersController {
     @Param('id') id: string,
     @Body() body: Partial<CarrierAccountInput>,
     @CurrentUser() user: AuthUser,
-    @VisibleCompanies() companyIds: string[],
+    @AllowedCompanies() companyIds: string[],
   ) {
     return this.svc.update(id, body, user.sub, companyIds);
   }
 
   @Delete('accounts/:id')
   @RequireCapability('manage_credentials')
-  remove(@Param('id') id: string, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser, @AllowedCompanies() companyIds: string[]) {
     return this.svc.remove(id, user.sub, companyIds);
   }
 
@@ -66,7 +75,7 @@ export class CarriersController {
    */
   @Post('accounts/:id/test')
   @RequireCapability('manage_credentials')
-  test(@Param('id') id: string, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
+  test(@Param('id') id: string, @CurrentUser() user: AuthUser, @AllowedCompanies() companyIds: string[]) {
     return this.svc.test(id, user.sub, companyIds);
   }
 }
