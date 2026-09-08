@@ -10,6 +10,10 @@ import {
   type RateQuoteInput, type RateEndpoint, type RateParcel,
 } from './fedex-rate';
 import { parseRateReply } from './fedex-rate-parse';
+import {
+  SHIP_CANCEL_PATH, SHIP_PATH, buildCancelRequest, buildShipRequest, missingForBooking,
+  type ShipParty, type ShipRequestInput,
+} from './fedex-ship';
 
 /** The credential fields a FedEx account holds. Nothing else is accepted or stored. */
 export const FEDEX_SECRET_FIELDS = ['apiKey', 'secretKey'] as const;
@@ -483,6 +487,224 @@ export class CarriersService {
       response: parsed ?? text.slice(0, 20_000),
       origin: origin?.source ?? null,
       customs,
+    };
+  }
+
+  // ------------------------------------------------------------------ booking
+
+  /**
+   * Book a shipment and write down everything about it.
+   *
+   * The order of operations matters more here than anywhere else in this integration. FedEx has no
+   * shipment-history API (§2.2): once a label exists, anything we failed to record is unrecoverable.
+   * So the whole reply is stored before this function returns, and it is stored even when the reply
+   * cannot be fully understood.
+   *
+   * The response shape is NOT yet mapped. FedEx's Ship collection carries 1,335 sample requests and
+   * no sample responses, exactly as the rate collection did. Rather than invent field names, this
+   * keeps the reply whole and reports what it could and could not find. The first real booking
+   * settles it, and nothing is lost in the meantime.
+   */
+  async book(
+    accountId: string,
+    input: {
+      transactionId: string;
+      serviceType: string;
+      shipDate: string;
+      parcels: Array<{ weightKg: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }>;
+      dutiesPaidBy: 'sender' | 'recipient';
+      goodsDescription?: string | null;
+      quoted?: { amount: number; currency: string } | null;
+      labelImageType?: 'PDF' | 'PNG' | 'ZPLII';
+    },
+    actorId?: string,
+    companyIds?: string[],
+  ) {
+    const account = await this.prisma.carrierAccount.findFirst({
+      where: { id: accountId, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: { id: true, environment: true, accountNumber: true, isActive: true, company: { select: { officialName: true, phoneLandline: true } } },
+    });
+    if (!account) throw new NotFoundException('Carrier account not found');
+    if (!account.isActive) throw new BadRequestException('Test the connection on this account before booking with it.');
+
+    const tx = await this.prisma.salesTransaction.findFirst({
+      where: { id: input.transactionId, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: { id: true, transactionRef: true, deliveryAddress: true },
+    });
+    if (!tx) throw new NotFoundException('Sales transaction not found');
+
+    const addr = tx.deliveryAddress;
+    if (!addr || addr.purgedAt) {
+      throw new BadRequestException(
+        addr?.purgedAt
+          ? 'This order\'s delivery address was erased under the retention policy. Re-enter it before booking.'
+          : 'This order has no delivery address yet.',
+      );
+    }
+
+    const originAddr = await this.shipperParty(accountId, account.company?.officialName ?? null, account.company?.phoneLandline ?? null);
+    const recipient: ShipParty = {
+      contact: { personName: addr.fullName, companyName: addr.companyName, phoneNumber: addr.phone },
+      address: {
+        streetLines: [addr.addressLine1, addr.addressLine2].filter((x): x is string => !!x),
+        city: addr.city,
+        stateOrProvinceCode: addr.stateOrRegion,
+        postalCode: addr.postalCode,
+        countryCode: addr.countryIso,
+        residential: addr.isBusiness == null ? null : !addr.isBusiness,
+      },
+      ...(addr.eori ? { tins: [{ tinType: 'BUSINESS_NATIONAL', number: addr.eori }] } : {}),
+    };
+
+    const shipInput: ShipRequestInput = {
+      accountNumber: account.accountNumber,
+      shipper: originAddr,
+      recipient,
+      serviceType: input.serviceType,
+      shipDate: input.shipDate,
+      parcels: input.parcels,
+      // The order reference, which is what comes back on the invoice and joins the charge to it.
+      customerReference: tx.transactionRef ?? tx.id,
+      dutiesPaidBy: input.dutiesPaidBy,
+      goodsDescription: input.goodsDescription ?? null,
+      labelImageType: input.labelImageType,
+    };
+
+    const gaps = missingForBooking(shipInput);
+    if (gaps.length) throw new BadRequestException(`Cannot book yet — still needed: ${gaps.join(', ')}.`);
+
+    const eu = await this.euCountryCodes();
+    const customs = needsCustoms(shipInput.shipper.address.countryCode, shipInput.recipient.address.countryCode, eu);
+    const body = buildShipRequest(shipInput, { customs });
+
+    const send = async (token: string) =>
+      fetch(`${baseUrlFor(account.environment)}${SHIP_PATH}`, {
+        method: 'POST',
+        headers: rateHeaders(token),
+        body: JSON.stringify(body),
+      });
+
+    let res = await send(await this.token(accountId));
+    if (res.status === 401) res = await send(await this.token(accountId, { force: true }));
+
+    const text = await res.text();
+    let parsed: any = null;
+    try { parsed = JSON.parse(text); } catch { /* kept as text below */ }
+
+    if (!res.ok) {
+      // Nothing was booked, so nothing is recorded. A failed booking is not a shipment.
+      this.logger.warn(`FedEx booking failed (${res.status}) on account ${accountId}`);
+      return { ok: false as const, status: res.status, message: describeRateFailure(res.status, parsed), request: body, response: parsed ?? text.slice(0, 20_000), booking: null };
+    }
+
+    /**
+     * A label now exists and is billable. Everything below is best-effort EXCEPT the row itself,
+     * which is written whatever we manage to understand — an unparsed booking we can read later
+     * beats no record of a shipment that has already left.
+     */
+    const shipment = parsed?.output?.transactionShipments?.[0] ?? null;
+    const masterTrackingNumber = shipment?.masterTrackingNumber ?? null;
+
+    const booking = await this.prisma.carrierBooking.create({
+      data: {
+        carrierAccountId: accountId,
+        transactionId: tx.id,
+        // Copied, not referenced — see the column comment.
+        environment: account.environment,
+        serviceType: input.serviceType,
+        serviceName: shipment?.serviceName ?? null,
+        masterTrackingNumber,
+        quotedAmount: input.quoted?.amount ?? null,
+        quotedCurrency: input.quoted?.currency ?? null,
+        dutiesPaidBy: input.dutiesPaidBy,
+        customerReference: shipInput.customerReference,
+        responseJson: parsed ?? { unparsed: text.slice(0, 100_000) },
+        createdById: actorId ?? null,
+      },
+      select: { id: true, masterTrackingNumber: true, environment: true, customerReference: true },
+    });
+
+    this.logger.log(`FedEx booking ${booking.id} created on ${account.environment} for ${shipInput.customerReference}`);
+    return {
+      ok: true as const,
+      status: res.status,
+      booking,
+      /** Said plainly when the reply did not yield what we expected — the raw is stored regardless. */
+      message: masterTrackingNumber
+        ? null
+        : 'Booked, but no tracking number could be read from the reply. The whole response is stored against the booking — the response shape needs mapping before this is used in earnest.',
+      request: body,
+      response: parsed ?? text.slice(0, 20_000),
+    };
+  }
+
+  /** Cancel a booked shipment. The row stays: a cancelled label may still attract a charge. */
+  async cancel(bookingId: string, actorId?: string, companyIds?: string[]) {
+    const booking = await this.prisma.carrierBooking.findFirst({
+      where: {
+        id: bookingId, deletedAt: null,
+        ...(companyIds ? { account: { companyId: { in: companyIds } } } : {}),
+      },
+      select: { id: true, status: true, masterTrackingNumber: true, carrierAccountId: true, account: { select: { accountNumber: true, environment: true } } },
+    });
+    if (!booking) throw new NotFoundException('Booking not found');
+    if (booking.status === 'cancelled') return { ok: true as const, alreadyCancelled: true };
+    if (!booking.masterTrackingNumber) {
+      throw new BadRequestException('This booking has no tracking number recorded, so FedEx cannot be asked to cancel it.');
+    }
+
+    const body = buildCancelRequest(booking.account.accountNumber, booking.masterTrackingNumber);
+    const send = async (token: string) =>
+      fetch(`${baseUrlFor(booking.account.environment)}${SHIP_CANCEL_PATH}`, {
+        method: 'PUT',
+        headers: rateHeaders(token),
+        body: JSON.stringify(body),
+      });
+
+    let res = await send(await this.token(booking.carrierAccountId));
+    if (res.status === 401) res = await send(await this.token(booking.carrierAccountId, { force: true }));
+    const text = await res.text();
+    let parsed: any = null;
+    try { parsed = JSON.parse(text); } catch { /* raw below */ }
+
+    if (!res.ok) {
+      return { ok: false as const, status: res.status, message: describeRateFailure(res.status, parsed), response: parsed ?? text.slice(0, 8_000) };
+    }
+
+    await this.prisma.carrierBooking.update({
+      where: { id: bookingId },
+      // Marked, not deleted. A cancelled label can still appear on the invoice, and a row that
+      // vanished would make that charge impossible to explain.
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+    return { ok: true as const, alreadyCancelled: false };
+  }
+
+  /** Us, as FedEx needs us described: the account's origin, or the company's own address. */
+  private async shipperParty(accountId: string, companyName: string | null, phone: string | null): Promise<ShipParty> {
+    const a = await this.prisma.carrierAccount.findFirst({
+      where: { id: accountId },
+      select: {
+        originLine1: true, originLine2: true, originCity: true, originRegion: true,
+        originPostalCode: true, originCountryIso: true, originPhone: true,
+        company: { select: { officialName: true, addressLine1: true, addressLine2: true, addressCity: true, addressRegion: true, addressPostalCode: true, addressCountry: true, phoneLandline: true } },
+      },
+    });
+    const useAccount = !!(a?.originPostalCode && a?.originCountryIso);
+    const c = a?.company;
+    return {
+      contact: {
+        personName: companyName ?? c?.officialName ?? null,
+        companyName: companyName ?? c?.officialName ?? null,
+        phoneNumber: (useAccount ? a?.originPhone : c?.phoneLandline) ?? phone ?? null,
+      },
+      address: {
+        streetLines: (useAccount ? [a?.originLine1, a?.originLine2] : [c?.addressLine1, c?.addressLine2]).filter((x): x is string => !!x),
+        city: (useAccount ? a?.originCity : c?.addressCity) ?? null,
+        stateOrProvinceCode: (useAccount ? a?.originRegion : c?.addressRegion) ?? null,
+        postalCode: (useAccount ? a?.originPostalCode : c?.addressPostalCode) ?? null,
+        countryCode: (useAccount ? a?.originCountryIso : c?.addressCountry) ?? null,
+      },
     };
   }
 }

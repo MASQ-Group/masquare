@@ -89,6 +89,35 @@ export class CarriersController {
    * Rating is not the throttled endpoint (that is the token), so this needs no special protection
    * beyond the account being one the caller may reach.
    */
+  /**
+   * Book a shipment. Creates a real label and a real charge.
+   *
+   * Gated on marketplace_write — the capability that exists for actions with an outside consequence
+   * that cannot be undone by pressing the button again. A booking is exactly that: cancellable, but
+   * only deliberately, and the charge may land regardless.
+   */
+  @Post('accounts/:id/book')
+  @RequireCapability('marketplace_write')
+  book(
+    @Param('id') id: string,
+    @Body() body: any,
+    @CurrentUser() user: AuthUser,
+    @AllowedCompanies() companyIds: string[],
+  ) {
+    return this.svc.book(id, body ?? {}, user.sub, companyIds);
+  }
+
+  /** Cancel a booked shipment. The record stays — a cancelled label can still attract a charge. */
+  @Post('bookings/:bookingId/cancel')
+  @RequireCapability('marketplace_write')
+  cancelBooking(
+    @Param('bookingId') bookingId: string,
+    @CurrentUser() user: AuthUser,
+    @AllowedCompanies() companyIds: string[],
+  ) {
+    return this.svc.cancel(bookingId, user.sub, companyIds);
+  }
+
   @Post('accounts/:id/rate-quote')
   rateQuote(
     @Param('id') id: string,

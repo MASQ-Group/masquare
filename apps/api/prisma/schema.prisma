@@ -2278,8 +2278,9 @@ model CarrierAccount {
   updatedById String?   @map("updated_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at")
 
-  company Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  secrets CarrierAccountSecret[]
+  company  Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  secrets  CarrierAccountSecret[]
+  bookings CarrierBooking[]
 
   /// One account number per carrier per environment. The same number appearing in both sandbox and
   /// production is normal and must stay possible; the same number twice in one environment is a
@@ -2287,6 +2288,86 @@ model CarrierAccount {
   @@unique([carrier, accountNumber, environment])
   @@index([companyId])
   @@map("carrier_account")
+}
+
+/// A shipment booked with a carrier, and everything the carrier will not tell us again.
+///
+/// Handoff §2.2: FedEx has no shipment-history API. `Retrieve Async Ship` returns only a job we
+/// submitted ourselves, tracking data is discarded 90 days after delivery and carries no charge
+/// information. Whatever is not written down here at the moment of creation is gone — which is why
+/// this table keeps things that look redundant, including the whole reply.
+model CarrierBooking {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Which account was billed. Not derivable afterwards, and required to cancel.
+  carrierAccountId String @map("carrier_account_id") @db.Uuid
+  /// The order this was shipped for.
+  transactionId    String @map("transaction_id") @db.Uuid
+  /// Our own shipment row, once one exists for it.
+  shipmentId       String? @map("shipment_id") @db.Uuid
+
+  /// 'sandbox' or 'production', copied from the account at booking time rather than read through it.
+  ///
+  /// Copied deliberately: an account can be switched between environments, and a sandbox booking
+  /// that later reads as production would be a fictitious shipment sitting in the middle of real
+  /// ones. What this was when it happened is a fact, and facts do not change when settings do.
+  environment String
+
+  /// FedEx's service, in FedEx's vocabulary — distinct from our own ShippingService.
+  serviceType String  @map("service_type")
+  serviceName String? @map("service_name")
+
+  /// The number FedEx tracks the whole consignment by.
+  masterTrackingNumber String? @map("master_tracking_number")
+
+  /**
+   * What FedEx said it would cost, at the moment of booking.
+   *
+   * Kept because it is the only chance to have it. The invoice arrives weeks later through the CSV
+   * feed (§8) and the difference between the two is the thing worth alerting on — invisible without
+   * this. Distinct from Shipment.shippingCostEur, which is what was actually charged.
+   */
+  quotedAmount    Decimal? @map("quoted_amount") @db.Decimal(14, 2)
+  quotedCurrency  String?  @map("quoted_currency")
+  quotedAmountEur Decimal? @map("quoted_amount_eur") @db.Decimal(14, 2)
+
+  /// 'sender' (duty-paid by us) or 'recipient'. A cost consequence, not just a form setting.
+  dutiesPaidBy String @map("duties_paid_by")
+
+  /// The reference we actually SENT, not the one we meant to.
+  ///
+  /// §8's join key: this is what comes back on the invoice file and ties a FedEx charge to an order.
+  /// Storing what was sent rather than re-deriving it is what makes a later mismatch diagnosable
+  /// instead of merely puzzling.
+  customerReference String @map("customer_reference")
+
+  /// The label, in object storage. FedEx returns it once and never again.
+  labelUrl    String? @map("label_url")
+  labelFormat String? @map("label_format")
+
+  /// 'created' or 'cancelled'. A cancelled booking is not a deleted row — the charge may still land.
+  status      String    @default("created")
+  cancelledAt DateTime? @map("cancelled_at")
+
+  /// The reply, whole, as it arrived.
+  ///
+  /// Verbose on purpose. It is the only copy that will ever exist, it costs a few kilobytes, and
+  /// every time this integration guessed at a shape instead of keeping the real one it was wrong.
+  responseJson Json? @map("response_json")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  account     CarrierAccount   @relation(fields: [carrierAccountId], references: [id], onDelete: Restrict)
+  transaction SalesTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  shipment    Shipment?        @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+
+  @@index([transactionId])
+  @@index([carrierAccountId])
+  @@index([masterTrackingNumber])
+  @@map("carrier_booking")
 }
 
 /// Carrier credentials, encrypted at rest by the same service that holds the marketplace keys.
@@ -2519,6 +2600,7 @@ model SalesTransaction {
   unlockRequests     SalesTransactionUnlockRequest[]
   shipments          Shipment[]
   deliveryAddress    SalesTransactionAddress?
+  carrierBookings    CarrierBooking[]
 
   // Company isolation filters every read by companyId, and lists/analytics sort &
   // range by date — this composite serves both. The rest match the hot filters and
@@ -2575,6 +2657,7 @@ model Shipment {
 
   transaction     SalesTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   shippingService ShippingService? @relation("ShipmentShippingService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
+  carrierBookings CarrierBooking[]
   warehouse       Warehouse?       @relation("ShipmentWarehouse", fields: [warehouseId], references: [id], onDelete: SetNull)
 
   @@index([transactionId])
