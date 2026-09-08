@@ -108,6 +108,32 @@ export class CarriersController {
   }
 
   /**
+   * What FedEx would charge to ship one order.
+   *
+   * Keyed on the transaction rather than on an account, because that is the question somebody
+   * recording a shipment is actually asking. Everything else — which account, which address, what
+   * the parcel weighs — is resolved server-side, where the data already is.
+   */
+  @Post('quote-for-transaction')
+  quoteForTransaction(
+    @Body() body: { transactionId: string; weightKg?: number | null; accountId?: string | null; postalCode?: string | null; countryIso?: string | null },
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    return this.svc.quoteForTransaction(
+      body?.transactionId,
+      {
+        weightKg: body?.weightKg ?? null,
+        accountId: body?.accountId ?? null,
+        // A destination for this quote alone. Most orders carry no delivery address yet, and a
+        // quote needs only a postcode and a country.
+        postalCode: body?.postalCode ?? null,
+        countryIso: body?.countryIso ?? null,
+      },
+      companyIds,
+    );
+  }
+
+  /**
    * A sandbox-only booking that persists nothing.
    *
    * How the Ship response shape gets learnt without creating a real label. Needs no capability

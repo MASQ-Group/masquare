@@ -4,6 +4,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DatePicker, ModalShell, Select } from '@masquare/ui';
 import { shipmentsApi, shippingServicesApi, type Shipment } from '../../lib/api';
+import { FedexRatesPanel } from './FedexRatesPanel';
 
 interface Props {
   transactionId: string;
@@ -210,6 +211,17 @@ export function ShipmentModal({ transactionId, transactionRef, contextLine, defa
               Each parcel is recorded separately, so every tracking number is kept and the costs add up to €{totalCost.toFixed(2)}.
               Duty is charged once for the consignment, not per parcel.
             </p>
+          )}
+
+          {/* Outbound only: an inbound return is not something we buy carriage for on this account,
+              so quoting one would answer a question nobody asked. The price lands in the FIRST
+              parcel's cost box — a quote covers the consignment, and splitting it across parcels
+              would be an invented apportionment. */}
+          {type === 'outbound' && (
+            <FedexRatesPanel
+              transactionId={transactionId}
+              onUsePrice={(amount) => setParcel(0, { cost: String(round2(amount)) })}
+            />
           )}
         </div>
 

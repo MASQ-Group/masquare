@@ -268,3 +268,33 @@ function extractErrorCodes(body: unknown): string[] {
 function extractErrorMessages(body: unknown): string[] {
   return errorList(body).map((e) => String(e?.message ?? '')).filter(Boolean);
 }
+
+/** A line on an order, as far as weighing it is concerned. */
+export interface WeighableLine {
+  quantity: number;
+  packageWeightKg: number | null;
+  productWeightKg: number | null;
+}
+
+/**
+ * What the parcel for an order weighs, from the goods on it.
+ *
+ * Package weight in preference to product weight: a carrier rates the box, not its contents, and
+ * the two differ by exactly the packaging we are being charged to move.
+ *
+ * Lines with no weight at all contribute nothing rather than being guessed at. That makes the total
+ * an UNDER-estimate when the catalogue is incomplete, which is the wrong direction for a cost — so
+ * the caller is told how many lines were skipped and can refuse to rate a half-known parcel rather
+ * than quoting confidently on one.
+ */
+export function derivedWeightKg(lines: WeighableLine[]): { weightKg: number; linesWithoutWeight: number } {
+  let weightKg = 0;
+  let linesWithoutWeight = 0;
+  for (const l of lines) {
+    const kg = l.packageWeightKg ?? l.productWeightKg;
+    if (kg == null || !(kg > 0)) { linesWithoutWeight++; continue; }
+    weightKg += kg * (l.quantity > 0 ? l.quantity : 1);
+  }
+  // Grams. Below that a rate does not move, and a long float in a request is noise.
+  return { weightKg: Math.round(weightKg * 1000) / 1000, linesWithoutWeight };
+}

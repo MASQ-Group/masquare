@@ -264,6 +264,34 @@ export const carriersApi = {
    * to map, rather than against a guessed shape.
    */
   /**
+   * What FedEx would charge to ship one order.
+   *
+   * Keyed on the transaction: the account, the delivery address and the parcel weight are all
+   * resolved server-side, where that data already lives. A refusal names what is missing.
+   */
+  quoteForTransaction: (body: {
+    transactionId: string;
+    weightKg?: number | null;
+    accountId?: string | null;
+    /** A destination for this quote alone — not saved to the order. */
+    postalCode?: string | null;
+    countryIso?: string | null;
+  }) =>
+    api.post<{
+      ok: boolean;
+      /** Why there is no quote, in words somebody can act on. Null on success. */
+      reason: string | null;
+      quote: FedexRateReply | null;
+      /** What was actually rated, so the assumption is visible rather than inferred. */
+      weightKg: number | null;
+      weightSource?: 'entered' | 'products';
+      /** Lines with no weight in the catalogue: the quote covers less than the whole order. */
+      linesWithoutWeight?: number;
+      destination?: { postalCode: string | null; countryIso: string | null };
+      accounts: Array<{ id: string; name: string }>;
+      accountId?: string;
+    }>('/carriers/quote-for-transaction', body).then((r) => r.data),
+  /**
    * A sandbox-only booking that records nothing.
    *
    * How the Ship response shape gets learnt without creating a real label. The API refuses

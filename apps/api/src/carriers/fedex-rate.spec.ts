@@ -4,6 +4,7 @@ import {
   RATE_PATH,
   buildRateRequest,
   describeRateFailure,
+  derivedWeightKg,
   missingForQuote,
   needsCustoms,
   rateHeaders,
@@ -247,5 +248,47 @@ describe('explaining a refused rate quote', () => {
 
   it('says something useful even when the body is not the shape we expect', () => {
     expect(describeRateFailure(400, 'not json at all')).toContain('400');
+  });
+});
+
+describe('working out what a parcel weighs', () => {
+  it('prefers the package weight to the product weight', () => {
+    // A carrier rates the box, not its contents, and the difference is exactly the packaging we
+    // are paying to move.
+    expect(derivedWeightKg([{ quantity: 1, packageWeightKg: 0.6, productWeightKg: 0.4 }]).weightKg).toBe(0.6);
+  });
+
+  it('falls back to the product weight where no package weight is held', () => {
+    expect(derivedWeightKg([{ quantity: 1, packageWeightKg: null, productWeightKg: 0.4 }]).weightKg).toBe(0.4);
+  });
+
+  it('multiplies by quantity', () => {
+    expect(derivedWeightKg([{ quantity: 3, packageWeightKg: 0.25, productWeightKg: null }]).weightKg).toBe(0.75);
+  });
+
+  it('counts the lines it could not weigh instead of guessing at them', () => {
+    // Skipping makes the total an UNDER-estimate, which is the wrong direction for a cost. The
+    // count is what lets the caller refuse to quote confidently on a half-known parcel.
+    const r = derivedWeightKg([
+      { quantity: 1, packageWeightKg: 0.5, productWeightKg: null },
+      { quantity: 2, packageWeightKg: null, productWeightKg: null },
+    ]);
+    expect(r.weightKg).toBe(0.5);
+    expect(r.linesWithoutWeight).toBe(1);
+  });
+
+  it('treats a zero weight as unknown rather than as nothing', () => {
+    // Products carry 0 where nobody has weighed them. Believed literally it quotes a free parcel.
+    const r = derivedWeightKg([{ quantity: 1, packageWeightKg: 0, productWeightKg: 0 }]);
+    expect(r.weightKg).toBe(0);
+    expect(r.linesWithoutWeight).toBe(1);
+  });
+
+  it('rounds to grams', () => {
+    expect(derivedWeightKg([{ quantity: 3, packageWeightKg: 0.3333, productWeightKg: null }]).weightKg).toBe(1);
+  });
+
+  it('returns zero for an empty order rather than throwing', () => {
+    expect(derivedWeightKg([])).toEqual({ weightKg: 0, linesWithoutWeight: 0 });
   });
 });

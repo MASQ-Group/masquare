@@ -6,7 +6,7 @@ import {
   type CachedToken,
 } from './fedex-token';
 import {
-  RATE_PATH, buildRateRequest, describeRateFailure, missingForQuote, needsCustoms, rateHeaders,
+  RATE_PATH, buildRateRequest, derivedWeightKg, describeRateFailure, missingForQuote, needsCustoms, rateHeaders,
   type RateQuoteInput, type RateEndpoint, type RateParcel,
 } from './fedex-rate';
 import { parseRateReply } from './fedex-rate-parse';
@@ -498,6 +498,158 @@ export class CarriersService {
       originCountry: quote.shipper.countryIso ?? null,
       originPostalCode: quote.shipper.postalCode ?? null,
       customs,
+    };
+  }
+
+  /**
+   * What FedEx would charge to ship a particular ORDER.
+   *
+   * The version of rating that is actually useful: everything is resolved here — the account, the
+   * destination, the weight — rather than assembled by a screen that would have to fetch four
+   * things to do it. A caller supplies a transaction id and, optionally, a weight it knows better.
+   *
+   * Returns a refusal that NAMES what is missing rather than an empty list. "No rates" and "we hold
+   * no delivery address for this order" look identical on a screen and mean completely different
+   * things — one is a lane FedEx does not serve, the other is a gap somebody can go and fill.
+   */
+  async quoteForTransaction(
+    transactionId: string,
+    opts: {
+      weightKg?: number | null;
+      accountId?: string | null;
+      /**
+       * A destination typed for this quote alone.
+       *
+       * Most orders carry no delivery address: they only began accumulating when that work shipped,
+       * eBay and OnBuy supply them from the next sync forward, and Amazon's are typed by hand. A
+       * quote needs a postcode and a country and nothing else, so refusing one for want of a full
+       * address would make this unusable across the whole back catalogue for no benefit.
+       *
+       * Deliberately NOT written to the order. A postcode alone is not a delivery address, and
+       * storing it as though it were would leave a half-address that reads as answered — which
+       * booking would then act on.
+       */
+      postalCode?: string | null;
+      countryIso?: string | null;
+    } = {},
+    companyIds?: string[],
+  ) {
+    const tx = await this.prisma.salesTransaction.findFirst({
+      where: { id: transactionId, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: {
+        id: true, companyId: true, currency: true,
+        deliveryAddress: true,
+        destinationCountry: { select: { isoCode: true } },
+        items: {
+          where: { deletedAt: null },
+          select: {
+            quantity: true, netSalesAmount: true,
+            product: { select: { packageWeightKg: true, productWeightKg: true, title: true } },
+          },
+        },
+      },
+    });
+    if (!tx) throw new NotFoundException('Sales transaction not found');
+
+    /**
+     * A production account, and only an active one.
+     *
+     * Sandbox is deliberately excluded: it answers with canned data, so a sandbox quote against a
+     * real order would put a fictitious price in front of somebody deciding what to charge.
+     */
+    const accounts = await this.prisma.carrierAccount.findMany({
+      where: {
+        deletedAt: null, isActive: true, environment: 'production',
+        ...(tx.companyId ? { companyId: tx.companyId } : {}),
+        ...(opts.accountId ? { id: opts.accountId } : {}),
+      },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    if (accounts.length === 0) {
+      return {
+        ok: false as const,
+        reason: tx.companyId
+          ? 'No connected production carrier account for this order\'s company. Add one in Setup → Carrier accounts and test the connection.'
+          : 'This order has no company, so there is no carrier account to quote against.',
+        quote: null, weightKg: null, accounts: [],
+      };
+    }
+    const account = accounts[0];
+
+    const addr = tx.deliveryAddress;
+    const postalCode = addr?.purgedAt ? null : addr?.postalCode ?? null;
+    const countryIso = (addr?.purgedAt ? null : addr?.countryIso) ?? tx.destinationCountry?.isoCode ?? null;
+    if (!postalCode || !countryIso) {
+      return {
+        ok: false as const,
+        // Named precisely, because the two gaps have different fixes.
+        reason: !countryIso
+          ? 'This order has no destination country, so there is nothing to quote against.'
+          : 'A postcode is needed to quote, and this order\'s delivery address has none. Add it on the order.',
+        quote: null, weightKg: null, accounts,
+      };
+    }
+
+    /**
+     * The weight, from the goods themselves where nobody has said otherwise.
+     *
+     * Package weight in preference to product weight — a quote is for a parcel, not for its
+     * contents. Returned alongside the quote so the screen can show what was assumed rather than
+     * quietly rating a guess.
+     */
+    const derived = derivedWeightKg(tx.items.map((it) => ({
+      quantity: Number(it.quantity ?? 1),
+      packageWeightKg: it.product?.packageWeightKg == null ? null : Number(it.product.packageWeightKg),
+      productWeightKg: it.product?.productWeightKg == null ? null : Number(it.product.productWeightKg),
+    })));
+    const entered = opts.weightKg != null && opts.weightKg > 0;
+    const weightKg = entered ? opts.weightKg! : derived.weightKg;
+    if (!(weightKg > 0)) {
+      return {
+        ok: false as const,
+        reason: 'None of the products on this order carry a weight, so there is nothing to rate. Enter one to get a quote.',
+        quote: null, weightKg: null, accounts,
+      };
+    }
+
+    /** What the goods are worth, for the customs line on an export. */
+    const customsValue = tx.items.reduce((t, it) => t + Number(it.netSalesAmount ?? 0), 0);
+
+    const r = await this.rateQuote(
+      account.id,
+      {
+        recipient: {
+          postalCode, countryIso,
+          // Business or residential where the address says; carriers rate the two differently.
+          residential: addr?.isBusiness == null ? null : !addr.isBusiness,
+        },
+        parcels: [{ weightKg }],
+        customsValue: customsValue > 0 ? { amount: Math.round(customsValue * 100) / 100, currency: tx.currency ?? 'EUR' } : null,
+        goodsDescription: tx.items[0]?.product?.title ?? null,
+      },
+      companyIds,
+    );
+
+    return {
+      ok: r.ok,
+      reason: r.ok ? null : r.message,
+      quote: r.quote,
+      /** What was rated, so the reader can see the assumption rather than infer it. */
+      weightKg,
+      weightSource: entered ? ('entered' as const) : ('products' as const),
+      /**
+       * Lines the catalogue could not weigh, when the weight came from the products.
+       *
+       * A skipped line makes the total an UNDER-estimate, which is the wrong direction for a cost —
+       * and a quote for a parcel lighter than the real one is not visibly wrong, it is simply a
+       * cheaper number. Reported so the screen can say the quote is for less than the whole order
+       * rather than presenting it as complete.
+       */
+      linesWithoutWeight: entered ? 0 : derived.linesWithoutWeight,
+      destination: { postalCode, countryIso },
+      accounts,
+      accountId: account.id,
     };
   }
 
