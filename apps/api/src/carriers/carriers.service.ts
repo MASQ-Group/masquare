@@ -1066,7 +1066,7 @@ export class CarriersService {
         id: true, trackingNumber: true, shipmentDate: true,
         shippingService: { select: { name: true, alias: true } },
         transaction: { select: { companyId: true } },
-        tracking: { select: { trackingNumber: true, deliveredAt: true, checkedAt: true, failureCount: true } },
+        tracking: { select: { trackingNumber: true, deliveredAt: true, checkedAt: true, failureCount: true, found: true, detailsJson: true } },
       },
     });
 
@@ -1085,6 +1085,14 @@ export class CarriersService {
           deliveredAt: stale ? null : (s.tracking?.deliveredAt ?? null),
           checkedAt: stale ? null : (s.tracking?.checkedAt ?? null),
           failureCount: stale ? 0 : (s.tracking?.failureCount ?? 0),
+          /**
+           * Answered before we started keeping the carrier's full reply.
+           *
+           * `found === true` matters: a number FedEx has never recognised also has no details, and
+           * treating that as a backfill would ask about it every two hours instead of every six,
+           * burning through its five chances in a morning.
+           */
+          needsBackfill: !stale && s.tracking?.found === true && s.tracking?.detailsJson == null,
         },
         now,
         { force: !!opts.force },

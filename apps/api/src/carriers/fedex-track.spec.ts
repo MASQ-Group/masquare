@@ -70,7 +70,7 @@ describe('describeTrackFailure', () => {
 
 describe('dueForRefresh', () => {
   const now = at('2026-09-08T12:00:00Z');
-  const base = { shipmentDate: at('2026-09-06T09:00:00Z'), deliveredAt: null, checkedAt: null, failureCount: 0 };
+  const base = { shipmentDate: at('2026-09-06T09:00:00Z'), deliveredAt: null, checkedAt: null, failureCount: 0, needsBackfill: false };
 
   it('asks about a number nobody has asked about yet', () => {
     expect(dueForRefresh(base, now)).toBe(true);
@@ -115,6 +115,25 @@ describe('dueForRefresh', () => {
     const ancient = { ...base, shipmentDate: at('2026-05-01T09:00:00Z') };
     expect(dueForRefresh(ancient, now, { force: true })).toBe(false);
     expect(dueForRefresh({ ...base, failureCount: TRACK_MAX_FAILURES }, now, { force: true })).toBe(false);
+  });
+
+  /**
+   * The rule that makes a new column fill itself in.
+   *
+   * Without it, every parcel already delivered keeps whatever we happened to store on the day, and
+   * enriching them depends on somebody remembering to run a script — which is the same as it not
+   * happening. One more ask, then the delivered stop takes over again for good.
+   */
+  it('asks once more about a delivered parcel whose stored reply predates a new column', () => {
+    const done = { ...base, deliveredAt: at('2026-09-07T15:00:00Z'), checkedAt: at('2026-09-07T16:00:00Z') };
+    expect(dueForRefresh(done, now)).toBe(false);
+    expect(dueForRefresh({ ...done, needsBackfill: true }, now)).toBe(true);
+  });
+
+  it('does not let a backfill outrank retention or the failure ceiling', () => {
+    const ancient = { ...base, shipmentDate: at('2026-05-01T09:00:00Z'), needsBackfill: true };
+    expect(dueForRefresh(ancient, now)).toBe(false);
+    expect(dueForRefresh({ ...base, needsBackfill: true, failureCount: TRACK_MAX_FAILURES }, now)).toBe(false);
   });
 
   /** A Cyprus Post number in a FedEx row will never start being recognised. */

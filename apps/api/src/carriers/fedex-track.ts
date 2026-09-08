@@ -119,6 +119,15 @@ export interface TrackRefreshState {
   checkedAt: Date | null;
   /** Consecutive refusals for this number specifically. */
   failureCount: number;
+  /**
+   * Answered successfully, but before we kept the carrier's full reply.
+   *
+   * The self-healing hook. A delivered parcel is never asked about again, which is right — except
+   * on the day a new column appears, when every row already delivered would keep the thinner data
+   * for good and somebody would have to remember to run a backfill by hand. One more ask settles
+   * it, and then the delivered rule takes over again permanently.
+   */
+  needsBackfill: boolean;
 }
 
 /**
@@ -132,8 +141,10 @@ export interface TrackRefreshState {
  *     to return nothing and would do so for as long as the row exists.
  *  3. **Five straight refusals, stop.** The number is not FedEx's — a Cyprus Post number in a FedEx
  *     row, or a typo. Neither improves with asking.
- *  4. **Never asked, ask now.**
- *  5. Otherwise: every six hours for the first fortnight, then daily.
+ *  4. **Answered, but before we kept the whole reply — ask once more.** How a new column fills
+ *     itself in on shipments already delivered, instead of needing somebody to run a backfill.
+ *  5. **Never asked, ask now.**
+ *  6. Otherwise: every six hours for the first fortnight, then daily.
  *
  * The fortnight boundary is where movement stops being newsworthy. An express parcel that has been
  * out for three weeks is not going to be resolved by finding out four hours sooner, and the point of
@@ -154,6 +165,7 @@ export function dueForRefresh(state: TrackRefreshState, now: Date, opts: { force
   if (state.failureCount >= TRACK_MAX_FAILURES) return false;
 
   if (opts.force) return true;
+  if (state.needsBackfill) return true;
 
   if (state.deliveredAt) return false;
   if (!state.checkedAt) return true;

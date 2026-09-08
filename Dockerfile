@@ -45,6 +45,10 @@ COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY --from=build /app/apps/api/prisma ./apps/api/prisma
 COPY --from=build /app/apps/web/dist ./apps/web/dist
 COPY --from=build /app/packages ./packages
+# The FedEx diagnostic. Small, and the difference between reading a real carrier reply in thirty
+# seconds and guessing at one — which is how a morning of wrong theories about the sandbox got
+# settled. It was referenced in an operational note while not actually being in the image.
+COPY --from=build /app/scripts ./scripts
 
 # Apply pending migrations, then boot. The app reads PORT (injected by Railway).
 CMD ["sh","-c","npx prisma migrate deploy --schema=apps/api/prisma/schema.prisma && node apps/api/dist/src/main.js"]
