@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DatePicker, ModalShell, Select } from '@masquare/ui';
-import { shipmentsApi, shippingServicesApi, type Shipment } from '../../lib/api';
+import { salesTransactionsApi, shipmentsApi, shippingServicesApi, type Shipment } from '../../lib/api';
 import { FedexRatesPanel } from './FedexRatesPanel';
 
 interface Props {
@@ -33,6 +33,25 @@ const round2 = (v: number) => Number(v.toFixed(2));
 export function ShipmentModal({ transactionId, transactionRef, contextLine, defaultServiceId, shipment, onClose, onSaved }: Props) {
   const editing = !!shipment;
   const { data: services = [] } = useQuery({ queryKey: ['shipping-services'], queryFn: () => shippingServicesApi.list() });
+
+  /**
+   * The order's own shipping estimate, shown as the cost box's placeholder.
+   *
+   * The estimate is what profit already uses until an actual cost replaces it, so it is the figure
+   * somebody is implicitly checking against when they type one from a despatch note. Having it in
+   * front of them turns a blind entry into a comparison — a €40 charge against a €12 estimate is
+   * worth a second look, and nothing on the screen said so before.
+   *
+   * A placeholder rather than a default value, deliberately. Placeholders are not submitted, so an
+   * untouched box still saves as "no actual cost recorded" rather than quietly promoting an
+   * estimate into an actual — which is the distinction the whole cost review rests on.
+   */
+  const { data: transaction } = useQuery({
+    queryKey: ['sales-transaction', transactionId],
+    queryFn: () => salesTransactionsApi.get(transactionId),
+    enabled: !!transactionId,
+  });
+  const estimate = transaction?.estimatedShippingCost ?? null;
 
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -179,7 +198,12 @@ export function ShipmentModal({ transactionId, transactionRef, contextLine, defa
                     inputMode="decimal"
                     value={p.cost}
                     onChange={(e) => setParcel(i, { cost: e.target.value })}
-                    placeholder="0.00"
+                    /* On the first parcel only: the estimate is for the consignment, and repeating
+                       it against each parcel would read as a per-parcel figure it is not. */
+                    placeholder={i === 0 && estimate != null ? `est. ${estimate.toFixed(2)}` : '0.00'}
+                    title={i === 0 && estimate != null
+                      ? `The order's estimated shipping cost is €${estimate.toFixed(2)}. Enter what was actually charged.`
+                      : undefined}
                   />
                   {!editing && (
                     <button
