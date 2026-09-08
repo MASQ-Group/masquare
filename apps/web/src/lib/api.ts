@@ -243,6 +243,8 @@ export const carriersApi = {
   }) =>
     api.post<{
       ok: boolean; status: number; request: unknown; response: unknown;
+      /** What the failure means, rather than what FedEx called it. Null on success. */
+      message: string | null;
       origin: 'account' | 'company' | null; customs: boolean;
     }>(`/carriers/accounts/${id}/rate-quote`, body).then((r) => r.data),
 };

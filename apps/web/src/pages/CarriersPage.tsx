@@ -115,17 +115,24 @@ export function CarriersPage() {
                   >
                     {testingId === a.id ? <><Loader2 size={14} className="animate-spin" /> Testing…</> : <><Plug size={14} /> Test connection</>}
                   </button>
-                  {/* Only once the account authenticates. A quote needs a token, and offering it
-                      before the connection works produces a confusing failure. */}
-                  {a.isActive && (
-                    <button
-                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-teal-300 hover:text-teal-700"
-                      title="Ask FedEx what a shipment would cost — the first call that actually uses the account number"
-                      onClick={() => setQuoteFor(a)}
-                    >
-                      Test a rate quote
-                    </button>
-                  )}
+                  {/*
+                    Shown always, disabled until the account authenticates.
+                    
+                    It was hidden entirely at first, which was the wrong call: a control that is
+                    simply absent tells nobody why, and the reader is left comparing two cards and
+                    guessing. A quote does need a working token, so it stays unavailable — but it
+                    now says so.
+                  */}
+                  <button
+                    className="inline-flex h-9 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-teal-300 hover:text-teal-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-n-200 disabled:hover:text-n-700"
+                    disabled={!a.isActive}
+                    title={a.isActive
+                      ? 'Ask FedEx what a shipment would cost — the first call that actually uses the account number'
+                      : 'Test the connection first: a quote needs a token, and this account has not authenticated yet'}
+                    onClick={() => setQuoteFor(a)}
+                  >
+                    Test a rate quote
+                  </button>
                   <button className="btn btn-ghost h-9" onClick={() => setModal(a)}>Edit</button>
                 </div>
               </div>

@@ -44,7 +44,7 @@ export function RateQuoteModal({ account, onClose }: Props) {
       }),
     onSuccess: (r) => {
       if (r.ok) toast.success('FedEx answered — the reply is below');
-      else toast.error(`FedEx returned ${r.status} — the reply is below`, { duration: 8000 });
+      else toast.error(`FedEx returned ${r.status}`, { duration: 8000 });
     },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not reach FedEx'),
   });
@@ -113,6 +113,19 @@ export function RateQuoteModal({ account, onClose }: Props) {
                   {result.customs ? 'customs declaration included' : 'no customs declaration (same customs area)'}
                 </span>
               </div>
+
+              {/*
+                What the failure actually means, above the raw reply.
+
+                FedEx answers a refused rate request with "We could not authenticate your
+                credentials", which is misleading: a token had to be minted before this call could
+                be made at all. Left unexplained it sends somebody to replace a working key.
+              */}
+              {!result.ok && result.message && (
+                <p className="mb-3 whitespace-pre-line rounded-md border border-orange-200 bg-orange-50 px-3 py-2.5 text-[12.5px] leading-[1.55] text-orange-900">
+                  {result.message}
+                </p>
+              )}
 
               {/* Both halves. A rejection can only be read against what was actually sent. */}
               <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-n-500">What we sent</div>

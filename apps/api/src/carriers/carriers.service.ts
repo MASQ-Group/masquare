@@ -6,7 +6,7 @@ import {
   type CachedToken,
 } from './fedex-token';
 import {
-  RATE_PATH, buildRateRequest, missingForQuote, needsCustoms, rateHeaders,
+  RATE_PATH, buildRateRequest, describeRateFailure, missingForQuote, needsCustoms, rateHeaders,
   type RateQuoteInput, type RateEndpoint, type RateParcel,
 } from './fedex-rate';
 
@@ -462,6 +462,14 @@ export class CarriersService {
     return {
       ok: res.ok,
       status: res.status,
+      /**
+       * What the failure means, rather than what FedEx called it.
+       *
+       * A rejected rate request comes back as "We could not authenticate your credentials", which
+       * is not true and sends people to re-type a key that demonstrably works — a token was minted
+       * with it moments earlier. Null when the call succeeded.
+       */
+      message: res.ok ? null : describeRateFailure(res.status, parsed),
       /** What we sent, so a rejection can be read against it rather than guessed at. */
       request: body,
       response: parsed ?? text.slice(0, 20_000),

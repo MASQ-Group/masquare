@@ -189,3 +189,51 @@ export function rateHeaders(token: string): Record<string, string> {
     authorization: `Bearer ${token}`,
   };
 }
+
+/**
+ * What a failed rate call actually means, given that a token was obtained first.
+ *
+ * FedEx answers a rejected rate request with NOT.AUTHORIZED.ERROR and "We could not authenticate
+ * your credentials". Taken at face value that sends somebody to re-type a working API key — and we
+ * know it is working, because a token had to be minted before this call could be made at all.
+ *
+ * It is an authorisation failure, not an authentication one. Two causes account for nearly all of
+ * them, and both live in the FedEx portal rather than in anything here:
+ *
+ *  - The account number in the request is not the one these credentials are entitled to use. The
+ *    common version of this is a real account number entered against a sandbox row: sandbox expects
+ *    the test account number the portal assigned, and rejects the live one.
+ *  - The API project does not include Rates and Transit Times. A project grants a specific list of
+ *    APIs; the token is issued regardless, and only the call to an API outside that list fails.
+ */
+export function describeRateFailure(status: number, body: unknown): string {
+  const codes = extractErrorCodes(body);
+  if (status === 401 || status === 403 || codes.includes('NOT.AUTHORIZED.ERROR')) {
+    return [
+      'FedEx refused this account for the Rate API. The API key and secret are NOT the problem — a token was issued with them a moment before this call.',
+      'Two things to check in the FedEx portal:',
+      '1. The account number on this record is the one these credentials may use. A sandbox record needs the test account number the portal assigned, not the live one.',
+      '2. The API project includes "Rates and Transit Times". A token is issued whatever the project covers; only the call to an API outside it is refused.',
+    ].join('\n');
+  }
+  if (status === 429) {
+    return 'FedEx is rate-limiting us. Rating allows 1,400 calls per ten seconds, so this is unusual — wait a moment before retrying.';
+  }
+  if (status >= 500) {
+    return `FedEx returned ${status}. Their side, not our request — try again shortly.`;
+  }
+  const messages = extractErrorMessages(body);
+  return messages.length ? messages.join(' · ') : `FedEx refused the rate request (${status}).`;
+}
+
+/** FedEx reports problems as `errors: [{ code, message }]`. */
+function errorList(body: unknown): Array<{ code?: string; message?: string }> {
+  const errs = (body as any)?.errors;
+  return Array.isArray(errs) ? errs : [];
+}
+function extractErrorCodes(body: unknown): string[] {
+  return errorList(body).map((e) => String(e?.code ?? '')).filter(Boolean);
+}
+function extractErrorMessages(body: unknown): string[] {
+  return errorList(body).map((e) => String(e?.message ?? '')).filter(Boolean);
+}

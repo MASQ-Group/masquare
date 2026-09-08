@@ -3,6 +3,7 @@ import {
   CYPRUS_SERVICE_TYPES,
   RATE_PATH,
   buildRateRequest,
+  describeRateFailure,
   missingForQuote,
   needsCustoms,
   rateHeaders,
@@ -176,5 +177,56 @@ describe('the service catalogue for a Cyprus origin', () => {
   it('includes the services Cyprus actually sells', () => {
     expect(CYPRUS_SERVICE_TYPES).toContain('INTERNATIONAL_PRIORITY');
     expect(CYPRUS_SERVICE_TYPES).toContain('INTERNATIONAL_ECONOMY');
+  });
+});
+
+describe('explaining a refused rate quote', () => {
+  /**
+   * The reply that prompted this: HTTP 401, NOT.AUTHORIZED.ERROR, "We could not authenticate your
+   * credentials. Please try again." Every word of which is misleading, because the credentials had
+   * just authenticated — a token is required to make the call at all.
+   */
+  const notAuthorised = {
+    transactionId: '03aac233-db58-4ad0-a2ba-fc7a173c54a0',
+    errors: [{ code: 'NOT.AUTHORIZED.ERROR', message: 'We could not authenticate your credentials. Please try again.' }],
+  };
+
+  it('says plainly that the keys are not the problem', () => {
+    // The one thing a reader must not do here is go and replace a working API key.
+    const msg = describeRateFailure(401, notAuthorised);
+    expect(msg).toMatch(/NOT the problem/);
+    expect(msg).toMatch(/token was issued/i);
+  });
+
+  it('names the account number as the first thing to check', () => {
+    // A rate request is the first call that uses the account number, so it is the first that can
+    // reject it — and a live number on a sandbox record is the usual version of the mistake.
+    const msg = describeRateFailure(401, notAuthorised);
+    expect(msg).toMatch(/account number/i);
+    expect(msg).toMatch(/sandbox record needs the test account number/i);
+  });
+
+  it('names the project API list as the second', () => {
+    // A FedEx project grants a specific set of APIs. The token is issued regardless of that list;
+    // only the call to an API outside it fails, which is exactly what this looks like.
+    expect(describeRateFailure(401, notAuthorised)).toMatch(/Rates and Transit Times/);
+  });
+
+  it('treats a 403 and a bare NOT.AUTHORIZED code the same way', () => {
+    expect(describeRateFailure(403, {})).toMatch(/NOT the problem/);
+    expect(describeRateFailure(200, notAuthorised)).toMatch(/NOT the problem/);
+  });
+
+  it('does not blame our request for their outage', () => {
+    expect(describeRateFailure(503, {})).toMatch(/Their side/i);
+  });
+
+  it('passes through what FedEx said on anything else', () => {
+    const body = { errors: [{ code: 'POSTAL.CODE.INVALID', message: 'Postal code is invalid' }] };
+    expect(describeRateFailure(400, body)).toContain('Postal code is invalid');
+  });
+
+  it('says something useful even when the body is not the shape we expect', () => {
+    expect(describeRateFailure(400, 'not json at all')).toContain('400');
   });
 });
