@@ -221,15 +221,31 @@ export function rateHeaders(token: string): Record<string, string> {
  *  - The API project does not include Rates and Transit Times. A project grants a specific list of
  *    APIs; the token is issued regardless, and only the call to an API outside that list fails.
  */
-export function describeRateFailure(status: number, body: unknown): string {
+export function describeRateFailure(
+  status: number,
+  body: unknown,
+  opts: { environment?: string; originCountry?: string | null } = {},
+): string {
   const codes = extractErrorCodes(body);
   if (status === 401 || status === 403 || codes.includes('NOT.AUTHORIZED.ERROR')) {
-    return [
+    /**
+     * Authorisation, not authentication — and the two candidates are ranked by nothing.
+     *
+     * Both have been seen in practice and neither is reliably likelier, so they are listed rather
+     * than guessed between. The temptation is to reason "rating works on the other environment,
+     * therefore the project is fine" — which holds only if both environments belong to the SAME
+     * project. FedEx lets you hold several, and a test project with a different API selection
+     * produces exactly this, with a working token and a refused call.
+     */
+    const lines = [
       'FedEx refused this account for the Rate API. The API key and secret are NOT the problem — a token was issued with them a moment before this call.',
-      'Two things to check in the FedEx portal:',
-      '1. The account number on this record is the one these credentials may use. A sandbox record needs the test account number the portal assigned, not the live one.',
-      '2. The API project includes "Rates and Transit Times". A token is issued whatever the project covers; only the call to an API outside it is refused.',
-    ].join('\n');
+      `Two things to check in the FedEx portal, for the ${opts.environment === 'sandbox' ? 'sandbox' : 'production'} credentials specifically:`,
+      opts.environment === 'sandbox'
+        ? `1. The account number is the test one the portal assigned for this origin (${opts.originCountry ?? 'the shipping origin'}). Test accounts are issued per location and a shared one covers only the countries listed against it.`
+        : '1. The account number on this record is one these credentials may use.',
+      '2. The PROJECT behind these particular keys includes "Rates and Transit Times". Sandbox and production keys can belong to different projects with different API selections, so one environment working proves nothing about the other. A token is issued whatever the project covers; only the call to an API outside it is refused.',
+    ];
+    return lines.join('\n');
   }
   if (status === 429) {
     return 'FedEx is rate-limiting us. Rating allows 1,400 calls per ten seconds, so this is unusual — wait a moment before retrying.';

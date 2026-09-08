@@ -263,6 +263,23 @@ export const carriersApi = {
    * obtain a real one. The mapping to our own shipping figures goes in once there is something real
    * to map, rather than against a guessed shape.
    */
+  /**
+   * A sandbox-only booking that records nothing.
+   *
+   * How the Ship response shape gets learnt without creating a real label. The API refuses
+   * production outright, so this cannot become a billable shipment however it is called.
+   */
+  testBook: (id: string, body: {
+    recipient: { personName: string; streetLines: string[]; city: string; stateOrProvinceCode?: string | null; postalCode: string; countryIso: string; phone?: string | null };
+    serviceType: string;
+    shipDate: string;
+    parcels: Array<{ weightKg: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }>;
+    dutiesPaidBy: 'sender' | 'recipient';
+    labelImageType?: 'PDF' | 'PNG' | 'ZPLII';
+  }) =>
+    api.post<{ ok: boolean; status: number; message: string | null; request: unknown; response: unknown; customs: boolean }>(
+      `/carriers/accounts/${id}/test-book`, body,
+    ).then((r) => r.data),
   rateQuote: (id: string, body: {
     recipient: { postalCode: string; countryIso: string; residential?: boolean | null };
     parcels: Array<{ weightKg: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }>;
@@ -276,7 +293,11 @@ export const carriersApi = {
       quote: FedexRateReply | null;
       /** What the failure means, rather than what FedEx called it. Null on success. */
       message: string | null;
-      origin: 'account' | 'company' | null; customs: boolean;
+      origin: 'account' | 'company' | null;
+      /** The origin actually sent. A refusal is unreadable without it. */
+      originCountry: string | null;
+      originPostalCode: string | null;
+      customs: boolean;
     }>(`/carriers/accounts/${id}/rate-quote`, body).then((r) => r.data),
 };
 

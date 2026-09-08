@@ -107,6 +107,18 @@ export class CarriersController {
     return this.svc.book(id, body ?? {}, user.sub, companyIds);
   }
 
+  /**
+   * A sandbox-only booking that persists nothing.
+   *
+   * How the Ship response shape gets learnt without creating a real label. Needs no capability
+   * beyond reaching the page: it cannot book on production and it cannot write a record, so there
+   * is nothing here to guard against.
+   */
+  @Post('accounts/:id/test-book')
+  testBook(@Param('id') id: string, @Body() body: any, @AllowedCompanies() companyIds: string[]) {
+    return this.svc.testBook(id, body ?? {}, companyIds);
+  }
+
   /** Cancel a booked shipment. The record stays — a cancelled label can still attract a charge. */
   @Post('bookings/:bookingId/cancel')
   @RequireCapability('marketplace_write')

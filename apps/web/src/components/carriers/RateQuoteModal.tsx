@@ -69,9 +69,11 @@ export function RateQuoteModal({ account, onClose }: Props) {
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {account.environment === 'sandbox' && (
             <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900">
-              Sandbox is virtualised: it answers with canned data regardless of what is sent. That is
-              enough to learn the shape of a reply and to prove our request is accepted, but the
-              prices it returns are not ours and the account number is not really being checked.
+              Sandbox is virtualised: it answers with canned data regardless of what is sent, so the
+              prices are not ours and the account number is not really being checked. It also only
+              knows the lanes in FedEx's own sample data — a Cyprus origin is refused there whatever
+              the account, which is why this defaults to their US origin and a Canadian destination.
+              Changing the lane may well produce a refusal that says nothing about our setup.
             </p>
           )}
 
@@ -109,7 +111,10 @@ export function RateQuoteModal({ account, onClose }: Props) {
                   HTTP {result.status}
                 </span>
                 <span className="text-n-500">
-                  Origin from {result.origin === 'account' ? 'this account' : 'the company address'} ·{' '}
+                  {/* The origin, named. On sandbox an unrecognised one is refused in the same words
+                      as a bad credential, so leaving it implicit sends people hunting for lost keys. */}
+                  Shipped from <span className="mono text-n-700">{[result.originPostalCode, result.originCountry].filter(Boolean).join(' ') || 'nowhere recorded'}</span>
+                  {' '}({result.origin === 'account' ? 'this account' : 'the company address'}) ·{' '}
                   {result.customs ? 'customs declaration included' : 'no customs declaration (same customs area)'}
                 </span>
               </div>

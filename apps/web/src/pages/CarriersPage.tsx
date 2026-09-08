@@ -6,6 +6,7 @@ import { carriersApi, type CarrierAccount } from '../lib/api';
 import { PageHeader } from '../components/common/PageHeader';
 import { CarrierAccountModal } from '../components/carriers/CarrierAccountModal';
 import { RateQuoteModal } from '../components/carriers/RateQuoteModal';
+import { TestBookingModal } from '../components/carriers/TestBookingModal';
 
 const CARRIER_LABEL: Record<string, string> = { fedex: 'FedEx' };
 
@@ -22,6 +23,7 @@ export function CarriersPage() {
   const [modal, setModal] = useState<CarrierAccount | null | undefined>(undefined);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [quoteFor, setQuoteFor] = useState<CarrierAccount | null>(null);
+  const [bookFor, setBookFor] = useState<CarrierAccount | null>(null);
 
   const { data: accounts = [], isLoading } = useQuery({
     queryKey: ['carrier-accounts'],
@@ -133,6 +135,17 @@ export function CarriersPage() {
                   >
                     Test a rate quote
                   </button>
+                  {/* Sandbox only, and only once connected. Absent on production rather than
+                      disabled: there is no such thing as a harmless test booking there. */}
+                  {a.isActive && a.environment === 'sandbox' && (
+                    <button
+                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-teal-300 hover:text-teal-700"
+                      title="Make one booking on sandbox to learn the reply shape. Records nothing, and cannot run on production."
+                      onClick={() => setBookFor(a)}
+                    >
+                      Test a booking
+                    </button>
+                  )}
                   <button className="btn btn-ghost h-9" onClick={() => setModal(a)}>Edit</button>
                 </div>
               </div>
@@ -151,6 +164,7 @@ export function CarriersPage() {
       )}
 
       {quoteFor && <RateQuoteModal account={quoteFor} onClose={() => setQuoteFor(null)} />}
+      {bookFor && <TestBookingModal account={bookFor} onClose={() => setBookFor(null)} />}
 
       {modal !== undefined && (
         <CarrierAccountModal

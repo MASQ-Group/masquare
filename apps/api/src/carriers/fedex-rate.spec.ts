@@ -207,10 +207,22 @@ describe('explaining a refused rate quote', () => {
 
   it('names the account number as the first thing to check', () => {
     // A rate request is the first call that uses the account number, so it is the first that can
-    // reject it — and a live number on a sandbox record is the usual version of the mistake.
-    const msg = describeRateFailure(401, notAuthorised);
-    expect(msg).toMatch(/account number/i);
-    expect(msg).toMatch(/sandbox record needs the test account number/i);
+    // reject it.
+    expect(describeRateFailure(401, notAuthorised)).toMatch(/account number/i);
+  });
+
+  it('names the origin on sandbox, where test accounts are issued per location', () => {
+    const msg = describeRateFailure(401, notAuthorised, { environment: 'sandbox', originCountry: 'CY' });
+    expect(msg).toMatch(/test one the portal assigned/i);
+    expect(msg).toMatch(/CY/);
+  });
+
+  it('refuses to conclude the project is fine because the other environment works', () => {
+    // The tempting deduction, and a wrong one: FedEx lets you hold several projects, so sandbox and
+    // production keys can sit behind different API selections. This was reasoned through the wrong
+    // way round once already — one environment working proves nothing about the other.
+    expect(describeRateFailure(401, notAuthorised)).toMatch(/different projects/i);
+    expect(describeRateFailure(401, notAuthorised)).toMatch(/proves nothing about the other/i);
   });
 
   it('names the project API list as the second', () => {

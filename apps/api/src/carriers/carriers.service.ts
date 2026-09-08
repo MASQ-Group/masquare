@@ -474,7 +474,9 @@ export class CarriersService {
        * is not true and sends people to re-type a key that demonstrably works — a token was minted
        * with it moments earlier. Null when the call succeeded.
        */
-      message: res.ok ? null : describeRateFailure(res.status, parsed),
+      message: res.ok
+        ? null
+        : describeRateFailure(res.status, parsed, { environment: account.environment, originCountry: quote.shipper.countryIso }),
       /**
        * The quote, read into our own shape: negotiated price, surcharges, transit commitment.
        *
@@ -486,6 +488,15 @@ export class CarriersService {
       request: body,
       response: parsed ?? text.slice(0, 20_000),
       origin: origin?.source ?? null,
+      /**
+       * The origin actually used, spelled out.
+       *
+       * Without it a refusal is unreadable: sandbox rejects a lane it does not know in exactly the
+       * words it uses for a bad credential, and the reader has no way to see which origin was sent.
+       * That sent somebody hunting for lost API keys when the ship-from had simply reverted.
+       */
+      originCountry: quote.shipper.countryIso ?? null,
+      originPostalCode: quote.shipper.postalCode ?? null,
       customs,
     };
   }
@@ -635,6 +646,106 @@ export class CarriersService {
         : 'Booked, but no tracking number could be read from the reply. The whole response is stored against the booking — the response shape needs mapping before this is used in earnest.',
       request: body,
       response: parsed ?? text.slice(0, 20_000),
+    };
+  }
+
+  /**
+   * Book a shipment on SANDBOX only, persist nothing, and hand back the whole reply.
+   *
+   * This exists for one reason: FedEx ships 1,335 sample Ship requests and no sample responses, so
+   * the shape of a booking reply cannot be known without making one. Learning it on production would
+   * mean a real label, a real tracking number and a real charge, which is not a reasonable price for
+   * a piece of documentation.
+   *
+   * Two deliberate differences from `book()`:
+   *  - It refuses production outright. Not a warning, not a confirmation dialog — the diagnostic
+   *    physically cannot create a billable shipment.
+   *  - It writes no CarrierBooking row. A sandbox booking is not a shipment, and a fictitious one
+   *    sitting among real records is worse than no record at all.
+   *
+   * Note the origin: FedEx's sandbox only knows the lanes in its own sample data. A Cyprus origin is
+   * refused there even with the correct test account, so this defaults to the US origin their
+   * samples use throughout. That is fine — a virtualised sandbox answers with canned data whatever
+   * it is sent, so the lane was never going to say anything about our real prices.
+   */
+  async testBook(
+    accountId: string,
+    input: {
+      recipient: { personName: string; streetLines: string[]; city: string; stateOrProvinceCode?: string | null; postalCode: string; countryIso: string; phone?: string | null };
+      shipper?: { personName: string; streetLines: string[]; city: string; stateOrProvinceCode?: string | null; postalCode: string; countryIso: string; phone?: string | null } | null;
+      serviceType: string;
+      shipDate: string;
+      parcels: Array<{ weightKg: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }>;
+      dutiesPaidBy: 'sender' | 'recipient';
+      labelImageType?: 'PDF' | 'PNG' | 'ZPLII';
+    },
+    companyIds?: string[],
+  ) {
+    const account = await this.prisma.carrierAccount.findFirst({
+      where: { id: accountId, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: { id: true, environment: true, accountNumber: true, isActive: true },
+    });
+    if (!account) throw new NotFoundException('Carrier account not found');
+    if (account.environment !== 'sandbox') {
+      throw new BadRequestException(
+        'Test bookings are sandbox-only. On production this would create a real label, a real tracking number and a real charge — use the ordinary booking flow for that, deliberately.',
+      );
+    }
+    if (!account.isActive) throw new BadRequestException('Test the connection on this account first.');
+
+    const party = (p: NonNullable<typeof input.shipper>): ShipParty => ({
+      contact: { personName: p.personName, phoneNumber: p.phone ?? null },
+      address: {
+        streetLines: p.streetLines.filter(Boolean),
+        city: p.city,
+        stateOrProvinceCode: p.stateOrProvinceCode ?? null,
+        postalCode: p.postalCode,
+        countryCode: p.countryIso,
+      },
+    });
+
+    const shipInput: ShipRequestInput = {
+      accountNumber: account.accountNumber,
+      // FedEx's own sample origin. Overridable, but this is the one their sandbox knows.
+      shipper: party(input.shipper ?? {
+        personName: 'maSquare test', streetLines: ['3610 Hacks Cross Road'], city: 'MEMPHIS',
+        stateOrProvinceCode: 'TN', postalCode: '38125', countryIso: 'US', phone: '9012636716',
+      }),
+      recipient: party(input.recipient),
+      serviceType: input.serviceType,
+      shipDate: input.shipDate,
+      parcels: input.parcels,
+      // Marked as a test in the reference itself, so a stray sandbox charge would be identifiable.
+      customerReference: 'SANDBOX-TEST',
+      dutiesPaidBy: input.dutiesPaidBy,
+      labelImageType: input.labelImageType,
+    };
+
+    const gaps = missingForBooking(shipInput);
+    if (gaps.length) throw new BadRequestException(`Cannot book yet — still needed: ${gaps.join(', ')}.`);
+
+    const eu = await this.euCountryCodes();
+    const customs = needsCustoms(shipInput.shipper.address.countryCode, shipInput.recipient.address.countryCode, eu);
+    const body = buildShipRequest(shipInput, { customs });
+
+    const send = async (token: string) =>
+      fetch(`${baseUrlFor(account.environment)}${SHIP_PATH}`, {
+        method: 'POST', headers: rateHeaders(token), body: JSON.stringify(body),
+      });
+    let res = await send(await this.token(accountId));
+    if (res.status === 401) res = await send(await this.token(accountId, { force: true }));
+
+    const text = await res.text();
+    let parsed: any = null;
+    try { parsed = JSON.parse(text); } catch { /* raw below */ }
+
+    return {
+      ok: res.ok,
+      status: res.status,
+      message: res.ok ? null : describeRateFailure(res.status, parsed, { environment: 'sandbox', originCountry: shipInput.shipper.address.countryCode }),
+      request: body,
+      response: parsed ?? text.slice(0, 40_000),
+      customs,
     };
   }
 
