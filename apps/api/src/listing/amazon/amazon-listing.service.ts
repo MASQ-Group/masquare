@@ -258,7 +258,7 @@ export class AmazonListingService {
     // only in this response would mean the page forgets it on reload AND the scheduler re-asks it
     // tomorrow, spending the call twice for one fact. Best-effort: a failure to file the answer must
     // not lose the answer the caller is waiting for.
-    await this.storeSweep(productId, integrations, results).catch((e) =>
+    await this.storeSweep(productId, integrations, results, !!opts.withPricing).catch((e) =>
       this.logger.warn(`Could not store availability from the manual sweep: ${(e as Error)?.message ?? e}`),
     );
 
@@ -303,7 +303,18 @@ export class AmazonListingService {
       integrationId: string; found: boolean; asin: string | null; productType: string | null;
       title: string | null; imageUrl: string | null; restricted: boolean | null;
       restrictionReason: string | null; error: string | null; alreadyListed: boolean;
+      competitive?: boolean | null; featuredPriceCents?: number | null;
+      featuredMarginPct?: number | null; currency?: string | null;
+      competitionUnavailable?: boolean;
     }>,
+    /**
+     * Whether this run priced at all.
+     *
+     * Passed rather than inferred from the rows: a run that priced and found no featured offer
+     * produces exactly the same nulls as a run that never asked, and only one of those should
+     * overwrite a stored verdict.
+     */
+    priced: boolean,
   ): Promise<void> {
     for (const r of results) {
       if (r.alreadyListed) continue;
@@ -322,6 +333,16 @@ export class AmazonListingService {
           restricted: r.restricted, restrictionReason: r.restrictionReason, error: r.error,
         },
         'manual',
+        // Only where this row was actually priced. Rows the sweep skips — restricted, not found —
+        // never had the offers call made for them, so they have nothing to say about competition.
+        priced && (r.competitive != null || r.featuredPriceCents != null || r.competitionUnavailable)
+          ? {
+              competitive: r.competitive ?? null,
+              featuredPriceCents: r.featuredPriceCents ?? null,
+              featuredMarginPct: r.featuredMarginPct ?? null,
+              currency: r.currency ?? null,
+            }
+          : undefined,
       );
     }
   }

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, ChevronDown, Edit3, ExternalLink, Eye, Grid2x2, LayoutGrid, Layers, Package, Pause, RefreshCw, Search, SlidersHorizontal, TrendingDown, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { Pagination, ProgressButton, Select } from '@masquare/ui';
-import { brandsApi, channelListingsApi, productTypesApi, vendorsApi, type ChannelListingCell, type ChannelListingChannel, type ChannelSyncResult, type JobView } from '../lib/api';
+import { brandsApi, channelListingsApi, productTypesApi, vendorsApi, type CellAvailability, type ChannelListingCell, type ChannelListingChannel, type ChannelSyncResult, type JobView } from '../lib/api';
 import { useJobProgress } from '../lib/useJobProgress';
 import { formatAmount } from '../lib/format';
 import { Flag } from '../components/common/Flag';
@@ -74,6 +74,31 @@ const CELL_FIELDS: { key: CellField; label: string }[] = [
 ];
 const ALL_FIELDS: CellField[] = CELL_FIELDS.map((f) => f.key);
 
+/**
+ * The hover text behind a one- or two-word competitive verdict.
+ *
+ * The cell has room for "not competitive" and nothing else, and those two words are a conclusion —
+ * the price it was reached from, the margin at that price, and when it was read are what let anyone
+ * judge whether to believe it. A verdict from three months ago and one from this morning are not
+ * the same claim.
+ */
+function competitionTitle(a: CellAvailability): string {
+  const price =
+    a.featuredPriceCents != null && a.currency
+      ? `Buy Box ${(a.featuredPriceCents / 100).toLocaleString(undefined, { style: 'currency', currency: a.currency })}`
+      : null;
+  const lines =
+    a.competitive === false
+      ? ['Amazon would accept a listing here, but the offer that wins the Buy Box is below what we can sell at.']
+      : a.competitive === true
+        ? ['We could win the Buy Box here at a profit.']
+        : ['Nobody has priced this marketplace against the competition, so whether we could sell here at a profit is unknown.'];
+  if (price) lines.push(price);
+  if (a.featuredMarginPct != null) lines.push(`Our margin at that price: ${(a.featuredMarginPct * 100).toFixed(1)}%`);
+  if (a.competitionCheckedAt) lines.push(`Competition read ${new Date(a.competitionCheckedAt).toLocaleString()}`);
+  return lines.join('\n');
+}
+
 function ChannelCell({ cell, solo, fields }: { cell?: ChannelListingCell; solo?: boolean; fields: Set<CellField> }) {
   const [open, setOpen] = useState<null | 'status' | 'profit'>(null);
   const show = (f: CellField) => fields.has(f);
@@ -96,11 +121,29 @@ function ChannelCell({ cell, solo, fields }: { cell?: ChannelListingCell; solo?:
       );
     }
     const canList = a.found && a.restricted === false;
+    /**
+     * Eligible, but at a loss.
+     *
+     * "Can be listed" answers whether Amazon would accept an offer. It says nothing about whether
+     * that offer would earn anything, and on a grid of green cells the difference is invisible —
+     * which is how a marketplace where the featured offer sits below our break-even ends up on
+     * somebody's list of opportunities. Only shown where the question was actually answered:
+     * `competitive` is null both when nobody priced it and when Amazon refused, and neither is a
+     * verdict to render.
+     */
+    const uncompetitive = canList && a.competitive === false;
     return (
       <div className="chc flex flex-col justify-center gap-0.5 border-l border-n-100 px-3 py-3">
-        <span className={`text-[12px] font-semibold ${canList ? 'text-teal-700' : 'text-n-400'}`}>
+        <span className={`text-[12px] font-semibold ${uncompetitive ? 'text-orange-700' : canList ? 'text-teal-700' : 'text-n-400'}`}>
           {canList ? 'Can be listed' : a.restricted ? 'Needs approval' : 'Not in catalogue'}
         </span>
+        {/* Only where we can list: beside "Needs approval" a price verdict is noise, since approval
+            is the thing that has to happen first. */}
+        {canList && (
+          <span className={`text-[11px] ${uncompetitive ? 'font-medium text-orange-700' : a.competitive ? 'font-medium text-teal-600' : 'text-n-400'}`} title={competitionTitle(a)}>
+            {uncompetitive ? 'not competitive' : a.competitive ? 'competitive' : 'competition not checked'}
+          </span>
+        )}
         {/* The date is what makes it actionable. "Cannot list here" from three months ago and the
             same words from this morning are not the same claim. */}
         <span className="text-[11px] text-n-300" title={`Checked with Amazon ${new Date(a.checkedAt).toLocaleString()}`}>

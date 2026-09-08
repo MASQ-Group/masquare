@@ -7,6 +7,13 @@ import { CreateCombinedShipmentDto, CreateShipmentBatchDto, CreateShipmentDto, U
 
 export interface ShipmentQuery {
   q?: string;
+  /**
+   * 'reviewed' | 'unreviewed'. Absent means both, which is the normal view.
+   *
+   * Accounting works the unreviewed list; everyone else rarely cares. Making it a filter rather
+   * than a tab keeps it out of the way of people it does not concern.
+   */
+  reviewState?: 'reviewed' | 'unreviewed';
   companyId?: string;
   /** Enforced company isolation (scoped via the shipment's sales transaction). */
   companyIds?: string[];
@@ -66,8 +73,135 @@ export class ShipmentsService {
       dutyImportEur: s.dutyImportEur,
       comments: s.comments,
       groupId: s.groupId ?? null,
+      /**
+       * Whether accounting has checked this cost against the carrier's invoice.
+       *
+       * Sent as a date, not a flag: the screen shows when, and "reviewed at some unknown point" is
+       * not much of an assurance.
+       */
+      reviewedAt: s.reviewedAt ?? null,
       createdAt: s.createdAt,
     };
+  }
+
+  /**
+   * Record that accounting has checked this cost against the carrier's invoice.
+   *
+   * A date and a name, not a flag. "Reviewed" is an assurance, and one nobody's name is against is
+   * worth very little when a figure is later disputed — which is the only moment anybody looks.
+   *
+   * Reversible, because a review can be given in error and an assurance that cannot be withdrawn is
+   * not one anybody should be asked to give.
+   */
+  async setReviewed(id: string, reviewed: boolean, actorId?: string) {
+    const shipment = await this.prisma.shipment.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, shippingCostEur: true },
+    });
+    if (!shipment) throw new NotFoundException('Shipment not found');
+
+    // Reviewing a shipment with no recorded cost would be an assurance about nothing.
+    if (reviewed && shipment.shippingCostEur == null) {
+      throw new BadRequestException('Register the actual cost before marking it reviewed — there is nothing to check yet.');
+    }
+
+    await this.prisma.shipment.update({
+      where: { id },
+      data: reviewed
+        ? { reviewedAt: new Date(), reviewedById: actorId ?? null }
+        : { reviewedAt: null, reviewedById: null },
+    });
+    return { ok: true as const, id, reviewed };
+  }
+
+  /**
+   * Every shipment sharing this one's parcel, so a cost can be split where it was actually incurred.
+   *
+   * Several orders in one box share a groupId and the carrier charges once. Recording that once
+   * against one order and nothing against the others makes one order look unprofitable and the rest
+   * look better than they are. A shipment with no group is its own group of one.
+   */
+  async costGroup(id: string) {
+    const shipment = await this.prisma.shipment.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, groupId: true },
+    });
+    if (!shipment) throw new NotFoundException('Shipment not found');
+
+    const rows = await this.prisma.shipment.findMany({
+      where: shipment.groupId
+        ? { groupId: shipment.groupId, deletedAt: null }
+        : { id, deletedAt: null },
+      select: {
+        id: true, trackingNumber: true, shippingCostEur: true, dutyImportEur: true,
+        reviewedAt: true, shipmentDate: true,
+        transaction: { select: { id: true, transactionRef: true } },
+      },
+      orderBy: [{ trackingNumber: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    return {
+      shipmentId: id,
+      groupId: shipment.groupId,
+      /** One entry per tracking number: the carrier charged per parcel, so the cost is per parcel. */
+      parcels: rows.map((r) => ({
+        shipmentId: r.id,
+        trackingNumber: r.trackingNumber,
+        shippingCostEur: r.shippingCostEur,
+        dutyImportEur: r.dutyImportEur,
+        reviewed: r.reviewedAt != null,
+        transactionRef: r.transaction?.transactionRef ?? null,
+      })),
+    };
+  }
+
+  /**
+   * Write the actual cost for one or more parcels in a group.
+   *
+   * Per parcel rather than one figure divided by however many there were: an equal split is a guess
+   * dressed as a fact, and where two parcels went to different countries the guess is badly wrong.
+   * The caller sends what the carrier actually charged for each.
+   */
+  async setActualCosts(
+    entries: Array<{ shipmentId: string; shippingCostEur?: number | null; dutyImportEur?: number | null }>,
+  ) {
+    if (!Array.isArray(entries) || entries.length === 0) {
+      throw new BadRequestException('Nothing to save');
+    }
+    for (const e of entries) {
+      for (const [label, v] of [['Shipping cost', e.shippingCostEur], ['Duty', e.dutyImportEur]] as const) {
+        if (v != null && (!Number.isFinite(v) || v < 0)) {
+          throw new BadRequestException(`${label} must be zero or more`);
+        }
+      }
+    }
+
+    /**
+     * All of them or none.
+     *
+     * Half a parcel group costed reads as complete on every screen that sums it, and the missing
+     * half is invisible. Better to refuse the lot than to leave a total nobody can trust.
+     */
+    await this.prisma.$transaction(
+      entries.map((e) =>
+        this.prisma.shipment.update({
+          where: { id: e.shipmentId },
+          data: {
+            ...(e.shippingCostEur !== undefined ? { shippingCostEur: e.shippingCostEur } : {}),
+            ...(e.dutyImportEur !== undefined ? { dutyImportEur: e.dutyImportEur } : {}),
+            /**
+             * A changed cost is a new fact, so any earlier review no longer covers it.
+             *
+             * Leaving the tick in place would mean accounting appeared to have signed off a figure
+             * they never saw — the one thing a review must never claim.
+             */
+            reviewedAt: null,
+            reviewedById: null,
+          },
+        }),
+      ),
+    );
+    return { ok: true as const, updated: entries.length };
   }
 
   /** Recorded shipments log (across all transactions). */
@@ -77,6 +211,12 @@ export class ShipmentsService {
     const where: Prisma.ShipmentWhereInput = {
       deletedAt: null,
       ...(query.type && query.type !== 'fba' ? { type: query.type } : {}),
+      // Accounting's worklist is the unreviewed half; absent means both, which is everyone else's view.
+      ...(query.reviewState === 'reviewed'
+        ? { reviewedAt: { not: null } }
+        : query.reviewState === 'unreviewed'
+          ? { reviewedAt: null }
+          : {}),
       // Always: a shipment belonging to a deleted order does not belong in the log. This used to be
       // applied only when some filter happened to be set, so an unfiltered list showed rows a
       // filtered one hid.

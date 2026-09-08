@@ -2453,6 +2453,17 @@ model Shipment {
   /// when the order shipped, and the replacement consumes a second one.
   warehouseId       String?  @map("warehouse_id") @db.Uuid
 
+  /// When accounting checked the recorded cost against the carrier's invoice.
+  ///
+  /// Null is the normal state and means nobody has checked yet — deliberately not a boolean, so the
+  /// record says WHEN as well as whether. A cost entered from a despatch note is an estimate until
+  /// somebody has seen the invoice, and the difference between the two is the whole reason this
+  /// exists.
+  reviewedAt   DateTime? @map("reviewed_at")
+  /// Who checked it. Kept beside the date because "reviewed" is an assurance, and an assurance
+  /// nobody's name is against is worth very little when the figure is later disputed.
+  reviewedById String?   @map("reviewed_by") @db.Uuid
+
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
   createdById String?   @map("created_by") @db.Uuid
@@ -3209,6 +3220,23 @@ model ProductChannelAvailability {
   restrictionReason String?  @map("restriction_reason")
   /// Why the check produced no answer, in our words. Null when it worked.
   error             String?
+
+  /// Whether we could win the Buy Box at a profit. Null means the question was not answered —
+  /// either it was never asked (a check without pricing) or Amazon refused the offers call. It is
+  /// deliberately NOT read as "yes": "can be listed" and "can be sold at a profit" are two claims,
+  /// and a grid that shows only the first invites work on marketplaces we would lose money on.
+  competitive         Boolean?
+  /// When the competition was last read, separate from checkedAt.
+  ///
+  /// A catalogue answer changes over months; a competitor's price changes over hours. One date for
+  /// both would let a year-old price verdict borrow this morning's freshness.
+  competitionCheckedAt DateTime? @map("competition_checked_at")
+  /// What the offer that currently wins the Buy Box charges, in `currency`'s minor units.
+  featuredPriceCents  Int?     @map("featured_price_cents")
+  /// Our margin at that price, as a fraction. Negative where we would sell at a loss.
+  featuredMarginPct   Float?   @map("featured_margin_pct")
+  /// The currency the price above is in. A marketplace has exactly one.
+  currency            String?
 
   checkedAt DateTime @map("checked_at")
   /// 'scheduled' or 'manual'. A manual check is someone standing at the screen wanting an answer

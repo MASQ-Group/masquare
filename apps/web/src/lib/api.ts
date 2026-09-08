@@ -391,6 +391,19 @@ export interface CellAvailability {
   restricted: boolean | null;
   restrictionReason: string | null;
   checkedAt: string;
+  /**
+   * Whether we could win the Buy Box here at a profit.
+   *
+   * Null means unanswered — never priced, or Amazon refused the offers call. It must never render
+   * as a yes: "can be listed" and "can be sold at a profit" are two different claims.
+   */
+  competitive?: boolean | null;
+  /** Dated separately from checkedAt: a competitor's price ages in hours, a catalogue entry in months. */
+  competitionCheckedAt?: string | null;
+  featuredPriceCents?: number | null;
+  /** Our margin at the featured price, as a fraction. Negative where we would sell at a loss. */
+  featuredMarginPct?: number | null;
+  currency?: string | null;
 }
 export interface ChannelListingCell {
   integrationId: string; channelSku: string; asin: string | null; listed: boolean;
@@ -2110,6 +2123,8 @@ export interface Shipment {
   dutyImportEur: number | null;
   comments: string | null;
   groupId: string | null;
+  /** When accounting checked this cost against the carrier's invoice. Null = not yet. */
+  reviewedAt?: string | null;
   createdAt: string;
 }
 
@@ -2147,9 +2162,33 @@ export interface ShipmentImportRowResult {
   issues: { field: string; message: string; severity: 'error' | 'warning' }[];
 }
 
+/** One parcel in a cost group: what the carrier charged for THIS tracking number. */
+export interface ShipmentCostParcel {
+  shipmentId: string;
+  trackingNumber: string | null;
+  shippingCostEur: number | null;
+  dutyImportEur: number | null;
+  reviewed: boolean;
+  transactionRef: string | null;
+}
+export interface ShipmentCostGroup {
+  shipmentId: string;
+  groupId: string | null;
+  /** One entry per tracking number. A shipment with no group is a group of one. */
+  parcels: ShipmentCostParcel[];
+}
+
 export const shipmentsApi = {
   /** includeFba folds settled FBA shipments into the log — they have no transaction behind them. */
-  list: (params: { q?: string; companyId?: string; salesChannelId?: string; type?: string; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number; includeFba?: boolean }) =>
+  /** Every parcel this shipment's carrier charge is shared with — one per tracking number. */
+  costGroup: (id: string) => api.get<ShipmentCostGroup>(`/shipments/${id}/cost-group`).then((r) => r.data),
+  /** What the carrier actually charged, per parcel. Writing a cost withdraws any earlier review. */
+  setActualCosts: (entries: Array<{ shipmentId: string; shippingCostEur?: number | null; dutyImportEur?: number | null }>) =>
+    api.post<{ ok: true; updated: number }>('/shipments/actual-costs', { entries }).then((r) => r.data),
+  /** Accounting's sign-off that the recorded cost matches the invoice. Reversible. */
+  setReviewed: (id: string, reviewed: boolean) =>
+    api.post<{ ok: true; reviewed: boolean }>(`/shipments/${id}/reviewed`, { reviewed }).then((r) => r.data),
+  list: (params: { q?: string; companyId?: string; salesChannelId?: string; type?: string; reviewState?: 'reviewed' | 'unreviewed'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number; includeFba?: boolean }) =>
     api.get<ShipmentListResponse>('/shipments', { params }).then((r) => r.data),
   pending: (params: { q?: string; companyId?: string; salesChannelId?: string; channelKind?: 'local' | 'channel'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<PendingListResponse>('/shipments/pending', { params }).then((r) => r.data),

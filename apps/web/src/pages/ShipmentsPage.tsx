@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowDown, ArrowRight, ArrowUp, Coins, Download, ExternalLink, Package, PackageCheck, PackagePlus, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUp, BadgeCheck, Coins, Download, ExternalLink, Package, PackageCheck, PackagePlus, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadSheet, Pagination, Select } from '@masquare/ui';
 import { countriesApi, fbaShipmentsApi, salesChannelsApi, shipmentsApi, type FbaShipment, type PendingShipment, type Shipment } from '../lib/api';
@@ -15,6 +15,7 @@ import { CombineShipmentModal } from '../components/shipments/CombineShipmentMod
 import { ShipmentImportModal } from '../components/shipments/ShipmentImportModal';
 import { SHIPMENT_HEADER, shipmentRowToCells } from '../components/shipments/shipmentColumns';
 import { FbaActualCostModal } from '../components/fba-shipments/FbaActualCostModal';
+import { ShipmentActualCostModal } from '../components/shipments/ShipmentActualCostModal';
 import { PageHeader } from '../components/common/PageHeader';
 
 type Tab = 'pending' | 'dispatched' | 'all' | 'fba';
@@ -53,6 +54,9 @@ export function ShipmentsPage() {
   const [modal, setModal] = useState<ModalCtx | null>(null);
   const [combineOpen, setCombineOpen] = useState(false);
   const [fbaActualFor, setFbaActualFor] = useState<FbaShipment | null>(null);
+  const [costFor, setCostFor] = useState<Shipment | null>(null);
+  // Accounting's worklist is the unreviewed half; blank means both, which is everyone else's view.
+  const [filterReview, setFilterReview] = usePersistentState<'' | 'reviewed' | 'unreviewed'>('shipments.filterReview', '');
   const [importOpen, setImportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -100,7 +104,7 @@ export function ShipmentsPage() {
     queryFn: () => shipmentsApi.dispatchedElsewhere(pendingParams),
     enabled: tab === 'dispatched',
   });
-  const allParams = { ...commonParams, type: filterType || undefined, sortDir: allSort, includeFba: true };
+  const allParams = { ...commonParams, type: filterType || undefined, reviewState: filterReview || undefined, sortDir: allSort, includeFba: true };
   const allQ = useQuery({
     queryKey: ['shipments-all', allParams], queryFn: () => shipmentsApi.list(allParams), enabled: tab === 'all',
   });
@@ -154,6 +158,19 @@ export function ShipmentsPage() {
     mutationFn: async (ids: string[]) => { for (const id of ids) await shipmentsApi.fulfilLocal(id); return ids.length; },
     onSuccess: (n) => { toast.success(`Marked ${n} as fulfilled`); setSelected(new Set()); invalidate(); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Bulk fulfil failed'),
+  });
+
+  /**
+   * Accounting's sign-off that a recorded cost matches the carrier's invoice.
+   *
+   * Reversible: a tick given in error that could not be taken back would make people hesitant to
+   * give one at all. Writing a new cost withdraws it server-side, so a review never covers a figure
+   * nobody saw.
+   */
+  const review = useMutation({
+    mutationFn: ({ id, reviewed }: { id: string; reviewed: boolean }) => shipmentsApi.setReviewed(id, reviewed),
+    onSuccess: (_r, v) => { toast.success(v.reviewed ? 'Reviewed' : 'Review withdrawn'); invalidate(); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not update'),
   });
 
   const invalidate = () => {
@@ -241,6 +258,15 @@ export function ShipmentsPage() {
             <Select dense className="w-40" value={filterChannel} onChange={(v) => { setFilterChannel(v); setPage(1); }} options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]} />
             {tab === 'all' && (
               <Select dense className="w-36" value={filterType} onChange={(v) => { setFilterType(v); setPage(1); }} options={[{ value: '', label: 'All types' }, { value: 'outbound', label: 'Outbound' }, { value: 'inbound', label: 'Inbound' }, { value: 'fba', label: 'FBA inbound' }]} />
+            )}
+            {tab === 'all' && (
+              <Select
+                dense
+                className="w-40"
+                value={filterReview}
+                onChange={(v) => { setFilterReview(v as '' | 'reviewed' | 'unreviewed'); setPage(1); }}
+                options={[{ value: '', label: 'Reviewed & not' }, { value: 'unreviewed', label: 'Not reviewed' }, { value: 'reviewed', label: 'Reviewed' }]}
+              />
             )}
             {(tab === 'pending' || tab === 'dispatched') && (
               <Select dense className="w-36" value={pendingKind} onChange={(v) => { setPendingKind(v as '' | 'local' | 'channel'); setPage(1); }} options={[{ value: '', label: 'All sources' }, { value: 'local', label: 'Local only' }, { value: 'channel', label: 'Channel only' }]} />
@@ -431,7 +457,12 @@ export function ShipmentsPage() {
                     </td>
                     <td className={td}>{s.shippingService?.name ?? '—'}</td>
                     <td className={`${td} code`}>{s.trackingNumber ?? '—'}</td>
-                    <td className={`${td} mono text-right`}>{eur(s.shippingCostEur)}</td>
+                    <td className={`${td} mono text-right`}>
+                      {eur(s.shippingCostEur)}
+                      {s.reviewedAt && (
+                        <BadgeCheck size={13} className="ml-1 inline-block align-[-2px] text-teal-600" aria-label="Reviewed" />
+                      )}
+                    </td>
                     <td className={td}>{s.costBorneBy === 'company' ? 'Company' : 'Customer'}</td>
                     <td className={`${td} mono text-right`}>{s.dutyImportEur != null && s.dutyImportEur !== 0 ? eur(s.dutyImportEur) : '—'}</td>
                     <td className={`${td} max-w-[220px] truncate`} title={s.comments ?? undefined}>{s.comments ?? '—'}</td>
@@ -446,6 +477,29 @@ export function ShipmentsPage() {
                         </div>
                       ) : (
                       <div className="flex justify-end gap-1">
+                        <button
+                          className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800"
+                          title={s.shippingCostEur != null ? 'Edit the actual shipping cost and duty' : 'Register the actual shipping cost and duty'}
+                          onClick={() => setCostFor(s)}
+                        >
+                          <Coins size={15} />
+                        </button>
+                        {/* Accounting ticks this once the figure matches the carrier's invoice. Disabled
+                            until there is a cost, since a review of nothing asserts nothing. */}
+                        <button
+                          className={`grid h-8 w-8 place-items-center rounded-md ${s.reviewedAt ? 'text-teal-600 hover:bg-teal-50' : 'text-n-400 hover:bg-n-100 hover:text-n-800'} disabled:cursor-not-allowed disabled:opacity-40`}
+                          disabled={review.isPending || s.shippingCostEur == null}
+                          title={
+                            s.shippingCostEur == null
+                              ? 'Register the actual cost first — there is nothing to check yet'
+                              : s.reviewedAt
+                                ? `Reviewed ${formatDate(s.reviewedAt)} — click to withdraw`
+                                : 'Mark reviewed against the carrier invoice'
+                          }
+                          onClick={() => review.mutate({ id: s.id, reviewed: !s.reviewedAt })}
+                        >
+                          <BadgeCheck size={15} />
+                        </button>
                         <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Add another shipment for this transaction" onClick={() => openAddFor(s)}><Package size={15} /></button>
                         <button className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800" title="Edit" onClick={() => openForEdit(s)}><Pencil size={15} /></button>
                         <button
@@ -557,6 +611,13 @@ export function ShipmentsPage() {
           shipment={modal.shipment}
           onClose={() => setModal(null)}
           onSaved={() => { setModal(null); invalidate(); }}
+        />
+      )}
+      {costFor && (
+        <ShipmentActualCostModal
+          shipment={costFor}
+          onClose={() => setCostFor(null)}
+          onSaved={() => { setCostFor(null); invalidate(); }}
         />
       )}
       {fbaActualFor && (

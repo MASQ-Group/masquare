@@ -33,6 +33,9 @@ function makePrisma(over: Partial<Record<string, any>> = {}) {
     product: { findMany: vi.fn().mockResolvedValue(over.products ?? [{ id: 'p1' }]) },
     productChannelAvailability: {
       findMany: vi.fn().mockResolvedValue(over.stored ?? []),
+      // recordAvailability reads the current row to decide whether a stored competitive verdict
+      // still describes the same ASIN. Null here: these cases are all first checks.
+      findUnique: vi.fn().mockResolvedValue(null),
       upsert: vi.fn().mockImplementation((args: any) => { upserts.push(args); return Promise.resolve({}); }),
     },
     channelListing: { findMany: vi.fn().mockResolvedValue(over.listings ?? []) },

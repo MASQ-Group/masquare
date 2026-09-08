@@ -1160,6 +1160,8 @@ export class ChannelListingsService {
       select: {
         productId: true, integrationId: true, found: true, restricted: true,
         restrictionReason: true, checkedAt: true,
+        competitive: true, competitionCheckedAt: true, featuredPriceCents: true,
+        featuredMarginPct: true, currency: true,
       },
     });
     for (const a of availability) {
@@ -1174,6 +1176,19 @@ export class ChannelListingsService {
           restricted: a.restricted,
           restrictionReason: a.restrictionReason,
           checkedAt: a.checkedAt,
+          /**
+           * Whether we could actually SELL here, not merely list here.
+           *
+           * The cell said "Can be listed" on every eligible marketplace, including the ones where
+           * the featured offer is below our break-even. Both facts were already known; only the
+           * cheaper one reached the grid, so a screen full of green invited work on marketplaces we
+           * would lose money on. Null stays null — never asked is not a yes.
+           */
+          competitive: a.competitive,
+          competitionCheckedAt: a.competitionCheckedAt,
+          featuredPriceCents: a.featuredPriceCents,
+          featuredMarginPct: a.featuredMarginPct,
+          currency: a.currency,
         },
       } as any;
     }

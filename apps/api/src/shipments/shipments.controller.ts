@@ -21,13 +21,14 @@ export class ShipmentsController {
     @Query('q') q?: string,
     @Query('salesChannelId') salesChannelId?: string,
     @Query('type') type?: string,
+    @Query('reviewState') reviewState?: 'reviewed' | 'unreviewed',
     @Query('sortDir') sortDir?: 'asc' | 'desc',
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('includeFba') includeFba?: string,
   ) {
     const query: ShipmentQuery = {
-      q, companyIds, salesChannelId, type, sortDir,
+      q, companyIds, salesChannelId, type, sortDir, reviewState,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
       // Opt-in, so an existing caller that only knows about order shipments keeps its old result.
@@ -138,6 +139,35 @@ export class ShipmentsController {
   @Post()
   create(@Body() dto: CreateShipmentDto, @CurrentUser() user: AuthUser) {
     return this.svc.create(dto, user.sub);
+  }
+
+  /**
+   * Accounting's sign-off that a recorded cost matches the carrier's invoice.
+   *
+   * Reversible: a review given in error must be withdrawable, or nobody should be asked to give one.
+   */
+  @Post(':id/reviewed')
+  setReviewed(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() body: { reviewed?: boolean } = {},
+  ) {
+    return this.svc.setReviewed(id, body.reviewed !== false, user.sub);
+  }
+
+  /** Every parcel whose cost this shipment shares — one entry per tracking number. */
+  @Get(':id/cost-group')
+  costGroup(@Param('id') id: string) {
+    return this.svc.costGroup(id);
+  }
+
+  /** Write what the carrier actually charged, per parcel. */
+  @Post('actual-costs')
+  @RequireCapability('unlock_transactions')
+  setActualCosts(
+    @Body() body: { entries: Array<{ shipmentId: string; shippingCostEur?: number | null; dutyImportEur?: number | null }> },
+  ) {
+    return this.svc.setActualCosts(body?.entries ?? []);
   }
 
   @Get(':id')
