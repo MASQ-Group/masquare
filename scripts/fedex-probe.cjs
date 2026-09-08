@@ -3,6 +3,8 @@
  *
  *   node --env-file=.env scripts/fedex-probe.cjs rate
  *   node --env-file=.env scripts/fedex-probe.cjs book
+ *   node --env-file=.env scripts/fedex-probe.cjs track [trackingNumber ...]
+ *   node --env-file=.env scripts/fedex-probe.cjs sweep [limit] [force]
  *
  * Why this exists: FedEx's sandbox goes down without warning, and its refusals for an outage, a
  * wrong account and an unrecognised lane read almost identically. Being able to fire one call and
@@ -25,12 +27,16 @@ const trimBase64 = (s) => s.replace(/"[A-Za-z0-9+/=]{200,}"/g, '"<base64 omitted
   const mode = process.argv[2] ?? 'rate';
   const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
   const svc = app.get(CarriersService);
-  const [account] = await app.get(PrismaService).carrierAccount.findMany({
-    where: { environment: 'sandbox', deletedAt: null },
+  const prisma = app.get(PrismaService);
+  // Tracking is a free read with no side effect, so it runs against PRODUCTION — where the real
+  // numbers are. Sandbox would answer about parcels that do not exist.
+  const environment = mode === 'track' || mode === 'sweep' ? 'production' : 'sandbox';
+  const [account] = await prisma.carrierAccount.findMany({
+    where: { environment, deletedAt: null },
     select: { id: true, name: true, accountNumber: true, originPostalCode: true, originCountryIso: true },
   });
   if (!account) {
-    console.error('No sandbox carrier account in this database. Add one in Setup → Carrier accounts.');
+    console.error(`No ${environment} carrier account in this database. Add one in Setup → Carrier accounts.`);
     process.exit(1);
   }
   console.log(`account: ${account.name} (${account.accountNumber}) from ${account.originPostalCode} ${account.originCountryIso}`);
@@ -73,8 +79,37 @@ const trimBase64 = (s) => s.replace(/"[A-Za-z0-9+/=]{200,}"/g, '"<base64 omitted
     console.log(`HTTP ${r.status} ok=${r.ok}`);
     if (r.message) console.log(r.message);
     console.log(trimBase64(JSON.stringify(r.response, null, 1)).slice(0, 8000));
+  } else if (mode === 'track') {
+    let numbers = process.argv.slice(3).filter(Boolean);
+    if (!numbers.length) {
+      // The most recently despatched FedEx parcels, which are the ones FedEx still has history for.
+      const rows = await prisma.shipment.findMany({
+        where: { deletedAt: null, trackingNumber: { not: null }, shippingService: { name: 'FedEx' } },
+        orderBy: { shipmentDate: 'desc' },
+        take: 3,
+        select: { trackingNumber: true, shipmentDate: true },
+      });
+      numbers = rows.map((r) => r.trackingNumber);
+      for (const r of rows) console.log(`  using ${r.trackingNumber} shipped ${r.shipmentDate.toISOString().slice(0, 10)}`);
+    }
+    const r = await svc.trackRaw(account.id, numbers);
+    console.log(`HTTP ${r.status} ok=${r.ok}`);
+    if (r.message) console.log(r.message);
+    console.log(trimBase64(JSON.stringify(r.response, null, 1)).slice(0, 20000));
+  } else if (mode === 'sweep') {
+    // The scheduled tracking sweep, run by hand. Same method, same rules, no cron to wait for.
+    // `force` re-asks about parcels already answered for — how a new column gets backfilled from
+    // FedEx rather than left null on everything shipped before it existed.
+    const shipmentIds = process.argv[4] === 'force'
+      ? (await prisma.shipment.findMany({
+          where: { deletedAt: null, trackingNumber: { not: null }, shippingService: { name: 'FedEx' } },
+          orderBy: { shipmentDate: 'desc' }, take: Number(process.argv[3]) || 300, select: { id: true },
+        })).map((r) => r.id)
+      : null;
+    const r = await svc.refreshTracking({ limit: Number(process.argv[3]) || 300, shipmentIds, force: !!shipmentIds });
+    console.log(JSON.stringify(r, null, 1));
   } else {
-    console.error(`Unknown mode "${mode}". Use "rate" or "book".`);
+    console.error(`Unknown mode "${mode}". Use "rate", "book", "track" or "sweep".`);
     process.exit(1);
   }
 

@@ -257,6 +257,24 @@ export const carriersApi = {
    */
   test: (id: string) => api.post<{ ok: boolean; message: string }>(`/carriers/accounts/${id}/test`, {}).then((r) => r.data),
   /**
+   * Ask the carrier where these parcels are, and store what it says.
+   *
+   * Naming shipments forces a refresh regardless of the polling cadence — a button that waited six
+   * hours for the schedule to allow it would look broken. Omitting them refreshes everything due,
+   * which is what the scheduled sweep does.
+   */
+  refreshTracking: (shipmentIds?: string[]) =>
+    api.post<{
+      considered: number; due: number; updated: number; delivered: number;
+      notFound: number; unaccounted: number; outOfRetention: number; failedCalls: number; messages: string[];
+    }>('/carriers/tracking/refresh', { shipmentIds: shipmentIds ?? null }).then((r) => r.data),
+  /** What we already hold for one shipment, scan history and all. Reads our own store, not FedEx. */
+  tracking: (shipmentId: string) =>
+    api.get<ShipmentTrackingDetail>(`/carriers/tracking/shipment/${shipmentId}`).then((r) => r.data),
+  /** Every shipment on one order. An order can go out in several parcels; this asks once. */
+  trackingForTransaction: (transactionId: string) =>
+    api.get<TransactionTracking>(`/carriers/tracking/transaction/${transactionId}`).then((r) => r.data),
+  /**
    * Ask FedEx what a shipment would cost. Returns the reply untouched.
    *
    * Unmapped on purpose: FedEx publishes sample requests but no sample responses, so this is how we
@@ -2268,7 +2286,99 @@ export interface Shipment {
   groupId: string | null;
   /** When accounting checked this cost against the carrier's invoice. Null = not yet. */
   reviewedAt?: string | null;
+  /**
+   * Where the carrier says it is. Null until somebody, or the sweep, has asked.
+   *
+   * Its own object rather than flattened onto the row, so it stays visibly a different kind of fact
+   * from the rest: everything else here was typed by a person, and this was fetched.
+   */
+  tracking?: ShipmentTrackingSummary | null;
   createdAt: string;
+}
+
+export interface ShipmentTrackingSummary {
+  /** FedEx's code — DL delivered, IT in transit, OC label created — and their own wording for it. */
+  statusCode: string | null;
+  statusDescription: string | null;
+  deliveredAt: string | null;
+  estimatedDeliveryAt: string | null;
+  lastScanAt: string | null;
+  lastScanDescription: string | null;
+  lastScanLocation: string | null;
+  /**
+   * The latest scan that reported a problem — a failed attempt, a customs hold.
+   *
+   * Present on most DELIVERED parcels too, where it is history rather than a task: two thirds of
+   * ours cleared customs with a hold scan on the way. Only worth putting in front of somebody while
+   * the parcel is still out.
+   */
+  exceptionCode: string | null;
+  exceptionDescription: string | null;
+  /** What the carrier weighed the box at — an independent figure, and the one they billed on. */
+  weightKg: number | null;
+  checkedAt: string | null;
+  /** False when the carrier does not recognise the number at all. */
+  found: boolean | null;
+}
+
+export interface ShipmentTrackingScan {
+  /** The carrier's timestamp, carrying the offset of the place the scan happened. Local, not ours. */
+  at: string;
+  /** The normalised status of the scan. Collapses arrivals, departures and van loads into IT. */
+  code: string;
+  /** The raw scan type — the only thing that distinguishes "out for delivery" from "in transit". */
+  eventType: string;
+  description: string;
+  city: string | null;
+  countryCode: string | null;
+  exceptionCode: string | null;
+  exceptionDescription: string | null;
+}
+
+/** One step of the journey. `done` without an `at` means a later step happened, so this one must have. */
+export interface TrackingStage {
+  key: 'label' | 'collected' | 'transit' | 'out_for_delivery' | 'delivered';
+  label: string;
+  at: string | null;
+  done: boolean;
+}
+
+export interface ShipmentTrackingRow extends ShipmentTrackingSummary {
+  trackingNumber: string;
+  shippedAt: string | null;
+  serviceName: string | null;
+  shipperReference: string | null;
+  scans: ShipmentTrackingScan[] | null;
+  /**
+   * The rest of the carrier's reply, whole, minus the people in it.
+   *
+   * Kept because FedEx drops a shipment's history ninety days after delivery — past that, this is
+   * the record. The signatory's name and both parties' contact people are stripped before storage;
+   * proof of delivery stays in the FedEx portal, under their retention rather than ours.
+   */
+  detailsJson: any | null;
+  lastError: string | null;
+  failureCount: number;
+}
+
+export interface ShipmentTrackingDetail {
+  shipmentId: string;
+  trackingNumber: string | null;
+  /** Whether this is a carrier we can ask at all. Only FedEx is connected. */
+  trackable: boolean;
+  tracking: ShipmentTrackingRow | null;
+  /** Derived server-side, so every screen showing a journey reads it from the same tested rule. */
+  stages: TrackingStage[];
+}
+
+/** One order's shipments, each with what the carrier says. Untracked carriers are included. */
+export interface TransactionTracking {
+  transactionId: string;
+  shipments: Array<ShipmentTrackingDetail & {
+    type: string;
+    shipmentDate: string;
+    serviceName: string | null;
+  }>;
 }
 
 export interface PendingShipment {

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CarriersService } from './carriers.service';
 import { CarriersController } from './carriers.controller';
 import { CryptoModule } from '../crypto/crypto.module';
+import { TrackingSweepService } from './tracking-sweep.service';
 
 /**
  * Carrier accounts and, in time, everything that runs on them — rating, labels, pickups, tracking.
@@ -12,7 +13,7 @@ import { CryptoModule } from '../crypto/crypto.module';
 @Module({
   imports: [CryptoModule],
   controllers: [CarriersController],
-  providers: [CarriersService],
+  providers: [CarriersService, TrackingSweepService],
   exports: [CarriersService],
 })
 export class CarriersModule {}

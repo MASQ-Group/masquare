@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { ArrowDown, ArrowRight, ArrowUp, BadgeCheck, Coins, Download, ExternalLink, Package, PackageCheck, PackagePlus, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BadgeCheck, CircleCheck, Coins, Download, ExternalLink, MapPin, Package, PackageCheck, PackagePlus, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadSheet, Pagination, Select } from '@masquare/ui';
 import { countriesApi, fbaShipmentsApi, salesChannelsApi, shipmentsApi, type FbaShipment, type PendingShipment, type Shipment } from '../lib/api';
@@ -16,11 +16,45 @@ import { ShipmentImportModal } from '../components/shipments/ShipmentImportModal
 import { SHIPMENT_HEADER, shipmentRowToCells } from '../components/shipments/shipmentColumns';
 import { FbaActualCostModal } from '../components/fba-shipments/FbaActualCostModal';
 import { ShipmentActualCostModal } from '../components/shipments/ShipmentActualCostModal';
+import { ShipmentTrackingModal } from '../components/shipments/ShipmentTrackingModal';
 import { PageHeader } from '../components/common/PageHeader';
 
 type Tab = 'pending' | 'dispatched' | 'all' | 'fba';
 
 const eur = (v: number | null | undefined) => (v != null ? `€${v.toFixed(2)}` : '—');
+
+/**
+ * One line of carrier status, under the tracking number.
+ *
+ * Deliberately quiet. Most of these rows read "Delivered", which is the answer nobody needs to act
+ * on, so only a parcel that is still out and has hit a problem gets any colour. Two thirds of our
+ * delivered parcels carry a customs-hold scan somewhere in their history; flagging those would
+ * train everybody to ignore the flag inside a week.
+ */
+function TrackingLine({ tracking }: { tracking: NonNullable<Shipment['tracking']> }) {
+  if (tracking.found === false) {
+    return (
+      <div className="mt-0.5 text-[11.5px] text-amber-700">Not recognised by FedEx</div>
+    );
+  }
+  if (tracking.deliveredAt) {
+    return (
+      <div className="mt-0.5 flex items-center gap-1 text-[11.5px] text-teal-700">
+        <CircleCheck size={12} /> Delivered {formatDate(tracking.deliveredAt)}
+      </div>
+    );
+  }
+  const held = tracking.exceptionDescription;
+  return (
+    <div className={`mt-0.5 flex items-center gap-1 text-[11.5px] ${held ? 'text-amber-700' : 'text-n-500'}`}>
+      {held && <AlertTriangle size={12} className="shrink-0" />}
+      <span className="truncate" title={[tracking.statusDescription, tracking.lastScanLocation, held].filter(Boolean).join(' · ')}>
+        {held ?? tracking.statusDescription ?? '—'}
+        {!held && tracking.lastScanLocation ? ` · ${tracking.lastScanLocation}` : ''}
+      </span>
+    </div>
+  );
+}
 
 interface ModalCtx {
   transactionId: string;
@@ -55,6 +89,7 @@ export function ShipmentsPage() {
   const [combineOpen, setCombineOpen] = useState(false);
   const [fbaActualFor, setFbaActualFor] = useState<FbaShipment | null>(null);
   const [costFor, setCostFor] = useState<Shipment | null>(null);
+  const [trackFor, setTrackFor] = useState<Shipment | null>(null);
   // Accounting's worklist is the unreviewed half; blank means both, which is everyone else's view.
   const [filterReview, setFilterReview] = usePersistentState<'' | 'reviewed' | 'unreviewed'>('shipments.filterReview', '');
   const [importOpen, setImportOpen] = useState(false);
@@ -456,7 +491,12 @@ export function ShipmentsPage() {
                           : <span className="tag border border-orange-100 bg-orange-50 text-orange-700">Inbound</span>}
                     </td>
                     <td className={td}>{s.shippingService?.name ?? '—'}</td>
-                    <td className={`${td} code`}>{s.trackingNumber ?? '—'}</td>
+                    <td className={td}>
+                      <div className="code">{s.trackingNumber ?? '—'}</div>
+                      {/* The carrier's own account, under the number it belongs to. Absent until the
+                          sweep has asked, and absent for good on carriers we cannot ask. */}
+                      {s.tracking && <TrackingLine tracking={s.tracking} />}
+                    </td>
                     <td className={`${td} mono text-right`}>
                       {eur(s.shippingCostEur)}
                       {s.reviewedAt && (
@@ -477,6 +517,17 @@ export function ShipmentsPage() {
                         </div>
                       ) : (
                       <div className="flex justify-end gap-1">
+                        {/* Offered on every row rather than only on FedEx ones: the modal is where
+                            "this carrier is not connected" gets said, and a button that silently
+                            disappears on some rows reads as a bug. */}
+                        <button
+                          className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800 disabled:cursor-not-allowed disabled:opacity-40"
+                          disabled={!s.trackingNumber}
+                          title={s.trackingNumber ? 'Where is this parcel?' : 'No tracking number recorded'}
+                          onClick={() => setTrackFor(s)}
+                        >
+                          <MapPin size={15} />
+                        </button>
                         <button
                           className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800"
                           title={s.shippingCostEur != null ? 'Edit the actual shipping cost and duty' : 'Register the actual shipping cost and duty'}
@@ -611,6 +662,13 @@ export function ShipmentsPage() {
           shipment={modal.shipment}
           onClose={() => setModal(null)}
           onSaved={() => { setModal(null); invalidate(); }}
+        />
+      )}
+      {trackFor && (
+        <ShipmentTrackingModal
+          shipment={trackFor}
+          onClose={() => setTrackFor(null)}
+          onRefreshed={invalidate}
         />
       )}
       {costFor && (

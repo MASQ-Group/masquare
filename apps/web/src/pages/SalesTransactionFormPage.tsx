@@ -13,6 +13,7 @@ import { RefField } from '../components/products/RefField';
 import { CountrySelect } from '../components/common/CountrySelect';
 import { ProductSkuField } from '../components/sales/ProductSkuField';
 import { DeliveryAddressCard } from '../components/sales/DeliveryAddressCard';
+import { TransactionTracking } from '../components/sales/TransactionTracking';
 import { SerialPicker } from '../components/sales/SerialPicker';
 import { useConfirm } from '../components/ConfirmProvider';
 
@@ -890,6 +891,10 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                 ? 'Local sale — amounts in EUR, no exchange rate and no sales fee. VAT is derived from each line’s VAT class when you save.'
                 : 'Marketplace sale — the channel’s sales fee and exchange rate apply. Enter the amounts the channel reported.'}
             </div>
+
+            {/* Where the parcels are, according to the carrier. Appears once something has shipped
+                and not before — on a draft order it would only repeat the fulfilment status. */}
+            {transaction?.id && <TransactionTracking transactionId={transaction.id} compact asCard />}
           </div>
         </div>
       </div>

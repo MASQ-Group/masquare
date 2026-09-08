@@ -8,6 +8,7 @@ import { ProductModal } from '../products/ProductModal';
 import { CountryTag } from '../common/Flag';
 import { ChannelChip, useChannelChips } from '../common/ChannelChip';
 import { EntityHistory } from '../common/EntityHistory';
+import { TransactionTracking } from './TransactionTracking';
 
 interface Props {
   transaction: SalesTransaction;
@@ -70,7 +71,9 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
       initialSize={{ w: 1040, h: 660 }}
       // History sits behind a tab rather than under the figures: it is consulted when something
       // looks wrong, which is rarely, and it would otherwise push the money off the first screen.
-      tabs={[{ key: 'summary', label: 'Summary' }, { key: 'history', label: 'History' }]}
+      // Tracking gets one for the opposite reason — it is consulted often, and it is a running
+      // story rather than a figure, so it wants the room a tab gives it.
+      tabs={[{ key: 'summary', label: 'Summary' }, { key: 'tracking', label: 'Tracking' }, { key: 'history', label: 'History' }]}
       activeTab={tab}
       onTabChange={setTab}
       primaryLabel="Edit transaction"
@@ -83,7 +86,8 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
       {tab === 'history' && (
         <EntityHistory entityKey="sales-transaction" entityId={t.id} fetchPage={(id, p) => salesTransactionsApi.activity(id, p)} />
       )}
-      <div className={`flex flex-col gap-5 ${tab === 'history' ? 'hidden' : ''}`}>
+      {tab === 'tracking' && <TransactionTracking transactionId={t.id} />}
+      <div className={`flex flex-col gap-5 ${tab === 'summary' ? '' : 'hidden'}`}>
         {/* Header facts */}
         <div className="grid grid-cols-4 gap-x-4 gap-y-3 max-[760px]:grid-cols-2">
           <Fact label="Date" value={formatDate(t.date)} mono />

@@ -47,6 +47,22 @@ const txContext = {
 const include = {
   transaction: txContext,
   shippingService: { select: { id: true, name: true } },
+  /**
+   * Where the carrier says the parcel is.
+   *
+   * Selected field by field rather than whole: the row also holds the full scan history, which runs
+   * to twenty entries a parcel and would be fifty times that on one page of a list nobody is
+   * reading scans on. The history is fetched when a shipment is opened.
+   */
+  tracking: {
+    select: {
+      statusCode: true, statusDescription: true,
+      deliveredAt: true, estimatedDeliveryAt: true,
+      lastScanAt: true, lastScanDescription: true, lastScanLocation: true,
+      exceptionCode: true, exceptionDescription: true,
+      weightKg: true, checkedAt: true, found: true,
+    },
+  },
 } satisfies Prisma.ShipmentInclude;
 
 @Injectable()
@@ -80,6 +96,14 @@ export class ShipmentsService {
        * not much of an assurance.
        */
       reviewedAt: s.reviewedAt ?? null,
+      /**
+       * The carrier's own account of where it is. Null until somebody or the sweep has asked.
+       *
+       * Kept in its own object rather than flattened onto the row, so it stays visibly a DIFFERENT
+       * kind of fact from the rest: everything else here was entered by a person and is theirs to
+       * be held to, and this was fetched and can be fetched again.
+       */
+      tracking: s.tracking ?? null,
       createdAt: s.createdAt,
     };
   }
@@ -346,6 +370,9 @@ export class ShipmentsService {
         dutyImportEur: null,
         comments: r.comments ?? null,
         groupId: null,
+        // Shaped like an order shipment so the two can share a table. FBA parcels are not tracked
+        // here — they are Amazon's inbound consignments, with their own status on Seller Central.
+        tracking: null,
         createdAt: r.createdAt,
       };
     });

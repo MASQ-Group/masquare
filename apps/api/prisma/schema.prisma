@@ -2370,6 +2370,108 @@ model CarrierBooking {
   @@map("carrier_booking")
 }
 
+/**
+ * Where a parcel is, according to the carrier.
+ *
+ * A table of its own rather than columns on Shipment, for two reasons. It is entirely DERIVED — every
+ * field can be re-fetched from FedEx and none of it is anybody's entry, so it must never sit beside
+ * the figures people typed and are held to. And it has its own lifecycle: FedEx keeps a shipment's
+ * history for ninety days and then drops it, so a row here goes quiet long before the shipment it
+ * describes stops mattering.
+ *
+ * One row per shipment, not per tracking number. Several of our shipment rows can share a number
+ * when orders travel as one parcel; each still wants its own answer on its own screen, and the sweep
+ * de-duplicates numbers before it calls FedEx so the batch of thirty is not spent twice on one box.
+ */
+model ShipmentTracking {
+  id         String @id @default(uuid()) @db.Uuid
+  shipmentId String @unique @map("shipment_id") @db.Uuid
+
+  /// 'fedex' for now — the same code CarrierAccount uses, so a second carrier is a row not a migration.
+  carrier String @default("fedex")
+
+  /**
+   * The number this row is ABOUT, copied from the shipment rather than read through it.
+   *
+   * Copied so a corrected tracking number invalidates what we hold instead of silently relabelling
+   * a foreign parcel's history as this one's. The service compares the two and starts again when
+   * they differ.
+   */
+  trackingNumber String @map("tracking_number")
+
+  /// FedEx's own code and FedEx's own wording. We deliberately do not keep a second vocabulary.
+  statusCode        String? @map("status_code")
+  statusDescription String? @map("status_description")
+
+  deliveredAt         DateTime? @map("delivered_at")
+  estimatedDeliveryAt DateTime? @map("estimated_delivery_at")
+  /// When FedEx actually took possession, which is not always the date on the label.
+  shippedAt           DateTime? @map("shipped_at")
+
+  lastScanAt          DateTime? @map("last_scan_at")
+  lastScanDescription String?   @map("last_scan_description")
+  lastScanLocation    String?   @map("last_scan_location")
+
+  /**
+   * The latest scan that reported a problem, held separately from the latest scan.
+   *
+   * A failed delivery attempt is the one thing on a tracking screen somebody can act on, and it
+   * disappears from the status the moment the parcel moves again.
+   */
+  exceptionCode        String? @map("exception_code")
+  exceptionDescription String? @map("exception_description")
+
+  /// The service FedEx actually carried it on, in their vocabulary.
+  serviceName String? @map("service_name")
+
+  /// What FedEx weighed the box at, and billed on — an independent measurement of our own parcel.
+  weightKg Float? @map("weight_kg")
+
+  /// The reference on the waybill as FedEx holds it. For our Amazon shipments, the order id.
+  shipperReference String? @map("shipper_reference")
+
+  /// The scan history, newest first, normalised. The signatory's name is deliberately not among it.
+  scans Json?
+
+  /**
+   * The rest of the carrier's reply, whole, minus the people in it.
+   *
+   * Kept because it is the only copy that will ever exist: FedEx drops a shipment's history ninety
+   * days after delivery, and past that this IS the record. A few kilobytes buys everything the
+   * named columns leave behind — packaging and dimensions, delivery attempts, special handling,
+   * the transit commitment, the facilities it passed through.
+   *
+   * Redacted before it gets here, in one place, by `redactTrackResult`: the signatory's name and
+   * both parties' contact people are removed. The customer's name and number are already held once
+   * on the delivery address under a twelve-month retention with a purge behind it, and a second
+   * copy buried in a blob would sit outside that policy and outlive it. Proof of delivery stays
+   * available in the FedEx portal, under their retention rather than ours.
+   */
+  detailsJson Json? @map("details_json")
+
+  /// When we last asked, whether FedEx knew the number, and what it said if it did not.
+  checkedAt DateTime? @map("checked_at")
+  found     Boolean?
+  lastError String?   @map("last_error")
+
+  /**
+   * Consecutive refusals for this number.
+   *
+   * The stopping condition for a poller with no webhook behind it. The same column holds Cyprus Post
+   * numbers as FedEx ones, and a number FedEx does not recognise will never start being recognised.
+   */
+  failureCount Int @default(0) @map("failure_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([trackingNumber])
+  @@index([deliveredAt])
+  @@map("shipment_tracking")
+}
+
 /// Carrier credentials, encrypted at rest by the same service that holds the marketplace keys.
 ///
 /// A separate table rather than columns, so a secret is never selected by accident: reading an
@@ -2658,6 +2760,7 @@ model Shipment {
   transaction     SalesTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   shippingService ShippingService? @relation("ShipmentShippingService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
   carrierBookings CarrierBooking[]
+  tracking        ShipmentTracking?
   warehouse       Warehouse?       @relation("ShipmentWarehouse", fields: [warehouseId], references: [id], onDelete: SetNull)
 
   @@index([transactionId])

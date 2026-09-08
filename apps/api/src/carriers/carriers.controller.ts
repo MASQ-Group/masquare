@@ -156,6 +156,49 @@ export class CarriersController {
     return this.svc.cancel(bookingId, user.sub, companyIds);
   }
 
+  /**
+   * Ask FedEx where these parcels are, and store the answer.
+   *
+   * No capability gate beyond reaching the page. It reads our own shipments, changes nothing
+   * outside, and spends a call against an allowance of 100,000 a day — nothing here is worth
+   * locking away from the people whose job is answering "where is it".
+   *
+   * `shipmentIds` omitted means everything due, which is what the scheduled sweep does. Naming
+   * shipments forces a refresh regardless of the cadence, which is what a button does.
+   */
+  @Post('tracking/refresh')
+  refreshTracking(
+    @Body() body: { shipmentIds?: string[] | null; limit?: number | null },
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    const shipmentIds = body?.shipmentIds?.filter(Boolean) ?? null;
+    return this.svc.refreshTracking({
+      shipmentIds,
+      companyIds,
+      // Asking about named shipments is somebody pressing a button. Waiting six hours for the
+      // cadence to allow it would make the button look broken.
+      force: !!shipmentIds?.length,
+      limit: body?.limit ?? undefined,
+    });
+  }
+
+  /** What we already hold for one shipment — status, scan history and all. No call to FedEx. */
+  @Get('tracking/shipment/:shipmentId')
+  tracking(@Param('shipmentId') shipmentId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.trackingForShipment(shipmentId, companyIds);
+  }
+
+  /**
+   * The same, for every shipment on one order.
+   *
+   * What an order screen actually needs: an order can go out in several parcels, and asking per
+   * shipment would mean the screen firing a request per row to answer one question.
+   */
+  @Get('tracking/transaction/:transactionId')
+  trackingForTransaction(@Param('transactionId') transactionId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.trackingForTransaction(transactionId, companyIds);
+  }
+
   @Post('accounts/:id/rate-quote')
   rateQuote(
     @Param('id') id: string,

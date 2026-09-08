@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
 import {
@@ -15,6 +16,11 @@ import {
   SHIP_CANCEL_PATH, SHIP_PATH, buildCancelRequest, buildShipRequest, missingForBooking,
   type ShipParty, type ShipRequestInput,
 } from './fedex-ship';
+import {
+  FEDEX_NAME_FRAGMENT, TRACK_HISTORY_DAYS, TRACK_PATH, buildTrackRequest, chunkTrackingNumbers,
+  describeTrackFailure, dueForRefresh, isFedexService,
+} from './fedex-track';
+import { parseTrackReply, trackStages, type TrackResult, type TrackScan } from './fedex-track-parse';
 
 /** The credential fields a FedEx account holds. Nothing else is accepted or stored. */
 export const FEDEX_SECRET_FIELDS = ['apiKey', 'secretKey'] as const;
@@ -955,6 +961,357 @@ export class CarriersService {
       data: { status: 'cancelled', cancelledAt: new Date() },
     });
     return { ok: true as const, alreadyCancelled: false };
+  }
+
+  // ------------------------------------------------------------------ tracking
+
+  /**
+   * Ask FedEx where some parcels are, and hand back the reply untouched.
+   *
+   * Unmapped on purpose, for the same reason rating was: FedEx ships sample REQUESTS and no sample
+   * responses, and every time this integration guessed at a response shape it was wrong. Unlike
+   * booking, though, learning this one costs nothing — tracking is a free read with no side effect,
+   * so a single real call against a number we already hold settles it.
+   *
+   * Numbers are batched to thirty per call by the caller; this sends one batch.
+   */
+  async trackRaw(accountId: string, numbers: string[], companyIds?: string[]) {
+    const account = await this.prisma.carrierAccount.findFirst({
+      where: { id: accountId, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: { id: true, environment: true, isActive: true },
+    });
+    if (!account) throw new NotFoundException('Carrier account not found');
+    if (!account.isActive) throw new BadRequestException('Test the connection on this account before tracking with it.');
+
+    const body = buildTrackRequest(numbers);
+    if (!body.trackingInfo.length) throw new BadRequestException('No tracking numbers to look up.');
+
+    const send = async (token: string) =>
+      fetch(`${baseUrlFor(account.environment)}${TRACK_PATH}`, {
+        method: 'POST', headers: rateHeaders(token), body: JSON.stringify(body),
+      });
+
+    let res = await send(await this.token(accountId));
+    if (res.status === 401) res = await send(await this.token(accountId, { force: true }));
+
+    const text = await res.text();
+    let parsed: any = null;
+    try { parsed = JSON.parse(text); } catch { /* raw below */ }
+
+    if (!res.ok) this.logger.warn(`FedEx tracking failed (${res.status}) on account ${accountId}`);
+    return {
+      ok: res.ok,
+      status: res.status,
+      message: res.ok ? null : describeTrackFailure(res.status, parsed),
+      request: body,
+      response: parsed ?? text.slice(0, 40_000),
+    };
+  }
+
+  /**
+   * Bring stored tracking up to date, for one shipment or for everything that is due.
+   *
+   * The whole tracking design in one method, so the rules are in one place rather than spread
+   * between a cron job and a button:
+   *
+   *  - **Only FedEx shipments.** The tracking column also holds Cyprus Post numbers, and sending
+   *    those to FedEx would produce a few thousand confident "not found"s.
+   *  - **The company's own account.** A shipment is tracked with the account belonging to the
+   *    company that shipped it, never with whichever one happened to be first.
+   *  - **Production accounts only.** Sandbox does not know our parcels; it would answer, and its
+   *    answer would be fiction.
+   *  - **Numbers are de-duplicated before the call.** Orders that travelled as one parcel share a
+   *    number; each shipment row still gets its own answer, but FedEx is asked once.
+   *
+   * Returns counts rather than rows: this is called by a scheduled sweep as often as by a person,
+   * and what a sweep needs to say afterwards is how much it did.
+   */
+  async refreshTracking(
+    opts: {
+      /** Refresh these specific shipments. Omitted means everything due. */
+      shipmentIds?: string[] | null;
+      companyIds?: string[] | null;
+      /** Ignore the cadence. What the button on a screen does; never what the sweep does. */
+      force?: boolean;
+      /** Most shipments to consider in one run. Thirty per FedEx call, so 300 is ten calls. */
+      limit?: number;
+    } = {},
+  ) {
+    const now = new Date();
+    const limit = Math.min(3_000, Math.max(1, opts.limit ?? 300));
+
+    const candidates = await this.prisma.shipment.findMany({
+      where: {
+        deletedAt: null,
+        trackingNumber: { not: null },
+        ...(opts.shipmentIds?.length ? { id: { in: opts.shipmentIds } } : {}),
+        // A cheap narrowing on the same fragment isFedexService matches, so that thousands of
+        // Cyprus Post rows are not read into memory to be discarded. The predicate below still
+        // decides.
+        shippingService: {
+          is: {
+            OR: [
+              { name: { contains: FEDEX_NAME_FRAGMENT, mode: 'insensitive' } },
+              { alias: { contains: FEDEX_NAME_FRAGMENT, mode: 'insensitive' } },
+            ],
+          },
+        },
+        transaction: { deletedAt: null, ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : {}) },
+      },
+      // Newest first: the parcels somebody is actually waiting on, and the only ones FedEx still
+      // holds history for.
+      orderBy: { shipmentDate: 'desc' },
+      take: limit,
+      select: {
+        id: true, trackingNumber: true, shipmentDate: true,
+        shippingService: { select: { name: true, alias: true } },
+        transaction: { select: { companyId: true } },
+        tracking: { select: { trackingNumber: true, deliveredAt: true, checkedAt: true, failureCount: true } },
+      },
+    });
+
+    const due = candidates.filter((s) => {
+      if (!isFedexService(s.shippingService?.name, s.shippingService?.alias)) return false;
+      /**
+       * A corrected tracking number starts again from nothing.
+       *
+       * Without this, a typo fixed on the shipment would keep the old number's five failures and
+       * its "delivered" — a foreign parcel's history, relabelled as this one's and never re-asked.
+       */
+      const stale = s.tracking && s.tracking.trackingNumber !== s.trackingNumber;
+      return dueForRefresh(
+        {
+          shipmentDate: s.shipmentDate,
+          deliveredAt: stale ? null : (s.tracking?.deliveredAt ?? null),
+          checkedAt: stale ? null : (s.tracking?.checkedAt ?? null),
+          failureCount: stale ? 0 : (s.tracking?.failureCount ?? 0),
+        },
+        now,
+        { force: !!opts.force },
+      );
+    });
+
+    const result = {
+      considered: candidates.length,
+      due: due.length,
+      updated: 0,
+      delivered: 0,
+      notFound: 0,
+      /** Shipments whose company has no usable FedEx account — a setting, not a failure. */
+      unaccounted: 0,
+      /**
+       * Asked for, but past what FedEx keeps.
+       *
+       * Counted separately so a Refresh that does nothing can say WHY. "Nothing new" and "FedEx
+       * deleted this history in June" are different answers, and only one of them is worth
+       * pressing the button again for.
+       */
+      outOfRetention: 0,
+      /** Calls FedEx refused outright. Separate from notFound, which is per number. */
+      failedCalls: 0,
+      messages: [] as string[],
+    };
+    if (opts.shipmentIds?.length) {
+      // Only meaningful for a named request: on a sweep, everything old is out of retention and
+      // saying so of two thousand shipments every two hours is noise, not information.
+      result.outOfRetention = candidates.filter(
+        (s) =>
+          isFedexService(s.shippingService?.name, s.shippingService?.alias) &&
+          !due.includes(s) &&
+          (now.getTime() - s.shipmentDate.getTime()) / 86_400_000 > TRACK_HISTORY_DAYS,
+      ).length;
+    }
+    if (!due.length) return result;
+
+    const accounts = await this.prisma.carrierAccount.findMany({
+      where: { carrier: 'fedex', environment: 'production', isActive: true, deletedAt: null },
+      select: { id: true, companyId: true },
+    });
+    const accountByCompany = new Map(accounts.map((a) => [a.companyId, a.id]));
+
+    const byCompany = new Map<string, typeof due>();
+    for (const s of due) {
+      const companyId = s.transaction?.companyId;
+      if (!companyId || !accountByCompany.has(companyId)) {
+        result.unaccounted += 1;
+        continue;
+      }
+      const list = byCompany.get(companyId) ?? [];
+      list.push(s);
+      byCompany.set(companyId, list);
+    }
+    if (byCompany.size === 0 && result.unaccounted) {
+      result.messages.push(
+        'No active production FedEx account for these shipments’ company. Add one in Setup → Carrier accounts and test it.',
+      );
+      return result;
+    }
+
+    for (const [companyId, shipments] of byCompany) {
+      const accountId = accountByCompany.get(companyId)!;
+      for (const batch of chunkTrackingNumbers(shipments.map((s) => s.trackingNumber))) {
+        let reply: Awaited<ReturnType<CarriersService['trackRaw']>>;
+        try {
+          reply = await this.trackRaw(accountId, batch);
+        } catch (e: any) {
+          // One batch failing must not abandon the rest — a sweep that stops at the first refusal
+          // leaves everything after it silently un-updated.
+          result.failedCalls += 1;
+          result.messages.push(e?.message ?? 'FedEx could not be reached.');
+          continue;
+        }
+        if (!reply.ok) {
+          /**
+           * A refused CALL is not the numbers' fault, so no failure is counted against them.
+           *
+           * Counting it would retire perfectly good tracking numbers over a FedEx outage — five
+           * bad afternoons and a live parcel stops being asked about for good.
+           */
+          result.failedCalls += 1;
+          if (reply.message) result.messages.push(reply.message);
+          continue;
+        }
+
+        const byNumber = new Map(parseTrackReply(reply.response).map((r) => [r.trackingNumber, r]));
+        for (const shipment of shipments) {
+          const found = byNumber.get((shipment.trackingNumber ?? '').trim());
+          if (!found) continue;
+          await this.writeTracking(shipment.id, shipment.trackingNumber!, found, now);
+          result.updated += 1;
+          if (found.deliveredAt) result.delivered += 1;
+          if (!found.found) result.notFound += 1;
+        }
+      }
+    }
+    return result;
+  }
+
+  /** One shipment's stored tracking, scans and all. Null when nobody has asked FedEx yet. */
+  async trackingForShipment(shipmentId: string, companyIds?: string[]) {
+    const shipment = await this.prisma.shipment.findFirst({
+      where: {
+        id: shipmentId, deletedAt: null,
+        transaction: { deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      },
+      select: {
+        id: true, trackingNumber: true,
+        shippingService: { select: { name: true, alias: true } },
+        tracking: true,
+      },
+    });
+    if (!shipment) throw new NotFoundException('Shipment not found');
+    return this.trackingView(shipment);
+  }
+
+  /**
+   * Every shipment on one order, with what the carrier says about each.
+   *
+   * Keyed on the transaction because that is the question asked from an order screen — "where is
+   * this customer's parcel" — and an order can have gone out in several. Returns a row per
+   * shipment, including the ones on carriers we cannot ask, so the screen shows the whole
+   * consignment rather than the tracked half of it.
+   */
+  async trackingForTransaction(transactionId: string, companyIds?: string[]) {
+    const tx = await this.prisma.salesTransaction.findFirst({
+      where: { id: transactionId, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: { id: true },
+    });
+    if (!tx) throw new NotFoundException('Sales transaction not found');
+
+    const shipments = await this.prisma.shipment.findMany({
+      where: { transactionId, deletedAt: null },
+      orderBy: [{ shipmentDate: 'asc' }, { createdAt: 'asc' }],
+      select: {
+        id: true, trackingNumber: true, type: true, shipmentDate: true,
+        shippingService: { select: { name: true, alias: true } },
+        tracking: true,
+      },
+    });
+    return {
+      transactionId,
+      shipments: shipments.map((s) => ({
+        ...this.trackingView(s),
+        type: s.type,
+        shipmentDate: s.shipmentDate,
+        serviceName: s.shippingService?.name ?? null,
+      })),
+    };
+  }
+
+  /**
+   * One shipment's tracking as a screen wants it.
+   *
+   * The stages are derived here rather than in the browser so that every surface showing this —
+   * the shipments log, the order summary, the order form — reads the same journey from the same
+   * rule, and that rule has tests.
+   */
+  private trackingView(shipment: {
+    id: string;
+    trackingNumber: string | null;
+    shippingService?: { name: string | null; alias: string | null } | null;
+    tracking: any;
+  }) {
+    const t = shipment.tracking ?? null;
+    const scans = (Array.isArray(t?.scans) ? t.scans : []) as TrackScan[];
+    return {
+      shipmentId: shipment.id,
+      trackingNumber: shipment.trackingNumber,
+      /** Whether this is a carrier we can ask at all — the screen offers no button when it is not. */
+      trackable: isFedexService(shipment.shippingService?.name, shipment.shippingService?.alias),
+      tracking: t,
+      /** Collected → in transit → out for delivery → delivered. Empty when nobody has asked yet. */
+      stages: t && t.found !== false ? trackStages(scans, t.deliveredAt ? new Date(t.deliveredAt).toISOString() : null) : [],
+    };
+  }
+
+  /**
+   * Write what FedEx said, without losing what it said last time.
+   *
+   * A number that answered yesterday and is refused today keeps its status and its history: the
+   * likeliest reason for a miss on a number that used to work is FedEx's ninety-day retention
+   * expiring, and blanking a delivered parcel to "unknown" because its history aged out would be a
+   * plain loss of information.
+   */
+  private async writeTracking(shipmentId: string, trackingNumber: string, r: TrackResult, now: Date) {
+    const when = (iso: string | null) => (iso ? new Date(iso) : null);
+
+    const common = { checkedAt: now, found: r.found, trackingNumber };
+    const data = r.found
+      ? {
+          ...common,
+          statusCode: r.statusCode,
+          statusDescription: r.statusDescription,
+          deliveredAt: when(r.deliveredAt),
+          estimatedDeliveryAt: when(r.estimatedDeliveryAt),
+          shippedAt: when(r.shippedAt),
+          lastScanAt: when(r.lastScanAt),
+          lastScanDescription: r.lastScanDescription,
+          lastScanLocation: r.lastScanLocation,
+          exceptionCode: r.exceptionCode,
+          exceptionDescription: r.exceptionDescription,
+          serviceName: r.serviceName,
+          weightKg: r.weightKg,
+          shipperReference: r.shipperReference,
+          scans: r.scans as unknown as Prisma.InputJsonValue,
+          // Everything else FedEx sent, redacted upstream. See the column comment for why it is
+          // kept whole rather than distilled into more columns.
+          detailsJson: (r.details ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          failureCount: 0,
+          lastError: null,
+        }
+      : { ...common, lastError: r.errorMessage ?? r.errorCode, failureCount: { increment: 1 } };
+
+    await this.prisma.shipmentTracking.upsert({
+      where: { shipmentId },
+      create: {
+        shipmentId,
+        ...data,
+        // `increment` is an update operation and means nothing on a create: the first refusal is
+        // simply the first one.
+        failureCount: r.found ? 0 : 1,
+      },
+      update: data,
+    });
   }
 
   /** Us, as FedEx needs us described: the account's origin, or the company's own address. */
