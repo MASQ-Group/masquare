@@ -214,6 +214,35 @@ export interface CarrierAccount {
   secrets: Array<{ fieldKey: string; last4: string; updatedAt: string }>;
 }
 
+/** One service FedEx will carry this shipment on, at our negotiated price. */
+export interface FedexRateOption {
+  serviceType: string;
+  /** FedEx's own name for it. */
+  serviceName: string;
+  /** What WE pay, surcharges included. The figure a profit calculation needs. */
+  netCharge: number;
+  currency: string;
+  baseCharge: number;
+  totalDiscount: number;
+  surcharges: Array<{ type: string; description: string; amount: number }>;
+  billingWeightKg: number | null;
+  /** The published price, so the discount is visible. */
+  listCharge: number | null;
+  /** True when no negotiated rate came back and netCharge is the PUBLISHED price. */
+  isListPriceOnly: boolean;
+  deliveryAt: string | null;
+  deliveryMessage: string | null;
+  requiredDocuments: string[];
+  /** NOT included in netCharge. A second cost wherever we ship duty-paid. */
+  dutiesAndTaxes: number;
+}
+export interface FedexRateReply {
+  options: FedexRateOption[];
+  /** FedEx's own notes — address corrections and the like. Not failures. */
+  alerts: Array<{ code: string; message: string; type: string }>;
+  quoteDate: string | null;
+}
+
 export const carriersApi = {
   list: () => api.get<CarrierAccount[]>('/carriers/accounts').then((r) => r.data),
   get: (id: string) => api.get<CarrierAccount>(`/carriers/accounts/${id}`).then((r) => r.data),
@@ -243,6 +272,8 @@ export const carriersApi = {
   }) =>
     api.post<{
       ok: boolean; status: number; request: unknown; response: unknown;
+      /** The quote read into our own shape. Null on failure — never an empty list. */
+      quote: FedexRateReply | null;
       /** What the failure means, rather than what FedEx called it. Null on success. */
       message: string | null;
       origin: 'account' | 'company' | null; customs: boolean;

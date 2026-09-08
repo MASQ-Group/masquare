@@ -174,8 +174,15 @@ describe('the service catalogue for a Cyprus origin', () => {
     expect(CYPRUS_SERVICE_TYPES).not.toContain('FEDEX_REGIONAL_ECONOMY' as any);
   });
 
-  it('includes the services Cyprus actually sells', () => {
-    expect(CYPRUS_SERVICE_TYPES).toContain('INTERNATIONAL_PRIORITY');
+  it('uses the prefixed name for International Priority, as a live quote proved', () => {
+    // This was INTERNATIONAL_PRIORITY until a real Cyprus->GB reply came back with
+    // FEDEX_INTERNATIONAL_PRIORITY. The unprefixed name is plausible, appears in FedEx's own
+    // samples, and would have quietly returned nothing on this lane.
+    expect(CYPRUS_SERVICE_TYPES).toContain('FEDEX_INTERNATIONAL_PRIORITY');
+    expect(CYPRUS_SERVICE_TYPES).not.toContain('INTERNATIONAL_PRIORITY' as any);
+  });
+
+  it('still lists the services the handoff names but a live quote has not yet returned', () => {
     expect(CYPRUS_SERVICE_TYPES).toContain('INTERNATIONAL_ECONOMY');
   });
 });

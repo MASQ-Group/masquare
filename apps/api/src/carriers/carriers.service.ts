@@ -9,6 +9,7 @@ import {
   RATE_PATH, buildRateRequest, describeRateFailure, missingForQuote, needsCustoms, rateHeaders,
   type RateQuoteInput, type RateEndpoint, type RateParcel,
 } from './fedex-rate';
+import { parseRateReply } from './fedex-rate-parse';
 
 /** The credential fields a FedEx account holds. Nothing else is accepted or stored. */
 export const FEDEX_SECRET_FIELDS = ['apiKey', 'secretKey'] as const;
@@ -470,6 +471,13 @@ export class CarriersService {
        * with it moments earlier. Null when the call succeeded.
        */
       message: res.ok ? null : describeRateFailure(res.status, parsed),
+      /**
+       * The quote, read into our own shape: negotiated price, surcharges, transit commitment.
+       *
+       * Null on failure — an empty options list would read as "FedEx has nothing on this lane",
+       * which is a different and much more misleading answer than "the request was refused".
+       */
+      quote: res.ok ? parseRateReply(parsed) : null,
       /** What we sent, so a rejection can be read against it rather than guessed at. */
       request: body,
       response: parsed ?? text.slice(0, 20_000),

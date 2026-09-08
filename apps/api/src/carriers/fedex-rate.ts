@@ -64,19 +64,34 @@ export interface RateQuoteInput {
  * would put a service on a screen that may simply error.
  */
 export const CYPRUS_SERVICE_TYPES = [
+  // Confirmed by a live Cyprus->GB quote on 8 September 2026. The first three are what FedEx
+  // actually returned; the rest are from the handoff and remain unconfirmed on a real lane.
   'INTERNATIONAL_FIRST',
   'FEDEX_INTERNATIONAL_PRIORITY_EXPRESS',
-  'INTERNATIONAL_PRIORITY',
+  /**
+   * FEDEX_-prefixed, and this was wrong until a real reply corrected it.
+   *
+   * The catalogue said INTERNATIONAL_PRIORITY, which reads perfectly plausibly and appears in
+   * FedEx's own samples. What comes back from Cyprus is FEDEX_INTERNATIONAL_PRIORITY. Asking for
+   * the unprefixed name would have returned nothing, with no error to explain why.
+   */
+  'FEDEX_INTERNATIONAL_PRIORITY',
   'INTERNATIONAL_ECONOMY',
   'INTERNATIONAL_PRIORITY_FREIGHT',
   'INTERNATIONAL_ECONOMY_FREIGHT',
 ] as const;
 
-/** Human labels for the services above. */
+/**
+ * Fallback labels, used only where a reply carries no name of its own.
+ *
+ * FedEx returns `serviceName` on every rated service — "FedEx International First®" — and that is
+ * better than anything we would maintain here: it is current, it is theirs, and it cannot drift out
+ * of step with what they actually sell.
+ */
 export const SERVICE_LABELS: Record<string, string> = {
   INTERNATIONAL_FIRST: 'International First',
   FEDEX_INTERNATIONAL_PRIORITY_EXPRESS: 'International Priority Express',
-  INTERNATIONAL_PRIORITY: 'International Priority',
+  FEDEX_INTERNATIONAL_PRIORITY: 'International Priority',
   INTERNATIONAL_ECONOMY: 'International Economy',
   INTERNATIONAL_PRIORITY_FREIGHT: 'International Priority Freight',
   INTERNATIONAL_ECONOMY_FREIGHT: 'International Economy Freight',

@@ -127,6 +127,71 @@ export function RateQuoteModal({ account, onClose }: Props) {
                 </p>
               )}
 
+              {/* The quote itself, read rather than dumped. */}
+              {result.quote && result.quote.options.length > 0 && (
+                <div className="mb-4">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="border-b border-n-200 bg-n-25 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-n-500">Service</th>
+                        <th className="border-b border-n-200 bg-n-25 px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Our price</th>
+                        <th className="border-b border-n-200 bg-n-25 px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-n-500">Published</th>
+                        <th className="border-b border-n-200 bg-n-25 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-n-500">Delivery</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.quote.options.map((o) => (
+                        <tr key={o.serviceType}>
+                          <td className="border-b border-n-100 px-3 py-2 text-[13px] text-n-800">
+                            {o.serviceName}
+                            {o.surcharges.length > 0 && (
+                              <span className="block text-[11.5px] text-n-400">
+                                incl. {o.surcharges.map((sc) => `${sc.description} ${sc.amount.toFixed(2)}`).join(', ')}
+                              </span>
+                            )}
+                            {/* Said out loud rather than left for somebody to infer from a number. */}
+                            {o.isListPriceOnly && (
+                              <span className="block text-[11.5px] font-medium text-orange-700">
+                                published price — FedEx returned no negotiated rate for this service
+                              </span>
+                            )}
+                          </td>
+                          <td className="border-b border-n-100 px-3 py-2 text-right">
+                            <span className="mono text-[13px] font-semibold text-n-900">{o.netCharge.toFixed(2)} {o.currency}</span>
+                          </td>
+                          <td className="border-b border-n-100 px-3 py-2 text-right">
+                            {/* Shown beside ours so the negotiated discount is visible rather than
+                                taken on trust. On this lane it is the difference between 30 and 305. */}
+                            <span className="mono text-[12.5px] text-n-400">
+                              {o.listCharge != null && o.listCharge !== o.netCharge ? `${o.listCharge.toFixed(2)} ${o.currency}` : '—'}
+                            </span>
+                          </td>
+                          <td className="border-b border-n-100 px-3 py-2 text-[12.5px] text-n-600">
+                            {o.deliveryAt ? new Date(o.deliveryAt).toLocaleString() : '—'}
+                            {o.deliveryMessage && <span className="block text-[11.5px] text-n-400">{o.deliveryMessage.trim()}</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* FedEx's own words on every international quote, and easy to forget: the price
+                      above is carriage only. Where we ship duty-paid it is not the whole cost. */}
+                  {result.customs && (
+                    <p className="mt-2 text-[12px] text-n-500">
+                      Carriage only. Duties, taxes and clearance fees are not included — on a
+                      duty-paid shipment they are a second cost.
+                    </p>
+                  )}
+
+                  {result.quote.alerts.length > 0 && (
+                    <ul className="mt-2 list-disc pl-5 text-[11.5px] text-n-400">
+                      {result.quote.alerts.map((al) => <li key={al.code}>{al.message}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )}
+
               {/* Both halves. A rejection can only be read against what was actually sent. */}
               <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-n-500">What we sent</div>
               <pre className="max-h-[200px] overflow-auto rounded-md border border-n-200 bg-n-25 p-3 text-[11.5px] leading-[1.5] text-n-700">
