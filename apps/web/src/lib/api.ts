@@ -2491,6 +2491,55 @@ export const activityApi = {
   purgeNow: () => api.post<{ human: number; machine: number; stats: ActivityRetention }>('/activity/retention/purge').then((r) => r.data),
 };
 
+/**
+ * Where an order's goods are going.
+ *
+ * Two routes in. eBay and OnBuy hand us the address in the order payload we already fetch; Amazon
+ * buyer addresses are restricted data we hold no approval for, so those are copied out of Seller
+ * Central by hand. `source` says which of the two produced what is on screen.
+ */
+export interface DeliveryAddress {
+  source: 'channel' | 'manual';
+  fullName: string | null;
+  companyName: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  stateOrRegion: string | null;
+  postalCode: string | null;
+  countryIso: string | null;
+  phone: string | null;
+  email: string | null;
+  /** Recipient EORI. Missing values on non-EU B2B are the commonest cause of customs holds. */
+  eori: string | null;
+  vatNumber: string | null;
+  /** Business or residential. Null means nobody has said; carriers rate the two differently. */
+  isBusiness: boolean | null;
+  channelSyncedAt: string | null;
+  editedAt: string | null;
+  editedBy: string | null;
+}
+
+export interface DeliveryAddressView {
+  transactionId: string;
+  /**
+   * Null while an address is held or was never held; set once erased.
+   *
+   * The distinction is the point: "erased after twelve months" and "we never had one" mean
+   * different things to whoever is looking at an old order.
+   */
+  purgedAt: string | null;
+  /** The retention period in days, so the screen states the policy rather than implying one. */
+  retentionDays: number;
+  address: DeliveryAddress | null;
+  destinationCountryIso: string | null;
+  /** The fields a carrier would still refuse the shipment for. Named, not counted. */
+  missing: string[];
+  /** Whether this order's marketplace can supply the address at all. False for Amazon. */
+  canPullFromChannel: boolean;
+  channel: string | null;
+}
+
 export const salesTransactionsApi = {
   activity: (id: string, params: { page?: number; pageSize?: number } = {}) =>
     api.get<{ items: ActivityEntry[]; total: number; page: number; pageSize: number }>(`/sales-transactions/${id}/activity`, { params }).then((r) => r.data),
@@ -2507,6 +2556,15 @@ export const salesTransactionsApi = {
   groupMembers: (params: TxFilterParams, groupBy: TxGroupBy, groupKey: string) =>
     api.get<SalesTransaction[]>('/sales-transactions/group-members', { params: { ...params, groupBy, groupKey } }).then((r) => r.data),
   get: (id: string) => api.get<SalesTransaction>(`/sales-transactions/${id}`).then((r) => r.data),
+  /** Where the goods are going, with its provenance and whatever a label would still need. */
+  deliveryAddress: (id: string) =>
+    api.get<DeliveryAddressView>(`/sales-transactions/${id}/delivery-address`).then((r) => r.data),
+  /** Save a typed address. Always lands as `manual`, so a later sync will not overwrite it. */
+  saveDeliveryAddress: (id: string, body: Partial<Omit<DeliveryAddress, 'source' | 'channelSyncedAt' | 'editedAt' | 'editedBy'>>) =>
+    api.post<{ ok: true; missing: string[] }>(`/sales-transactions/${id}/delivery-address`, body).then((r) => r.data),
+  /** Erase it now rather than waiting for the retention sweep. Not reversible by any sync. */
+  eraseDeliveryAddress: (id: string) =>
+    api.delete<{ ok: true; alreadyErased: boolean }>(`/sales-transactions/${id}/delivery-address`).then((r) => r.data),
   create: (body: any) => api.post<SalesTransaction>('/sales-transactions', body).then((r) => r.data),
   update: (id: string, body: any) => api.patch<SalesTransaction>(`/sales-transactions/${id}`, body).then((r) => r.data),
   remove: (id: string) => api.delete(`/sales-transactions/${id}`).then((r) => r.data),

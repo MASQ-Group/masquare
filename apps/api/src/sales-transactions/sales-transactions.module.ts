@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { SalesTransactionsService } from './sales-transactions.service';
 import { SalesTransactionsController } from './sales-transactions.controller';
+import { AddressRetentionService } from './address-retention.service';
 import { WarehousesModule } from '../warehouses/warehouses.module';
 import { AvailabilityModule } from '../availability/availability.module';
 
@@ -10,7 +11,7 @@ import { AvailabilityModule } from '../availability/availability.module';
   // (integrations -> sales-transactions -> channel-listings -> integrations).
   imports: [WarehousesModule, AvailabilityModule],
   controllers: [SalesTransactionsController],
-  providers: [SalesTransactionsService],
+  providers: [SalesTransactionsService, AddressRetentionService],
   exports: [SalesTransactionsService],
 })
 export class SalesTransactionsModule {}

@@ -14,6 +14,10 @@ import { SALES_TX_FIELD_LABELS, SALES_TX_REF_FIELDS, SALES_TX_REF_NAME_FIELD } f
 import type { ChannelListingsService } from '../channel-listings/channel-listings.service';
 import type { AuthUser } from '../common/current-user.decorator';
 import { CreateSalesTransactionDto, SalesTransactionItemDto, UpdateSalesTransactionDto } from './dto/sales-transaction.dto';
+import {
+  ADDRESS_RETENTION_DAYS, PURGEABLE_FIELDS, channelMayWrite, isEmptyAddress, isPurgeDue,
+  missingForLabel, normaliseAddress, retentionBasis, type AddressInput, type StoredAddress,
+} from './delivery-address';
 
 export interface TxQuery {
   q?: string;
@@ -1122,6 +1126,209 @@ export class SalesTransactionsService {
       out.items = out.items.map((it: any) => ({ ...it, serials: it.productId ? byProduct.get(it.productId) ?? [] : [] }));
     }
     return out;
+  }
+
+  // ---------------------------------------------------------------- delivery address
+
+  /**
+   * Where the goods are going, and where those words came from.
+   *
+   * Returned with `missing` — the fields a carrier would still refuse the shipment for — because
+   * "incomplete" on its own sends somebody hunting through a form. `canPullFromChannel` says
+   * whether this order's marketplace could supply it: eBay and OnBuy hand us the address in the
+   * payload we already fetch, Amazon does not, and the screen should say which it is rather than
+   * leaving somebody to wonder why the button is absent.
+   */
+  async getDeliveryAddress(id: string, companyIds?: string[]) {
+    const tx = await this.prisma.salesTransaction.findFirst({
+      where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: { id: true, source: true, destinationCountry: { select: { isoCode: true } } },
+    });
+    if (!tx) throw new NotFoundException('Sales transaction not found');
+
+    const row = await this.prisma.salesTransactionAddress.findFirst({ where: { transactionId: id, deletedAt: null } });
+    // A purged row holds no values, so it must not render as an address — but it must not render as
+    // "never held" either. The screen is told which it is.
+    const purgedAt = row?.purgedAt ?? null;
+    const editor = row?.editedById
+      ? await this.prisma.user.findFirst({ where: { id: row.editedById }, select: { fullName: true, email: true } })
+      : null;
+
+    return {
+      transactionId: id,
+      /** Erased under the retention policy. Distinct from never having held one. */
+      purgedAt,
+      retentionDays: ADDRESS_RETENTION_DAYS,
+      address: row && !purgedAt
+        ? {
+            source: row.source as 'channel' | 'manual',
+            fullName: row.fullName, companyName: row.companyName,
+            addressLine1: row.addressLine1, addressLine2: row.addressLine2,
+            city: row.city, stateOrRegion: row.stateOrRegion, postalCode: row.postalCode,
+            countryIso: row.countryIso, phone: row.phone, email: row.email,
+            eori: row.eori, vatNumber: row.vatNumber, isBusiness: row.isBusiness,
+            channelSyncedAt: row.channelSyncedAt, editedAt: row.editedAt,
+            editedBy: editor?.fullName ?? editor?.email ?? null,
+          }
+        : null,
+      /** The order's destination country, so a new address starts on the right one. */
+      destinationCountryIso: tx.destinationCountry?.isoCode ?? null,
+      missing: missingForLabel(purgedAt ? null : row),
+      /**
+       * Whether the marketplace could give us this.
+       *
+       * Amazon buyer addresses are restricted data we hold no approval for, so those are copied
+       * from Seller Central by hand. If approval ever lands, Amazon joins the others here and
+       * nothing else changes.
+       */
+      canPullFromChannel: tx.source === 'ebay' || tx.source === 'onbuy',
+      channel: tx.source ?? null,
+    };
+  }
+
+  /**
+   * Save an address somebody typed.
+   *
+   * Always lands as `source: 'manual'`, even when they were correcting a channel-supplied one —
+   * because from that moment the values are theirs, and channelMayWrite then stops a later sync
+   * from quietly putting the marketplace's version back.
+   */
+  async saveDeliveryAddress(id: string, input: AddressInput, actorId?: string, companyIds?: string[]) {
+    const tx = await this.prisma.salesTransaction.findFirst({
+      where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: { id: true },
+    });
+    if (!tx) throw new NotFoundException('Sales transaction not found');
+
+    const a = normaliseAddress(input);
+    if (isEmptyAddress(a)) throw new BadRequestException('Enter an address before saving');
+
+    const now = new Date();
+    /**
+     * Typing an address onto a purged order clears the tombstone.
+     *
+     * A person has deliberately entered it, on screen, for a live reason — a late replacement, a
+     * carrier claim — and that is a new collection with its own purpose, not a resurrection of the
+     * old one. The retention clock simply starts again. Only the automatic route stays barred.
+     */
+    const data = { ...a, source: 'manual', editedAt: now, editedById: actorId ?? null, deletedAt: null, purgedAt: null };
+    await this.prisma.salesTransactionAddress.upsert({
+      where: { transactionId: id },
+      create: { transactionId: id, ...data, createdById: actorId ?? null },
+      update: data,
+    });
+    return { ok: true as const, missing: missingForLabel(a) };
+  }
+
+  /**
+   * Store an address a marketplace supplied, if it is allowed to.
+   *
+   * Called by the order importer for every eBay and OnBuy order. Best-effort by design: an address
+   * that fails to save must not fail the order import, because the money on the order is the part
+   * that has to land.
+   */
+  async recordChannelAddress(transactionId: string, incoming: AddressInput): Promise<'created' | 'refreshed' | 'kept'> {
+    const stored = await this.prisma.salesTransactionAddress.findFirst({
+      where: { transactionId, deletedAt: null },
+      // purgedAt is selected because channelMayWrite refuses on it. Leaving it out would have made
+      // that refusal unreachable — the guard would read undefined and wave every sync through.
+      select: { id: true, source: true, editedAt: true, purgedAt: true },
+    });
+    if (!channelMayWrite(stored as StoredAddress | null, incoming)) return 'kept';
+
+    const a = normaliseAddress(incoming);
+    const data = { ...a, source: 'channel', channelSyncedAt: new Date(), deletedAt: null };
+    await this.prisma.salesTransactionAddress.upsert({
+      where: { transactionId },
+      create: { transactionId, ...data },
+      update: data,
+    });
+    return stored ? 'refreshed' : 'created';
+  }
+
+  /**
+   * Empty the personal fields on one address, now.
+   *
+   * Two callers with the same need: the retention sweep, and a person acting on an erasure request,
+   * which does not wait twelve months for a schedule. The row survives with `purgedAt` set — see the
+   * column comment for why a tombstone beats a deletion, and why it is what stops the next sync
+   * putting the address back.
+   */
+  private async purgeAddressRow(id: string): Promise<void> {
+    const cleared = Object.fromEntries(PURGEABLE_FIELDS.map((f) => [f, null]));
+    await this.prisma.salesTransactionAddress.update({
+      where: { id },
+      // isBusiness is cleared too: on its own it identifies nobody, but it is a fact about the
+      // recipient and there is no purpose left to keep it for.
+      data: { ...cleared, isBusiness: null, purgedAt: new Date() },
+    });
+  }
+
+  /** Erase one order's address on request, ahead of the retention schedule. */
+  async eraseDeliveryAddress(id: string, companyIds?: string[]) {
+    const tx = await this.prisma.salesTransaction.findFirst({
+      where: { id, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: { id: true },
+    });
+    if (!tx) throw new NotFoundException('Sales transaction not found');
+
+    const row = await this.prisma.salesTransactionAddress.findFirst({
+      where: { transactionId: id, deletedAt: null },
+      select: { id: true, purgedAt: true },
+    });
+    if (!row) throw new BadRequestException('There is no address on this order to erase');
+    // Already erased. Not an error — the caller wanted it gone and it is gone.
+    if (row.purgedAt) return { ok: true as const, alreadyErased: true };
+
+    await this.purgeAddressRow(row.id);
+    this.logger.log(`Delivery address erased on request for transaction ${id}`);
+    return { ok: true as const, alreadyErased: false };
+  }
+
+  /**
+   * The retention sweep: erase addresses older than the policy allows.
+   *
+   * Runs in batches so a first run over a long backlog cannot hold a transaction open for minutes,
+   * and reports what it did rather than working silently — a retention policy nobody can evidence
+   * is not a policy, it is an intention.
+   *
+   * The clock runs from the LATEST outbound despatch, so a part-shipped order keeps its address
+   * until the last parcel has gone and the year has run from there.
+   */
+  async purgeExpiredAddresses(opts: { limit?: number; now?: Date } = {}) {
+    const now = opts.now ?? new Date();
+    const limit = opts.limit ?? 500;
+
+    const rows = await this.prisma.salesTransactionAddress.findMany({
+      where: { purgedAt: null, deletedAt: null },
+      select: {
+        id: true,
+        transaction: {
+          select: {
+            id: true, date: true,
+            shipments: { where: { deletedAt: null, type: 'outbound' }, select: { shipmentDate: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+    });
+
+    let purged = 0;
+    for (const r of rows) {
+      const basis = retentionBasis({
+        date: r.transaction.date,
+        outboundShipmentDates: r.transaction.shipments.map((sh) => sh.shipmentDate),
+      });
+      if (!isPurgeDue(basis, now)) continue;
+      await this.purgeAddressRow(r.id);
+      purged++;
+    }
+
+    if (purged > 0) {
+      this.logger.log(`Address retention: erased ${purged} of ${rows.length} examined (policy ${ADDRESS_RETENTION_DAYS} days from despatch).`);
+    }
+    return { examined: rows.length, purged, retentionDays: ADDRESS_RETENTION_DAYS };
   }
 
   /** All serialized transactions in a date range (for analytics/reporting). */

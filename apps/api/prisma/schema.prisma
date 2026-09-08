@@ -2415,6 +2415,7 @@ model SalesTransaction {
   items              SalesTransactionItem[]
   unlockRequests     SalesTransactionUnlockRequest[]
   shipments          Shipment[]
+  deliveryAddress    SalesTransactionAddress?
 
   // Company isolation filters every read by companyId, and lists/analytics sort &
   // range by date — this composite serves both. The rest match the hot filters and
@@ -2476,6 +2477,70 @@ model Shipment {
   @@index([transactionId])
   @@index([groupId])
   @@map("shipment")
+}
+
+/// Where the goods are actually going.
+///
+/// Kept apart from SalesTransaction rather than as ten more columns on it, because it is personal
+/// data with its own provenance, its own edit history and — eventually — its own retention rule.
+/// A carrier label cannot be produced without it, and until FedEx work begins nothing else reads it.
+model SalesTransactionAddress {
+  id            String @id @default(uuid()) @db.Uuid
+  transactionId String @unique @map("transaction_id") @db.Uuid
+
+  /// Where the CURRENT values came from.
+  ///
+  /// 'channel' — the marketplace gave them to us (eBay, OnBuy).
+  /// 'manual'  — one of our people typed them, which is the only route for Amazon: buyer addresses
+  ///             are restricted data we are not approved to pull, so they are copied from Seller
+  ///             Central by hand.
+  ///
+  /// This is a fact about the data, not a setting. It flips to 'manual' the moment somebody edits,
+  /// because from then on the values are theirs and a later sync must not quietly replace them.
+  source String @default("manual")
+
+  fullName      String? @map("full_name")
+  companyName   String? @map("company_name")
+  addressLine1  String? @map("address_line1")
+  addressLine2  String? @map("address_line2")
+  city          String?
+  stateOrRegion String? @map("state_or_region")
+  postalCode    String? @map("postal_code")
+  /// ISO-2. Deliberately a code, not a country row: this is what the carrier is told, and it must
+  /// survive independently of our own countries table.
+  countryIso    String? @map("country_iso")
+  phone         String?
+  email         String?
+
+  /// Recipient EORI. Absent values on non-EU B2B are the single most common cause of customs holds.
+  eori       String?
+  vatNumber  String?  @map("vat_number")
+  /// Business or residential. Null means nobody has said; carriers rate the two differently, so a
+  /// guess here is a wrong shipping cost rather than a missing one.
+  isBusiness Boolean? @map("is_business")
+
+  /// When the personal fields were emptied under the retention policy.
+  ///
+  /// The row survives the purge deliberately. "Erased after twelve months" and "no address was ever
+  /// held" are different facts, and the difference is exactly what somebody looking at an old order
+  /// needs to know. It is also the flag that stops a later channel sync quietly re-importing what
+  /// was just erased, which would leave the policy doing nothing at all.
+  purgedAt DateTime? @map("purged_at")
+
+  /// When a marketplace last supplied these values. Null where none ever has.
+  channelSyncedAt DateTime? @map("channel_synced_at")
+  /// When one of our people last edited them, and who. Null while untouched by hand.
+  editedAt        DateTime? @map("edited_at")
+  editedById      String?   @map("edited_by") @db.Uuid
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  transaction SalesTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@map("sales_transaction_address")
 }
 
 model SalesTransactionUnlockRequest {

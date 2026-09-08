@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { StorageService } from '../storage/storage.service';
 import { SalesTransactionsService } from '../sales-transactions/sales-transactions.service';
+import { addressFromEbayOrder, addressFromOnBuyOrder } from '../sales-transactions/delivery-address';
 import type { ProgressSink } from '../jobs/jobs.service';
 import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFieldKeys, type ConnectorDef } from './connectors';
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
@@ -2870,8 +2871,30 @@ export class IntegrationsService implements OnModuleInit {
       // Most of these write no history at all — an update whose figures are unchanged has an empty
       // diff and is not recorded — so what survives is the part worth reading: a fee Amazon posted
       // a fortnight late, a status that moved, a refund that landed.
-      if (existing) { await this.salesTx.update(existing.id, dto, sysUser, undefined, 'sync'); counts.updated++; }
-      else { await this.salesTx.create(dto, actorId, 'sync'); counts.created++; }
+      let txId: string | null = null;
+      if (existing) { await this.salesTx.update(existing.id, dto, sysUser, undefined, 'sync'); txId = existing.id; counts.updated++; }
+      else { const made = await this.salesTx.create(dto, actorId, 'sync'); txId = made?.id ?? null; counts.created++; }
+
+      /**
+       * The delivery address, where the marketplace gives us one.
+       *
+       * eBay and OnBuy carry it in the order payload we already fetch, under the scope we already
+       * hold — we were reading the country code out of it and discarding the rest. Amazon is
+       * absent by design: buyer addresses are restricted data we hold no approval for, so those
+       * are typed in from Seller Central and this leaves them alone.
+       *
+       * Best-effort. An address that fails to save must not fail the order import — the money on
+       * the order is the part that has to land — and the service refuses to overwrite anything a
+       * person has edited, so a retry tomorrow is harmless.
+       */
+      if (txId && (row.channelType === 'ebay' || row.channelType === 'onbuy')) {
+        const address = row.channelType === 'ebay'
+          ? addressFromEbayOrder(mapped.raw)
+          : addressFromOnBuyOrder(mapped.raw);
+        await this.salesTx.recordChannelAddress(txId, address).catch((e: any) =>
+          this.logger.warn(`Could not store the delivery address for ${dto.transactionRef}: ${e?.message ?? e}`),
+        );
+      }
       return true;
     } catch (e: any) {
       counts.errors++;

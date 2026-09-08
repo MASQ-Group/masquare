@@ -6,7 +6,8 @@ import { CreateSalesTransactionDto, DecideUnlockDto, ResolveTransactionDto, Upda
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { VisibleCompanies } from '../common/active-company.decorator';
-import { AccessArea } from '../access/access.decorators';
+import { AccessArea, RequireCapability } from '../access/access.decorators';
+import type { AddressInput } from './delivery-address';
 
 @ApiTags('sales-transactions')
 @ApiBearerAuth()
@@ -250,6 +251,40 @@ export class SalesTransactionsController {
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });
+  }
+
+  /**
+   * Where the goods are going.
+   *
+   * Its own route rather than part of the transaction payload: it is personal data, it is absent on
+   * most orders, and nothing outside the shipping screens has any business reading it.
+   */
+  @Get(':id/delivery-address')
+  deliveryAddress(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.getDeliveryAddress(id, companyIds);
+  }
+
+  /** Save an address somebody typed — the only route for Amazon orders. */
+  @Post(':id/delivery-address')
+  saveDeliveryAddress(
+    @Param('id') id: string,
+    @Body() body: AddressInput,
+    @CurrentUser() user: AuthUser,
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    return this.svc.saveDeliveryAddress(id, body ?? {}, user.sub, companyIds);
+  }
+
+  /**
+   * Erase this order's address now, ahead of the twelve-month schedule.
+   *
+   * Exists because an erasure request does not wait for a cron. Gated on delete_records: emptying
+   * personal data is a deletion, and it cannot be undone by the automatic route afterwards.
+   */
+  @Delete(':id/delivery-address')
+  @RequireCapability('delete_records')
+  eraseDeliveryAddress(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.eraseDeliveryAddress(id, companyIds);
   }
 
   @Get(':id')

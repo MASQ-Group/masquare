@@ -12,6 +12,7 @@ import { useAuth } from '../lib/auth';
 import { RefField } from '../components/products/RefField';
 import { CountrySelect } from '../components/common/CountrySelect';
 import { ProductSkuField } from '../components/sales/ProductSkuField';
+import { DeliveryAddressCard } from '../components/sales/DeliveryAddressCard';
 import { SerialPicker } from '../components/sales/SerialPicker';
 import { useConfirm } from '../components/ConfirmProvider';
 
@@ -790,6 +791,9 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                 )}
               </div>
             </div>
+
+            {/* Only on a saved order: there is no transaction to hang an address on until then. */}
+            {transaction?.id && <DeliveryAddressCard transactionId={transaction.id} />}
 
             <div className="card overflow-hidden p-0">
               <div className="border-b border-n-100 px-5 py-4 text-[12px] font-bold uppercase tracking-wide text-n-500">Profit &amp; costs</div>
