@@ -465,7 +465,14 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
       </div>
 
       {transaction?.id && (
-        <div className="border-b border-n-200 bg-n-0 px-8 pb-3 max-[760px]:px-4">
+        <div className="border-b border-n-200 bg-n-0 px-8 pb-4 pt-4 max-[760px]:px-4">
+          {/*
+            Air above and below the strip.
+            With padding on the bottom only, the tabs sat flush against the action bar's rule while
+            their own rounded border landed on this row's rule — two horizontal lines a few pixels
+            apart with the control wedged between them, reading as one stacked seam rather than as
+            a header, a set of tabs, and the page below.
+          */}
           <TabBar
             label="Transaction sections"
             tabs={[{ key: 'details', label: 'Details' }, { key: 'tracking', label: 'Tracking' }, { key: 'history', label: 'History' }]}
