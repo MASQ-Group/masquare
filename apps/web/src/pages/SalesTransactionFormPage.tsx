@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, Plus, Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { DatePicker, Select } from '@masquare/ui';
+import { DatePicker, Select, TabBar } from '@masquare/ui';
 import {
   countriesApi, productsApi, salesChannelsApi, salesTransactionsApi, shippingServicesApi, vatClassesApi,
   type RefLite, type SalesTransaction,
@@ -14,6 +14,7 @@ import { CountrySelect } from '../components/common/CountrySelect';
 import { ProductSkuField } from '../components/sales/ProductSkuField';
 import { DeliveryAddressCard } from '../components/sales/DeliveryAddressCard';
 import { TransactionTracking } from '../components/sales/TransactionTracking';
+import { EntityHistory } from '../components/common/EntityHistory';
 import { SerialPicker } from '../components/sales/SerialPicker';
 import { useConfirm } from '../components/ConfirmProvider';
 
@@ -402,6 +403,14 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
   // channel actually reports (local: unit price + VAT class; marketplace: the reported amounts).
   const cols = 'minmax(200px,1fr) 74px 120px 150px 108px 34px 34px';
 
+  /**
+   * Details / Tracking / History.
+   *
+   * Only on a SAVED transaction: tracking and history are both about something that has happened,
+   * and neither has anything to say about a form nobody has submitted yet.
+   */
+  const [tab, setTab] = useState<'details' | 'tracking' | 'history'>('details');
+
   return (
     <div className="-mx-8 -my-7 flex min-h-full flex-col max-[760px]:-mx-4 max-[760px]:-my-5">
       {/* Sticky action bar. The scroll container (AppShell's <main>) has py-7, and a sticky
@@ -455,7 +464,38 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
         )}
       </div>
 
-      <div className="flex-1 overflow-visible px-8 pb-16 pt-6 max-[760px]:px-4">
+      {transaction?.id && (
+        <div className="border-b border-n-200 bg-n-0 px-8 pb-3 max-[760px]:px-4">
+          <TabBar
+            label="Transaction sections"
+            tabs={[{ key: 'details', label: 'Details' }, { key: 'tracking', label: 'Tracking' }, { key: 'history', label: 'History' }]}
+            value={tab}
+            onChange={(k) => setTab(k as typeof tab)}
+            className="w-fit"
+          />
+        </div>
+      )}
+
+      {transaction?.id && tab === 'tracking' && (
+        <div className="flex-1 px-8 pb-16 pt-6 max-[760px]:px-4">
+          <div className="card max-w-[1240px] p-6"><TransactionTracking transactionId={transaction.id} /></div>
+        </div>
+      )}
+      {transaction?.id && tab === 'history' && (
+        <div className="flex-1 px-8 pb-16 pt-6 max-[760px]:px-4">
+          <div className="card max-w-[1240px] p-6">
+            <EntityHistory entityKey="sales-transaction" entityId={transaction.id} fetchPage={(id, p) => salesTransactionsApi.activity(id, p)} />
+          </div>
+        </div>
+      )}
+
+      {/*
+        Hidden rather than unmounted.
+        A tab switch must not throw away what somebody has typed: this is a form, its state lives in
+        the inputs, and unmounting it to show a tracking history would quietly discard an hour of
+        edits the moment somebody got curious about where the parcel was.
+      */}
+      <div className={`flex-1 overflow-visible px-8 pb-16 pt-6 max-[760px]:px-4 ${tab === 'details' ? '' : 'hidden'}`}>
         <div className="flex max-w-[1240px] items-start gap-6 max-[1100px]:flex-col">
           {/* ===== FORM COLUMN ===== */}
           <fieldset disabled={locked} className="flex min-w-0 flex-1 flex-col gap-5 border-0 p-0">

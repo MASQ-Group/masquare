@@ -20,7 +20,7 @@ import {
   FEDEX_NAME_FRAGMENT, TRACK_HISTORY_DAYS, TRACK_PATH, buildTrackRequest, chunkTrackingNumbers,
   describeTrackFailure, dueForRefresh, isFedexService,
 } from './fedex-track';
-import { parseTrackReply, trackStages, type TrackResult, type TrackScan } from './fedex-track-parse';
+import { deliveryPromise, parseTrackReply, trackStages, type TrackResult, type TrackScan } from './fedex-track-parse';
 
 /** The credential fields a FedEx account holds. Nothing else is accepted or stored. */
 export const FEDEX_SECRET_FIELDS = ['apiKey', 'secretKey'] as const;
@@ -1269,6 +1269,19 @@ export class CarriersService {
       tracking: t,
       /** Collected → in transit → out for delivery → delivered. Empty when nobody has asked yet. */
       stages: t && t.found !== false ? trackStages(scans, t.deliveredAt ? new Date(t.deliveredAt).toISOString() : null) : [],
+      /**
+       * When FedEx said it would arrive, whether that was an estimate or a commitment, and whether
+       * it was met. Derived here so the distinction is decided once, by a tested rule, rather than
+       * three screens each having a go at it.
+       */
+      promise:
+        t && t.found !== false
+          ? deliveryPromise(
+              t.detailsJson ?? null,
+              t.estimatedDeliveryAt ? new Date(t.estimatedDeliveryAt).toISOString() : null,
+              t.deliveredAt ? new Date(t.deliveredAt).toISOString() : null,
+            )
+          : null,
     };
   }
 

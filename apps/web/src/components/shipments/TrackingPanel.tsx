@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, CircleCheck, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { carriersApi, type ShipmentTrackingDetail } from '../../lib/api';
+import { carriersApi, type DeliveryPromise, type ShipmentTrackingDetail } from '../../lib/api';
 import { formatDate } from '../../lib/format';
 
 /**
@@ -93,6 +93,7 @@ export function TrackingPanel({
    * is customs doing its job. Flagging those would train everybody to ignore the flag within a week.
    */
   const held = !t.deliveredAt ? t.exceptionDescription : null;
+  const promise = view.promise;
   const scans = t.scans ?? [];
   const shown = compact ? scans.slice(0, 4) : scans;
   const d = t.detailsJson ?? null;
@@ -122,7 +123,7 @@ export function TrackingPanel({
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[12.5px]">
         {/* Dates only, no clock. These come from stored timestamp columns, which have lost the
             offset of the place the event happened — the timeline below keeps it. */}
-        {!t.deliveredAt && t.estimatedDeliveryAt && <Pair k="Due" v={formatDate(t.estimatedDeliveryAt)} />}
+        {promise?.at && <Pair k={promiseLabel(promise, !!t.deliveredAt)} v={<Promised promise={promise} delivered={!!t.deliveredAt} />} />}
         {t.serviceName && <Pair k="Service" v={t.serviceName} />}
         {/* The carrier's own measurement of the box, and the figure they billed on. */}
         {t.weightKg != null && <Pair k="Weighed" v={<>{t.weightKg} kg <span className="text-n-500">by FedEx</span></>} />}
@@ -209,6 +210,34 @@ function Stages({ view }: { view: ShipmentTrackingDetail }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+/**
+ * What to call the carrier's date.
+ *
+ * Shown on a DELIVERED parcel as well as one in flight, which it was not before: with the actual
+ * date beside it, the promise is the only thing on the screen that says whether FedEx did what we
+ * paid for — and that is the number worth having when a customer complains or an invoice is
+ * queried.
+ */
+function promiseLabel(promise: DeliveryPromise, delivered: boolean): string {
+  if (promise.source === 'estimate') return delivered ? 'Was estimated' : 'Estimated';
+  return delivered ? 'Committed by' : 'Due by';
+}
+
+function Promised({ promise, delivered }: { promise: DeliveryPromise; delivered: boolean }) {
+  const window = promise.from && formatDate(promise.from) !== formatDate(promise.at!)
+    ? `${formatDate(promise.from)} – ${formatDate(promise.at!)}`
+    : formatDate(promise.at!);
+  return (
+    <>
+      {window}
+      {/* Only stated where it is known. `late` is null when a date is missing, and rendering that as
+          "on time" would credit FedEx with keeping a promise nobody could check. */}
+      {delivered && promise.late === true && <span className="ml-1.5 font-medium text-amber-700">delivered late</span>}
+      {delivered && promise.late === false && <span className="ml-1.5 text-teal-700">met</span>}
+    </>
   );
 }
 

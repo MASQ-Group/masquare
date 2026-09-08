@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseTrackReply, redactTrackResult, trackStages } from './fedex-track-parse';
+import { deliveryPromise, parseTrackReply, redactTrackResult, trackStages } from './fedex-track-parse';
 
 /**
  * A real reply, trimmed.
@@ -310,5 +310,85 @@ describe('trackStages', () => {
   it('has nothing done for a parcel with no scans at all', () => {
     expect(trackStages([])).toHaveLength(5);
     expect(trackStages([]).some((s) => s.done)).toBe(false);
+  });
+});
+
+describe('deliveryPromise', () => {
+  /**
+   * What our own delivered shipments actually look like: 64 of 69 carry the published transit
+   * commitment and none carry a live estimate, because FedEx drops the estimate once a parcel
+   * arrives. So the commitment is what a delivered parcel gets measured against.
+   */
+  it('reads the published commitment and marks a late delivery', () => {
+    const p = deliveryPromise(
+      { standardTransitTimeWindow: { window: { ends: '2026-09-02T20:00:00+02:00' } } },
+      null,
+      '2026-09-03T16:18:00+02:00',
+    );
+    expect(p.source).toBe('commitment');
+    expect(p.at).toBe('2026-09-02T20:00:00+02:00');
+    expect(p.late).toBe(true);
+  });
+
+  it('does not call an on-time delivery late', () => {
+    const p = deliveryPromise(
+      { standardTransitTimeWindow: { window: { ends: '2026-09-03T20:00:00+02:00' } } },
+      null,
+      '2026-09-03T16:18:00+02:00',
+    );
+    expect(p.late).toBe(false);
+  });
+
+  /** A parcel promised by 20:00 in Spain and delivered at 19:00 in Cyprus was late. */
+  it('compares instants rather than clocks', () => {
+    const p = deliveryPromise(
+      { standardTransitTimeWindow: { window: { ends: '2026-09-03T20:00:00+02:00' } } },
+      null,
+      '2026-09-03T21:00:00+03:00',
+    );
+    expect(p.late).toBe(false);
+    expect(deliveryPromise(
+      { standardTransitTimeWindow: { window: { ends: '2026-09-03T20:00:00+02:00' } } },
+      null,
+      '2026-09-03T22:00:00+03:00',
+    ).late).toBe(true);
+  });
+
+  /**
+   * The distinction the type exists for: a live estimate is about THIS parcel, a commitment is
+   * about the lane. Confusing them has somebody chasing a parcel that is exactly where the service
+   * said it would be.
+   */
+  it('prefers the live estimate over the lane commitment while a parcel is moving', () => {
+    const p = deliveryPromise({
+      dateAndTimes: [{ type: 'ESTIMATED_DELIVERY', dateTime: '2026-09-09T12:00:00+02:00' }],
+      standardTransitTimeWindow: { window: { ends: '2026-09-08T20:00:00+02:00' } },
+    }, null, null);
+    expect(p.source).toBe('estimate');
+    expect(p.at).toBe('2026-09-09T12:00:00+02:00');
+  });
+
+  it('carries the window start when FedEx gives a range rather than a time', () => {
+    const p = deliveryPromise({
+      estimatedDeliveryTimeWindow: { window: { begins: '2026-09-09T09:00:00+02:00', ends: '2026-09-09T13:00:00+02:00' } },
+    }, null, null);
+    expect(p.source).toBe('estimate');
+    expect(p.from).toBe('2026-09-09T09:00:00+02:00');
+    expect(p.at).toBe('2026-09-09T13:00:00+02:00');
+  });
+
+  /**
+   * Null, not false. A screen that reads a missing answer as "on time" would report every parcel
+   * we cannot track as having met a promise nobody made.
+   */
+  it('says nothing about lateness when either date is missing', () => {
+    expect(deliveryPromise({}, null, '2026-09-03T16:18:00+02:00').late).toBeNull();
+    expect(deliveryPromise({ standardTransitTimeWindow: { window: { ends: '2026-09-03T20:00:00+02:00' } } }, null, null).late).toBeNull();
+  });
+
+  it('falls back to the stored estimate when the reply predates keeping the full details', () => {
+    const p = deliveryPromise(null, '2026-09-03T20:00:00+02:00', null);
+    expect(p.at).toBe('2026-09-03T20:00:00+02:00');
+    expect(p.source).toBe('commitment');
   });
 });

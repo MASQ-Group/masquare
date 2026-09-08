@@ -2361,6 +2361,24 @@ export interface ShipmentTrackingRow extends ShipmentTrackingSummary {
   failureCount: number;
 }
 
+/**
+ * When the carrier said it would arrive, and whether it did.
+ *
+ * `source` matters. An ESTIMATE is FedEx's live view of this parcel, revised as it moves; a
+ * COMMITMENT is the published transit time for the service, promised at label time and never
+ * revised. Calling a commitment an estimate sends somebody chasing a parcel that is exactly where
+ * the service said it would be.
+ *
+ * `late` is null when either date is missing — which is not false. Reading it as false would report
+ * every untrackable parcel as having met a promise nobody made.
+ */
+export interface DeliveryPromise {
+  at: string | null;
+  from: string | null;
+  source: 'estimate' | 'commitment' | null;
+  late: boolean | null;
+}
+
 export interface ShipmentTrackingDetail {
   shipmentId: string;
   trackingNumber: string | null;
@@ -2369,6 +2387,7 @@ export interface ShipmentTrackingDetail {
   tracking: ShipmentTrackingRow | null;
   /** Derived server-side, so every screen showing a journey reads it from the same tested rule. */
   stages: TrackingStage[];
+  promise: DeliveryPromise | null;
 }
 
 /** One order's shipments, each with what the carrier says. Untracked carriers are included. */

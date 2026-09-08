@@ -146,6 +146,60 @@ const STAGE_EVENTS: Array<{ key: TrackStage['key']; label: string; events: strin
 ];
 
 /**
+ * When FedEx said the parcel would arrive, and whether it did.
+ *
+ * Two different things wear the same label on a tracking screen and they are worth telling apart:
+ *
+ *  - an ESTIMATE is FedEx's live view of this particular parcel, revised as it moves;
+ *  - a COMMITMENT is the published transit time for the service, promised when the label was
+ *    bought and never revised.
+ *
+ * Calling a commitment an estimate would have somebody chasing a parcel that is exactly where the
+ * service said it would be. Calling an estimate a commitment would have us conceding a claim FedEx
+ * never made.
+ */
+export interface DeliveryPromise {
+  /** When it should arrive, or should have. */
+  at: string | null;
+  /** The start of the window, where FedEx gave one rather than a single time. */
+  from: string | null;
+  source: 'estimate' | 'commitment' | null;
+  /**
+   * Delivered after the promised time. Null when either date is missing — which is not the same as
+   * false, and a screen that treats it as false claims every untracked parcel arrived on time.
+   */
+  late: boolean | null;
+}
+
+export function deliveryPromise(
+  details: unknown,
+  estimatedAt: string | null,
+  deliveredAt: string | null,
+): DeliveryPromise {
+  const d = (details ?? {}) as any;
+  const live =
+    dateOfType(d?.dateAndTimes, 'ESTIMATED_DELIVERY') ?? str(d?.estimatedDeliveryTimeWindow?.window?.ends);
+  const commitment = str(d?.standardTransitTimeWindow?.window?.ends);
+
+  const at = live ?? commitment ?? estimatedAt;
+  const source: DeliveryPromise['source'] = at == null ? null : live ? 'estimate' : 'commitment';
+
+  return {
+    at,
+    // Only meaningful as the other end of a window; a start with no end is not a promise.
+    from: live
+      ? str(d?.estimatedDeliveryTimeWindow?.window?.begins)
+      : commitment
+        ? str(d?.standardTransitTimeWindow?.window?.begins)
+        : null,
+    source,
+    // Compared as instants: both carry their own offset, and a parcel promised by 20:00 in Spain
+    // and delivered at 19:00 in Cyprus was late, whatever the two clocks say.
+    late: at && deliveredAt ? Date.parse(deliveredAt) > Date.parse(at) : null,
+  };
+}
+
+/**
  * The journey, in five steps, from the scan history.
  *
  * Read from the RAW eventType rather than the derived status, because the derived status cannot
@@ -295,17 +349,21 @@ function readOne(trackingNumber: string, result: any): TrackResult {
 
     deliveredAt: dateOfType(result?.dateAndTimes, 'ACTUAL_DELIVERY'),
     /**
-     * Three sources, in decreasing order of how much FedEx is committing to.
+     * Three sources, most specific to this parcel first.
      *
-     * ESTIMATED_DELIVERY is their live estimate; standardTransitTimeWindow is the service's
-     * published commitment; estimatedDeliveryTimeWindow is a window that is frequently present and
-     * empty. A delivered parcel carries none of them, which is correct — by then the actual date
-     * is the answer.
+     * ESTIMATED_DELIVERY and estimatedDeliveryTimeWindow are FedEx's live view of THIS shipment;
+     * standardTransitTimeWindow is the service's published transit time, which is a promise about
+     * the lane rather than about the parcel. The generic one is the fallback, not the preference.
+     *
+     * Measured across our own delivered shipments: 64 of 69 carry the transit commitment, none
+     * carry a live estimate — FedEx drops the estimate once a parcel arrives, which is why a
+     * delivered parcel is answered by its actual date and the commitment is only worth showing
+     * beside it, to say whether the promise was kept.
      */
     estimatedDeliveryAt:
       dateOfType(result?.dateAndTimes, 'ESTIMATED_DELIVERY') ??
-      str(result?.standardTransitTimeWindow?.window?.ends) ??
-      str(result?.estimatedDeliveryTimeWindow?.window?.ends),
+      str(result?.estimatedDeliveryTimeWindow?.window?.ends) ??
+      str(result?.standardTransitTimeWindow?.window?.ends),
     // What FedEx actually collected, ahead of what the label said. A label printed on Tuesday for a
     // parcel collected on Thursday should read as Thursday.
     shippedAt: dateOfType(result?.dateAndTimes, 'ACTUAL_PICKUP') ?? dateOfType(result?.dateAndTimes, 'SHIP'),
