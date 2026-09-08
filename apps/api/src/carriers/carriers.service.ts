@@ -5,6 +5,10 @@ import {
   baseUrlFor, describeTokenFailure, expiryFrom, isExpired, tokenCacheKey,
   type CachedToken,
 } from './fedex-token';
+import {
+  RATE_PATH, buildRateRequest, missingForQuote, needsCustoms, rateHeaders,
+  type RateQuoteInput, type RateEndpoint, type RateParcel,
+} from './fedex-rate';
 
 /** The credential fields a FedEx account holds. Nothing else is accepted or stored. */
 export const FEDEX_SECRET_FIELDS = ['apiKey', 'secretKey'] as const;
@@ -343,5 +347,126 @@ export class CarriersService {
       },
     });
     return { ok, message: note };
+  }
+
+  // ------------------------------------------------------------------ rating
+
+  /**
+   * Where this account's shipments leave from.
+   *
+   * The account's own origin if one was entered, otherwise the owning company's address. Kept in
+   * one place because a rate quoted from the wrong origin is not obviously wrong on screen — it is
+   * simply a number, and a plausible one.
+   */
+  private async originFor(accountId: string): Promise<{ endpoint: RateEndpoint; source: 'account' | 'company' } | null> {
+    const a = await this.prisma.carrierAccount.findFirst({
+      where: { id: accountId, deletedAt: null },
+      select: {
+        originPostalCode: true, originCountryIso: true,
+        company: { select: { addressPostalCode: true, addressCountry: true } },
+      },
+    });
+    if (!a) return null;
+    if (a.originPostalCode && a.originCountryIso) {
+      return { endpoint: { postalCode: a.originPostalCode, countryIso: a.originCountryIso }, source: 'account' };
+    }
+    return {
+      endpoint: { postalCode: a.company?.addressPostalCode ?? null, countryIso: a.company?.addressCountry ?? null },
+      source: 'company',
+    };
+  }
+
+  /** ISO-2 codes inside the EU VAT zone, from our own countries table rather than a second list. */
+  private async euCountryCodes(): Promise<Set<string>> {
+    const rows = await this.prisma.country.findMany({
+      where: { euVatZone: true, deletedAt: null },
+      select: { isoCode: true },
+    });
+    return new Set(rows.map((r) => (r.isoCode ?? '').toUpperCase()).filter(Boolean));
+  }
+
+  /**
+   * Ask FedEx what a shipment would cost.
+   *
+   * The response is returned RAW and unmapped, deliberately. FedEx's JSON collection ships sample
+   * requests but no sample responses — the sandbox generates those when a request is run — so
+   * nobody here has yet seen the shape of a reply. Writing a mapper against a guessed shape is the
+   * one mistake this integration has been avoiding from the start, and it would have to be rewritten
+   * the day a real response arrived. The mapping goes in once there is something real to map.
+   */
+  async rateQuote(
+    accountId: string,
+    input: { recipient: RateEndpoint; parcels: RateParcel[]; customsValue?: { amount: number; currency: string } | null; goodsDescription?: string | null; serviceType?: string | null },
+    companyIds?: string[],
+  ) {
+    const account = await this.prisma.carrierAccount.findFirst({
+      where: { id: accountId, deletedAt: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      select: { id: true, environment: true, accountNumber: true, isActive: true },
+    });
+    if (!account) throw new NotFoundException('Carrier account not found');
+    if (!account.isActive) {
+      throw new BadRequestException('Test the connection on this account before quoting with it.');
+    }
+
+    const origin = await this.originFor(accountId);
+    const quote: RateQuoteInput = {
+      accountNumber: account.accountNumber,
+      shipper: origin?.endpoint ?? { postalCode: null, countryIso: null },
+      recipient: input.recipient,
+      parcels: input.parcels,
+      customsValue: input.customsValue ?? null,
+      goodsDescription: input.goodsDescription ?? null,
+      serviceType: input.serviceType ?? null,
+      // Every figure in this platform is reconciled in euro, so the quote is asked for in euro
+      // rather than converted afterwards at a rate FedEx did not use.
+      preferredCurrency: 'EUR',
+    };
+
+    const gaps = missingForQuote(quote);
+    if (gaps.length) {
+      // Refused before spending a call, and it names what is missing — including the case where the
+      // origin is missing because neither the account nor its company carries an address.
+      throw new BadRequestException(`Cannot quote yet — still needed: ${gaps.join(', ')}.`);
+    }
+
+    const eu = await this.euCountryCodes();
+    const customs = needsCustoms(quote.shipper.countryIso, quote.recipient.countryIso, eu);
+    const body = buildRateRequest(quote, { customs });
+
+    const send = async (token: string) =>
+      fetch(`${baseUrlFor(account.environment)}${RATE_PATH}`, {
+        method: 'POST',
+        headers: rateHeaders(token),
+        body: JSON.stringify(body),
+      });
+
+    let res = await send(await this.token(accountId));
+    if (res.status === 401) {
+      /**
+       * The one case a forced refresh is for.
+       *
+       * A token can be revoked before it expires, and only a 401 says so. Retried exactly once: a
+       * second 401 means something other than staleness, and looping would spend token requests
+       * against an endpoint that bans us for ten minutes.
+       */
+      res = await send(await this.token(accountId, { force: true }));
+    }
+
+    const text = await res.text();
+    let parsed: unknown = null;
+    try { parsed = JSON.parse(text); } catch { /* left as raw text below */ }
+
+    if (!res.ok) {
+      this.logger.warn(`FedEx rate quote failed (${res.status}) on account ${accountId}`);
+    }
+    return {
+      ok: res.ok,
+      status: res.status,
+      /** What we sent, so a rejection can be read against it rather than guessed at. */
+      request: body,
+      response: parsed ?? text.slice(0, 20_000),
+      origin: origin?.source ?? null,
+      customs,
+    };
   }
 }

@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { carriersApi, type CarrierAccount } from '../lib/api';
 import { PageHeader } from '../components/common/PageHeader';
 import { CarrierAccountModal } from '../components/carriers/CarrierAccountModal';
+import { RateQuoteModal } from '../components/carriers/RateQuoteModal';
 
 const CARRIER_LABEL: Record<string, string> = { fedex: 'FedEx' };
 
@@ -20,6 +21,7 @@ export function CarriersPage() {
   const qc = useQueryClient();
   const [modal, setModal] = useState<CarrierAccount | null | undefined>(undefined);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [quoteFor, setQuoteFor] = useState<CarrierAccount | null>(null);
 
   const { data: accounts = [], isLoading } = useQuery({
     queryKey: ['carrier-accounts'],
@@ -113,6 +115,17 @@ export function CarriersPage() {
                   >
                     {testingId === a.id ? <><Loader2 size={14} className="animate-spin" /> Testing…</> : <><Plug size={14} /> Test connection</>}
                   </button>
+                  {/* Only once the account authenticates. A quote needs a token, and offering it
+                      before the connection works produces a confusing failure. */}
+                  {a.isActive && (
+                    <button
+                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-semibold text-n-700 hover:border-teal-300 hover:text-teal-700"
+                      title="Ask FedEx what a shipment would cost — the first call that actually uses the account number"
+                      onClick={() => setQuoteFor(a)}
+                    >
+                      Test a rate quote
+                    </button>
+                  )}
                   <button className="btn btn-ghost h-9" onClick={() => setModal(a)}>Edit</button>
                 </div>
               </div>
@@ -129,6 +142,8 @@ export function CarriersPage() {
           please do not press it repeatedly if it fails.
         </p>
       )}
+
+      {quoteFor && <RateQuoteModal account={quoteFor} onClose={() => setQuoteFor(null)} />}
 
       {modal !== undefined && (
         <CarrierAccountModal

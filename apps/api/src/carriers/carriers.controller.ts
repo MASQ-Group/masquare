@@ -78,4 +78,23 @@ export class CarriersController {
   test(@Param('id') id: string, @CurrentUser() user: AuthUser, @AllowedCompanies() companyIds: string[]) {
     return this.svc.test(id, user.sub, companyIds);
   }
+
+  /**
+   * Ask FedEx what a shipment would cost, and return the reply untouched.
+   *
+   * The response is deliberately unmapped: FedEx ships sample requests but no sample responses, so
+   * nobody here has seen the shape of a reply yet. This is how we get one — from FedEx rather than
+   * from a guess — and the mapper goes in afterwards.
+   *
+   * Rating is not the throttled endpoint (that is the token), so this needs no special protection
+   * beyond the account being one the caller may reach.
+   */
+  @Post('accounts/:id/rate-quote')
+  rateQuote(
+    @Param('id') id: string,
+    @Body() body: any,
+    @AllowedCompanies() companyIds: string[],
+  ) {
+    return this.svc.rateQuote(id, body ?? {}, companyIds);
+  }
 }

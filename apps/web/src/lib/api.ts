@@ -227,6 +227,24 @@ export const carriersApi = {
    * opposite responses, and "connection failed" sends somebody to re-type a working secret.
    */
   test: (id: string) => api.post<{ ok: boolean; message: string }>(`/carriers/accounts/${id}/test`, {}).then((r) => r.data),
+  /**
+   * Ask FedEx what a shipment would cost. Returns the reply untouched.
+   *
+   * Unmapped on purpose: FedEx publishes sample requests but no sample responses, so this is how we
+   * obtain a real one. The mapping to our own shipping figures goes in once there is something real
+   * to map, rather than against a guessed shape.
+   */
+  rateQuote: (id: string, body: {
+    recipient: { postalCode: string; countryIso: string; residential?: boolean | null };
+    parcels: Array<{ weightKg: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }>;
+    customsValue?: { amount: number; currency: string } | null;
+    goodsDescription?: string | null;
+    serviceType?: string | null;
+  }) =>
+    api.post<{
+      ok: boolean; status: number; request: unknown; response: unknown;
+      origin: 'account' | 'company' | null; customs: boolean;
+    }>(`/carriers/accounts/${id}/rate-quote`, body).then((r) => r.data),
 };
 
 export const companiesApi = {
