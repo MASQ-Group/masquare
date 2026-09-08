@@ -186,6 +186,49 @@ export const authApi = {
   me: () => api.get<Me>('/auth/me').then((r) => r.data),
 };
 
+/**
+ * A courier account — FedEx today.
+ *
+ * Deliberately not a ChannelIntegration: a carrier has an account number that gets billed and an
+ * address shipments leave from, and none of the marketplace furniture applies to it.
+ */
+export interface CarrierAccount {
+  id: string;
+  companyId: string;
+  companyName: string | null;
+  carrier: string;
+  name: string;
+  /** Printed on every waybill, so not a secret — unlike the keys. */
+  accountNumber: string;
+  environment: 'sandbox' | 'production';
+  origin: {
+    line1: string | null; line2: string | null; city: string | null; region: string | null;
+    postalCode: string | null; countryIso: string | null; phone: string | null;
+  };
+  /** Only ever true after a connection test has passed. */
+  isActive: boolean;
+  lastTestedAt: string | null;
+  lastTestOk: boolean | null;
+  lastTestNote: string | null;
+  /** Which credentials are stored and their last four characters. Never the values. */
+  secrets: Array<{ fieldKey: string; last4: string; updatedAt: string }>;
+}
+
+export const carriersApi = {
+  list: () => api.get<CarrierAccount[]>('/carriers/accounts').then((r) => r.data),
+  get: (id: string) => api.get<CarrierAccount>(`/carriers/accounts/${id}`).then((r) => r.data),
+  create: (body: any) => api.post<CarrierAccount>('/carriers/accounts', body).then((r) => r.data),
+  update: (id: string, body: any) => api.patch<CarrierAccount>(`/carriers/accounts/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/carriers/accounts/${id}`).then((r) => r.data),
+  /**
+   * Authenticate with the stored keys.
+   *
+   * The message is the finding and should be shown as-is: a rejected key and a rate-limit need
+   * opposite responses, and "connection failed" sends somebody to re-type a working secret.
+   */
+  test: (id: string) => api.post<{ ok: boolean; message: string }>(`/carriers/accounts/${id}/test`, {}).then((r) => r.data),
+};
+
 export const companiesApi = {
   list: () => api.get<Company[]>('/companies').then((r) => r.data),
   get: (id: string) => api.get<Company>(`/companies/${id}`).then((r) => r.data),

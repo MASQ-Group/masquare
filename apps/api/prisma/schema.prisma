@@ -71,6 +71,7 @@ model Company {
   salesChannels       SalesChannel[]
   fbaFulfilmentPools  FbaFulfilmentPool[]
   stockTransfers      StockTransfer[]
+  carrierAccounts     CarrierAccount[]
 
   @@map("company")
 }
@@ -2208,6 +2209,108 @@ model ChannelIntegration {
 
 // One encrypted secret field (e.g. liveSecretKey). Stores only ciphertext + the
 // GCM nonce/tag + key version + last-4 (for masked display). No plaintext, ever.
+// ---------------------------------------------------------------------------
+// Carrier accounts (FedEx, and whatever follows)
+//
+// Deliberately NOT ChannelIntegration. That model is built around a marketplace: it carries a target
+// sales channel, a marketplace ISO, a listing scope, an order-sync cursor. A courier has none of
+// those, and has things a marketplace does not — an account number that gets billed, a sandbox that
+// answers differently from production, an address shipments leave from. Bending one into the other
+// would leave half the columns meaningless on every row, and a reader unable to tell which half.
+// ---------------------------------------------------------------------------
+model CarrierAccount {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// The company whose account this is, and which gets billed.
+  ///
+  /// Required, unlike the nullable company on some other models: a shipment charged to the wrong
+  /// company's carrier account is a real invoice to unpick afterwards, so there is no such thing as
+  /// an unowned carrier account.
+  companyId String @map("company_id") @db.Uuid
+
+  /// 'fedex' for now. A code rather than an enum, so adding DHL is a row and not a migration.
+  carrier String
+  /// What our people call it — "FedEx CY main". Free text; the account number is the identity.
+  name String
+
+  /// The number FedEx bills. Not a secret — it is printed on every waybill — but it identifies us,
+  /// so it is stored in the clear and shown, unlike the keys.
+  accountNumber String @map("account_number")
+
+  /// 'sandbox' or 'production'.
+  ///
+  /// They have different base URLs AND different credentials, and a sandbox key sent to the
+  /// production host fails in ways that read like a broken integration rather than a wrong setting.
+  /// Held as data so both can exist side by side through the label certification, which needs a
+  /// production key while everyday development is still on sandbox.
+  environment String @default("sandbox")
+
+  /// Where shipments on this account leave from.
+  ///
+  /// Null means the owning company's own address, which is the ordinary case and saves retyping it.
+  /// Filled in only where an account ships from somewhere the company record does not describe.
+  /// It lives here rather than being asked at shipment time because a rate cannot be quoted without
+  /// an origin, and asking for one per shipment is how a wrong one gets typed.
+  originLine1      String? @map("origin_line1")
+  originLine2      String? @map("origin_line2")
+  originCity       String? @map("origin_city")
+  originRegion     String? @map("origin_region")
+  originPostalCode String? @map("origin_postal_code")
+  originCountryIso String? @map("origin_country_iso")
+  originPhone      String? @map("origin_phone")
+
+  /// Off by default. A newly entered account has never been tested, and nothing should ship on one
+  /// nobody has seen answer.
+  isActive Boolean @default(false) @map("is_active")
+
+  /// The last connection test: when, whether it worked, and what it said.
+  ///
+  /// Stored rather than left in the toast of whoever pressed the button, so a credential that
+  /// expired three weeks ago is visible on the screen instead of at the moment somebody needs a
+  /// label.
+  lastTestedAt DateTime? @map("last_tested_at")
+  lastTestOk   Boolean?  @map("last_test_ok")
+  lastTestNote String?   @map("last_test_note")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  company Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  secrets CarrierAccountSecret[]
+
+  /// One account number per carrier per environment. The same number appearing in both sandbox and
+  /// production is normal and must stay possible; the same number twice in one environment is a
+  /// mistake worth refusing at the database.
+  @@unique([carrier, accountNumber, environment])
+  @@index([companyId])
+  @@map("carrier_account")
+}
+
+/// Carrier credentials, encrypted at rest by the same service that holds the marketplace keys.
+///
+/// A separate table rather than columns, so a secret is never selected by accident: reading an
+/// account gives you everything except the keys, and the keys take a deliberate second query.
+model CarrierAccountSecret {
+  id         String   @id @default(uuid()) @db.Uuid
+  accountId  String   @map("account_id") @db.Uuid
+  fieldKey   String   @map("field_key")
+  ciphertext String
+  iv         String
+  authTag    String   @map("auth_tag")
+  keyVersion Int      @map("key_version")
+  /// The last four characters, so a screen can show WHICH key is stored without revealing it.
+  last4      String
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  account CarrierAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, fieldKey])
+  @@map("carrier_account_secret")
+}
+
 model IntegrationSecret {
   id            String   @id @default(uuid()) @db.Uuid
   integrationId String   @map("integration_id") @db.Uuid

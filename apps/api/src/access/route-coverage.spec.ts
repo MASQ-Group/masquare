@@ -76,7 +76,8 @@ describe('access declarations', () => {
     // missing entirely — a floor cannot notice an omission above it. If this number moves, a
     // controller was added or removed and somebody should say which.
     const classes = FILES.reduce((n, f) => n + declarations(readFileSync(f, 'utf8')).length, 0);
-    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(58);
+    // 59 since CarriersController (8 Sep 2026) — FedEx and whatever carriers follow it.
+    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(59);
   });
 
   it('declares an area or an explicit exemption on every controller', () => {

@@ -161,6 +161,10 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
     label: 'Setup',
     items: [
       { to: '/integrations', label: 'Integrations', area: 'integrations', icon: Plug, adminOnly: true },
+      // Same area as marketplace integrations — the same job of connecting to somebody else's
+      // system with somebody else's keys — but its own page, since a courier shares none of a
+      // marketplace's furniture.
+      { to: '/carriers', label: 'Carrier accounts', area: 'integrations', icon: Truck, adminOnly: true },
       { to: '/activity', label: 'Activity', area: 'activity', icon: History },
       { to: '/settings', label: 'Global settings', area: 'global_settings', icon: SlidersHorizontal },
       { to: '/companies', label: 'Companies', area: 'administration', icon: Building2, adminOnly: true },

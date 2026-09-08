@@ -21,6 +21,7 @@ import { GlobalSettingsModule } from './global-settings/global-settings.module';
 import { GlobalDataModule } from './global-data/global-data.module';
 import { ProductsModule } from './products/products.module';
 import { SalesTransactionsModule } from './sales-transactions/sales-transactions.module';
+import { CarriersModule } from './carriers/carriers.module';
 import { ShipmentsModule } from './shipments/shipments.module';
 import { FbaShipmentsModule } from './fba-shipments/fba-shipments.module';
 import { WarehousesModule } from './warehouses/warehouses.module';
@@ -77,6 +78,7 @@ import { HealthController } from './health.controller';
     GlobalDataModule,
     ProductsModule,
     SalesTransactionsModule,
+    CarriersModule,
     ShipmentsModule,
     FbaShipmentsModule,
     WarehousesModule,

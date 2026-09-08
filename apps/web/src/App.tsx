@@ -57,6 +57,7 @@ const ExpenseCategoriesPage = lazyPage(() => import('./pages/expenses/ExpenseCat
 const ExpenseNamesPage = lazyPage(() => import('./pages/expenses/ExpenseNamesPage'), 'ExpenseNamesPage');
 const ExpenseTagsPage = lazyPage(() => import('./pages/expenses/ExpenseTagsPage'), 'ExpenseTagsPage');
 const IntegrationsPage = lazyPage(() => import('./pages/IntegrationsPage'), 'IntegrationsPage');
+const CarriersPage = lazyPage(() => import('./pages/CarriersPage'), 'CarriersPage');
 const RepricingPage = lazyPage(() => import('./pages/RepricingPage'), 'RepricingPage');
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -167,6 +168,7 @@ export function App() {
         <Route path="/expenses/tags" element={<RequireArea area="expenses"><ExpenseTagsPage /></RequireArea>} />
         <Route path="/expenses/categories" element={<RequireArea area="expenses"><ExpenseCategoriesPage /></RequireArea>} />
         <Route path="/integrations" element={<RequireArea area="integrations"><RequireAdmin><IntegrationsPage /></RequireAdmin></RequireArea>} />
+        <Route path="/carriers" element={<RequireArea area="integrations"><RequireAdmin><CarriersPage /></RequireAdmin></RequireArea>} />
         <Route path="/companies" element={<RequireAdmin><CompaniesPage /></RequireAdmin>} />
         <Route path="/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
         <Route path="/roles" element={<RequireAdmin><RolesPage /></RequireAdmin>} />
