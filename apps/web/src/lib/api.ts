@@ -2509,7 +2509,7 @@ export const shipmentsApi = {
   list: (params: { q?: string; companyId?: string; salesChannelId?: string; type?: string; reviewState?: 'reviewed' | 'unreviewed'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number; includeFba?: boolean }) =>
     api.get<ShipmentListResponse>('/shipments', { params }).then((r) => r.data),
   /** Every order and where its parcels have got to. One row per order, parcels stacked inside it. */
-  trackingLog: (params: { q?: string; salesChannelId?: string; state?: 'all' | 'not_shipped' | 'in_transit' | 'delivered'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
+  trackingLog: (params: { q?: string; salesChannelId?: string; destinationCountryId?: string; shippingServiceId?: string; late?: boolean; state?: 'all' | 'not_shipped' | 'in_transit' | 'delivered'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<TrackingLogResponse>('/shipments/tracking-log', { params }).then((r) => r.data),
   pending: (params: { q?: string; companyId?: string; salesChannelId?: string; channelKind?: 'local' | 'channel'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<PendingListResponse>('/shipments/pending', { params }).then((r) => r.data),

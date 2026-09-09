@@ -11,13 +11,20 @@ export interface TrackingLogQuery {
   companyId?: string;
   companyIds?: string[];
   salesChannelId?: string;
+  /** Where the order is going. */
+  destinationCountryId?: string;
+  /** Which courier carried it — matches an order with at least one parcel on that service. */
+  shippingServiceId?: string;
   /**
-   * Where the order has got to.
+   * Only orders with a parcel that arrived after the carrier's promise.
    *
-   * Deliberately no "late" option. Deciding that needs one column compared against another, which
-   * Prisma cannot express without raw SQL — and a filter that quietly could not do what its label
-   * promised would be worse than not offering it. Lateness is marked on the row instead.
+   * Answerable now because lateness is decided at write time and stored (ShipmentTracking
+   * .deliveredLate). It could not be a filter while it was computed on read: comparing two columns
+   * needs raw SQL, and a filter that quietly could not do what its label promised would have been
+   * worse than not offering one.
    */
+  late?: boolean;
+  /** Where the order has got to. */
   state?: 'all' | 'not_shipped' | 'in_transit' | 'delivered';
   sortDir?: 'asc' | 'desc';
   page?: number;
@@ -339,32 +346,47 @@ export class ShipmentsService {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
 
-    const shipped = { some: { deletedAt: null } };
-    const anyDelivered = { some: { deletedAt: null, tracking: { is: { deliveredAt: { not: null } } } } };
-
-    const where: Prisma.SalesTransactionWhereInput = {
-      deletedAt: null,
-      ...(query.companyIds ? { companyId: { in: query.companyIds } } : query.companyId ? { companyId: query.companyId } : {}),
-      ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
+    /**
+     * Built as a list of AND clauses rather than one object.
+     *
+     * Several of these filters constrain the same relation — state, shipping service and lateness
+     * are all conditions on `shipments` — and as sibling keys in one object the last would silently
+     * win. As separate clauses they compose, which is what a filter bar with four controls has to
+     * do.
+     */
+    const and: Prisma.SalesTransactionWhereInput[] = [
+      { deletedAt: null },
       // FBA is fulfilled by Amazon from their own warehouse — there is no parcel of ours to track.
-      fulfilmentType: { not: 'FBA' },
-      ...(query.state === 'not_shipped' ? { shipments: { none: { deletedAt: null } } } : {}),
-      ...(query.state === 'delivered' ? { shipments: anyDelivered } : {}),
-      // Out of our hands and not yet arrived. Both clauses are needed: "has a shipment" alone would
-      // include everything already delivered.
-      ...(query.state === 'in_transit'
-        ? { AND: [{ shipments: shipped }, { shipments: { none: { deletedAt: null, tracking: { is: { deliveredAt: { not: null } } } } } }] }
-        : {}),
-      ...(query.q
-        ? {
-            OR: [
-              { transactionRef: { contains: query.q, mode: 'insensitive' } },
-              { shipments: { some: { deletedAt: null, trackingNumber: { contains: query.q, mode: 'insensitive' } } } },
-              { items: { some: { deletedAt: null, sku: { contains: query.q, mode: 'insensitive' } } } },
-            ],
-          }
-        : {}),
-    };
+      { fulfilmentType: { not: 'FBA' } },
+    ];
+    if (query.companyIds) and.push({ companyId: { in: query.companyIds } });
+    else if (query.companyId) and.push({ companyId: query.companyId });
+    if (query.salesChannelId) and.push({ salesChannelId: query.salesChannelId });
+    if (query.destinationCountryId) and.push({ destinationCountryId: query.destinationCountryId });
+    if (query.shippingServiceId) {
+      and.push({ shipments: { some: { deletedAt: null, shippingServiceId: query.shippingServiceId } } });
+    }
+    if (query.late) and.push({ shipments: { some: { deletedAt: null, tracking: { is: { deliveredLate: true } } } } });
+
+    if (query.state === 'not_shipped') and.push({ shipments: { none: { deletedAt: null } } });
+    if (query.state === 'delivered') {
+      and.push({ shipments: { some: { deletedAt: null, tracking: { is: { deliveredAt: { not: null } } } } } });
+    }
+    if (query.state === 'in_transit') {
+      // Both clauses are needed: "has a shipment" alone would include everything already delivered.
+      and.push({ shipments: { some: { deletedAt: null } } });
+      and.push({ shipments: { none: { deletedAt: null, tracking: { is: { deliveredAt: { not: null } } } } } });
+    }
+    if (query.q) {
+      and.push({
+        OR: [
+          { transactionRef: { contains: query.q, mode: 'insensitive' } },
+          { shipments: { some: { deletedAt: null, trackingNumber: { contains: query.q, mode: 'insensitive' } } } },
+          { items: { some: { deletedAt: null, sku: { contains: query.q, mode: 'insensitive' } } } },
+        ],
+      });
+    }
+    const where: Prisma.SalesTransactionWhereInput = { AND: and };
 
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.salesTransaction.count({ where }),
@@ -388,7 +410,7 @@ export class ShipmentsService {
               tracking: {
                 select: {
                   statusDescription: true, estimatedDeliveryAt: true, deliveredAt: true,
-                  exceptionDescription: true, found: true,
+                  exceptionDescription: true, found: true, deliveredLate: true,
                 },
               },
             },
@@ -419,16 +441,8 @@ export class ShipmentsService {
           statusDescription: s.tracking?.statusDescription ?? null,
           /** Only while it is still out — a cleared customs hold is history, not a task. */
           exceptionDescription: s.tracking?.deliveredAt ? null : (s.tracking?.exceptionDescription ?? null),
-          /**
-           * Arrived after the carrier's own promise.
-           *
-           * Computed here rather than filtered in SQL: comparing two columns needs raw SQL, and a
-           * filter that quietly could not do what its label said would be worse than none.
-           */
-          late:
-            s.tracking?.deliveredAt && s.tracking?.estimatedDeliveryAt
-              ? s.tracking.deliveredAt.getTime() > s.tracking.estimatedDeliveryAt.getTime()
-              : null,
+          /** Arrived after the carrier's own promise. Decided at write time; see the schema. */
+          late: s.tracking?.deliveredLate ?? null,
           notRecognised: s.tracking?.found === false,
         })),
       })),

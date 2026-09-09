@@ -2430,6 +2430,19 @@ model ShipmentTracking {
   /// The reference on the waybill as FedEx holds it. For our Amazon shipments, the order id.
   shipperReference String? @map("shipper_reference")
 
+  /**
+   * Arrived after the carrier's own promise.
+   *
+   * Stored rather than computed on read, because a comparison BETWEEN TWO COLUMNS cannot be
+   * expressed as a query filter without dropping to raw SQL — and "show me the late ones" is the
+   * question this whole table exists to answer. Derived at write time from the two dates beside it,
+   * which is where every other derived value here comes from.
+   *
+   * NULL means unknown, not on time: a parcel with no promise or no delivery has not met anything.
+   * Read as false, it would report every untracked shipment as a carrier keeping its word.
+   */
+  deliveredLate Boolean? @map("delivered_late")
+
   /// The scan history, newest first, normalised. The signatory's name is deliberately not among it.
   scans Json?
 
@@ -2469,6 +2482,8 @@ model ShipmentTracking {
 
   @@index([trackingNumber])
   @@index([deliveredAt])
+  /// The late-orders filter reads this directly.
+  @@index([deliveredLate])
   @@map("shipment_tracking")
 }
 

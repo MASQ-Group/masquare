@@ -2,8 +2,11 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation } from 'react-router-dom';
 import { AlertTriangle, ArrowDown, ArrowUp, CircleCheck, Search } from 'lucide-react';
-import { Pagination } from '@masquare/ui';
-import { shipmentsApi, type TrackingLogParcel, type TrackingLogRow } from '../lib/api';
+import { Pagination, Select } from '@masquare/ui';
+import {
+  countriesApi, salesChannelsApi, shipmentsApi, shippingServicesApi,
+  type TrackingLogParcel, type TrackingLogRow,
+} from '../lib/api';
 import { formatDate } from '../lib/format';
 import { withReturn } from '../lib/useBackLink';
 import { CountryTag } from '../components/common/Flag';
@@ -32,9 +35,17 @@ export function ShipmentsTrackingPage() {
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [channelId, setChannelId] = useState('');
+  const [countryId, setCountryId] = useState('');
+  const [serviceId, setServiceId] = useState('');
+  const [lateOnly, setLateOnly] = useState(false);
   const [page, setPage] = useState(1);
   const pageSize = 50;
   const chipFor = useChannelChips();
+
+  const { data: channels = [] } = useQuery({ queryKey: ['sales-channels'], queryFn: () => salesChannelsApi.list() });
+  const { data: countries = [] } = useQuery({ queryKey: ['countries'], queryFn: () => countriesApi.list() });
+  const { data: services = [] } = useQuery({ queryKey: ['shipping-services'], queryFn: () => shippingServicesApi.list() });
   // Where a link opened from, so the order can offer a way back to exactly this view.
   const here = useLocation();
 
@@ -43,11 +54,18 @@ export function ShipmentsTrackingPage() {
     const id = setTimeout(() => { setSearch(q.trim()); setPage(1); }, 300);
     return () => clearTimeout(id);
   }, [q]);
-  useEffect(() => { setPage(1); }, [state, activeCompanyId]);
+  useEffect(() => { setPage(1); }, [state, activeCompanyId, channelId, countryId, serviceId, lateOnly]);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['tracking-log', { state, search, sortDir, page, activeCompanyId }],
-    queryFn: () => shipmentsApi.trackingLog({ q: search || undefined, state, sortDir, page, pageSize }),
+    queryKey: ['tracking-log', { state, search, sortDir, page, activeCompanyId, channelId, countryId, serviceId, lateOnly }],
+    queryFn: () => shipmentsApi.trackingLog({
+      q: search || undefined,
+      salesChannelId: channelId || undefined,
+      destinationCountryId: countryId || undefined,
+      shippingServiceId: serviceId || undefined,
+      late: lateOnly || undefined,
+      state, sortDir, page, pageSize,
+    }),
   });
 
   const rows = data?.items ?? [];
@@ -71,15 +89,44 @@ export function ShipmentsTrackingPage() {
         activeTab={state}
         onTabChange={(k) => setState(k as State)}
         toolbar={
-          <div className="relative w-[320px] max-w-full">
-            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-n-400" />
-            <input
-              className="h-9 w-full rounded-md border border-n-200 bg-n-0 pl-9 pr-3 text-[13px] text-n-800 placeholder:text-n-400 focus:border-teal-400 focus:outline-none focus:ring-[3px] focus:ring-teal-50"
-              placeholder="Order ID, tracking number or SKU"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </div>
+          <>
+            <div className="relative w-[280px] max-w-full">
+              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-n-400" />
+              <input
+                className="h-9 w-full rounded-md border border-n-200 bg-n-0 pl-9 pr-3 text-[13px] text-n-800 placeholder:text-n-400 focus:border-teal-400 focus:outline-none focus:ring-[3px] focus:ring-teal-50"
+                placeholder="Order ID, tracking number or SKU"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
+            </div>
+            <Select dense className="w-40" value={channelId} onChange={setChannelId}
+              options={[{ value: '', label: 'All channels' }, ...channels.map((c) => ({ value: c.id, label: c.name }))]} />
+            {/* The whole countries table, not just the ones with orders — the dropdown is
+                type-to-filter, so "Germ" finds Germany without scrolling, and narrowing it would
+                need the server to return the distinct destinations for the current scope. */}
+            <Select dense className="w-44" value={countryId} onChange={setCountryId}
+              options={[{ value: '', label: 'All destinations' }, ...countries.map((c) => ({ value: c.id, label: c.name }))]} />
+            <Select dense className="w-40" value={serviceId} onChange={setServiceId}
+              options={[{ value: '', label: 'All services' }, ...services.map((s) => ({ value: s.id, label: s.name }))]} />
+            {/*
+              A toggle rather than a fifth tab.
+              Late is not a stage of the journey — it cuts across Delivered, and combines with the
+              other three filters. "Late FedEx parcels to Germany" is one question, and a tab strip
+              cannot ask it.
+            */}
+            <button
+              type="button"
+              onClick={() => setLateOnly((v) => !v)}
+              title="Only orders with a parcel that arrived after the carrier's promised date"
+              className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-3 text-[13px] font-semibold ${
+                lateOnly
+                  ? 'border-warning-bd bg-warning-bg text-warning'
+                  : 'border-n-200 bg-n-0 text-n-600 hover:border-teal-300 hover:text-teal-700'
+              }`}
+            >
+              <AlertTriangle size={14} /> Late only
+            </button>
+          </>
         }
       />
 

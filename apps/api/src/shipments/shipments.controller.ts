@@ -48,13 +48,17 @@ export class ShipmentsController {
     @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('salesChannelId') salesChannelId?: string,
+    @Query('destinationCountryId') destinationCountryId?: string,
+    @Query('shippingServiceId') shippingServiceId?: string,
+    @Query('late') late?: string,
     @Query('state') state?: 'all' | 'not_shipped' | 'in_transit' | 'delivered',
     @Query('sortDir') sortDir?: 'asc' | 'desc',
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
     return this.svc.trackingLog({
-      q, companyIds, salesChannelId, state, sortDir,
+      q, companyIds, salesChannelId, destinationCountryId, shippingServiceId, state, sortDir,
+      late: late === 'true',
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });

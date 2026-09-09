@@ -1360,6 +1360,15 @@ export class CarriersService {
           serviceName: r.serviceName,
           weightKg: r.weightKg,
           shipperReference: r.shipperReference,
+          /**
+           * Arrived after the promise. Computed on the way in, because a filter cannot compare two
+           * columns — see the schema comment. Null when either date is missing, which is unknown
+           * rather than on time.
+           */
+          deliveredLate:
+            r.deliveredAt && r.estimatedDeliveryAt
+              ? Date.parse(r.deliveredAt) > Date.parse(r.estimatedDeliveryAt)
+              : null,
           scans: r.scans as unknown as Prisma.InputJsonValue,
           // Everything else FedEx sent, redacted upstream. See the column comment for why it is
           // kept whole rather than distilled into more columns.
