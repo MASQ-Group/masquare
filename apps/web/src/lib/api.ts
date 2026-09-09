@@ -2379,15 +2379,26 @@ export interface DeliveryPromise {
   late: boolean | null;
 }
 
+/** The one-line answer in the platform's words, with the tone to say it in. */
+export interface TrackingStatusPill {
+  tone: 'neutral' | 'teal' | 'green' | 'warning';
+  label: string;
+}
+
 export interface ShipmentTrackingDetail {
   shipmentId: string;
   trackingNumber: string | null;
+  /** The shipping service's name, as our people wrote it. Shown beside the number. */
+  carrier: string | null;
+  /** The carrier's public tracking page, built from the service's URL template. Null when unset. */
+  trackingUrl: string | null;
   /** Whether this is a carrier we can ask at all. Only FedEx is connected. */
   trackable: boolean;
   tracking: ShipmentTrackingRow | null;
   /** Derived server-side, so every screen showing a journey reads it from the same tested rule. */
   stages: TrackingStage[];
   promise: DeliveryPromise | null;
+  pill: TrackingStatusPill | null;
 }
 
 /** One order's shipments, each with what the carrier says. Untracked carriers are included. */
@@ -2450,6 +2461,41 @@ export interface ShipmentCostGroup {
   parcels: ShipmentCostParcel[];
 }
 
+/** One order in the tracking log, with its parcels stacked inside the shipping columns. */
+export interface TrackingLogParcel {
+  shipmentId: string;
+  type: string;
+  shipmentDate: string;
+  serviceName: string | null;
+  trackingNumber: string | null;
+  expectedAt: string | null;
+  deliveredAt: string | null;
+  statusDescription: string | null;
+  /** Only while the parcel is still out — a cleared customs hold is history, not a task. */
+  exceptionDescription: string | null;
+  /** Arrived after the carrier's own promise. Null when either date is missing, which is not false. */
+  late: boolean | null;
+  notRecognised: boolean;
+}
+
+export interface TrackingLogRow {
+  transactionId: string;
+  transactionRef: string | null;
+  date: string;
+  salesChannel: { id: string; name: string } | null;
+  company: { id: string; officialName: string } | null;
+  destinationCountry: { isoCode: string | null; name: string } | null;
+  skus: string[];
+  parcels: TrackingLogParcel[];
+}
+
+export interface TrackingLogResponse {
+  items: TrackingLogRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export const shipmentsApi = {
   /** includeFba folds settled FBA shipments into the log — they have no transaction behind them. */
   /** Every parcel this shipment's carrier charge is shared with — one per tracking number. */
@@ -2462,6 +2508,9 @@ export const shipmentsApi = {
     api.post<{ ok: true; reviewed: boolean }>(`/shipments/${id}/reviewed`, { reviewed }).then((r) => r.data),
   list: (params: { q?: string; companyId?: string; salesChannelId?: string; type?: string; reviewState?: 'reviewed' | 'unreviewed'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number; includeFba?: boolean }) =>
     api.get<ShipmentListResponse>('/shipments', { params }).then((r) => r.data),
+  /** Every order and where its parcels have got to. One row per order, parcels stacked inside it. */
+  trackingLog: (params: { q?: string; salesChannelId?: string; state?: 'all' | 'not_shipped' | 'in_transit' | 'delivered'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
+    api.get<TrackingLogResponse>('/shipments/tracking-log', { params }).then((r) => r.data),
   pending: (params: { q?: string; companyId?: string; salesChannelId?: string; channelKind?: 'local' | 'channel'; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number }) =>
     api.get<PendingListResponse>('/shipments/pending', { params }).then((r) => r.data),
   /** Orders the marketplace dispatched that we never recorded a shipment for. Same shape as pending. */

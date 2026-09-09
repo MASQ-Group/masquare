@@ -484,8 +484,10 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
       )}
 
       {transaction?.id && tab === 'tracking' && (
-        <div className="flex-1 px-8 pb-16 pt-6 max-[760px]:px-4">
-          <div className="card max-w-[1240px] p-6"><TransactionTracking transactionId={transaction.id} /></div>
+        // No card wrapper: the panel is itself three cards, and a card around cards reads as a box
+        // somebody forgot to remove. A single 860px column, as the design specifies.
+        <div className="flex-1 bg-n-50 px-8 pb-16 pt-6 max-[760px]:px-4">
+          <div className="mx-auto max-w-[860px]"><TransactionTracking transactionId={transaction.id} /></div>
         </div>
       )}
       {transaction?.id && tab === 'history' && (

@@ -146,6 +146,54 @@ const STAGE_EVENTS: Array<{ key: TrackStage['key']; label: string; events: strin
 ];
 
 /**
+ * The one-line answer, in our words rather than the carrier's.
+ *
+ * FedEx has dozens of status codes and its own phrasing for each. A person looking at an order
+ * wants one of six answers, and wants the same six whatever carrier eventually sits behind this —
+ * so the mapping lives here, once, instead of a screen parsing carrier strings.
+ *
+ * The exception case is the one that earns its keep: when a parcel is held, the useful label is not
+ * "In transit", it is FedEx's own reason — "Customs hold", "Customer not available". So the pill
+ * carries the reason rather than the status, and turns amber.
+ */
+export interface StatusPill {
+  tone: 'neutral' | 'teal' | 'green' | 'warning';
+  label: string;
+}
+
+export function statusPill(input: {
+  statusCode: string | null;
+  statusDescription: string | null;
+  deliveredAt: string | null;
+  /** The latest problem scan, or null. Only meaningful while the parcel is still out. */
+  exceptionDescription: string | null;
+  stages: TrackStage[];
+}): StatusPill {
+  const code = (input.statusCode ?? '').toUpperCase();
+
+  // Delivered outranks everything, including an exception earlier in the journey. Two thirds of our
+  // parcels clear customs with a hold scan; none of them are a problem once they have arrived.
+  if (input.deliveredAt) return { tone: 'green', label: 'Delivered' };
+  if (code === 'CA') return { tone: 'neutral', label: 'Cancelled' };
+  if (input.exceptionDescription) return { tone: 'warning', label: input.exceptionDescription };
+
+  /**
+   * Read from the STAGES, not the status code.
+   *
+   * FedEx's derived code collapses "on the vehicle for delivery" into IT along with everything else
+   * that moves — 883 of our scans share that code. The stage list is built from the raw event type,
+   * so it is the only thing that can tell "out for delivery" from "left the origin facility".
+   */
+  const reached = (key: TrackStage['key']) => input.stages.find((s) => s.key === key)?.done === true;
+  if (reached('out_for_delivery')) return { tone: 'teal', label: 'Out for delivery' };
+  if (reached('collected') || reached('transit')) return { tone: 'teal', label: 'On the way' };
+  if (code === 'OC' || code === 'IN' || reached('label')) return { tone: 'neutral', label: 'Label created' };
+
+  // Nothing recognisable: the carrier's own wording beats a wrong guess of ours.
+  return { tone: 'neutral', label: input.statusDescription ?? 'Unknown' };
+}
+
+/**
  * When FedEx said the parcel would arrive, and whether it did.
  *
  * Two different things wear the same label on a tracking screen and they are worth telling apart:

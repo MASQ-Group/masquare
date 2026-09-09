@@ -37,6 +37,29 @@ export class ShipmentsController {
     return this.svc.list(query);
   }
 
+  /**
+   * The tracking log: every order and where its parcels have got to.
+   *
+   * One row per ORDER, not per parcel — the question is "where is this customer's order", and an
+   * order that went out in two boxes is still one order.
+   */
+  @Get('tracking-log')
+  trackingLog(
+    @VisibleCompanies() companyIds: string[],
+    @Query('q') q?: string,
+    @Query('salesChannelId') salesChannelId?: string,
+    @Query('state') state?: 'all' | 'not_shipped' | 'in_transit' | 'delivered',
+    @Query('sortDir') sortDir?: 'asc' | 'desc',
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.svc.trackingLog({
+      q, companyIds, salesChannelId, state, sortDir,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  }
+
   // Literal paths before ":id".
   @Get('pending')
   pending(

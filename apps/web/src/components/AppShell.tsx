@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Coins,
   Container,
+  Radar,
   FolderTree,
   Gauge,
   Globe,
@@ -96,8 +97,27 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
     label: 'Sales',
     items: [
       { to: '/sales-transactions', label: 'Sales Transactions', area: 'sales_transactions', icon: Receipt },
+    ],
+  },
+  /**
+   * Getting goods to the customer, kept apart from selling to them.
+   *
+   * Shipments and FBA Shipments used to sit under Sales because that is where they were built, not
+   * because that is what they are: an order and the parcel that fulfils it are handled by different
+   * people on different days. Tracking joins them because it answers the question those people are
+   * actually asked — "where is it".
+   *
+   * The comment sits ABOVE the object, not inside it: breadcrumbs.spec reads these group labels
+   * straight out of this file to check every page's breadcrumb names a real section, and it expects
+   * `label:` to be the first line in the object. A comment in between made the whole group
+   * invisible to it — and the test caught exactly that.
+   */
+  {
+    label: 'Logistics',
+    items: [
       { to: '/shipments', label: 'Shipments', area: 'shipments', icon: Truck },
       { to: '/fba-shipments', label: 'FBA Shipments', area: 'shipments', icon: Container },
+      { to: '/shipments-tracking', label: 'Shipments Tracking', area: 'shipments', icon: Radar },
     ],
   },
   {

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { carriersApi, type Shipment } from '../../lib/api';
@@ -17,13 +18,14 @@ export function ShipmentTrackingModal({ shipment, onClose, onRefreshed }: Props)
     queryFn: () => carriersApi.tracking(shipment.id),
   });
   const refresh = useTrackingRefresh(onRefreshed);
+  const [asked, setAsked] = useState(false);
 
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(12,16,20,0.5)] p-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="flex max-h-[88vh] w-[560px] max-w-full flex-col rounded-lg bg-n-0 shadow-lg">
+      <div className="flex max-h-[88vh] w-[900px] max-w-full flex-col rounded-lg bg-n-0 shadow-lg">
         <div className="border-b border-n-200 px-5 py-3.5">
           <h2 className="text-[15px] font-semibold text-n-900">Tracking</h2>
           <p className="mt-0.5 text-[12.5px] text-n-500">
@@ -32,7 +34,7 @@ export function ShipmentTrackingModal({ shipment, onClose, onRefreshed }: Props)
           </p>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-n-50 px-5 py-4">
           {detail.isLoading && (
             <div className="flex items-center gap-2 py-6 text-[13px] text-n-500">
               <Loader2 size={15} className="animate-spin" /> Loading…
@@ -41,8 +43,9 @@ export function ShipmentTrackingModal({ shipment, onClose, onRefreshed }: Props)
           {detail.data && (
             <TrackingPanel
               view={detail.data}
-              onRefresh={() => refresh.mutate([shipment.id])}
+              onRefresh={() => { setAsked(true); refresh.mutate([shipment.id]); }}
               refreshing={refresh.isPending}
+              refreshFailed={asked && (refresh.isError || (refresh.data?.failedCalls ?? 0) > 0)}
             />
           )}
         </div>

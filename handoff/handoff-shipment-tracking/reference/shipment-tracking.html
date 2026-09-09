@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#F6F8FA;font-family:Inter,system-ui,sans-serif;color:#232A31}a{color:#0F857D;text-decoration:none}a:hover{color:#0B645E;text-decoration:underline}</style>
+</helmet>
+
+<div style="max-width:860px;margin:0 auto;padding:24px 20px 48px;display:flex;flex-direction:column;gap:16px">
+
+  <!-- Header card: status + tracking + progress -->
+  <div style="background:#fff;border:1px solid #DDE3E9;border-radius:12px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:14px;padding:16px 20px;flex-wrap:wrap">
+      <span style="display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 12px;border-radius:15px;background:#E7F6F4;color:#0B645E;font-size:13px;font-weight:600">
+        <span style="width:8px;height:8px;border-radius:50%;background:#14A79D"></span>On the way
+      </span>
+      <div style="display:flex;flex-direction:column;gap:1px">
+        <span style="font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#97A4AF">Tracking · FedEx</span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:14.5px;font-weight:500">876795474476</span>
+          <button onClick="{{ copyTracking }}" title="Copy tracking number" style="width:24px;height:24px;border:1px solid #DDE3E9;border-radius:6px;background:#fff;color:#6B7884;cursor:pointer;font-size:11px;display:inline-flex;align-items:center;justify-content:center" style-hover="border-color:#14A79D;color:#0F857D">{{ copyGlyph }}</button>
+        </span>
+      </div>
+      <div style="flex:1"></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px">
+        <span style="font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#97A4AF">Expected delivery</span>
+        <span style="font-size:14.5px;font-weight:600;color:#0B645E">Thu 10/09/2026</span>
+      </div>
+      <button onClick="{{ refresh }}" style="display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 14px;border:1px solid #DDE3E9;border-radius:8px;background:#fff;color:#232A31;font:500 13px Inter,sans-serif;cursor:pointer" style-hover="border-color:#14A79D;color:#0F857D">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.3M21 4v5h-5"></path></svg>{{ refreshLabel }}
+      </button>
+    </div>
+
+    <!-- Stepper -->
+    <div style="padding:20px 24px 22px;border-top:1px solid #EDF1F4;background:#FBFCFD">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr)">
+        <sc-for list="{{ steps }}" as="st" hint-placeholder-count="5">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:8px;position:relative">
+            <sc-if value="{{ st.hasBarL }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;top:11px;right:50%;margin-right:12px;left:0;height:2px;border-radius:1px;background:{{ st.barLColor }}"></span></sc-if>
+            <sc-if value="{{ st.hasBarR }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;top:11px;left:50%;margin-left:12px;right:0;height:2px;border-radius:1px;background:{{ st.barRColor }}"></span></sc-if>
+            <span style="width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:{{ st.dotBg }};border:{{ st.dotBorder }};color:#fff;position:relative;z-index:1">
+              <sc-if value="{{ st.done }}" hint-placeholder-val="{{ false }}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"></path></svg></sc-if>
+            </span>
+            <span style="font-size:12.5px;font-weight:{{ st.labelWeight }};color:{{ st.labelColor }};text-align:center">{{ st.label }}</span>
+            <sc-if value="{{ st.date }}" hint-placeholder-val="{{ false }}"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#97A4AF;margin-top:-4px">{{ st.date }}</span></sc-if>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shipment details -->
+  <div style="background:#fff;border:1px solid #DDE3E9;border-radius:12px;padding:18px 20px">
+    <div style="font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#97A4AF;margin-bottom:10px">Shipment details</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 40px">
+      <sc-for list="{{ details }}" as="d" hint-placeholder-count="8">
+        <div style="display:grid;grid-template-columns:120px 1fr;align-items:baseline;padding:9px 2px;border-bottom:1px solid #EDF1F4;font-size:13.5px">
+          <span style="color:#6B7884">{{ d.k }}</span>
+          <span style="font-family:{{ d.font }};font-weight:500;color:#232A31">{{ d.v }}<sc-if value="{{ d.note }}" hint-placeholder-val="{{ false }}"><span style="font-family:Inter,sans-serif;font-weight:400;color:#97A4AF"> {{ d.note }}</span></sc-if></span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- History timeline -->
+  <div style="background:#fff;border:1px solid #DDE3E9;border-radius:12px;padding:18px 20px">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:14px">
+      <span style="font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#97A4AF">History</span>
+      <span style="font-size:11.5px;color:#B4BEC7">Times are local to each scan</span>
+    </div>
+    <sc-for list="{{ days }}" as="day" hint-placeholder-count="2">
+      <div style="display:flex;flex-direction:column">
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0 10px">
+          <span style="font-size:12px;font-weight:600;color:#232A31">{{ day.label }}</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#97A4AF">{{ day.date }}</span>
+          <span style="flex:1;height:1px;background:#EDF1F4"></span>
+        </div>
+        <sc-for list="{{ day.events }}" as="ev" hint-placeholder-count="3">
+          <div style="display:grid;grid-template-columns:52px 20px 1fr;gap:0 10px;align-items:start">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#6B7884;padding-top:2px;text-align:right">{{ ev.time }}</span>
+            <span style="display:flex;flex-direction:column;align-items:center;align-self:stretch">
+              <span style="width:9px;height:9px;border-radius:50%;background:{{ ev.dotBg }};border:2px solid {{ ev.dotRing }};margin-top:4px;flex:none"></span>
+              <sc-if value="{{ ev.line }}" hint-placeholder-val="{{ true }}"><span style="width:2px;flex:1;background:#EDF1F4;border-radius:1px;margin-top:3px"></span></sc-if>
+            </span>
+            <span style="display:flex;flex-direction:column;gap:1px;padding-bottom:16px">
+              <span style="font-size:13.5px;font-weight:{{ ev.weight }};color:#232A31">{{ ev.title }}</span>
+              <span style="font-size:12px;color:#97A4AF">{{ ev.loc }}</span>
+            </span>
+          </div>
+        </sc-for>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:900,&quot;height&quot;:980},&quot;accentColor&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#14A79D&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;#14A79D&quot;,&quot;#0F857D&quot;,&quot;#2563EB&quot;,&quot;#475569&quot;]}}">
+class Component extends DCLogic {
+  state = { copied: false, refreshing: false };
+  renderVals() {
+    const accent = this.props.accentColor ?? '#14A79D';
+    const deep = '#0B645E';
+    const stepData = [
+      { label: 'Label created', date: '05/09/2026', s: 'done' },
+      { label: 'Collected', date: '07/09/2026', s: 'done' },
+      { label: 'In transit', date: '07/09/2026', s: 'current' },
+      { label: 'Out for delivery', date: '', s: 'todo' },
+      { label: 'Delivered', date: '', s: 'todo' },
+    ];
+    const steps = stepData.map((st, i) => {
+      const done = st.s === 'done', cur = st.s === 'current';
+      const prevDone = i > 0 && stepData[i - 1].s !== 'todo';
+      return {
+        label: st.label, date: st.date, done,
+        dotBg: done ? accent : cur ? '#fff' : '#F6F8FA',
+        dotBorder: done ? '1px solid ' + accent : cur ? '2px solid ' + accent : '2px dashed #C9D2DA',
+        labelWeight: cur ? 600 : done ? 500 : 400,
+        labelColor: cur ? deep : done ? '#232A31' : '#97A4AF',
+        hasBarL: i > 0, hasBarR: i < stepData.length - 1,
+        barLColor: prevDone ? accent : '#DDE3E9',
+        barRColor: st.s === 'done' ? accent : '#DDE3E9',
+      };
+    });
+    const mono = "'JetBrains Mono',monospace", sans = 'Inter,sans-serif';
+    const details = [
+      { k: 'Service', v: 'FedEx International Priority', font: sans },
+      { k: 'Waybill ref', v: '408-3485715-3037919', font: mono },
+      { k: 'Weight', v: '18.9 kg', note: 'weighed by FedEx', font: mono },
+      { k: 'Dimensions', v: '69 × 44 × 34 cm', font: mono },
+      { k: 'Packaging', v: 'Your Packaging', font: sans },
+      { k: 'Handling', v: 'Deliver Weekday', font: sans },
+    ];
+    const mkEv = (time, title, loc, latest, line) => ({
+      time, title, loc, line,
+      weight: latest ? 600 : 400,
+      dotBg: latest ? accent : '#C9D2DA',
+      dotRing: latest ? '#CDEEEA' : '#EDF1F4',
+    });
+    const days = [
+      { label: 'Today', date: '08/09/2026', events: [
+        mkEv('03:30', 'At local FedEx facility', 'Roissy Charles de Gaulle Cedex, FR', true, true),
+        mkEv('02:46', 'On the way', 'Roissy Charles de Gaulle Cedex, FR', false, true),
+        mkEv('01:05', 'Arrived at FedEx hub', 'Roissy Charles de Gaulle Cedex, FR', false, true),
+        mkEv('00:19', 'On the way', 'Roissy Charles de Gaulle Cedex, FR', false, false),
+      ]},
+      { label: 'Yesterday', date: '07/09/2026', events: [
+        mkEv('21:42', 'Left FedEx origin facility', 'Stuttgart, DE', false, true),
+        mkEv('16:08', 'Collected', 'Stuttgart, DE', false, false),
+      ]},
+    ];
+    return {
+      steps, details, days,
+      copyGlyph: this.state.copied ? '✓' : '⧉',
+      refreshLabel: this.state.refreshing ? 'Refreshing…' : 'Refresh',
+      copyTracking: () => {
+        navigator.clipboard && navigator.clipboard.writeText('876795474476');
+        this.setState({ copied: true });
+        setTimeout(() => this.setState({ copied: false }), 1500);
+      },
+      refresh: () => {
+        this.setState({ refreshing: true });
+        setTimeout(() => this.setState({ refreshing: false }), 900);
+      },
+    };
+  }
+}
+</script>
+</body>
+</html>

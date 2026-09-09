@@ -27,6 +27,7 @@ const SalesTransactionsPage = lazyPage(() => import('./pages/SalesTransactionsPa
 const SalesTransactionFormPage = lazyPage(() => import('./pages/SalesTransactionFormPage'), 'SalesTransactionFormPage');
 const ShipmentsPage = lazyPage(() => import('./pages/ShipmentsPage'), 'ShipmentsPage');
 const FbaShipmentsPage = lazyPage(() => import('./pages/FbaShipmentsPage'), 'FbaShipmentsPage');
+const ShipmentsTrackingPage = lazyPage(() => import('./pages/ShipmentsTrackingPage'), 'ShipmentsTrackingPage');
 const WarehousesPage = lazyPage(() => import('./pages/WarehousesPage'), 'WarehousesPage');
 const PurchaseOrdersPage = lazyPage(() => import('./pages/PurchaseOrdersPage'), 'PurchaseOrdersPage');
 const PurchaseOrderFormPage = lazyPage(() => import('./pages/PurchaseOrderFormPage'), 'PurchaseOrderFormPage');
@@ -132,6 +133,7 @@ export function App() {
         <Route path="/sales-transactions/:id/edit" element={<RequireArea area="sales_transactions"><SalesTransactionFormPage /></RequireArea>} />
         <Route path="/shipments" element={<RequireArea area="shipments"><ShipmentsPage /></RequireArea>} />
         <Route path="/fba-shipments" element={<RequireArea area="shipments"><FbaShipmentsPage /></RequireArea>} />
+        <Route path="/shipments-tracking" element={<RequireArea area="shipments"><ShipmentsTrackingPage /></RequireArea>} />
         <Route path="/inventory" element={<RequireArea area="inventory"><InventoryPage /></RequireArea>} />
         <Route path="/availability" element={<RequireArea area="products"><RequireTradingCompany><AvailabilityPage /></RequireTradingCompany></RequireArea>} />
         <Route path="/channel-listings" element={<RequireArea area="channel_listings"><RequireTradingCompany><ChannelListingsPage /></RequireTradingCompany></RequireArea>} />

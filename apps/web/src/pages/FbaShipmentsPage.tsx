@@ -158,7 +158,7 @@ export function FbaShipmentsPage() {
   return (
     <div className="w-full">
       <PageHeader
-        module="Sales"
+        module="Logistics"
         title="FBA Shipments"
         info="Ship stock to Amazon fulfilment centers. The estimated (then actual) shipping cost is allocated per SKU and feeds each product's average inbound FBA cost."
         tabs={[

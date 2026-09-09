@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deliveryPromise, parseTrackReply, redactTrackResult, trackStages } from './fedex-track-parse';
+import { deliveryPromise, parseTrackReply, redactTrackResult, statusPill, trackStages } from './fedex-track-parse';
 
 /**
  * A real reply, trimmed.
@@ -390,5 +390,61 @@ describe('deliveryPromise', () => {
     const p = deliveryPromise(null, '2026-09-03T20:00:00+02:00', null);
     expect(p.at).toBe('2026-09-03T20:00:00+02:00');
     expect(p.source).toBe('commitment');
+  });
+});
+
+describe('statusPill', () => {
+  const stages = (...done: string[]) =>
+    (['label', 'collected', 'transit', 'out_for_delivery', 'delivered'] as const).map((key) => ({
+      key, label: key, at: done.includes(key) ? '2026-09-03T10:00:00Z' : null, done: done.includes(key),
+    }));
+
+  it('says Delivered, in green, once it has arrived', () => {
+    expect(statusPill({ statusCode: 'DL', statusDescription: 'Delivered', deliveredAt: '2026-09-03T16:18:00+02:00', exceptionDescription: null, stages: stages('label', 'collected', 'transit', 'out_for_delivery', 'delivered') }))
+      .toEqual({ tone: 'green', label: 'Delivered' });
+  });
+
+  /**
+   * Two thirds of our delivered parcels carry a customs-hold scan somewhere in their history. None
+   * of them are a problem once they have arrived, so delivered has to outrank the exception.
+   */
+  it('does not flag a delivered parcel over an exception it got past', () => {
+    expect(statusPill({ statusCode: 'DL', statusDescription: 'Delivered', deliveredAt: '2026-09-03T16:18:00+02:00', exceptionDescription: 'Package available for clearance', stages: stages('label', 'collected', 'transit', 'delivered') }).tone)
+      .toBe('green');
+  });
+
+  /** Held up: the useful label is the carrier's reason, not "In transit". */
+  it('carries the reason as the label when a parcel is held', () => {
+    expect(statusPill({ statusCode: 'IT', statusDescription: 'In transit', deliveredAt: null, exceptionDescription: 'Customer not available or business closed', stages: stages('label', 'collected', 'transit') }))
+      .toEqual({ tone: 'warning', label: 'Customer not available or business closed' });
+  });
+
+  /**
+   * The case the derived status code cannot answer: FedEx collapses the van scan into IT along with
+   * everything else that moves, so this has to come from the stages.
+   */
+  it('says Out for delivery from the stages, not the status code', () => {
+    expect(statusPill({ statusCode: 'IT', statusDescription: 'In transit', deliveredAt: null, exceptionDescription: null, stages: stages('label', 'collected', 'transit', 'out_for_delivery') }))
+      .toEqual({ tone: 'teal', label: 'Out for delivery' });
+  });
+
+  it('says On the way once collected', () => {
+    expect(statusPill({ statusCode: 'IT', statusDescription: 'In transit', deliveredAt: null, exceptionDescription: null, stages: stages('label', 'collected', 'transit') }))
+      .toEqual({ tone: 'teal', label: 'On the way' });
+  });
+
+  it('says Label created before the carrier has it', () => {
+    expect(statusPill({ statusCode: 'OC', statusDescription: 'Shipment information sent to FedEx', deliveredAt: null, exceptionDescription: null, stages: stages('label') }))
+      .toEqual({ tone: 'neutral', label: 'Label created' });
+  });
+
+  it('says Cancelled', () => {
+    expect(statusPill({ statusCode: 'CA', statusDescription: 'Cancelled', deliveredAt: null, exceptionDescription: null, stages: stages() }).label).toBe('Cancelled');
+  });
+
+  /** A code we do not recognise: the carrier's own wording beats a wrong guess of ours. */
+  it('falls back to the carrier wording rather than inventing a status', () => {
+    expect(statusPill({ statusCode: 'ZZ', statusDescription: 'Held at customs pending payment', deliveredAt: null, exceptionDescription: null, stages: stages() }))
+      .toEqual({ tone: 'neutral', label: 'Held at customs pending payment' });
   });
 });

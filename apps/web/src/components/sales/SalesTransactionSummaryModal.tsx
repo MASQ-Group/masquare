@@ -86,7 +86,13 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
       {tab === 'history' && (
         <EntityHistory entityKey="sales-transaction" entityId={t.id} fetchPage={(id, p) => salesTransactionsApi.activity(id, p)} />
       )}
-      {tab === 'tracking' && <TransactionTracking transactionId={t.id} />}
+      {/* On the modal's own surface rather than a card: the panel supplies its own cards, and the
+          tinted ground is what separates them, exactly as on the tracking tab of the order page. */}
+      {tab === 'tracking' && (
+        <div className="-mx-5 -my-4 min-h-full bg-n-50 px-5 py-4">
+          <TransactionTracking transactionId={t.id} />
+        </div>
+      )}
       <div className={`flex flex-col gap-5 ${tab === 'summary' ? '' : 'hidden'}`}>
         {/* Header facts */}
         <div className="grid grid-cols-4 gap-x-4 gap-y-3 max-[760px]:grid-cols-2">

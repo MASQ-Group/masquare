@@ -5,6 +5,25 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StockService } from '../warehouses/stock.service';
 import { CreateCombinedShipmentDto, CreateShipmentBatchDto, CreateShipmentDto, UpdateShipmentDto } from './dto/shipment.dto';
 
+/** The tracking log's own filters. Order-centric, so it does not share ShipmentQuery. */
+export interface TrackingLogQuery {
+  q?: string;
+  companyId?: string;
+  companyIds?: string[];
+  salesChannelId?: string;
+  /**
+   * Where the order has got to.
+   *
+   * Deliberately no "late" option. Deciding that needs one column compared against another, which
+   * Prisma cannot express without raw SQL — and a filter that quietly could not do what its label
+   * promised would be worse than not offering it. Lateness is marked on the row instead.
+   */
+  state?: 'all' | 'not_shipped' | 'in_transit' | 'delivered';
+  sortDir?: 'asc' | 'desc';
+  page?: number;
+  pageSize?: number;
+}
+
 export interface ShipmentQuery {
   q?: string;
   /**
@@ -300,6 +319,119 @@ export class ShipmentsService {
       total: ownTotal + fba.total,
       page,
       pageSize,
+    };
+  }
+
+  /**
+   * Every order and where its parcels are — the tracking log.
+   *
+   * Order-centric rather than shipment-centric, deliberately: the question this page answers is
+   * "where is this customer's order", and an order that went out in two boxes is still one order.
+   * So it is one row per order with the parcels stacked inside the shipping columns, and the
+   * columns line up row-wise — the third tracking number is on the same line as the third expected
+   * date.
+   *
+   * Orders with no shipment are included rather than filtered out. A customer chasing an order does
+   * not know whether it has left, and a log that silently omits the ones that have not is a log
+   * that cannot answer the question.
+   */
+  async trackingLog(query: TrackingLogQuery) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(query.pageSize) || 50));
+
+    const shipped = { some: { deletedAt: null } };
+    const anyDelivered = { some: { deletedAt: null, tracking: { is: { deliveredAt: { not: null } } } } };
+
+    const where: Prisma.SalesTransactionWhereInput = {
+      deletedAt: null,
+      ...(query.companyIds ? { companyId: { in: query.companyIds } } : query.companyId ? { companyId: query.companyId } : {}),
+      ...(query.salesChannelId ? { salesChannelId: query.salesChannelId } : {}),
+      // FBA is fulfilled by Amazon from their own warehouse — there is no parcel of ours to track.
+      fulfilmentType: { not: 'FBA' },
+      ...(query.state === 'not_shipped' ? { shipments: { none: { deletedAt: null } } } : {}),
+      ...(query.state === 'delivered' ? { shipments: anyDelivered } : {}),
+      // Out of our hands and not yet arrived. Both clauses are needed: "has a shipment" alone would
+      // include everything already delivered.
+      ...(query.state === 'in_transit'
+        ? { AND: [{ shipments: shipped }, { shipments: { none: { deletedAt: null, tracking: { is: { deliveredAt: { not: null } } } } } }] }
+        : {}),
+      ...(query.q
+        ? {
+            OR: [
+              { transactionRef: { contains: query.q, mode: 'insensitive' } },
+              { shipments: { some: { deletedAt: null, trackingNumber: { contains: query.q, mode: 'insensitive' } } } },
+              { items: { some: { deletedAt: null, sku: { contains: query.q, mode: 'insensitive' } } } },
+            ],
+          }
+        : {}),
+    };
+
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.salesTransaction.count({ where }),
+      this.prisma.salesTransaction.findMany({
+        where,
+        orderBy: [{ date: query.sortDir === 'asc' ? 'asc' : 'desc' }, { createdAt: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true, transactionRef: true, date: true,
+          salesChannel: { select: { id: true, name: true } },
+          company: { select: { id: true, officialName: true } },
+          destinationCountry: { select: { isoCode: true, name: true } },
+          items: { where: { deletedAt: null }, select: { sku: true } },
+          shipments: {
+            where: { deletedAt: null },
+            orderBy: [{ shipmentDate: 'asc' }, { createdAt: 'asc' }],
+            select: {
+              id: true, type: true, shipmentDate: true, trackingNumber: true,
+              shippingService: { select: { name: true } },
+              tracking: {
+                select: {
+                  statusDescription: true, estimatedDeliveryAt: true, deliveredAt: true,
+                  exceptionDescription: true, found: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      total, page, pageSize,
+      items: rows.map((t) => ({
+        transactionId: t.id,
+        transactionRef: t.transactionRef,
+        date: t.date,
+        salesChannel: t.salesChannel,
+        company: t.company,
+        destinationCountry: t.destinationCountry,
+        // Distinct, in order: the same SKU twice on one order is one thing to read, not two.
+        skus: [...new Set(t.items.map((i) => i.sku).filter((x): x is string => !!x))],
+        parcels: t.shipments.map((s) => ({
+          shipmentId: s.id,
+          type: s.type,
+          shipmentDate: s.shipmentDate,
+          serviceName: s.shippingService?.name ?? null,
+          trackingNumber: s.trackingNumber,
+          expectedAt: s.tracking?.estimatedDeliveryAt ?? null,
+          deliveredAt: s.tracking?.deliveredAt ?? null,
+          statusDescription: s.tracking?.statusDescription ?? null,
+          /** Only while it is still out — a cleared customs hold is history, not a task. */
+          exceptionDescription: s.tracking?.deliveredAt ? null : (s.tracking?.exceptionDescription ?? null),
+          /**
+           * Arrived after the carrier's own promise.
+           *
+           * Computed here rather than filtered in SQL: comparing two columns needs raw SQL, and a
+           * filter that quietly could not do what its label said would be worse than none.
+           */
+          late:
+            s.tracking?.deliveredAt && s.tracking?.estimatedDeliveryAt
+              ? s.tracking.deliveredAt.getTime() > s.tracking.estimatedDeliveryAt.getTime()
+              : null,
+          notRecognised: s.tracking?.found === false,
+        })),
+      })),
     };
   }
 
