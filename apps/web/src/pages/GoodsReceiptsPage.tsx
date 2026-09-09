@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { withReturn } from '../lib/useBackLink';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PackageCheck, Search } from 'lucide-react';
 import { DEFAULT_PAGE_SIZES, Pagination, Select } from '@masquare/ui';
@@ -25,6 +26,8 @@ const STATUS_LABEL: Record<GoodsReceiptStatus, string> = { pending: 'Pending', p
 
 export function GoodsReceiptsPage() {
   const navigate = useNavigate();
+  // Where a link opened from, so the destination can offer a way back to exactly this view.
+  const here = useLocation();
   const qc = useQueryClient();
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
@@ -111,7 +114,7 @@ export function GoodsReceiptsPage() {
                   </td>
                   <td className={TD}>
                     {r.purchaseOrder
-                      ? <button className="code font-semibold text-teal-700 hover:underline" onClick={() => navigate(`/purchase-orders/${r.purchaseOrder!.id}`)}>{r.purchaseOrder.poNumber}</button>
+                      ? <button className="code font-semibold text-teal-700 hover:underline" onClick={() => navigate(withReturn(`/purchase-orders/${r.purchaseOrder!.id}`, here))}>{r.purchaseOrder.poNumber}</button>
                       : <span className="text-n-300">—</span>}
                   </td>
                   <td className={TD}>{r.vendor?.name ?? <span className="text-n-300">—</span>}</td>
@@ -147,7 +150,7 @@ export function GoodsReceiptsPage() {
                 <span className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_STYLE[r.status]}`}>{STATUS_LABEL[r.status]}</span>
               </div>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-n-500">
-                {r.purchaseOrder && <button className="code text-teal-700" onClick={() => navigate(`/purchase-orders/${r.purchaseOrder!.id}`)}>{r.purchaseOrder.poNumber}</button>}
+                {r.purchaseOrder && <button className="code text-teal-700" onClick={() => navigate(withReturn(`/purchase-orders/${r.purchaseOrder!.id}`, here))}>{r.purchaseOrder.poNumber}</button>}
                 {r.vendor?.name && <span>· {r.vendor.name}</span>}
                 <span>· {r.destinationWarehouse?.name ?? 'at receiving'}</span>
               </div>

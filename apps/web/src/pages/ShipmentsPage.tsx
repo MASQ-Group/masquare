@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BadgeCheck, CircleCheck, Coins, Download, ExternalLink, MapPin, Package, PackageCheck, PackagePlus, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadSheet, Pagination, Select } from '@masquare/ui';
@@ -10,6 +10,7 @@ import { ChannelChip, useChannelChips } from '../components/common/ChannelChip';
 import { useAuth } from '../lib/auth';
 import { usePersistentState } from '../lib/usePersistentState';
 import { formatDate } from '../lib/format';
+import { withReturn } from '../lib/useBackLink';
 import { ShipmentModal } from '../components/shipments/ShipmentModal';
 import { CombineShipmentModal } from '../components/shipments/CombineShipmentModal';
 import { ShipmentImportModal } from '../components/shipments/ShipmentImportModal';
@@ -67,6 +68,8 @@ interface ModalCtx {
 export function ShipmentsPage() {
   const qc = useQueryClient();
   const { activeCompanyId } = useAuth();
+  // Where a link opened from, so the destination can offer a way back to exactly this view.
+  const here = useLocation();
   const [storedTab, setTab] = usePersistentState<Tab>('shipments.tab', 'pending');
   // 'despatched' was persisted by an earlier build under the old spelling. Restoring a key no
   // branch matches renders an empty page with no tab selected, so an unknown value falls back
@@ -511,7 +514,7 @@ export function ShipmentsPage() {
                           its lines and cost allocation belong to the FBA Shipments module. */}
                       {s.type === 'fba' ? (
                         <div className="flex justify-end">
-                          <Link to="/fba-shipments" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:border-teal-300 hover:text-teal-700" title="Open the FBA Shipments module">
+                          <Link to={withReturn('/fba-shipments', here)} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12.5px] font-medium text-n-700 hover:border-teal-300 hover:text-teal-700" title="Open the FBA Shipments module">
                             <ExternalLink size={14} /> FBA module
                           </Link>
                         </div>

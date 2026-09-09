@@ -197,6 +197,27 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
   },
 ];
 
+/**
+ * What the sidebar calls a page, given its path.
+ *
+ * Read from the navigation rather than restated, so a "back to …" button can never name a page
+ * something the sidebar does not. Longest match wins: /channel-listings/:id belongs to Channel
+ * Listings, and without that the deeper path would find nothing and the button would not appear.
+ *
+ * Null for a path the sidebar does not offer — a detail page reached some other way is not
+ * somewhere the app claims you can navigate to by name.
+ */
+export function navLabelFor(pathname: string): string | null {
+  // Not every nav entry is a destination — some are headings with an icon and no path.
+  const items = [...TOP_LEVEL, ...NAV_GROUPS.flatMap((g) => g.items)]
+    .filter((i): i is NavDef & { to: string } => !!i.to);
+  const match = items
+    // '/' is the Overview and would otherwise prefix-match every page in the app.
+    .filter((i) => pathname === i.to || (i.to !== '/' && pathname.startsWith(`${i.to}/`)))
+    .sort((a, b) => b.to.length - a.to.length)[0];
+  return match?.label ?? null;
+}
+
 export function AppShell() {
   const { user, signOut, activeCompany } = useAuth();
   const { can } = useAccess();

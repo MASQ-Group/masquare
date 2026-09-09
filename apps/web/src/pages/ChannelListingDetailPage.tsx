@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw, Rocket, Search, RotateCw, Tag } from 'lucide-react';
@@ -13,6 +13,7 @@ import { useJobProgress } from '../lib/useJobProgress';
 import { ListOnChannelModal } from '../components/channel-listings/ListOnChannelModal';
 import { NotListedPanel } from '../components/channel-listings/NotListedPanel';
 import { PageHeader } from '../components/common/PageHeader';
+import { withReturn } from '../lib/useBackLink';
 import { EditPriceModal } from '../components/channel-listings/EditPriceModal';
 import { ListEverywhereModal } from '../components/channel-listings/ListEverywhereModal';
 
@@ -48,6 +49,8 @@ const marketplaceName = (channelType: string | null, fallback: string): string =
 
 export function ChannelListingDetailPage() {
   const { productId = '' } = useParams();
+  // Where this page was opened from, so the product editor can offer a way back.
+  const here = useLocation();
   const qc = useQueryClient();
   const [listingEverywhere, setListingEverywhere] = useState(false);
   const { data, isLoading } = useQuery({ queryKey: ['channel-listing-detail', productId], queryFn: () => channelListingsApi.detail(productId) });
@@ -246,7 +249,7 @@ export function ChannelListingDetailPage() {
             </button>
           </>
         }
-        primary={<Link to={`/products?edit=${productId}`} className="hbtn-primary"><Edit3 size={15} /> Edit product</Link>}
+        primary={<Link to={withReturn(`/products?edit=${productId}`, here)} className="hbtn-primary"><Edit3 size={15} /> Edit product</Link>}
       />
 
       {/* Identity and stock at a glance. The title used to repeat here under the breadcrumb; it

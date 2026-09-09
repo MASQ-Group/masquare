@@ -1,8 +1,9 @@
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { MoreHorizontal } from 'lucide-react';
+import { ChevronLeft, MoreHorizontal } from 'lucide-react';
 import { useIsMobile } from '../../lib/useIsMobile';
 import { AnchoredPanel } from './AnchoredPanel';
+import { useBackLink } from '../../lib/useBackLink';
 
 // Unified top bar for every page (Top Bar Redesign). Two rows:
 //   • Row 1 — header: breadcrumb "MODULE › Title" + ⓘ description tooltip on the left,
@@ -100,6 +101,13 @@ function OverflowMenu({ items }: { items: PageHeaderOverflowItem[] }) {
 }
 
 export function PageHeader({ module, moduleHref, parent, title, info, tabs, activeTab, onTabChange, actions, overflow, primary, toolbar, summary }: PageHeaderProps) {
+  /**
+   * Where this page was opened from, when it was opened from somewhere else.
+   *
+   * Read here rather than passed in, so every page using this header gains the way back without
+   * knowing anything about it — the linking page decides, the destination just honours it.
+   */
+  const back = useBackLink();
   const rootRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
   // `hidden` = scrolled down past the threshold. Desktop slides the whole bar out of view; mobile
@@ -149,6 +157,21 @@ export function PageHeader({ module, moduleHref, parent, title, info, tabs, acti
     >
       {/* Row 1 — page header: breadcrumb "MODULE › Title" + ⓘ on the left, actions on the right. */}
       <div className={`flex items-center gap-3 px-8 pt-3.5 max-[760px]:px-4 ${hasOptions && !mobileCollapsed ? 'pb-2.5' : 'pb-3.5'}`}>
+        {/*
+          The way back sits BEFORE the breadcrumb, not inside it.
+          The trail says where this page lives; this says where you came from, and they are often
+          different places. Folding one into the other would make the breadcrumb lie about the
+          app's structure — which is the thing it exists to describe.
+        */}
+        {back && (
+          <Link
+            to={back.href}
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-n-200 bg-n-0 pl-1.5 pr-2.5 text-[12px] font-semibold text-n-600 hover:border-teal-300 hover:text-teal-700"
+            title={`Back to ${back.label}`}
+          >
+            <ChevronLeft size={14} /> {back.label}
+          </Link>
+        )}
         <div className="flex min-w-0 shrink items-baseline gap-2 whitespace-nowrap">
           {moduleHref ? (
             <Link

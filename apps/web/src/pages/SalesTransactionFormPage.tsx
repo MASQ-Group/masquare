@@ -14,6 +14,7 @@ import { CountrySelect } from '../components/common/CountrySelect';
 import { ProductSkuField } from '../components/sales/ProductSkuField';
 import { DeliveryAddressCard } from '../components/sales/DeliveryAddressCard';
 import { TransactionTracking } from '../components/sales/TransactionTracking';
+import { useBackLink } from '../lib/useBackLink';
 import { EntityHistory } from '../components/common/EntityHistory';
 import { SerialPicker } from '../components/sales/SerialPicker';
 import { useConfirm } from '../components/ConfirmProvider';
@@ -359,7 +360,7 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
       else await salesTransactionsApi.create(body);
       toast.success(status === 'submitted' ? 'Transaction submitted' : 'Draft saved');
       qc.invalidateQueries({ queryKey: ['sales-transactions'] });
-      navigate('/sales-transactions');
+      navigate(back?.href ?? '/sales-transactions');
     } catch (e: any) {
       toast.error(e?.response?.data?.message ?? 'Save failed');
     } finally {
@@ -373,7 +374,7 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
     try {
       const res: any = await salesTransactionsApi.requestUnlock(transaction.id);
       toast.success(res?.alreadyRequested ? 'An unlock request is already pending' : 'Unlock request sent to an admin');
-      navigate('/sales-transactions');
+      navigate(back?.href ?? '/sales-transactions');
     } catch (e: any) {
       toast.error(e?.response?.data?.message ?? 'Could not send request');
     } finally {
@@ -411,6 +412,15 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
    */
   const [tab, setTab] = useState<'details' | 'tracking' | 'history'>('details');
 
+  /**
+   * Where this order was opened from, when it was opened from somewhere else.
+   *
+   * This page writes its own header rather than using PageHeader, so it has to honour the return
+   * link itself — otherwise the one crumb it does show would send somebody to the transactions
+   * list they never came from.
+   */
+  const back = useBackLink();
+
   return (
     <div className="-mx-8 -my-7 flex min-h-full flex-col max-[760px]:-mx-4 max-[760px]:-my-5">
       {/* Sticky action bar. The scroll container (AppShell's <main>) has py-7, and a sticky
@@ -421,9 +431,9 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
           <button
             type="button"
             className="mb-0.5 inline-flex items-center gap-1 text-[12.5px] font-semibold text-n-500 hover:text-teal-700"
-            onClick={() => navigate('/sales-transactions')}
+            onClick={() => navigate(back?.href ?? '/sales-transactions')}
           >
-            <ChevronLeft size={14} /> Sales Transactions
+            <ChevronLeft size={14} /> {back?.label ?? 'Sales Transactions'}
           </button>
           <h1 className="text-[22px] font-bold tracking-tight text-n-900">
             {transaction ? 'Edit sales transaction' : 'New sales transaction'}

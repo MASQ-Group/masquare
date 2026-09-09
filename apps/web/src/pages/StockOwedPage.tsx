@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { withReturn } from '../lib/useBackLink';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, PackageX } from 'lucide-react';
 import { DEFAULT_PAGE_SIZES, Pagination, Select } from '@masquare/ui';
@@ -27,6 +28,8 @@ const STATUS_STYLE: Record<string, string> = {
  */
 export function StockOwedPage() {
   const navigate = useNavigate();
+  // Where a link opened from, so the destination can offer a way back to exactly this view.
+  const here = useLocation();
   const [status, setStatus] = useState('open');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
@@ -85,7 +88,7 @@ export function StockOwedPage() {
                   <td className={`${TD} max-w-[280px] truncate`} title={r.productName}>{r.productName}</td>
                   <td className={TD}>
                     {r.transactionRef
-                      ? <button className="code text-n-700 hover:text-teal-700" onClick={() => navigate(`/sales-transactions?q=${encodeURIComponent(r.transactionRef!)}`)}>{r.transactionRef}</button>
+                      ? <button className="code text-n-700 hover:text-teal-700" onClick={() => navigate(withReturn(`/sales-transactions?q=${encodeURIComponent(r.transactionRef!)}`, here))}>{r.transactionRef}</button>
                       : <span className="text-n-300">—</span>}
                   </td>
                   <td className={TD}>
@@ -117,7 +120,7 @@ export function StockOwedPage() {
                 <span>Owed <b className={`mono ${r.status === 'open' ? 'text-warning' : 'text-n-500'}`}>{r.quantity}</b></span>
                 <span>Since {formatDate(r.openedAt)}</span>
                 {r.settledAt && <span>Settled {formatDate(r.settledAt)}</span>}
-                {r.transactionRef && <button className="code text-n-600 hover:text-teal-700" onClick={() => navigate(`/sales-transactions?q=${encodeURIComponent(r.transactionRef!)}`)}>{r.transactionRef}</button>}
+                {r.transactionRef && <button className="code text-n-600 hover:text-teal-700" onClick={() => navigate(withReturn(`/sales-transactions?q=${encodeURIComponent(r.transactionRef!)}`, here))}>{r.transactionRef}</button>}
               </div>
             </div>
           ))}

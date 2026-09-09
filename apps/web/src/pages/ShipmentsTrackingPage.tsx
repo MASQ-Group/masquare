@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { AlertTriangle, ArrowDown, ArrowUp, CircleCheck, Search } from 'lucide-react';
 import { Pagination } from '@masquare/ui';
 import { shipmentsApi, type TrackingLogParcel, type TrackingLogRow } from '../lib/api';
 import { formatDate } from '../lib/format';
+import { withReturn } from '../lib/useBackLink';
 import { CountryTag } from '../components/common/Flag';
 import { ChannelChip, useChannelChips } from '../components/common/ChannelChip';
 import { PageHeader } from '../components/common/PageHeader';
@@ -34,6 +35,8 @@ export function ShipmentsTrackingPage() {
   const [page, setPage] = useState(1);
   const pageSize = 50;
   const chipFor = useChannelChips();
+  // Where a link opened from, so the order can offer a way back to exactly this view.
+  const here = useLocation();
 
   // Debounced, so typing a tracking number does not fire a query per keystroke.
   useEffect(() => {
@@ -112,7 +115,7 @@ export function ShipmentsTrackingPage() {
                   {search ? `Nothing matches “${search}”.` : 'No orders here yet.'}
                 </td></tr>
               )}
-              {rows.map((r) => <Row key={r.transactionId} row={r} td={td} chipFor={chipFor} />)}
+              {rows.map((r) => <Row key={r.transactionId} row={r} td={td} chipFor={chipFor} here={here} />)}
             </tbody>
           </table>
         </div>
@@ -127,15 +130,15 @@ export function ShipmentsTrackingPage() {
   );
 }
 
-function Row({ row, td, chipFor }: { row: TrackingLogRow; td: string; chipFor: ReturnType<typeof useChannelChips> }) {
+function Row({ row, td, chipFor, here }: { row: TrackingLogRow; td: string; chipFor: ReturnType<typeof useChannelChips>; here: { pathname: string; search: string } }) {
   const parcels = row.parcels;
   return (
     <tr className="hover:bg-teal-50/50">
       <td className={`${td} mono whitespace-nowrap`}>{formatDate(row.date)}</td>
       <td className={td}>
-        {/* Straight to the order's Tracking tab, which is where somebody following a link from
-            here wants to land. */}
-        <Link to={`/sales-transactions/${row.transactionId}/edit`} className="font-medium text-n-800 hover:text-teal-700 hover:underline">
+        {/* Carries where it was opened from, so the order offers a way straight back to this
+            list rather than to the transactions list nobody was looking at. */}
+        <Link to={withReturn(`/sales-transactions/${row.transactionId}/edit`, here)} className="font-medium text-n-800 hover:text-teal-700 hover:underline">
           {row.transactionRef ?? '—'}
         </Link>
       </td>
