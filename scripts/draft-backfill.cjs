@@ -235,6 +235,31 @@ const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '—');
 
   if (apply) {
     /**
+     * Applying through the live rules means inheriting the live SWITCH, and that is a silent trap.
+     *
+     * `reconcileSaleAvailability` opens with
+     *   `if (!settings?.autoAdjustAvailabilityOnSale && !opts.forceRelease) return [];`
+     * so with the setting off it deducts nothing, reports nothing, and exits successfully. The
+     * report above would promise dozens of units, the run would say it applied, and not one figure
+     * would have moved. That is the worst way for this to fail — it looks like it worked.
+     */
+    const settings = await prisma.platformSettings.findFirst({
+      select: { autoAdjustAvailabilityOnSale: true },
+    });
+    if (!settings?.autoAdjustAvailabilityOnSale) {
+      console.error(
+        [
+          '',
+          'Refusing to apply: "Adjust channel Availability when a sale is submitted" is OFF.',
+          'The reconcile inherits that setting, so this run would deduct nothing at all and still',
+          'report success. Turn it on in Settings > General, or use --mark-availability only.',
+        ].join('\n'),
+      );
+      await app.close();
+      process.exit(1);
+    }
+
+    /**
      * Marking must come first, and this refuses rather than trusting the operator to remember.
      *
      * `--apply` reconciles whole ORDERS through the ordinary save path, and that path knows nothing
@@ -255,6 +280,17 @@ const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '—');
       await app.close();
       process.exit(1);
     }
+
+    /**
+     * Applying reaches the marketplaces. Said before it happens, not discovered afterwards.
+     *
+     * Each reconciled order schedules a channel push for its products, and since the push queue was
+     * persisted those are durable rows rather than an in-memory timer that a short-lived CLI process
+     * would have dropped. They drain when the API next arms its debounce or restarts. That is the
+     * correct outcome — these products are advertising stock that is gone — but it is a live write
+     * to live listings and nobody should meet it by surprise.
+     */
+    console.log(`\nApplying ${applyTxIds.size} order(s). Availability drops WILL be pushed to the channels.`);
 
     // Through the ordinary save path, so the backfill cannot drift from the live rules.
     const sales = app.get(SalesTransactionsService);
