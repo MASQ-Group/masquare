@@ -94,6 +94,17 @@ const whole = (q) => {
     const backed = fullWithRefs.filter((l) => moved.has(`${l.productId}|${l.transaction?.transactionRef}`));
     const unbacked = fullWithRefs.filter((l) => !moved.has(`${l.productId}|${l.transaction?.transactionRef}`));
 
+    /**
+     * Say WHICH database this is, every run.
+     *
+     * Two runs minutes apart returned 4,348 and then 0. Either the data changed underneath, or the
+     * connection did — and no output so far could tell those apart. A report that does not identify
+     * its source is not evidence.
+     */
+    const who = await prisma.$queryRaw`select current_database() as db, inet_server_addr()::text as host, current_setting('server_version') as ver`;
+    console.log(`  database ${who[0].db} at ${who[0].host ?? 'local socket'}, postgres ${who[0].ver}`);
+    console.log(`  sales transactions ${await prisma.salesTransaction.count()}, items ${await prisma.salesTransactionItem.count()}, products ${await prisma.product.count()}`);
+
     // Whether sales are even allowed to move stock — the fact that decides what zero movements
     // means. OFF makes 'no sale movements' expected rather than suspicious, and it makes every
     // line claiming a deduction a claim about something that could not have happened.
@@ -121,6 +132,32 @@ const whole = (q) => {
       console.log(`\n  earliest ${times[0].toISOString()}`);
       console.log(`  latest   ${times[times.length - 1].toISOString()}`);
     }
+
+    /**
+     * What the stock ledger actually holds, before concluding anything from an absence.
+     *
+     * "No 'sale' movements" is a claim about one reason string, and it was contradicted by someone
+     * who had watched deduction work. Either the movements are filed under a different reason, or
+     * the table is empty, or they were removed — three very different situations that the earlier
+     * output could not tell apart. Printing the whole distribution settles it instead of inferring.
+     */
+    const allMoves = await prisma.stockMovement.groupBy({
+      by: ['reason'],
+      _count: { _all: true },
+      _max: { createdAt: true },
+    });
+    console.log('\n  stock ledger, every reason it holds:');
+    if (!allMoves.length) {
+      console.log('    (the stock_movement table is empty)');
+    } else {
+      for (const m of allMoves.sort((a, b) => b._count._all - a._count._all)) {
+        console.log(`    ${String(m._count._all).padStart(7)}  ${m.reason.padEnd(18)} newest ${m._max.createdAt?.toISOString().slice(0, 16) ?? '—'}`);
+      }
+    }
+
+    // And whether anything references a sales order at all, whatever it is called.
+    const refd = await prisma.stockMovement.count({ where: { reference: { not: null } } });
+    console.log(`    ${String(refd).padStart(7)}  carry a reference`);
 
     /**
      * If NOTHING is backed, the join is not working and the whole safety check is vacuous — which
