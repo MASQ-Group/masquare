@@ -106,6 +106,8 @@ const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '—');
 
   const markLines = { avail: [], stock: [] };
   const applyTxIds = new Set();
+  /** Orders holding at least one already-counted line, so --apply must not reach them unmarked. */
+  const markTxIds = new Set();
   const moving = new Map();      // productId -> what would actually move
   let accountedLines = 0, noAnchorLines = 0, fractional = 0;
 
@@ -123,7 +125,10 @@ const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '—');
     const availAfter = aCut ? placed > aCut : false;
     const stockAfter = sCut ? placed > sCut : false;
 
-    if (availOutstanding > 0 && !availAfter) markLines.avail.push({ id: l.id, units });
+    if (availOutstanding > 0 && !availAfter) {
+      markLines.avail.push({ id: l.id, units });
+      markTxIds.add(l.transaction.id);
+    }
     if (stockOutstanding > 0 && !stockAfter) markLines.stock.push({ id: l.id, units });
     if (!aCut && !sCut) noAnchorLines += 1; else if (!availAfter && !stockAfter) accountedLines += 1;
 
@@ -145,7 +150,16 @@ const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '—');
 
   const movers = [...moving.values()];
   const trackedMovers = movers.filter((m) => m.inAvailability && m.avail > 0);
-  const wouldFloor = trackedMovers.filter((m) => (m.have ?? 0) < m.avail);
+  /**
+   * Products that would LOSE what they have — not products that are already empty.
+   *
+   * This first tested `have < take`, which is true of everything sitting at zero, so a run
+   * reported eleven products "driven to zero" when all eleven were at zero already and nothing
+   * would move for them. A warning that fires on the unchanged is one nobody can act on, and it
+   * made a completely benign result look alarming.
+   */
+  const wouldFloor = trackedMovers.filter((m) => (m.have ?? 0) > 0 && (m.have ?? 0) <= m.avail);
+  const alreadyEmpty = trackedMovers.filter((m) => (m.have ?? 0) === 0);
 
   console.log(`${apply ? 'APPLY' : mark ? 'MARK' : 'REPORT'} — backlog since drafts began consuming stock\n`);
   console.log('ALREADY IN THE COUNT — to be marked, nothing moves');
@@ -160,8 +174,26 @@ const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '—');
   console.log(`  stock units to take                                ${movers.reduce((s, m) => s + m.stock, 0)}`);
   if (fractional) console.log(`  fractional lines skipped                           ${fractional}`);
 
+  /**
+   * The reason --mark-availability has to run first, stated as a number rather than as a caution.
+   *
+   * `--apply` settles whole ORDERS through the ordinary save path, and that path knows nothing about
+   * cut-offs — it reconciles every line on the order. One order can carry a line for a product
+   * counted last week and a line for one counted yesterday. Apply before marking and the counted
+   * line is deducted a second time, which is the exact double count this script exists to prevent.
+   */
+  const overlap = [...applyTxIds].filter((id) => markTxIds.has(id));
+  if (overlap.length) {
+    console.log(`  of those, ${overlap.length} also hold an already-counted line — mark before applying`);
+  }
+
+  if (alreadyEmpty.length) {
+    console.log(`
+  ${alreadyEmpty.length} product(s) are already at zero — the deduction is recorded, the figure does not move.`);
+  }
   if (wouldFloor.length) {
-    console.log(`\n  ${wouldFloor.length} product(s) would still be driven to zero — worth a look before applying:`);
+    console.log(`
+  ${wouldFloor.length} product(s) HOLD stock and would lose all of it — worth a look before applying:`);
     for (const m of wouldFloor.sort((a, b) => b.avail - a.avail).slice(0, 15)) {
       console.log(`    ${String(m.mainSku).padEnd(24)} counted ${day(m.countedOn)}  have ${String(m.have).padStart(4)}  take ${String(m.avail).padStart(4)}`);
     }
@@ -202,6 +234,28 @@ const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '—');
   }
 
   if (apply) {
+    /**
+     * Marking must come first, and this refuses rather than trusting the operator to remember.
+     *
+     * `--apply` reconciles whole ORDERS through the ordinary save path, and that path knows nothing
+     * about cut-offs — it settles every line on the order. One order can hold a line for a product
+     * counted last week and a line for one counted yesterday, so applying before marking would
+     * deduct the already-counted line too. That is the double count this whole script exists to
+     * avoid, arriving through the back door.
+     */
+    if (markLines.avail.length > 0 && !markAvailability) {
+      console.error(
+        [
+          '',
+          `Refusing to apply: ${markLines.avail.length} availability line(s) are still unmarked.`,
+          'Some of them share an order with the lines being applied, and reconciling that order',
+          'would deduct them as well. Run --mark-availability first, then --apply.',
+        ].join('\n'),
+      );
+      await app.close();
+      process.exit(1);
+    }
+
     // Through the ordinary save path, so the backfill cannot drift from the live rules.
     const sales = app.get(SalesTransactionsService);
     let done = 0;
