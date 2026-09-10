@@ -25,23 +25,48 @@ interface Props {
 /**
  * The reasons the ledger records, in the platform's words rather than the enum's.
  *
- * `cancellation` is LEGACY and deliberately vague. Until the reason was decided rather than
- * inferred from the sign of the movement, every release was filed under it — draft orders, deleted
- * orders and genuine cancellations alike. Labelling those rows "Cancelled before shipment" (as this
- * first did) turned a vague record into a false claim about real, shipped orders. They are what
- * they are: units came back, and nobody wrote down why.
+ * `cancellation` is LEGACY. Until the reason was decided rather than inferred from the sign of the
+ * movement, every release was filed under it — draft orders, deleted orders and genuine
+ * cancellations alike.
+ *
+ * Getting its label right took two attempts and both failures were the same failure. "Cancelled
+ * before shipment" claimed a cancellation; "Returned — cause not recorded" claimed a return. Both
+ * were said about orders that shipped normally and came back to nobody, and a customer returning
+ * goods is a different and more alarming thing than the platform quietly releasing units it should
+ * have kept deducted.
+ *
+ * Most of these rows have since been re-derived from the order behind them and now read
+ * `order_not_submitted`, which is provable. What is left is genuinely unknowable, and says so:
+ * units came back, and nobody wrote down why.
  */
 const REASON: Record<string, { label: string; tone: string }> = {
   sale: { label: 'Sold', tone: 'border-teal-100 bg-teal-50 text-teal-700' },
   order_cancelled: { label: 'Cancelled before shipment', tone: 'border-orange-100 bg-orange-50 text-orange-700' },
-  order_not_submitted: { label: 'Order not submitted', tone: 'border-n-200 bg-n-50 text-n-600' },
+  order_not_submitted: { label: 'Released — order not submitted', tone: 'border-n-200 bg-n-50 text-n-600' },
   released: { label: 'Released', tone: 'border-n-200 bg-n-50 text-n-600' },
   quantity_reduced: { label: 'Quantity reduced', tone: 'border-n-200 bg-n-50 text-n-600' },
-  cancellation: { label: 'Returned — cause not recorded', tone: 'border-n-200 bg-n-50 text-n-500' },
+  cancellation: { label: 'Units restored — cause not recorded', tone: 'border-n-200 bg-n-50 text-n-500' },
   manual_set: { label: 'Set by hand', tone: 'border-n-200 bg-n-50 text-n-600' },
   manual_adjust: { label: 'Adjusted by hand', tone: 'border-n-200 bg-n-50 text-n-600' },
   vendor_import: { label: 'Vendor file', tone: 'border-violet-200 bg-violet-50 text-violet-700' },
   purge: { label: 'Purged', tone: 'border-danger-bd bg-danger-bg text-danger' },
+};
+
+/**
+ * The rows people ask about, explained where they are rather than in a note somewhere else.
+ *
+ * Both of these describe a rule the platform no longer follows, so without a word of context they
+ * read as accusations against the orders they name.
+ */
+const EXPLAIN: Record<string, string> = {
+  order_not_submitted:
+    'The platform used to give units back for any order that was not marked submitted, even one the '
+    + 'channel had already shipped. That rule is gone: a draft now consumes stock like any other order. '
+    + 'Derived from the order behind this entry, which is still a draft.',
+  cancellation:
+    'Recorded before the platform wrote down why units came back, so the cause is genuinely unknown. '
+    + 'It is not evidence of a return or a cancellation — where the cause could be established, the '
+    + 'entry says so instead.',
 };
 
 export function AvailabilityLedgerModal({ productId, mainSku, title, onClose }: Props) {
@@ -100,9 +125,7 @@ export function AvailabilityLedgerModal({ productId, mainSku, title, onClose }: 
                       <td className="border-b border-n-100 px-3 py-2">
                         <span
                           className={`tag border ${reason.tone}`}
-                          title={e.reason === 'cancellation'
-                            ? 'Recorded before the platform distinguished why units were returned. Most of these are orders that were never submitted, not cancellations.'
-                            : undefined}
+                          title={EXPLAIN[e.reason]}
                         >
                           {reason.label}
                         </span>
