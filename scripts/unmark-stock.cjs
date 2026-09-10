@@ -60,26 +60,78 @@ const whole = (q) => {
       return units !== null && l.stockDeductedQty === units;
     });
 
+    /**
+     * The LEDGER is the discriminator, not the timestamp.
+     *
+     * `updatedAt` moves whenever a row is touched for any reason — a channel sync re-saving today's
+     * orders bumps thousands of lines that deducted stock legitimately months ago. Reading a spike
+     * of "lines last touched today" as "lines marked today" is simply wrong, and on production it
+     * reported 4,348 where the marking run had written 112.
+     *
+     * What actually separates them: a real deduction moved stock and left a `sale` movement
+     * referencing the order. The bad mark moved nothing, so its lines claim a full deduction with no
+     * movement behind them. That is the population to undo, and it needs no window at all.
+     */
+    const withRefs = await prisma.salesTransactionItem.findMany({
+      where: { stockDeductedQty: { gt: 0 } },
+      select: {
+        quantity: true, stockDeductedQty: true, updatedAt: true, productId: true,
+        transaction: { select: { transactionRef: true } },
+      },
+    });
+    const fullWithRefs = withRefs.filter((l) => {
+      const units = whole(l.quantity);
+      return units !== null && l.stockDeductedQty === units;
+    });
+
+    const refs = [...new Set(fullWithRefs.map((l) => l.transaction?.transactionRef).filter(Boolean))];
+    const moves = await prisma.stockMovement.findMany({
+      where: { reason: 'sale', reference: { in: refs } },
+      select: { productId: true, reference: true },
+    });
+    const moved = new Set(moves.map((m) => `${m.productId}|${m.reference}`));
+
+    const backed = fullWithRefs.filter((l) => moved.has(`${l.productId}|${l.transaction?.transactionRef}`));
+    const unbacked = fullWithRefs.filter((l) => !moved.has(`${l.productId}|${l.transaction?.transactionRef}`));
+
+    // Whether sales are even allowed to move stock — the fact that decides what zero movements
+    // means. OFF makes 'no sale movements' expected rather than suspicious, and it makes every
+    // line claiming a deduction a claim about something that could not have happened.
+    const st = await prisma.platformSettings.findFirst({ select: { deductStockOnSale: true } });
+    console.log('SCAN — lines claiming a full stock deduction\n');
+    console.log(`  "Deduct stock on sale" setting                     ${st?.deductStockOnSale ? 'ON' : 'OFF'}`);
+    console.log(`  lines with any stock deduction recorded           ${rows.length}`);
+    console.log(`  of those, deducted in full                        ${full.length}`);
+    console.log(`  total 'sale' stock movements in the ledger        ${await prisma.stockMovement.count({ where: { reason: 'sale' } })}\n`);
+    console.log(`  BACKED by a stock movement — real, leave alone    ${backed.length}`);
+    console.log(`  NOT backed by any movement — marked, not moved    ${unbacked.length}\n`);
+
     const byDay = new Map();
-    for (const l of full) {
+    for (const l of unbacked) {
       const d = l.updatedAt.toISOString().slice(0, 10);
       byDay.set(d, (byDay.get(d) ?? 0) + 1);
     }
-
-    console.log('SCAN — lines claiming a full stock deduction, by the day they were last touched\n');
-    console.log(`  lines with any stock deduction recorded           ${rows.length}`);
-    console.log(`  of those, deducted in full                        ${full.length}\n`);
+    console.log('  the unbacked ones, by the day they were last touched:');
     for (const [d, n] of [...byDay.entries()].sort()) {
-      console.log(`  ${d}   ${String(n).padStart(6)}`);
+      console.log(`    ${d}   ${String(n).padStart(6)}`);
     }
-    if (full.length) {
-      // The exact instants, so --since can be set from evidence rather than from a guess.
-      const times = full.map((l) => l.updatedAt).sort((a, b) => a - b);
+
+    if (unbacked.length) {
+      const times = unbacked.map((l) => l.updatedAt).sort((a, b) => a - b);
       console.log(`\n  earliest ${times[0].toISOString()}`);
       console.log(`  latest   ${times[times.length - 1].toISOString()}`);
-      console.log('\n  Pass --since a moment BEFORE the spike you mean to undo.');
-    } else {
-      console.log('\n  Nothing claims a full stock deduction. There is nothing here to undo.');
+    }
+
+    /**
+     * If NOTHING is backed, the join is not working and the whole safety check is vacuous — which
+     * would make an --apply run reset every legitimate deduction in the table. Said loudly, because
+     * a vacuous guard that reports success is the most dangerous shape this script can take.
+     */
+    if (fullWithRefs.length && backed.length === 0) {
+      console.log('\n  WARNING: not one line matched a stock movement.');
+      console.log('  Either stock never deducted here, or the movement reference does not join to');
+      console.log('  the order. The two are indistinguishable from this side, and the second would');
+      console.log('  make --apply reset real deductions. Do NOT apply until this is understood.');
     }
     await app.close();
     return;
