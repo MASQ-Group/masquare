@@ -19,8 +19,8 @@ cd "$(dirname "$0")/.."
 
 REPORT="${REPORT:-prod-health}"
 case "$REPORT" in
-  prod-health|unmatched-listings|amazon-uk-vat|channel-duplicates) ;;
-  *) echo "Unknown report: $REPORT (allowed: prod-health, unmatched-listings, amazon-uk-vat, channel-duplicates)" >&2; exit 1 ;;
+  prod-health|unmatched-listings|amazon-uk-vat|channel-duplicates|zero-vat-orders) ;;
+  *) echo "Unknown report: $REPORT (allowed: prod-health, unmatched-listings, amazon-uk-vat, channel-duplicates, zero-vat-orders)" >&2; exit 1 ;;
 esac
 
 DATABASE_URL="$(railway variables --service Postgres --json 2>/dev/null \
