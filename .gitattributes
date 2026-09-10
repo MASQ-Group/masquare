@@ -1,0 +1,7 @@
+# Shell scripts must keep LF endings.
+#
+# This repo is developed on Windows, where git checks files out with CRLF by default. A shell script
+# checked out that way fails immediately and obscurely — bash reads the carriage return as part of
+# the shebang and reports `/usr/bin/env bash^M: bad interpreter`, or `$'\r': command not found` on
+# every line. The file looks perfectly correct in an editor.
+*.sh text eol=lf
