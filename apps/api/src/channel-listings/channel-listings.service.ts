@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, type OnApplicationBootstrap } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
@@ -8,6 +8,7 @@ import { syncDecision } from './sync-decision';
 import { deriveListingStatus } from './listing-status';
 import { planTransition } from './plan-transition';
 import { fullScopeIntegrationWhere } from '../common/amazon-scope';
+import { settlePushQueue, type PushResult } from './push-queue-settle';
 
 const ACTIVE = { deletedAt: null };
 // Per-channel accent dots (fallback palette; overridden by the SalesChannel chip colour if set).
@@ -26,7 +27,7 @@ export interface ListingsQuery {
 }
 
 @Injectable()
-export class ChannelListingsService {
+export class ChannelListingsService implements OnApplicationBootstrap {
   constructor(
     private readonly prisma: PrismaService,
     private readonly integrations: IntegrationsService,
@@ -1039,27 +1040,142 @@ export class ChannelListingsService {
   }
 
   private readonly logger = new Logger(ChannelListingsService.name);
-  private pushQueue = new Set<string>();
   private pushTimer: NodeJS.Timeout | null = null;
 
+  /** The debounce. Long enough to coalesce an ingest burst, short enough to feel immediate. */
+  private static readonly PUSH_DEBOUNCE_MS = 8_000;
+
   /**
-   * Coalesce channel pushes triggered by sell-through. A burst of ingested orders touching the
-   * same SKUs collapses to one live push per affected product, not one per order, which keeps
-   * us well inside the marketplaces' quantity-update rate limits. Fire-and-forget: the sale that
-   * scheduled it never waits on the network and never fails because a push did.
+   * A product that keeps failing stops being retried and starts being a worklist item.
+   *
+   * Without a ceiling a permanently rejected SKU is retried on every drain for ever, burning rate
+   * limit that working products need. The row is KEPT rather than deleted, because a push we owe
+   * and cannot make is exactly the thing somebody has to see.
    */
-  schedulePush(productIds: string[]) {
-    for (const id of productIds) if (id) this.pushQueue.add(id);
-    if (this.pushTimer || this.pushQueue.size === 0) return;
+  private static readonly PUSH_MAX_ATTEMPTS = 5;
+
+  /**
+   * Record that these products owe their channels a quantity, then drain shortly after.
+   *
+   * The debt is written to `channel_push_queue` BEFORE the timer is armed, and that ordering is the
+   * whole point. The queue used to be a `Set` and a `setTimeout`: a restart inside the eight-second
+   * window dropped the push and left no trace it had ever been owed - and this deploys on every
+   * push to main, so that window gets hit in earnest. Worse, only ATTEMPTS were recorded anywhere,
+   * so a schedule that never fired was indistinguishable from one that fired and was refused. The
+   * two need different fixes.
+   *
+   * Still fire-and-forget for the caller: a sale never waits on the network and never fails because
+   * a push did. It just can no longer lose the fact that it owes one.
+   */
+  schedulePush(productIds: string[], reason = 'sell_through') {
+    const ids = [...new Set(productIds.filter(Boolean))];
+    if (!ids.length) return;
+
+    void this.enqueuePush(ids, reason)
+      .then(() => this.armPushTimer())
+      .catch((e) => this.logger.error(`Could not record a push debt: ${e?.message ?? e}`));
+  }
+
+  private async enqueuePush(productIds: string[], reason: string) {
+    await Promise.all(productIds.map((productId) =>
+      this.prisma.channelPushQueue.upsert({
+        where: { productId },
+        create: { productId, reason },
+        /**
+         * An existing debt is refreshed, not duplicated and not reset.
+         *
+         * `attempts` is deliberately left alone: a product that has failed four times and sells
+         * again is still on its fifth attempt, and zeroing the count here would let a permanently
+         * broken SKU retry for ever simply because it keeps selling.
+         */
+        update: { enqueuedAt: new Date(), reason },
+      }),
+    ));
+  }
+
+  private armPushTimer() {
+    if (this.pushTimer) return;
     this.pushTimer = setTimeout(() => {
-      const ids = [...this.pushQueue];
-      this.pushQueue.clear();
       this.pushTimer = null;
-      this.pushAvailability(ids, { dryRun: false })
-        .then((r) => this.logger.log(`Sell-through auto-push: ${r.ok}/${r.count} listing(s) updated across ${ids.length} product(s)${r.failed ? `, ${r.failed} failed` : ''}`))
-        .catch((e) => this.logger.error(`Sell-through auto-push failed: ${e?.message ?? e}`));
-    }, 8000);
+      void this.drainPushQueue();
+    }, ChannelListingsService.PUSH_DEBOUNCE_MS);
     this.pushTimer.unref?.();
+  }
+
+  /**
+   * Pay whatever the queue says we owe.
+   *
+   * Rows are deleted only on success, so the table holds outstanding work and nothing else -
+   * "is anything stuck?" becomes a SELECT rather than a question about production logs.
+   */
+  async drainPushQueue(): Promise<{ products: number; ok: number; failed: number; stuck: number }> {
+    const due = await this.prisma.channelPushQueue.findMany({
+      where: { attempts: { lt: ChannelListingsService.PUSH_MAX_ATTEMPTS } },
+      orderBy: { enqueuedAt: 'asc' },
+      take: 500,
+      select: { id: true, productId: true, attempts: true },
+    });
+    const stuck = await this.prisma.channelPushQueue.count({
+      where: { attempts: { gte: ChannelListingsService.PUSH_MAX_ATTEMPTS } },
+    });
+    if (!due.length) return { products: 0, ok: 0, failed: 0, stuck };
+
+    let ok = 0;
+    let failed = 0;
+    try {
+      const r = await this.pushAvailability(due.map((d) => d.productId), { dryRun: false });
+
+      // Settled per PRODUCT rather than all-or-nothing; the rule and its reasoning live in
+      // push-queue-settle.ts, with tests.
+      const { settled, retry } = settlePushQueue(due, (r.results ?? []) as PushResult[]);
+      ok = settled.length;
+      failed = retry.length;
+
+      if (settled.length) {
+        await this.prisma.channelPushQueue.deleteMany({ where: { id: { in: settled.map((d) => d.id) } } });
+      }
+      for (const { row, why } of retry) {
+        await this.prisma.channelPushQueue.update({
+          where: { id: row.id },
+          data: { attempts: { increment: 1 }, lastAttemptAt: new Date(), lastError: why.slice(0, 300) },
+        });
+      }
+      this.logger.log(`Push queue: ${r.ok}/${r.count} listing(s) across ${due.length} product(s), ${failed} product(s) still owed${stuck ? `, ${stuck} stuck` : ''}`);
+    } catch (e: any) {
+      /**
+       * The whole drain fell over - a dead connection, a bad token. Nothing is settled, everything
+       * keeps its debt, and the attempt is counted so a permanently broken drain cannot spin.
+       */
+      failed = due.length;
+      await this.prisma.channelPushQueue.updateMany({
+        where: { id: { in: due.map((d) => d.id) } },
+        data: { attempts: { increment: 1 }, lastAttemptAt: new Date(), lastError: String(e?.message ?? e).slice(0, 300) },
+      });
+      this.logger.error(`Push queue drain failed for ${due.length} product(s): ${e?.message ?? e}`);
+    }
+    return { products: due.length, ok, failed, stuck };
+  }
+
+  /**
+   * Anything the last process still owed is paid on the way up.
+   *
+   * This is the restart case the in-memory queue could not survive, and it is not hypothetical:
+   * deploying restarts the API, and a sale saved seconds earlier had its push sitting in a timer
+   * that never fired. Delayed rather than immediate so a boot storm does not become a marketplace
+   * storm.
+   */
+  onApplicationBootstrap() {
+    const t = setTimeout(() => {
+      void this.prisma.channelPushQueue
+        .count({ where: { attempts: { lt: ChannelListingsService.PUSH_MAX_ATTEMPTS } } })
+        .then((n) => {
+          if (!n) return undefined;
+          this.logger.log(`Resuming ${n} channel push(es) owed from before the restart.`);
+          return this.drainPushQueue().then(() => undefined);
+        })
+        .catch((e) => this.logger.error(`Could not resume the push queue: ${e?.message ?? e}`));
+    }, 20_000);
+    t.unref?.();
   }
 
   private cellOf(l: any) {
