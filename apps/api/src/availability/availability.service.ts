@@ -395,9 +395,14 @@ export class AvailabilityService {
   async adjust(
     productId: string,
     delta: number,
-    // No 'return': a return never moves availability. A cancellation does, but only before shipment,
-    // which the caller decides.
-    reason: 'sale' | 'cancellation' | 'vendor_import' | 'manual_adjust',
+    /**
+     * Why, as established by the caller — never inferred here from the sign of the delta.
+     *
+     * 'cancellation' is retained only because 1,683 rows already carry it and their real cause was
+     * never recorded. Nothing writes it any more: a caller now says which release this is.
+     */
+    reason: 'sale' | 'order_cancelled' | 'order_not_submitted' | 'released' | 'quantity_reduced'
+      | 'cancellation' | 'vendor_import' | 'manual_adjust',
     ref: { refType?: string; refId?: string; note?: string } = {},
     actorId?: string,
     db: Prisma.TransactionClient | PrismaService = this.prisma,

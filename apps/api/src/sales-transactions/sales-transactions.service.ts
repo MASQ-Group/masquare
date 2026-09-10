@@ -14,6 +14,7 @@ import { SALES_TX_FIELD_LABELS, SALES_TX_REF_FIELDS, SALES_TX_REF_NAME_FIELD } f
 import type { ChannelListingsService } from '../channel-listings/channel-listings.service';
 import type { AuthUser } from '../common/current-user.decorator';
 import { CreateSalesTransactionDto, SalesTransactionItemDto, UpdateSalesTransactionDto } from './dto/sales-transaction.dto';
+import { availabilityMoveReason } from './availability-move-reason';
 import {
   ADDRESS_RETENTION_DAYS, PURGEABLE_FIELDS, channelMayWrite, isEmptyAddress, isPurgeDue,
   missingForLabel, normaliseAddress, retentionBasis, type AddressInput, type StoredAddress,
@@ -2208,7 +2209,15 @@ export class SalesTransactionsService {
     await this.prisma.$transaction(async (db) => {
       for (const it of tx.items) {
         if (!it.productId || it.product?.serialTracked) continue;
-        const desired = opts.forceRelease || cancelled || tx.status !== 'submitted'
+        /**
+         * A DRAFT still consumes stock. Draft is a completeness tag, not a claim about the order.
+         *
+         * Draft says "some final figure is still missing" — the settled sales fee, usually. It has
+         * never meant the order did not happen: channel orders arrive as drafts and most of them
+         * have already shipped. Treating draft as "not really sold" released the units of orders
+         * that were out the door, and the platform advertised goods it no longer had.
+         */
+        const desired = opts.forceRelease || cancelled
           ? 0
           : this.wholeUnitsForStock(it.quantity, it.sku, 'stock');
         await this.reconcileSaleLine(db, {
@@ -2272,13 +2281,26 @@ export class SalesTransactionsService {
     await this.prisma.$transaction(async (db) => {
       for (const it of tx.items) {
         if (!it.productId) continue;
-        const desired = opts.forceRelease || cancelled || tx.status !== 'submitted'
+        // Same rule as physical stock above: a draft is an incomplete RECORD, not an unplaced order.
+        const desired = opts.forceRelease || cancelled
           ? 0
           : this.wholeUnitsForStock(it.quantity, it.sku, 'channel availability');
         const move = desired - it.availabilityDeductedQty; // >0 = sell more, <0 = give back
         if (move === 0) continue;
+        /**
+         * The cause, decided rather than read off the arithmetic.
+         *
+         * This used to be `move > 0 ? 'sale' : 'cancellation'`, which wrote "cancellation" against
+         * every shipped-but-unsubmitted order — the ordinary state of a channel order — and made
+         * the history claim customers were cancelling when they were not.
+         */
+        const reason = availabilityMoveReason({
+          move,
+          forceRelease: !!opts.forceRelease,
+          cancelledBeforeShipment: cancelled,
+        });
         const applied = await this.availability.adjust(
-          it.productId, -move, move > 0 ? 'sale' : 'cancellation',
+          it.productId, -move, reason,
           { refType: 'sales_tx', refId: it.id, note: tx.transactionRef ?? undefined }, actorId, db,
         );
         // Null means the product is not in availability, so nothing was moved. Recording a

@@ -22,10 +22,22 @@ interface Props {
  * rather than an interpretation of it.
  */
 
-/** The reasons the ledger records, in the platform's words rather than the enum's. */
+/**
+ * The reasons the ledger records, in the platform's words rather than the enum's.
+ *
+ * `cancellation` is LEGACY and deliberately vague. Until the reason was decided rather than
+ * inferred from the sign of the movement, every release was filed under it — draft orders, deleted
+ * orders and genuine cancellations alike. Labelling those rows "Cancelled before shipment" (as this
+ * first did) turned a vague record into a false claim about real, shipped orders. They are what
+ * they are: units came back, and nobody wrote down why.
+ */
 const REASON: Record<string, { label: string; tone: string }> = {
   sale: { label: 'Sold', tone: 'border-teal-100 bg-teal-50 text-teal-700' },
-  cancellation: { label: 'Cancelled before shipment', tone: 'border-orange-100 bg-orange-50 text-orange-700' },
+  order_cancelled: { label: 'Cancelled before shipment', tone: 'border-orange-100 bg-orange-50 text-orange-700' },
+  order_not_submitted: { label: 'Order not submitted', tone: 'border-n-200 bg-n-50 text-n-600' },
+  released: { label: 'Released', tone: 'border-n-200 bg-n-50 text-n-600' },
+  quantity_reduced: { label: 'Quantity reduced', tone: 'border-n-200 bg-n-50 text-n-600' },
+  cancellation: { label: 'Returned — cause not recorded', tone: 'border-n-200 bg-n-50 text-n-500' },
   manual_set: { label: 'Set by hand', tone: 'border-n-200 bg-n-50 text-n-600' },
   manual_adjust: { label: 'Adjusted by hand', tone: 'border-n-200 bg-n-50 text-n-600' },
   vendor_import: { label: 'Vendor file', tone: 'border-violet-200 bg-violet-50 text-violet-700' },
@@ -86,7 +98,14 @@ export function AvailabilityLedgerModal({ productId, mainSku, title, onClose }: 
                     <tr key={e.id} className="hover:bg-n-25">
                       <td className="mono whitespace-nowrap border-b border-n-100 px-3 py-2 text-[12.5px] text-n-600">{formatDate(e.createdAt)}</td>
                       <td className="border-b border-n-100 px-3 py-2">
-                        <span className={`tag border ${reason.tone}`}>{reason.label}</span>
+                        <span
+                          className={`tag border ${reason.tone}`}
+                          title={e.reason === 'cancellation'
+                            ? 'Recorded before the platform distinguished why units were returned. Most of these are orders that were never submitted, not cancellations.'
+                            : undefined}
+                        >
+                          {reason.label}
+                        </span>
                       </td>
                       {/*
                         The sign is the point, so it is never dropped.
