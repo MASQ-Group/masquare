@@ -122,7 +122,7 @@ export function mapEbayOrder(o: any, vatForCountry?: (iso: string) => Destinatio
         { target: 'shippingAmount', label: 'Buyer-paid shipping', source: 'lineItem.deliveryCost.shippingCost', value: ship.net },
         { target: 'shippingAmountVat', label: 'Shipping VAT (seller-owed)', source: vatSource, value: ship.vat },
         { target: 'salesTaxAmount', label: 'VAT collected by eBay', source: 'ebayCollectAndRemitTaxes (reporting)', value: collectedVat },
-        { target: 'vatCollectedByChannel', label: 'Collected & remitted by eBay', source: 'ebayCollectAndRemitTaxes present', value: collectedVat > 0 },
+        { target: 'channelReportedTaxCollection', label: 'Collected & remitted by eBay', source: 'ebayCollectAndRemitTaxes present', value: collectedVat > 0 },
       ],
       payload: {
         sku: li.sku ?? null,
@@ -136,7 +136,7 @@ export function mapEbayOrder(o: any, vatForCountry?: (iso: string) => Destinatio
         amazonPointsAmount: 0,
         salesTaxAmount: collectedVat,
         // eBay returning a collect-and-remit line IS the statement that it took the tax.
-        vatCollectedByChannel: collectedVat > 0,
+        channelReportedTaxCollection: collectedVat > 0,
       },
     };
   });

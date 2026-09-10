@@ -205,6 +205,26 @@ export class IntegrationsController {
     );
   }
 
+  /**
+   * Backfill "the marketplace collected the VAT" onto orders that predate the flag.
+   *
+   * Kept off any page, like the fee repair and for the same reasons: it spends SP-API budget and
+   * rewrites a field a VAT return depends on. Call it deliberately.
+   *
+   * Without confirm it counts the candidates and calls nothing. It will not predict how many flip —
+   * that is only knowable by asking Amazon, and guessing it from the £135 threshold is precisely the
+   * derivation this whole mechanism exists to avoid.
+   */
+  @Post('repair-vat-flag')
+  repairChannelVatFlag(@Body() dto: { confirm?: boolean }, @VisibleCompanies() companyIds: string[]) {
+    if (!dto?.confirm) return this.svc.repairChannelVatFlag({ confirm: false, companyIds });
+    return this.jobs.start(
+      'integrations.repair-vat-flag',
+      'Reading VAT collection back from Amazon',
+      (ctx) => this.svc.repairChannelVatFlag({ confirm: true, companyIds }, ctx),
+    );
+  }
+
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() user: AuthUser, @VisibleCompanies() companyIds: string[]) {
     return this.svc.remove(id, user.sub, companyIds);

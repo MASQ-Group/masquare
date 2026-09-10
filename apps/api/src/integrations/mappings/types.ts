@@ -36,7 +36,7 @@ export interface MappedItemPayload {
    * platform's own configuration decide who owes HMRC, and would be silently wrong the moment a
    * marketplace changed its policy or a rule was edited after the fact.
    */
-  vatCollectedByChannel: boolean;
+  channelReportedTaxCollection: boolean;
 }
 
 export interface MappedItem {

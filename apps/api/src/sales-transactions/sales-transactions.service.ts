@@ -8,6 +8,7 @@ import { AvailabilityService } from '../availability/availability.service';
 import { ActivityService, type ActivitySource } from '../activity/activity.service';
 import { diffRecords } from '../activity/diff';
 import { SALES_TX_FIELD_LABELS, SALES_TX_REF_FIELDS, SALES_TX_REF_NAME_FIELD } from '../activity/sales-transaction-fields';
+import { channelRemitsTheVat } from '../integrations/mappings/tax-collection';
 // Type-only: importing the class value here would form a runtime ES-module cycle
 // (sales-transactions -> channel-listings -> integrations -> sales-transactions). Resolved at
 // call time via ModuleRef using the string token instead.
@@ -1847,6 +1848,13 @@ export class SalesTransactionsService {
   }
 
   /** Destination VAT %: user override → channel threshold rule → country rate. */
+  /** ISO-2 of a destination country, or null. The VAT scope rule turns on it. */
+  private async destinationIso(countryId: string | null): Promise<string | null> {
+    if (!countryId) return null;
+    const c = await this.prisma.country.findUnique({ where: { id: countryId }, select: { isoCode: true } });
+    return c?.isoCode ?? null;
+  }
+
   private async resolveDestinationVat(
     dto: { vatOverridden?: boolean; destinationVatPct?: number | null },
     channel: any,
@@ -2029,19 +2037,22 @@ export class SalesTransactionsService {
       ? { pct: null, overridden: false }
       : await this.resolveDestinationVat(dto, channel, overall, dto.destinationCountryId ?? null);
     /**
-     * One order, one answer: did the marketplace take this sale's VAT?
+     * Does the MARKETPLACE owe this order's VAT instead of us?
      *
-     * Rolled up from what the channel REPORTED per line, not decided here. The threshold applies
-     * to the whole consignment so in practice every line agrees; `some` rather than `every` so a
-     * line Amazon flagged is never quietly dropped by a sibling that carried no tax at all.
+     * Two facts, and I first collapsed them into one. The channel's report says it collected the
+     * tax; only a UK-destined VAT sale makes that OUR relief. Amazon is a facilitator for US
+     * sales tax, Australian GST and Japanese consumption tax as well, and anything shipping into
+     * the EU VAT zone is our liability whatever an API reports about it.
      *
-     * Deliberately not inferred from the £135 rule. The marketplace is the party that took the
-     * money and says so in its own payload — deriving it from our configuration would let an
-     * edited threshold rewrite who owes HMRC on orders that settled months ago.
+     * `some` on the lines, because a zero-priced line carries no tax block and must not drop a
+     * report the rest of the order made.
      */
-    const vatCollectedByChannel = !isLocal
-      && (dto.items ?? []).some((it: any) => it.vatCollectedByChannel === true);
     const taxType = isLocal ? 'vat' : await this.resolveTaxType(dto.destinationCountryId ?? null);
+    const vatCollectedByChannel = !isLocal && channelRemitsTheVat({
+      reportedByChannel: (dto.items ?? []).some((it: any) => it.channelReportedTaxCollection === true),
+      destinationIso: await this.destinationIso(dto.destinationCountryId ?? null),
+      taxType,
+    });
     // Refuse an incomplete submission before the row exists, so a rejected transaction
     // leaves nothing behind.
     const serialWork = await this.resolveSerialConsumption(
@@ -2455,10 +2466,14 @@ export class SalesTransactionsService {
     const { pct: destinationVatPct, overridden: vatOverridden } = isLocal
       ? { pct: null, overridden: false }
       : await this.resolveDestinationVat(dto, channel, overall, destCountryId);
-    // Same roll-up on update; an omitted items array leaves the existing lines to speak.
-    const vatCollectedByChannel = !isLocal
-      && ((dto.items ?? existing.items ?? []) as any[]).some((it: any) => it.vatCollectedByChannel === true);
+    // Same decision on update; an omitted items array leaves the existing lines to speak.
     const taxType = isLocal ? 'vat' : await this.resolveTaxType(destCountryId);
+    const vatCollectedByChannel = !isLocal && channelRemitsTheVat({
+      reportedByChannel: ((dto.items ?? existing.items ?? []) as any[])
+        .some((it: any) => it.channelReportedTaxCollection === true),
+      destinationIso: await this.destinationIso(destCountryId),
+      taxType,
+    });
     // An omitted discount field means "leave as it was", not "clear it".
     const discountType = dto.discountType === undefined ? existing.discountType : dto.discountType;
     const discountValue = dto.discountValue === undefined ? existing.discountValue : dto.discountValue;

@@ -54,7 +54,7 @@ export function mapOnBuyOrder(o: any): MappedOrder {
          * threshold. Left unclaimed rather than guessed: inventing the flag here would put a fact
          * about who owes HMRC into the database on no evidence at all.
          */
-        vatCollectedByChannel: false },
+        channelReportedTaxCollection: false },
     };
   });
 

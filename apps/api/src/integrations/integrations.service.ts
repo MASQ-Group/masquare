@@ -15,6 +15,7 @@ import { amazonCancelStage, mapAmazonOrder } from './mappings/amazon-mapping';
 import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
 import { readOrderMoney, readFinances, impliedEbayRate, type EbayFinancesRead } from './ebay-money-diagnostic';
 import { signedRequest, type SigningCipher, type SigningKey } from './ebay-signature';
+import { anyMarketplaceFacilitator, channelRemitsTheVat } from './mappings/tax-collection';
 
 /**
  * Outcome of a read-only SP-API role probe.
@@ -2495,6 +2496,140 @@ export class IntegrationsService implements OnModuleInit {
    * Idempotent: running it twice writes the same figures. Jobs are held in memory, so a deploy
    * during a run ends it — restart it and the orders already repaired simply get the same values.
    */
+  /**
+   * Backfill "the marketplace collected this order's VAT" onto orders that predate the flag.
+   *
+   * Below the UK's £135 threshold Amazon charges the buyer the VAT, keeps it and remits it. The
+   * order carries VAT that is not ours, and until the flag existed nothing recorded the difference —
+   * the same amount sat in `vatAmount` whether we owed it or Amazon did.
+   *
+   * The value is READ BACK FROM AMAZON, per order, from `TaxCollection.Model` on the order items.
+   * It is deliberately not derived from the threshold, even though that would need no API calls and
+   * would usually agree: deriving it would make our own configuration decide who owes HMRC, so a
+   * threshold edited next year would silently rewrite the liability on orders that settled last
+   * year. The marketplace is the party that took the money; it is the only source worth trusting.
+   *
+   * Grouped by integration so every order is fetched with ITS OWN company's Amazon credentials —
+   * the companies hold separate developer accounts and a call must never cross between them.
+   *
+   * Idempotent: a second run reads the same values and writes nothing new. A deploy mid-run ends it,
+   * and restarting simply re-reads the orders already done.
+   */
+  async repairChannelVatFlag(
+    opts: { confirm?: boolean; companyIds?: string[] },
+    ctx?: ProgressSink,
+  ) {
+    /**
+     * Only orders that could change, and only those carrying VAT.
+     *
+     * An order with no VAT has nothing for anyone to collect, so setting the flag on it would assert
+     * something about money that never moved. Already-flagged orders are skipped because the answer
+     * cannot change — the flag only ever goes false → true from this repair.
+     */
+    const where: Prisma.SalesTransactionWhereInput = {
+      deletedAt: null,
+      source: 'amazon',
+      integrationId: { not: null },
+      vatCollectedByChannel: false,
+      items: { some: { deletedAt: null, vatAmount: { gt: 0 } } },
+      // Only where the marketplace's collection could possibly relieve us: UK-destined VAT.
+      destinationCountry: { isoCode: 'GB' },
+      OR: [{ taxType: null }, { taxType: 'vat' }],
+      ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : {}),
+    };
+
+    const txs = await this.prisma.salesTransaction.findMany({
+      where,
+      select: {
+        id: true, transactionRef: true, integrationId: true, date: true, taxType: true,
+        company: { select: { officialName: true } },
+        destinationCountry: { select: { isoCode: true } },
+      },
+      orderBy: { date: 'desc' },
+    });
+
+    if (!opts.confirm) {
+      /**
+       * The preview cannot say how many will flip without asking Amazon, and says so rather than
+       * implying a number. Counting the candidates is honest; predicting the outcome would be the
+       * same derivation this repair exists to avoid.
+       */
+      return {
+        dryRun: true as const,
+        orders: txs.length,
+        note: 'Each order is read back from Amazon; how many carry MarketplaceFacilitator is not knowable without asking.',
+        companies: [...new Set(txs.map((t) => t.company?.officialName ?? 'Unknown'))],
+      };
+    }
+
+    const byIntegration = new Map<string, typeof txs>();
+    for (const t of txs) {
+      const k = t.integrationId as string;
+      byIntegration.set(k, [...(byIntegration.get(k) ?? []), t]);
+    }
+
+    ctx?.setTotal(txs.length);
+    let flagged = 0;
+    let notCollected = 0;
+    let failed = 0;
+    const changed: string[] = [];
+
+    for (const [integrationId, orders] of byIntegration) {
+      const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
+      if (!row) { failed += orders.length; ctx?.note(`Integration ${integrationId} is gone — skipped ${orders.length} order(s)`); continue; }
+      const config = (row.config ?? {}) as Record<string, string>;
+      const endpoint = this.amazonMarketMeta(row).endpoint;
+      let token: string;
+      try {
+        token = await this.amazonAccessToken(config, await this.decryptedSecrets(row.id));
+      } catch (e: any) {
+        failed += orders.length;
+        ctx?.note(`Could not authenticate ${row.name}: ${e?.message ?? e}`);
+        continue;
+      }
+      ctx?.note(`${row.name}: ${orders.length} order(s)`);
+
+      for (const t of orders) {
+        try {
+          const items = await this.amazonGetOrderItems(endpoint, token, t.transactionRef);
+          /**
+           * `some`, not `every`. The threshold applies to the whole consignment so the lines agree
+           * in practice, but a line Amazon flagged must not be dropped by a sibling that carried no
+           * tax at all and therefore no TaxCollection block.
+           */
+          /**
+           * The channel's report is half the answer. Only a UK-destined VAT sale makes its
+           * collection our relief — an EU-destined order carries VAT we remit ourselves whatever
+           * Amazon reports, and a facilitator flag on GST or US sales tax is about another regime
+           * entirely. Both halves, or the repair would mark the whole catalogue "not ours".
+           */
+          const collected = channelRemitsTheVat({
+            reportedByChannel: anyMarketplaceFacilitator(items),
+            destinationIso: t.destinationCountry?.isoCode ?? null,
+            taxType: t.taxType,
+          });
+          if (collected) {
+            await this.prisma.salesTransaction.update({
+              where: { id: t.id },
+              data: { vatCollectedByChannel: true },
+            });
+            flagged += 1;
+            if (changed.length < 50) changed.push(t.transactionRef);
+          } else {
+            notCollected += 1;
+          }
+        } catch (e: any) {
+          failed += 1;
+          ctx?.note(`${t.transactionRef}: ${e?.message ?? e}`);
+        }
+        ctx?.tick(true);
+      }
+    }
+
+    this.logger.log(`VAT flag repair: ${flagged} flagged, ${notCollected} not collected by Amazon, ${failed} failed.`);
+    return { dryRun: false as const, orders: txs.length, flagged, notCollected, failed, changed };
+  }
+
   async repairAmazonFees(
     opts: { confirm?: boolean; scope?: 'affected' | 'all'; companyIds?: string[] },
     ctx?: ProgressSink,
