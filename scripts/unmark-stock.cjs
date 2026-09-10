@@ -1,8 +1,9 @@
 /**
  * Undo stock lines marked by mistake.
  *
- *   node scripts/unmark-stock.cjs --since "2026-09-10T19:00:00Z"            # report only
- *   node scripts/unmark-stock.cjs --since "2026-09-10T19:00:00Z" --apply    # put them back
+ *   node scripts/unmark-stock.cjs --scan                                    # when did marking happen?
+ *   node scripts/unmark-stock.cjs --since "<ISO>"                           # report only
+ *   node scripts/unmark-stock.cjs --since "<ISO>" --apply                   # put them back
  *
  * ── Why this exists ─────────────────────────────────────────────────────────────
  * `draft-backfill.cjs` gated its marking on `mark`, which is `markAvailability || markStock`, and
@@ -23,12 +24,17 @@
  *
  * `--since` is required and is compared against the item's `updatedAt`, so only rows touched by the
  * bad run are considered. Pass the time just BEFORE that run.
+ *
+ * Start with `--scan`, which needs no window and shows when fully-marked lines were last touched.
+ * Guessing the window is worse than not knowing it: too late and the run reports zero, which reads
+ * exactly like "nothing to undo" when it means "wrong window". That already happened once.
  */
 const { NestFactory } = require('@nestjs/core');
 const { AppModule } = require('../apps/api/dist/src/app.module');
 const { PrismaService } = require('../apps/api/dist/src/prisma/prisma.service');
 
 const apply = process.argv.includes('--apply');
+const scan = process.argv.includes('--scan');
 const sinceArg = process.argv[process.argv.indexOf('--since') + 1];
 
 const whole = (q) => {
@@ -37,9 +43,52 @@ const whole = (q) => {
 };
 
 (async () => {
+  if (scan) {
+    const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
+    const prisma = app.get(PrismaService);
+
+    /**
+     * Every line that currently claims to have deducted its whole quantity, grouped by the DAY it
+     * was last touched. The marking run shows up as a spike; ordinary trading does not.
+     */
+    const rows = await prisma.salesTransactionItem.findMany({
+      where: { stockDeductedQty: { gt: 0 } },
+      select: { quantity: true, stockDeductedQty: true, updatedAt: true },
+    });
+    const full = rows.filter((l) => {
+      const units = whole(l.quantity);
+      return units !== null && l.stockDeductedQty === units;
+    });
+
+    const byDay = new Map();
+    for (const l of full) {
+      const d = l.updatedAt.toISOString().slice(0, 10);
+      byDay.set(d, (byDay.get(d) ?? 0) + 1);
+    }
+
+    console.log('SCAN — lines claiming a full stock deduction, by the day they were last touched\n');
+    console.log(`  lines with any stock deduction recorded           ${rows.length}`);
+    console.log(`  of those, deducted in full                        ${full.length}\n`);
+    for (const [d, n] of [...byDay.entries()].sort()) {
+      console.log(`  ${d}   ${String(n).padStart(6)}`);
+    }
+    if (full.length) {
+      // The exact instants, so --since can be set from evidence rather than from a guess.
+      const times = full.map((l) => l.updatedAt).sort((a, b) => a - b);
+      console.log(`\n  earliest ${times[0].toISOString()}`);
+      console.log(`  latest   ${times[times.length - 1].toISOString()}`);
+      console.log('\n  Pass --since a moment BEFORE the spike you mean to undo.');
+    } else {
+      console.log('\n  Nothing claims a full stock deduction. There is nothing here to undo.');
+    }
+    await app.close();
+    return;
+  }
+
   if (!process.argv.includes('--since') || !sinceArg) {
     console.error('Refusing to run without --since "<ISO timestamp>". Without a window this would\n'
-      + 'consider every marked line in the database, including ones marked deliberately.');
+      + 'consider every marked line in the database, including ones marked deliberately.\n'
+      + 'Run with --scan first to see when marking actually happened.');
     process.exit(1);
   }
   const since = new Date(sinceArg);
@@ -90,6 +139,16 @@ const whole = (q) => {
   console.log(`  stock DID move — left alone                        ${keep.length}`);
   for (const l of keep.slice(0, 10)) {
     console.log(`      ${l.sku} on ${l.transaction?.transactionRef}`);
+  }
+
+  if (candidates.length === 0) {
+    /**
+     * Zero here has two meanings and only one of them is good news. Said plainly, because a silent
+     * zero already sent one run away believing there was nothing to undo when the window was simply
+     * set too late.
+     */
+    console.log('\n  Zero can mean the window is wrong rather than that nothing was marked.');
+    console.log('  Run with --scan to see when lines were actually marked.');
   }
 
   if (!apply) {
