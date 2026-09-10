@@ -750,6 +750,14 @@ model PlatformSettings {
   // a few days before anything is allowed to act on them.
   autoCorrectChannelQuantity Boolean @default(false) @map("auto_correct_channel_quantity")
 
+  // Whether editing an availability quantity by hand pushes it to the channels straight away.
+  //
+  // Off by default and off for a reason: a figure typed while working through a catalogue is
+  // half-finished, and broadcasting every intermediate number puts wrong quantities on live
+  // listings. With it off the edit is saved and the person pushes when their work is ready.
+  // Sales are unaffected either way — an order is a fact about stock already gone and always pushes.
+  autoPushAvailabilityOnEdit Boolean @default(false) @map("auto_push_availability_on_edit")
+
   // Time of day the daily channel auto-sync runs, as "HH:MM" (24h, server time = UTC). Drives a
   // dynamically-scheduled cron (integrations.service) — editable from the Integrations page.
   channelSyncTime String @default("05:00") @map("channel_sync_time")

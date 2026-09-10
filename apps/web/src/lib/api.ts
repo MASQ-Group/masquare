@@ -449,6 +449,8 @@ export interface PlatformSettings {
   autoAdjustAvailabilityOnSale: boolean;
   /** Whether the hourly reconcile sweep may correct what it finds, or only report it. */
   autoCorrectChannelQuantity: boolean;
+  /** Whether a hand-typed availability quantity pushes to the channels immediately. */
+  autoPushAvailabilityOnEdit: boolean;
   /** What a new marketplace listing launches at, as a percentage margin. */
   launchMarginPct: number;
   /** Whether creating real marketplace listings is permitted. Off by default. */

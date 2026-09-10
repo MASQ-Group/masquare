@@ -916,6 +916,33 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                         </div>
                       </div>
 
+                      {/*
+                        Marketplace-collected VAT, between the two columns and the profit line.
+                        Amazon UK under the 135 threshold collects the VAT from the buyer and remits
+                        it itself; we never receive it and never pay it, so it belongs in NEITHER
+                        column — putting it under revenue would overstate the sale and under costs
+                        would understate the profit. It sits on its own, marked neutral, because a
+                        VAT return still has to account for it and "not in the arithmetic" is not the
+                        same as "not worth showing".
+
+                        Read-only: the channel owns this number. On production 722 of 839
+                        below-threshold Amazon UK orders carry one.
+                      */}
+                      {!isLocal && (t.salesTax ?? 0) > 0 && (
+                        <div className="flex items-baseline justify-between border-t border-dashed border-n-200 pt-3">
+                          <span className="text-[12.5px] text-n-500">
+                            {taxShortLabel(t.taxType)} collected by the marketplace
+                            <span className="ml-1 text-n-400">· neutral</span>
+                          </span>
+                          <div className="text-right">
+                            <div className="mono text-[12.5px] font-semibold text-n-600">{money(t.salesTax, nativeCcy)}</div>
+                            {t.salesTaxEur != null && nativeCcy !== 'EUR' && (
+                              <div className="mono text-[11px] text-n-400">{eur(t.salesTaxEur)}</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="flex items-baseline justify-between border-t border-n-100 pt-3.5">
                         <span className="text-[14px] font-bold text-n-900">Est. profit</span>
                         <div className="text-right">

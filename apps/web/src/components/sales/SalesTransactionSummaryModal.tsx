@@ -283,6 +283,20 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
               )}
             </div>
             <Fact label="Duty / import" value={t.dutyImportCost ? `€${t.dutyImportCost.toFixed(2)}` : '—'} mono />
+            {/*
+              Repeated here, beside the profit rather than only up with the tax figures.
+              Amazon UK under the 135 threshold collects this from the buyer and remits it itself, so
+              it is neither our revenue nor our cost and does not touch the profit beside it. It is
+              shown anyway because a VAT return has to account for it, and "neutral" is stated rather
+              than left for the reader to work out from its absence in both columns.
+            */}
+            {t.salesTax > 0 && (
+              <Fact
+                label={`${t.taxLabel} collected · neutral`}
+                value={`${money(t.salesTax, ccy)}${t.salesTaxEur != null && ccy !== 'EUR' ? ` · €${t.salesTaxEur.toFixed(2)}` : ''}`}
+                mono
+              />
+            )}
             <div>
               <div className="text-[11px] text-n-500">Profit (€)</div>
               <div className="mono text-[15px] font-semibold" style={{ color: t.profit != null ? (t.profit >= 0 ? PROFIT_GREEN : 'var(--danger)') : undefined }}>

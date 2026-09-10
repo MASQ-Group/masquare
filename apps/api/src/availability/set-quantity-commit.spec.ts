@@ -41,6 +41,12 @@ function makePrisma() {
      * listings, and it keeps this spec about the one thing it exists to catch — that the reply
      * reflects the committed write rather than the state before it.
      */
+    /**
+     * The auto-push toggle, read on every setQuantity. Off here — that is the default, and it keeps
+     * this spec about the one thing it exists to catch: that the reply reflects the committed write
+     * rather than the state before it.
+     */
+    platformSettings: { findFirst: vi.fn().mockImplementation(async () => ({ autoPushAvailabilityOnEdit: false })) },
     channelPush: { findMany: vi.fn().mockImplementation(async () => []) },
     channelListing: { findMany: vi.fn().mockImplementation(async () => []) },
     $transaction: vi.fn().mockImplementation(async (cb: any) => {

@@ -11,6 +11,8 @@ import { MissingFromAvailability } from '../components/availability/MissingFromA
 import { AddToAvailabilityModal } from '../components/availability/AddToAvailabilityModal';
 import { AvailabilityLedgerModal } from '../components/availability/AvailabilityLedgerModal';
 import { OutOfStepWithChannels } from '../components/availability/OutOfStepWithChannels';
+import { AutoPushToggle } from '../components/availability/AutoPushToggle';
+import { useAuth } from '../lib/auth';
 
 // The three ways a quantity can move: a person, a vendor file, or a sale. There is no Return —
 // a return never changes availability, and a cancellation before shipment is the sale reversing
@@ -20,6 +22,7 @@ const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(
 
 export function AvailabilityPage() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
   const [brandId, setBrandId] = usePersistentState('availability.brand', '');
@@ -107,6 +110,8 @@ export function AvailabilityPage() {
         onTabChange={(k) => setTab(k as 'in' | 'missing' | 'drift')}
         actions={
           <>
+            {/* Admin-only: it governs whether everyone else's edits reach live listings. */}
+            {tab === 'in' && user?.isAdmin && <AutoPushToggle />}
             {tab === 'in' && selected.size > 0 && (
               <button onClick={() => setSelected(new Set())} className="hbtn">Clear ({selected.size})</button>
             )}

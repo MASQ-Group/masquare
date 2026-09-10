@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, MapPin, Pencil, ShieldCheck, Trash2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
@@ -228,7 +229,19 @@ function AddressModal({ view, onClose, onSaved }: { view: DeliveryAddressView; o
     </div>
   );
 
-  return (
+  /**
+   * Rendered into <body>, not where it sits in the tree.
+   *
+   * `position: fixed` is only relative to the viewport while no ancestor establishes a containing
+   * block, and PageHeader is `sticky z-30` with `will-change: transform` and a translate — which
+   * makes it both a containing block and its own stacking context. From inside the page subtree the
+   * modal's `z-[60]` therefore loses to a header at `z-30`, and the dialog opened underneath it with
+   * its own title clipped out of view.
+   *
+   * A portal takes it out of that subtree entirely, so the z-index means what it says. Same reason
+   * the dropdowns and the date picker portal.
+   */
+  return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(12,16,20,0.5)] p-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}
@@ -312,6 +325,7 @@ function AddressModal({ view, onClose, onSaved }: { view: DeliveryAddressView; o
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

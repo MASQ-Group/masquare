@@ -20,6 +20,9 @@ export class UpdateSettingsDto {
   // rather than only listing them. Ignored unless autoAdjustAvailabilityOnSale is also on: with no
   // maintained availability figure there is nothing to correct toward.
   @IsOptional() @IsBoolean() autoCorrectChannelQuantity?: boolean;
+  // Whether a hand-typed availability quantity pushes to the channels immediately. Off by default:
+  // a half-finished count must not reach a live listing.
+  @IsOptional() @IsBoolean() autoPushAvailabilityOnEdit?: boolean;
   /** Margin a new listing launches at, as a percentage. Separate from the repricing floor margin. */
   @IsOptional() @IsNumber() launchMarginPct?: number;
   /** Whether creating real marketplace listings is permitted. */
