@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, CheckCircle2, ClipboardCopy, Info, Minus, Search, Send, X } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, ClipboardCopy, History, Info, Minus, Plus, Search, Send, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell, Pagination, Select } from '@masquare/ui';
 import { availabilityApi, brandsApi, channelListingsApi, productTypesApi, vendorsApi, type AvailabilityRow, type ChannelPushResult } from '../lib/api';
@@ -8,6 +8,8 @@ import { PageHeader } from '../components/common/PageHeader';
 import { usePersistentState } from '../lib/usePersistentState';
 import { CHANNEL_GROUPS, channelGroupOf, channelPlatform, sortByChannelCanonical, type ChannelPlatform } from '../lib/channelGroups';
 import { MissingFromAvailability } from '../components/availability/MissingFromAvailability';
+import { AddToAvailabilityModal } from '../components/availability/AddToAvailabilityModal';
+import { AvailabilityLedgerModal } from '../components/availability/AvailabilityLedgerModal';
 
 // The three ways a quantity can move: a person, a vendor file, or a sale. There is no Return —
 // a return never changes availability, and a cancellation before shipment is the sale reversing
@@ -29,6 +31,8 @@ export function AvailabilityPage() {
   // Selected products for a channel quantity push.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pushOpen, setPushOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [ledgerFor, setLedgerFor] = useState<AvailabilityRow | null>(null);
   // 'missing' is the onboarding worklist: listed on a channel, absent from availability.
   const [tab, setTab] = usePersistentState<'in' | 'missing'>('availability.tab', 'in');
 
@@ -97,9 +101,23 @@ export function AvailabilityPage() {
         ]}
         activeTab={tab}
         onTabChange={(k) => setTab(k as 'in' | 'missing')}
-        actions={tab === 'in' && selected.size > 0 ? (
-          <button onClick={() => setSelected(new Set())} className="hbtn">Clear ({selected.size})</button>
-        ) : undefined}
+        actions={
+          <>
+            {tab === 'in' && selected.size > 0 && (
+              <button onClick={() => setSelected(new Set())} className="hbtn">Clear ({selected.size})</button>
+            )}
+            {/*
+              On BOTH tabs, deliberately.
+              The onboarding worklist is built from channel listings, so a product listed nowhere can
+              never appear on it — which is exactly when somebody goes looking for a way to add one.
+              Offering it only on the other tab would hide the answer on the screen that raises the
+              question.
+            */}
+            <button onClick={() => setAddOpen(true)} className="hbtn" title="Add any catalogue product to availability, listed or not">
+              <Plus size={15} /> Add a product
+            </button>
+          </>
+        }
         primary={tab === 'missing' ? undefined : (
           <button disabled={selected.size === 0} onClick={() => setPushOpen(true)}
             className="hbtn-primary"
@@ -187,7 +205,21 @@ export function AvailabilityPage() {
                       </div>
                     </td>
                     <td className={td}>{r.lastSource ? <span className="tag border border-n-200 bg-n-50 text-n-500">{SOURCE_LABEL[r.lastSource] ?? r.lastSource}</span> : <span className="text-n-300">—</span>}</td>
-                    <td className={`${td} whitespace-nowrap text-n-500`}>{fmtDate(r.updatedAt)}</td>
+                    <td className={`${td} whitespace-nowrap text-n-500`}>
+                      <div className="flex items-center justify-between gap-2">
+                        {fmtDate(r.updatedAt)}
+                        {/* The audit trail was written from the beginning and never shown. It is
+                            the only way to tell a sale that never deducted from one that deducted
+                            and failed to reach the channels. */}
+                        <button
+                          onClick={() => setLedgerFor(r)}
+                          title="Availability history — every movement and what caused it"
+                          className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-n-400 opacity-0 transition-opacity hover:bg-n-100 hover:text-n-700 focus:opacity-100 group-hover:opacity-100"
+                        >
+                          <History size={14} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
@@ -207,6 +239,15 @@ export function AvailabilityPage() {
                   <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-[var(--teal-500)]" checked={selected.has(r.productId)} onChange={() => toggleOne(r.productId)} />
                   <span className="code min-w-0 flex-1 truncate text-[12.5px] font-semibold text-n-800">{r.mainSku}</span>
                   <span className="shrink-0 text-[11.5px] text-n-400">{fmtDate(r.updatedAt)}</span>
+                  {/* Always visible here. The desktop button appears on hover, which a touch screen
+                      never produces — hiding it the same way would hide it for good. */}
+                  <button
+                    onClick={() => setLedgerFor(r)}
+                    aria-label="Availability history"
+                    className="grid h-11 w-11 shrink-0 place-items-center rounded-md text-n-400 hover:bg-n-100 hover:text-n-700"
+                  >
+                    <History size={15} />
+                  </button>
                 </div>
                 <div className="truncate text-[13px] text-n-700">{r.title}</div>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-n-500">
@@ -245,6 +286,26 @@ export function AvailabilityPage() {
       )}
       </>)}
 
+      {ledgerFor && (
+        <AvailabilityLedgerModal
+          productId={ledgerFor.productId}
+          mainSku={ledgerFor.mainSku}
+          title={ledgerFor.title}
+          onClose={() => setLedgerFor(null)}
+        />
+      )}
+      {addOpen && (
+        <AddToAvailabilityModal
+          onClose={() => setAddOpen(false)}
+          onAdded={() => {
+            setAddOpen(false);
+            // Both lists move: the product joins "in availability" and leaves the worklist if it
+            // was ever on it.
+            qc.invalidateQueries({ queryKey: ['availability'] });
+            qc.invalidateQueries({ queryKey: ['availability-missing'] });
+          }}
+        />
+      )}
       {pushOpen && (
         <PushModal
           productIds={[...selected]}

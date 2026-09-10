@@ -2398,6 +2398,14 @@ export interface ShipmentTrackingDetail {
   carrier: string | null;
   /** The carrier's public tracking page, built from the service's URL template. Null when unset. */
   trackingUrl: string | null;
+  /**
+   * The carrier's tracking page, where a parcel cannot be deep-linked at all.
+   *
+   * Cyprus Post is the case: its search is a POST with a CSRF token and its results page is a
+   * signed URL, so no template can reach a parcel. Set when the template carries no `{tracking}`
+   * placeholder, and never at the same time as `trackingUrl`.
+   */
+  carrierUrl: string | null;
   /** Whether this is a carrier we can ask at all. Only FedEx is connected. */
   trackable: boolean;
   tracking: ShipmentTrackingRow | null;

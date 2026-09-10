@@ -87,7 +87,9 @@ export function TrackingPanel({
           the parcel is or show its history here.{' '}
           {view.trackingUrl
             ? 'Open the number above for their own tracking page.'
-            : 'Adding a tracking URL for this service in Settings → Shipping services would make the number a link to their page.'}
+            : view.carrierUrl
+              ? 'Copy the number and open their tracking page above — their search cannot be linked to directly.'
+              : 'Adding a tracking URL for this service in Settings → Shipping services would put a link to their page here.'}
         </p>
       </div>
     );
@@ -228,6 +230,24 @@ function TrackingNumber({ view }: { view: ShipmentTrackingDetail }) {
           </a>
         ) : (
           <span className="code text-[14.5px] font-medium text-n-800">{number}</span>
+        )}
+        {/*
+          A carrier whose parcel cannot be deep-linked gets a plainly different affordance.
+          Cyprus Post's results page is a signed URL and its search is a POST, so no template can
+          reach a parcel — the best available is their form with the number on the clipboard. Making
+          the NUMBER a link there would promise something it cannot do; a separate labelled link
+          says what actually happens.
+        */}
+        {!view.trackingUrl && view.carrierUrl && (
+          <a
+            href={view.carrierUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex shrink-0 items-center gap-1 text-[12px] font-semibold text-teal-700 hover:underline"
+            title={`Open ${view.carrier ?? 'the carrier'}'s tracking page — copy the number first, their search cannot be linked to`}
+          >
+            Track on {view.carrier ?? 'carrier'} <ExternalLink size={11} />
+          </a>
         )}
         <button
           type="button"

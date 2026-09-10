@@ -12,7 +12,7 @@ import {
   type RateQuoteInput, type RateEndpoint, type RateParcel,
 } from './fedex-rate';
 import { parseRateReply } from './fedex-rate-parse';
-import { buildTrackingUrl } from './tracking-url';
+import { buildTrackingUrl, carrierSiteUrl } from './tracking-url';
 import {
   SHIP_CANCEL_PATH, SHIP_PATH, buildCancelRequest, buildShipRequest, missingForBooking,
   type ShipParty, type ShipRequestInput,
@@ -1282,6 +1282,13 @@ export class CarriersService {
        * that goes nowhere.
        */
       trackingUrl: buildTrackingUrl(shipment.shippingService?.trackingUrlTemplate, shipment.trackingNumber),
+      /**
+       * The carrier's tracking PAGE, for couriers whose results cannot be linked to at all.
+       *
+       * Separate from trackingUrl so a screen can be honest about which it is offering: one lands
+       * on the parcel, the other on an empty form that needs the number pasted into it.
+       */
+      carrierUrl: carrierSiteUrl(shipment.shippingService?.trackingUrlTemplate),
       /** Whether this is a carrier we can ask at all — the screen offers no button when it is not. */
       trackable: isFedexService(shipment.shippingService?.name, shipment.shippingService?.alias),
       tracking: t,

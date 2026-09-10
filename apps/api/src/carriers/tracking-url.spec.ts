@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTrackingUrl } from './tracking-url';
+import { buildTrackingUrl, carrierSiteUrl } from './tracking-url';
 
 describe('buildTrackingUrl', () => {
   const fedex = 'https://www.fedex.com/fedextrack/?trknbr={tracking}';
@@ -33,5 +33,29 @@ describe('buildTrackingUrl', () => {
   /** A template with nowhere to put the number would send everybody to the same page. */
   it('refuses a template with no placeholder', () => {
     expect(buildTrackingUrl('https://www.fedex.com/fedextrack/', '876350374113')).toBeNull();
+  });
+});
+
+describe('carrierSiteUrl', () => {
+  /**
+   * Cyprus Post cannot be deep-linked at all: the search is a POST with a CSRF token and the
+   * results page is a signed URL. A template with no placeholder is their tracking FORM, and
+   * opening it with the number on the clipboard is the best there is.
+   */
+  it('reads a template with no placeholder as the carrier tracking page', () => {
+    expect(carrierSiteUrl('https://www.cypruspost.post/en/track_and_trace'))
+      .toBe('https://www.cypruspost.post/en/track_and_trace');
+  });
+
+  /** A template WITH the placeholder is a deep link — buildTrackingUrl's job, not this one's. */
+  it('is null when the template can produce a real deep link', () => {
+    expect(carrierSiteUrl('https://www.fedex.com/fedextrack/?trknbr={tracking}')).toBeNull();
+  });
+
+  it('refuses anything that is not an http(s) address', () => {
+    expect(carrierSiteUrl('javascript:alert(1)')).toBeNull();
+    expect(carrierSiteUrl('cypruspost.post')).toBeNull();
+    expect(carrierSiteUrl('')).toBeNull();
+    expect(carrierSiteUrl(null)).toBeNull();
   });
 });

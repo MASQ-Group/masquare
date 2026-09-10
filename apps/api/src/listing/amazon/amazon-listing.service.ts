@@ -7,6 +7,7 @@ import { FloorService } from '../../amazon-repricing/floor/floor.service';
 import { fullScopeIntegrationWhere, isOrdersOnlyCompany } from '../../common/amazon-scope';
 import { suggestSku } from './sku-suggestion';
 import { isSkuInUseRejection } from './sku-collision';
+import { readValidation } from './validation-gate';
 import { ListingService } from '../listing.service';
 import { recordAvailability } from '../availability/availability-record';
 import { decimalsFor, isExpressible, priceAmountFor, roundPriceCents } from '../../common/currency-precision';
@@ -1098,27 +1099,47 @@ export class AmazonListingService {
       { productType: payload.productType, attributes: payload.attributes },
       true,
     );
-    if (!check.ok) {
+    const verdict = readValidation(check.issues);
+    if (!check.ok && verdict.blocked) {
       /**
        * A refused SKU is a recoverable refusal, and the way out has to survive the throw.
        *
-       * Amazon reports "SKU already exists in other Amazon marketplace(s)" at validation, so this is
-       * where a collision is found. Thrown as a plain sentence, the suggestion computed a line later
-       * was lost and the caller was left with prose to parse — which is why a bulk run could report
-       * the failure but never offer the fix.
+       * Thrown as a plain sentence, the suggestion computed a line later was lost and the caller
+       * was left with prose to parse — which is why a bulk run could report the failure but never
+       * offer the fix.
        *
        * The message stays first so every existing reader is unaffected: Nest takes an exception's
-       * `.message` from a `message` property on the payload.
+       * `.message` from a `message` property on the payload. It names the BLOCKING issue rather
+       * than the first one, so a reply carrying both a SKU complaint and a missing attribute
+       * reports the attribute — the thing that actually has to change.
        */
-      const skuInUse = isSkuInUseRejection(check.issues);
+      const skuInUse = verdict.skuInUse;
       throw new BadRequestException({
-        message: `Amazon rejected the offer in validation: ${check.issues[0]?.message ?? check.message ?? 'unknown reason'}`,
+        message: `Amazon rejected the offer in validation: ${verdict.blockingIssues[0]?.message ?? check.message ?? 'unknown reason'}`,
         sku: built.sku,
         skuInUse,
         skuSuggestion: skuInUse
           ? suggestSku(built.sku, built.marketplace ?? '', await this.skusInUse(integrationId))
           : null,
       });
+    }
+
+    /**
+     * Validation objected only to the SKU NAME — so ask Amazon for real instead of believing it.
+     *
+     * `VALIDATION_PREVIEW` returns 100398 for SKUs that Seller Central creates on the same
+     * marketplace without complaint, and acting on that meant splitting a SKU — RE-S8540-FR — to
+     * avoid a problem that did not exist. A split is permanent and every system downstream carries
+     * it: orders, reports, returns.
+     *
+     * Nothing is lost by trying. If the real submit refuses too, the block below offers the same
+     * alias it always did, on an answer that is actually final.
+     */
+    if (!check.ok && verdict.skuInUse) {
+      this.logger.warn(
+        `Validation refused ${built.sku} on ${built.marketplace} for the SKU name only ` +
+          `(${check.issues.map((i) => i.code).filter(Boolean).join(', ') || 'no code'}) — submitting for real to let Amazon decide.`,
+      );
     }
 
     const result = await this.integrations.putAmazonOffer(

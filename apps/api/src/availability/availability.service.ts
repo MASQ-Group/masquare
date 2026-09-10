@@ -351,7 +351,7 @@ export class AvailabilityService {
     const qty = Math.max(0, Math.trunc(quantity));
     const current = await this.prisma.productAvailability.findUnique({ where: { productId }, select: { quantity: true } });
     const prev = current?.quantity ?? 0;
-    return this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       await tx.productAvailability.upsert({
         where: { productId },
         create: { productId, quantity: qty, lastSource: 'manual', updatedById: actorId ?? null },
@@ -360,8 +360,22 @@ export class AvailabilityService {
       await tx.availabilityLedger.create({
         data: { productId, delta: qty - prev, newQuantity: qty, reason: 'manual_set', note: note?.trim() || null, createdById: actorId ?? null },
       });
-      return this.get(productId);
     });
+
+    /**
+     * Read AFTER the commit, not inside it.
+     *
+     * `get` goes through `this.prisma` — a different connection from the transaction's `tx` — so
+     * called from inside the callback it could not see the writes above and returned the state from
+     * before them. Setting a quantity of 3 on a product new to availability answered
+     * `quantity: null, lastSource: null`: the write was right and the reply said it had not
+     * happened, so any screen trusting the response showed an empty row after a successful save.
+     *
+     * The alternative — threading `tx` through `get` — would make a read helper carry a transaction
+     * it has no other use for. Reading once the transaction has committed is both simpler and more
+     * honest about what it returns: what is actually stored.
+     */
+    return this.get(productId);
   }
 
   /**

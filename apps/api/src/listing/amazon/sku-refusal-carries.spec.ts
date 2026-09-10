@@ -5,10 +5,15 @@ import { isSkuInUseRejection } from './sku-collision';
 /**
  * A refused SKU has to survive being thrown.
  *
- * Amazon reports "SKU already exists in other Amazon marketplace(s)" during validation, which is
- * where submit() gives up. Thrown as a plain sentence, the alternative name computed a line later
- * went with it — so a bulk run could report the refusal and never offer the fix, and the only way
- * out was to leave for the single-channel flow and come back.
+ * Amazon reports "SKU already exists in other Amazon marketplace(s)", and submit() throws this when
+ * the refusal is final. Thrown as a plain sentence, the alternative name computed a line later went
+ * with it — so a bulk run could report the refusal and never offer the fix, and the only way out
+ * was to leave for the single-channel flow and come back.
+ *
+ * Note the "final": a lone SKU-in-use error at VALIDATION no longer reaches here. See
+ * validation-gate — the real submit is attempted first, because validation refuses names that
+ * Seller Central accepts, and only a refusal from the real submit produces this exception. The
+ * shape below is unchanged; what changed is how sure we are before using it.
  *
  * These pin the two halves of the fix: the exception still reads the same to anything that only
  * wants a message, and it now carries the parts a caller needs to act.
