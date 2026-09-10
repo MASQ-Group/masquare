@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { ProgressSink } from '../jobs/jobs.service';
+import { channelDrifted } from './channel-drift';
 
 export interface AvailabilityQuery {
   q?: string;
@@ -181,7 +182,20 @@ export class AvailabilityService {
     };
   }
 
-  async get(productId: string) {
+  /**
+   * One product's availability, its movements, and what the channels were actually told.
+   *
+   * The three used to be answerable only in three places, which made the ordinary question
+   * unanswerable: a unit sells, availability drops to 0, and nobody can say whether the channels
+   * were told. "The push did not run" and "the push ran and was rejected" need different fixes, and
+   * without the attempts beside the movements neither can be distinguished from the other — or from
+   * a push that simply has not fired yet, since sell-through pushes are debounced.
+   *
+   * `companyIds` scopes the channel side and nothing else. Availability is one shared pool per
+   * product and is deliberately company-agnostic, but listings and pushes belong to a company's
+   * integration and must never be read across that line.
+   */
+  async get(productId: string, companyIds?: string[]) {
     const p = await this.prisma.product.findFirst({
       where: { id: productId, ...ACTIVE },
       select: {
@@ -191,10 +205,75 @@ export class AvailabilityService {
       },
     });
     if (!p) throw new NotFoundException('Product not found');
-    const ledger = await this.prisma.availabilityLedger.findMany({
-      where: { productId }, orderBy: { createdAt: 'desc' }, take: 25,
-    });
-    return { ...this.serialize(p), ledger };
+
+    const scope = companyIds ? { companyId: { in: companyIds } } : {};
+    const [ledger, pushes, listings] = await Promise.all([
+      this.prisma.availabilityLedger.findMany({
+        where: { productId }, orderBy: { createdAt: 'desc' }, take: 25,
+      }),
+      /**
+       * Real quantity pushes only. A dry run is a rehearsal that never left the building, and
+       * showing it next to a live attempt would answer "was the channel told?" with a yes when the
+       * truthful answer is no.
+       */
+      this.prisma.channelPush.findMany({
+        where: { productId, field: 'quantity', dryRun: false, ...scope },
+        orderBy: { createdAt: 'desc' }, take: 40,
+        // ChannelPush carries integrationId but has no relation to follow, so the channel is named
+        // below from the listings, which do.
+        select: {
+          id: true, createdAt: true, marketplace: true, channelSku: true, integrationId: true,
+          requestedValue: true, previousValue: true, ok: true, message: true,
+        },
+      }),
+      this.prisma.channelListing.findMany({
+        where: { productId, ...scope },
+        select: {
+          id: true, integrationId: true, marketplace: true, channelSku: true,
+          listedQuantity: true, lastPulledAt: true,
+          integration: { select: { name: true, channelType: true } },
+        },
+      }),
+    ]);
+
+    const held = p.availability?.quantity ?? null;
+    const nameOf = new Map(listings.map((l) => [l.integrationId, l.integration?.name ?? null]));
+    /**
+     * What each channel actually holds, against what we hold — the check that settles it.
+     *
+     * Deliberately independent of the push log. A push row can be missing because the attempt was
+     * never made, and it can be present and successful while our own record went unupdated;
+     * comparing the two numbers catches both and needs neither to be trustworthy.
+     *
+     * `listedQuantity` is the marketplace's own figure as of the last pull (a successful push
+     * overwrites it until the next one), so a mismatch means the channel really was advertising a
+     * different number — as of that pull, which is why the date travels with it.
+     */
+    const channels = listings.map((l) => ({
+      id: l.id,
+      marketplace: l.marketplace || null,
+      channelSku: l.channelSku,
+      channelName: l.integration?.name ?? null,
+      channelType: l.integration?.channelType ?? null,
+      listedQuantity: l.listedQuantity,
+      /**
+       * How fresh that figure is. `lastPushedAt` would be the more natural field and is useless:
+       * a full pull runs `deleteMany` then `createMany` over an integration's listings, so every
+       * row is destroyed and rebuilt and the push stamp goes with it. Across the whole table, 0 of
+       * 17,374 rows carry one. The pull date is real.
+       */
+      lastPulledAt: l.lastPulledAt,
+      drifted: channelDrifted(held, l.listedQuantity),
+    }));
+
+    return {
+      ...this.serialize(p),
+      ledger,
+      // A push against an integration this product is no longer listed on still happened, so it is
+      // kept and simply goes unnamed rather than being dropped from the record.
+      pushes: pushes.map(({ integrationId, ...r }) => ({ ...r, channelName: nameOf.get(integrationId) ?? null })),
+      channels,
+    };
   }
 
   /**

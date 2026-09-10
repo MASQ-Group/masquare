@@ -741,9 +741,47 @@ export const availabilityApi = {
   ids: (params: { q?: string; brandId?: string; vendorId?: string; productTypeId?: string } = {}) =>
     api.get<string[]>('/availability/ids', { params }).then((r) => r.data),
   get: (productId: string) =>
-    api.get<AvailabilityRow & { ledger: AvailabilityLedgerRow[] }>(`/availability/${productId}`).then((r) => r.data),
+    api.get<AvailabilityDetail>(`/availability/${productId}`).then((r) => r.data),
   setQuantity: (productId: string, quantity: number, note?: string) =>
     api.post<AvailabilityRow & { ledger: AvailabilityLedgerRow[] }>(`/availability/${productId}`, { quantity, note }).then((r) => r.data),
+};
+
+/** One real quantity push to one channel. Dry runs are excluded server-side. */
+export interface AvailabilityPush {
+  id: string;
+  createdAt: string;
+  marketplace: string;
+  channelSku: string;
+  channelName: string | null;
+  requestedValue: number | null;
+  previousValue: number | null;
+  ok: boolean;
+  message: string | null;
+}
+
+/**
+ * What one channel holds, beside what we hold.
+ *
+ * `listedQuantity` is the marketplace's own figure as of `lastPulledAt`, overwritten by any figure
+ * we later push successfully. `drifted` therefore means the channel really was advertising a
+ * different number when we last looked.
+ */
+export interface AvailabilityChannel {
+  id: string;
+  marketplace: string | null;
+  channelSku: string;
+  channelName: string | null;
+  channelType: string | null;
+  listedQuantity: number | null;
+  /** Not lastPushedAt: a full pull deletes and recreates listing rows, so that stamp never survives. */
+  lastPulledAt: string | null;
+  drifted: boolean;
+}
+
+export type AvailabilityDetail = AvailabilityRow & {
+  ledger: AvailabilityLedgerRow[];
+  pushes: AvailabilityPush[];
+  channels: AvailabilityChannel[];
 };
 export const fulfilmentTypesApi = crud<FulfilmentType>('/fulfilment-types');
 export const vatClassesApi = crud<VatClass>('/vat-classes');

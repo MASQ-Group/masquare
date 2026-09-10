@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
-import { availabilityApi } from '../../lib/api';
+import { availabilityApi, type AvailabilityDetail } from '../../lib/api';
 import { formatDate } from '../../lib/format';
 
 interface Props {
@@ -69,6 +69,128 @@ const EXPLAIN: Record<string, string> = {
     + 'entry says so instead.',
 };
 
+/**
+ * Whether the channels were actually told, and when.
+ *
+ * The question this answers came in as a report: a unit sold, availability correctly went to 0, and
+ * there was no way to tell whether the marketplaces had been told 0 — only a belief that they had
+ * not. "The push never ran", "it ran and was rejected" and "it is still in the debounce window" are
+ * three different faults with three different fixes, and none of them was visible from anywhere in
+ * the platform.
+ *
+ * The headline comparison deliberately does not depend on the push log: it reads the marketplace's
+ * own figure from the last pull, so it holds whether or not an attempt was ever logged. The
+ * attempts below explain why a difference exists.
+ */
+function ChannelSync({ data }: { data: AvailabilityDetail }) {
+  const channels = data.channels ?? [];
+  const pushes = data.pushes ?? [];
+  const held = data.quantity;
+  const drifted = channels.filter((c) => c.drifted);
+
+  if (channels.length === 0) {
+    return (
+      <p className="mb-4 rounded-md border border-n-200 bg-n-25 px-3 py-2.5 text-[12.5px] text-n-600">
+        This product is not listed on any channel you can see, so there is nothing to push a quantity to.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mb-4">
+      <div className="mb-2 flex items-baseline justify-between gap-3">
+        <h3 className="text-[13px] font-semibold text-n-800">Channel quantity sync</h3>
+        <span className="text-[11.5px] text-n-500">
+          we hold <span className="mono font-medium text-n-700">{held ?? '—'}</span>
+        </span>
+      </div>
+
+      {drifted.length > 0 ? (
+        <p className="mb-2 rounded-md border border-orange-200 bg-orange-50 px-3 py-2 text-[12.5px] text-orange-800">
+          <strong>{drifted.length}</strong> of {channels.length} channel{channels.length === 1 ? '' : 's'} still
+          {' '}were advertising a different quantity when last checked — the figure shown below, not {held ?? '—'}.
+        </p>
+      ) : (
+        <p className="mb-2 rounded-md border border-teal-100 bg-teal-50 px-3 py-2 text-[12.5px] text-teal-800">
+          Every channel was showing {held ?? '—'} when last checked — the quantity is in sync.
+        </p>
+      )}
+
+      <table className="w-full border-collapse">
+        <thead>
+          <tr>
+            {['Channel', 'SKU', 'Channel has', 'Checked'].map((h, i) => (
+              <th key={h} className={`border-b border-n-200 bg-n-25 px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-n-500 ${i === 2 ? 'text-right' : 'text-left'}`}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {channels.map((c) => (
+            <tr key={c.id} className="hover:bg-n-25">
+              <td className="border-b border-n-100 px-3 py-1.5 text-[12.5px] text-n-700">
+                {c.channelName ?? c.channelType ?? 'Channel'}
+                {c.marketplace ? <span className="ml-1 text-n-400">{c.marketplace}</span> : null}
+              </td>
+              <td className="code border-b border-n-100 px-3 py-1.5 text-[12px] text-n-600">{c.channelSku}</td>
+              <td className={`mono border-b border-n-100 px-3 py-1.5 text-right text-[12.5px] font-medium ${c.drifted ? 'text-orange-700' : 'text-n-700'}`}>
+                {c.listedQuantity ?? '—'}
+              </td>
+              {/*
+                The PULL date, not the push date. A full pull deletes and recreates every listing
+                row, so the push stamp never survives one — across the whole table not a single row
+                carries one, and a column that always read "never" would be worse than no column.
+              */}
+              <td className="mono border-b border-n-100 px-3 py-1.5 text-[12px] text-n-500">
+                {c.lastPulledAt ? formatDate(c.lastPulledAt) : <span className="text-n-300">never</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {pushes.length > 0 ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[12px] text-n-500 hover:text-n-700">
+            {pushes.length} recent push attempt{pushes.length === 1 ? '' : 's'}
+          </summary>
+          <table className="mt-1.5 w-full border-collapse">
+            <tbody>
+              {pushes.map((p) => (
+                <tr key={p.id}>
+                  <td className="mono whitespace-nowrap border-b border-n-100 px-3 py-1.5 text-[12px] text-n-500">{formatDate(p.createdAt)}</td>
+                  <td className="border-b border-n-100 px-3 py-1.5 text-[12px] text-n-600">
+                    {p.channelName ?? 'Channel'}{p.marketplace ? ` ${p.marketplace}` : ''}
+                  </td>
+                  <td className="mono border-b border-n-100 px-3 py-1.5 text-[12px] text-n-600">
+                    {p.previousValue ?? '—'} → {p.requestedValue ?? '—'}
+                  </td>
+                  <td className="border-b border-n-100 px-3 py-1.5 text-[12px]">
+                    <span className={p.ok ? 'text-teal-700' : 'text-danger'}>{p.ok ? 'accepted' : 'rejected'}</span>
+                  </td>
+                  {/* The channel's own words on a rejection — the whole reason to keep these rows. */}
+                  <td className="max-w-[220px] truncate border-b border-n-100 px-3 py-1.5 text-[11.5px] text-n-500" title={p.message ?? undefined}>
+                    {p.message ?? ''}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      ) : (
+        /*
+         * No attempt at all is a finding, not an empty state — it is the difference between a push
+         * that failed and a push that never happened, so it says which.
+         */
+        <p className="mt-2 text-[12px] text-n-500">
+          No quantity push has ever been attempted for this product. A sale schedules one a few
+          seconds after it is saved, so nothing here means the schedule never ran rather than that a
+          channel refused.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function AvailabilityLedgerModal({ productId, mainSku, title, onClose }: Props) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['availability-ledger', productId],
@@ -82,7 +204,7 @@ export function AvailabilityLedgerModal({ productId, mainSku, title, onClose }: 
       className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(12,16,20,0.5)] p-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="flex max-h-[88vh] w-[620px] max-w-full flex-col rounded-lg bg-n-0 shadow-lg">
+      <div className="flex max-h-[88vh] w-[760px] max-w-full flex-col rounded-lg bg-n-0 shadow-lg">
         <div className="border-b border-n-200 px-5 py-3.5">
           <h2 className="text-[15px] font-semibold text-n-900">Availability history</h2>
           <p className="mt-0.5 truncate text-[12.5px] text-n-500" title={title ?? undefined}>
@@ -98,6 +220,8 @@ export function AvailabilityLedgerModal({ productId, mainSku, title, onClose }: 
             </div>
           )}
           {isError && <p className="py-6 text-[13px] text-danger">Could not load this product’s history.</p>}
+
+          {data && <ChannelSync data={data} />}
 
           {data && ledger.length === 0 && (
             <p className="rounded-md border border-n-200 bg-n-25 px-3 py-2.5 text-[12.5px] text-n-600">

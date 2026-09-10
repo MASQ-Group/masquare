@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
 import { JobsService } from '../jobs/jobs.service';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { VisibleCompanies } from '../common/active-company.decorator';
 import { AvailabilityService, type AvailabilityQuery } from './availability.service';
 import { SetAvailabilityDto } from './dto/availability.dto';
 import { AccessArea } from '../access/access.decorators';
@@ -92,9 +93,14 @@ export class AvailabilityController {
     );
   }
 
+  /**
+   * Company scope is passed because this now carries channel data. Availability itself is one
+   * shared pool per product, but the pushes and listings beside it belong to a company's
+   * integration and must not be read across that line.
+   */
   @Get(':productId')
-  get(@Param('productId') productId: string) {
-    return this.svc.get(productId);
+  get(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.get(productId, companyIds);
   }
 
   @Post(':productId')

@@ -36,6 +36,13 @@ function makePrisma() {
     availabilityLedger: {
       findMany: vi.fn().mockImplementation(async () => committed.ledger),
     },
+    /**
+     * `get` also reads the channel side now. Empty is the honest answer for a product with no
+     * listings, and it keeps this spec about the one thing it exists to catch — that the reply
+     * reflects the committed write rather than the state before it.
+     */
+    channelPush: { findMany: vi.fn().mockImplementation(async () => []) },
+    channelListing: { findMany: vi.fn().mockImplementation(async () => []) },
     $transaction: vi.fn().mockImplementation(async (cb: any) => {
       staged = { availability: null, ledger: [] };
       const tx = {
