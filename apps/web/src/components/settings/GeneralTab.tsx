@@ -26,6 +26,7 @@ export function GeneralTab() {
   const [deductStockOnSale, setDeductStockOnSale] = useState(false);
   const [applyChannelResolutions, setApplyChannelResolutions] = useState(false);
   const [autoAdjustAvailabilityOnSale, setAutoAdjustAvailabilityOnSale] = useState(false);
+  const [autoCorrectChannelQuantity, setAutoCorrectChannelQuantity] = useState(false);
   const [launchMarginPct, setLaunchMarginPct] = useState('20');
   const [listingLiveWrites, setListingLiveWrites] = useState(false);
   const [channelPriceWrites, setChannelPriceWrites] = useState(false);
@@ -42,6 +43,7 @@ export function GeneralTab() {
       setDeductStockOnSale(data.deductStockOnSale ?? false);
       setApplyChannelResolutions(data.applyChannelResolutions ?? false);
       setAutoAdjustAvailabilityOnSale(data.autoAdjustAvailabilityOnSale ?? false);
+      setAutoCorrectChannelQuantity(data.autoCorrectChannelQuantity ?? false);
       setLaunchMarginPct(String(data.launchMarginPct ?? 20));
       setListingLiveWrites(data.listingLiveWrites ?? false);
       setChannelPriceWrites(data.channelPriceWrites ?? false);
@@ -55,7 +57,7 @@ export function GeneralTab() {
   const previewFonts = (body: string, mono: string) => { setBodyFont(body); setMonoFont(mono); applyFonts(body, mono); };
 
   const save = useMutation({
-    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions, autoAdjustAvailabilityOnSale, launchMarginPct: Number(launchMarginPct) || 0, listingLiveWrites, channelPriceWrites, channelQuantityPushEnabled, channelPricePushEnabled }),
+    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions, autoAdjustAvailabilityOnSale, autoCorrectChannelQuantity, launchMarginPct: Number(launchMarginPct) || 0, listingLiveWrites, channelPriceWrites, channelQuantityPushEnabled, channelPricePushEnabled }),
     onSuccess: () => { toast.success('Settings saved'); qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Save failed'),
   });
@@ -182,6 +184,42 @@ export function GeneralTab() {
             <span>This makes live quantity writes to the marketplaces. Leave off until Availability reflects real
               sellable stock. It applies going forward — sales submitted before it was switched on are not
               retroactively adjusted.</span>
+          </p>
+        )}
+
+        {/*
+          Nested under the setting it depends on, and disabled without it: correcting toward a
+          figure that sales are not allowed to move would be arguing from a number the platform
+          does not maintain. The sweep enforces the same pairing server-side — this only makes the
+          dependency visible rather than something you discover from a log line.
+        */}
+        <label
+          className={`ml-7 flex items-start gap-3 ${readOnly || !autoAdjustAvailabilityOnSale ? 'opacity-60' : 'cursor-pointer'}`}
+          title={autoAdjustAvailabilityOnSale ? undefined : 'Needs the setting above: without it there is no maintained figure to correct toward.'}
+        >
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 accent-[var(--teal-500)]"
+            checked={autoCorrectChannelQuantity}
+            disabled={readOnly || !autoAdjustAvailabilityOnSale}
+            onChange={(e) => setAutoCorrectChannelQuantity(e.target.checked)}
+          />
+          <span>
+            <span className="block text-[13.5px] font-semibold text-n-800">Let the hourly check correct what it finds</span>
+            <span className="mt-0.5 block text-[12.5px] text-n-500">
+              Every hour the platform compares what each channel is advertising against what we hold, and lists the
+              differences under Availability → Out of step with channels. Off, it only reports; on, it also re-sends
+              the correct quantity. It catches what the automatic push cannot: a rejection that ran out of retries, a
+              listing changed on the marketplace's own side, a sale from before any of this was switched on.
+            </span>
+          </span>
+        </label>
+        {autoCorrectChannelQuantity && autoAdjustAvailabilityOnSale && (
+          <p className="ml-7 flex items-start gap-2 rounded-md border border-warning-bd bg-warning-bg px-3 py-2 text-[12px] text-warning">
+            <span>⚠</span>
+            <span>The platform will now write quantities to live listings on its own judgement, without anyone
+              asking. Read the worklist for a few days first — if what it lists looks wrong, so would the
+              corrections.</span>
           </p>
         )}
 

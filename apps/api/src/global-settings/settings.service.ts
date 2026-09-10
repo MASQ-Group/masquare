@@ -26,6 +26,7 @@ export class SettingsService {
         ...(dto.deductStockOnSale !== undefined ? { deductStockOnSale: dto.deductStockOnSale } : {}),
         ...(dto.applyChannelResolutions !== undefined ? { applyChannelResolutions: dto.applyChannelResolutions } : {}),
         ...(dto.autoAdjustAvailabilityOnSale !== undefined ? { autoAdjustAvailabilityOnSale: dto.autoAdjustAvailabilityOnSale } : {}),
+        ...(dto.autoCorrectChannelQuantity !== undefined ? { autoCorrectChannelQuantity: dto.autoCorrectChannelQuantity } : {}),
         ...(dto.launchMarginPct !== undefined ? { launchMarginPct: dto.launchMarginPct } : {}),
         ...(dto.listingLiveWrites !== undefined ? { listingLiveWrites: dto.listingLiveWrites } : {}),
         ...(dto.channelPriceWrites !== undefined ? { channelPriceWrites: dto.channelPriceWrites } : {}),

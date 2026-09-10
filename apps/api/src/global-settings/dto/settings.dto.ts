@@ -16,6 +16,10 @@ export class UpdateSettingsDto {
   // When on, a submitted sale lowers channel Availability and schedules a push of the new figure
   // to every channel the SKU is listed on. Off until deliberately enabled (it makes live writes).
   @IsOptional() @IsBoolean() autoAdjustAvailabilityOnSale?: boolean;
+  // When on, the hourly reconcile sweep re-sends the correct quantity to channels that disagree,
+  // rather than only listing them. Ignored unless autoAdjustAvailabilityOnSale is also on: with no
+  // maintained availability figure there is nothing to correct toward.
+  @IsOptional() @IsBoolean() autoCorrectChannelQuantity?: boolean;
   /** Margin a new listing launches at, as a percentage. Separate from the repricing floor margin. */
   @IsOptional() @IsNumber() launchMarginPct?: number;
   /** Whether creating real marketplace listings is permitted. */
