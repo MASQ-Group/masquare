@@ -292,7 +292,7 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
             */}
             {t.salesTax > 0 && (
               <Fact
-                label={`${t.taxLabel} collected · neutral`}
+                label={`${t.taxLabel} collected · ${t.vatCollectedByChannel ? 'remitted by the channel' : 'neutral'}`}
                 value={`${money(t.salesTax, ccy)}${t.salesTaxEur != null && ccy !== 'EUR' ? ` · €${t.salesTaxEur.toFixed(2)}` : ''}`}
                 mono
               />

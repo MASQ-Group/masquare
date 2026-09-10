@@ -932,7 +932,15 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                         <div className="flex items-baseline justify-between border-t border-dashed border-n-200 pt-3">
                           <span className="text-[12.5px] text-n-500">
                             {taxShortLabel(t.taxType)} collected by the marketplace
-                            <span className="ml-1 text-n-400">· neutral</span>
+                            {/*
+                              "Neutral" describes the arithmetic; this says who owes it, which is
+                              what a VAT return needs. The flag comes from the channel's own payload
+                              — Amazon's TaxCollection, eBay's collect-and-remit lines — so the
+                              stronger wording only appears where the marketplace stated it.
+                            */}
+                            <span className="ml-1 text-n-400">
+                              {t.vatCollectedByChannel ? '· remitted by the channel, not ours' : '· neutral'}
+                            </span>
                           </span>
                           <div className="text-right">
                             <div className="mono text-[12.5px] font-semibold text-n-600">{money(t.salesTax, nativeCcy)}</div>

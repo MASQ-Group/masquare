@@ -2684,6 +2684,21 @@ model SalesTransaction {
   // user overrides it (vatOverridden = true keeps the manual value on re-save).
   destinationVatPct     Float?    @map("destination_vat_pct")
   vatOverridden         Boolean   @default(false) @map("vat_overridden")
+
+  /**
+   * Whether the MARKETPLACE collected this order's VAT and remits it, rather than us.
+   *
+   * Below the UK's £135 consignment threshold Amazon, eBay and OnBuy charge the buyer the VAT, keep
+   * it and pay it over themselves. The order still CARRIES VAT — it is not zero-rated — but none of
+   * it is ours to declare or to pay. Without this flag the two cases are indistinguishable in the
+   * data: the same £4.00 sits in `vatAmount` whether we owe it or the channel does, and a VAT return
+   * built from that would declare output tax on money we never received.
+   *
+   * Snapshotted at save time rather than derived on read, for the same reason `destinationVatPct`
+   * and `taxType` are: the channel's threshold rule can be edited, and re-deciding an old order's
+   * VAT treatment from today's configuration would rewrite history.
+   */
+  vatCollectedByChannel Boolean   @default(false) @map("vat_collected_by_channel")
   // Destination tax regime for this sale, so reports can separate VAT from GST (AU),
   // Japanese Consumption Tax (JP) and US-style sales tax. Derived from the destination
   // country and snapshotted at sale time. vat | gst | jct | sales_tax | none.

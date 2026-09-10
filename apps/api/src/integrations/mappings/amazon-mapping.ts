@@ -103,6 +103,15 @@ export function mapAmazonOrder(o: any, orderItems: any[], defaultCountry: string
     // Amazon Points awarded — a JP-only loyalty program the seller funds, so it's a deduction from
     // proceeds. Only the JP marketplace returns PointsGranted; gate on JP so it never applies elsewhere.
     const points = isJp ? round2(money(it.PointsGranted?.PointsMonetaryValue)) : 0;
+    /**
+     * Amazon states outright whether it collected the tax, per line.
+     *
+     * `TaxCollection.Model` is `MarketplaceFacilitator` when Amazon charged the buyer, kept the
+     * money and remits it — which is the UK position under the £135 consignment threshold. The order
+     * still carries VAT; none of it is ours to declare. Read rather than inferred from the value of
+     * the goods, because Amazon is the party that actually took it.
+     */
+    const collectedByChannel = String(it.TaxCollection?.Model ?? '') === 'MarketplaceFacilitator';
     const quantity = n(it.QuantityOrdered) || 1;
     const sku = it.SellerSKU ?? null;
     return {
@@ -118,8 +127,9 @@ export function mapAmazonOrder(o: any, orderItems: any[], defaultCountry: string
         { target: 'fbaFulfilmentFeeAmount', label: 'FBA fulfilment fee', source: 'Finances API — FBA* ItemFeeList', value: 0 },
         { target: 'amazonPointsAmount', label: 'Amazon points awarded', source: 'OrderItems[].PointsGranted.PointsMonetaryValue', value: points },
         { target: 'salesTaxAmount', label: 'Tax charged (reporting)', source: 'ItemTax + ShippingTax', value: salesTax },
+        { target: 'vatCollectedByChannel', label: 'Collected & remitted by Amazon', source: 'OrderItems[].TaxCollection.Model', value: collectedByChannel },
       ],
-      payload: { sku, quantity, netSalesAmount: netSales, vatAmount: vat, shippingAmount: shipping, shippingAmountVat: shipVat, salesChannelSalesFeeAmount: 0, fbaFulfilmentFeeAmount: 0, amazonPointsAmount: points, salesTaxAmount: salesTax },
+      payload: { sku, quantity, netSalesAmount: netSales, vatAmount: vat, shippingAmount: shipping, shippingAmountVat: shipVat, salesChannelSalesFeeAmount: 0, fbaFulfilmentFeeAmount: 0, amazonPointsAmount: points, salesTaxAmount: salesTax, vatCollectedByChannel: collectedByChannel },
     };
   });
 

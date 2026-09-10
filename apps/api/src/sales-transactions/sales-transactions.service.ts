@@ -705,6 +705,8 @@ export class SalesTransactionsService {
       taxType,
       taxLabel: taxLabelFor(taxType),
       vatOverridden: t.vatOverridden,
+      /** The marketplace charged and remits this order's VAT, so none of it is ours to declare. */
+      vatCollectedByChannel: t.vatCollectedByChannel ?? false,
       overallPackageWeight,
       fulfilmentType: t.fulfilmentType ?? null,
       estimatedShippingCost,
@@ -2026,6 +2028,19 @@ export class SalesTransactionsService {
     const { pct: destinationVatPct, overridden: vatOverridden } = isLocal
       ? { pct: null, overridden: false }
       : await this.resolveDestinationVat(dto, channel, overall, dto.destinationCountryId ?? null);
+    /**
+     * One order, one answer: did the marketplace take this sale's VAT?
+     *
+     * Rolled up from what the channel REPORTED per line, not decided here. The threshold applies
+     * to the whole consignment so in practice every line agrees; `some` rather than `every` so a
+     * line Amazon flagged is never quietly dropped by a sibling that carried no tax at all.
+     *
+     * Deliberately not inferred from the £135 rule. The marketplace is the party that took the
+     * money and says so in its own payload — deriving it from our configuration would let an
+     * edited threshold rewrite who owes HMRC on orders that settled months ago.
+     */
+    const vatCollectedByChannel = !isLocal
+      && (dto.items ?? []).some((it: any) => it.vatCollectedByChannel === true);
     const taxType = isLocal ? 'vat' : await this.resolveTaxType(dto.destinationCountryId ?? null);
     // Refuse an incomplete submission before the row exists, so a rejected transaction
     // leaves nothing behind.
@@ -2048,6 +2063,7 @@ export class SalesTransactionsService {
         feeExchangeRate,
         destinationVatPct,
         vatOverridden,
+        vatCollectedByChannel,
         taxType,
         deliveryMethod: isLocal ? dto.deliveryMethod ?? null : null,
         localShippingCostEur: isLocal ? dto.localShippingCostEur ?? null : null,
@@ -2439,6 +2455,9 @@ export class SalesTransactionsService {
     const { pct: destinationVatPct, overridden: vatOverridden } = isLocal
       ? { pct: null, overridden: false }
       : await this.resolveDestinationVat(dto, channel, overall, destCountryId);
+    // Same roll-up on update; an omitted items array leaves the existing lines to speak.
+    const vatCollectedByChannel = !isLocal
+      && ((dto.items ?? existing.items ?? []) as any[]).some((it: any) => it.vatCollectedByChannel === true);
     const taxType = isLocal ? 'vat' : await this.resolveTaxType(destCountryId);
     // An omitted discount field means "leave as it was", not "clear it".
     const discountType = dto.discountType === undefined ? existing.discountType : dto.discountType;
@@ -2509,6 +2528,7 @@ export class SalesTransactionsService {
           feeExchangeRate,
           destinationVatPct,
           vatOverridden,
+          vatCollectedByChannel,
           taxType,
           deliveryMethod: isLocal ? dto.deliveryMethod ?? undefined : null,
           localShippingCostEur: isLocal ? dto.localShippingCostEur ?? undefined : null,

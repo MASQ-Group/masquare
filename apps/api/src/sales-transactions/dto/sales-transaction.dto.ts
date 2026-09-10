@@ -30,6 +30,9 @@ export class SalesTransactionItemDto {
    */
   @IsOptional() @IsArray() @IsString({ each: true }) serials?: string[];
   @IsOptional() @IsNumber() salesTaxAmount?: number | null;
+  // The channel reported that IT collected and remits this line's tax (Amazon
+  // TaxCollection.Model = MarketplaceFacilitator, eBay ebayCollectAndRemitTaxes).
+  @IsOptional() @IsBoolean() vatCollectedByChannel?: boolean;
   /** Local sales: which VAT class applies to this line. Defaults to the product's class. */
   @IsOptional() @IsUUID() vatClassId?: string | null;
   /** Override the product's stored unit purchase cost for this line only (EUR). */

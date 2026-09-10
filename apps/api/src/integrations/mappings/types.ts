@@ -27,6 +27,16 @@ export interface MappedItemPayload {
   fbaFulfilmentFeeAmount: number;     // Amazon FBA fulfilment fee (0 for non-FBA)
   amazonPointsAmount: number;         // Amazon Points awarded (JP) — a deduction from proceeds
   salesTaxAmount: number;             // total tax the channel charged (reporting only)
+  /**
+   * The channel REPORTED that it collected and remits this line's tax — not something we inferred.
+   *
+   * Amazon says so in `TaxCollection.Model = MarketplaceFacilitator`; eBay by returning
+   * `ebayCollectAndRemitTaxes`. Both are statements of fact from the party that took the money, and
+   * they are the only trustworthy source: deriving it from a threshold rule instead would make the
+   * platform's own configuration decide who owes HMRC, and would be silently wrong the moment a
+   * marketplace changed its policy or a rule was edited after the fact.
+   */
+  vatCollectedByChannel: boolean;
 }
 
 export interface MappedItem {

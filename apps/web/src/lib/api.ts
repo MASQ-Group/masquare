@@ -2264,6 +2264,11 @@ export interface SalesTransaction {
   amazonPointsEur: number | null;
   salesTax: number;
   salesTaxEur: number | null;
+  /**
+   * The channel reported that IT charged and remits this order's VAT, so none of it is ours to
+   * declare. Read from the marketplace's own payload, never inferred from the £135 threshold.
+   */
+  vatCollectedByChannel: boolean;
   destinationCountryVatPct: number | null;
   taxType: string | null;
   taxLabel: string;

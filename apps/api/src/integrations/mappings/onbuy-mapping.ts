@@ -47,7 +47,14 @@ export function mapOnBuyOrder(o: any): MappedOrder {
         { target: 'shippingAmountVat', label: 'Shipping VAT', source: 'products[].tax.tax_delivery', value: taxDelivery },
         { target: 'salesChannelSalesFeeAmount', label: 'Sales fee (actual)', source: 'products[].fee.total_sales_fee', value: fee },
       ],
-      payload: { sku: p.sku ?? null, quantity, netSalesAmount: netSales, vatAmount: taxProduct, shippingAmount: shipping, shippingAmountVat: taxDelivery, salesChannelSalesFeeAmount: fee, fbaFulfilmentFeeAmount: 0, amazonPointsAmount: 0, salesTaxAmount: round2(taxProduct + taxDelivery) },
+      payload: { sku: p.sku ?? null, quantity, netSalesAmount: netSales, vatAmount: taxProduct, shippingAmount: shipping, shippingAmountVat: taxDelivery, salesChannelSalesFeeAmount: fee, fbaFulfilmentFeeAmount: 0, amazonPointsAmount: 0, salesTaxAmount: round2(taxProduct + taxDelivery),
+        /**
+         * OnBuy's order payload carries no marketplace-facilitator indicator, so there is nothing to
+         * read. False means "not reported", NOT "OnBuy did not collect" — OnBuy does operate the UK
+         * threshold. Left unclaimed rather than guessed: inventing the flag here would put a fact
+         * about who owes HMRC into the database on no evidence at all.
+         */
+        vatCollectedByChannel: false },
     };
   });
 
