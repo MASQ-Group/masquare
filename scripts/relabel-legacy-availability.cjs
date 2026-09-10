@@ -177,6 +177,9 @@ const apply = process.argv.includes('--apply');
   for (const [k, v] of Object.entries(leftBy).sort((a, b) => b[1] - a[1])) {
     console.log(`      ${String(v).padStart(5)}  ${k}`);
   }
+  if (tally.unmatched) console.log(`  no order behind the note                           ${tally.unmatched}`);
+  if (tally.ambiguous) console.log(`  reference shared by disagreeing orders             ${tally.ambiguous}`);
+
   for (const [k, v] of Object.entries(residue).sort((a, b) => b[1] - a[1])) {
     console.log(`      ${String(v).padStart(5)}  ${k}`);
   }
@@ -201,8 +204,6 @@ const apply = process.argv.includes('--apply');
     console.log('  A deduction against a product with no availability row writes no ledger entry, so a');
     console.log('  retake after the purge leaves no trace here. "No later sale" is not proof of no retake.');
   }
-  if (tally.unmatched) console.log(`  no order behind the note                           ${tally.unmatched}`);
-  if (tally.ambiguous) console.log(`  reference shared by disagreeing orders             ${tally.ambiguous}`);
 
   if (!apply) {
     console.log('\nNothing was written.  Re-run with --apply to rewrite the provable rows.');
