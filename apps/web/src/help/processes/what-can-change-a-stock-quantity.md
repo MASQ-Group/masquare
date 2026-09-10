@@ -8,7 +8,10 @@ covers:
   - apps/api/src/warehouses/stock.service.ts
   - apps/api/src/warehouses/transfers.service.ts
   - apps/api/src/warehouses/adjustments.service.ts
-reviewed: 2026-09-04
+  # The sale and replacement routes out are performed here. Absent from this list, the freshness
+  # check could not see that changing when a sale deducts had made this page wrong.
+  - apps/api/src/sales-transactions/sales-transactions.service.ts
+reviewed: 2026-09-10
 ---
 
 # What can change a stock quantity
@@ -31,7 +34,10 @@ If a quantity is wrong, the movement history says who made it wrong and when.
 
 ## The routes out
 
-- **Sale despatch** — an order shipped.
+- **Sale** — an order recorded. Stock leaves when the order is saved, not when the parcel goes:
+  a draft is an order whose paperwork is unfinished, not one that has not happened, and channel
+  orders arrive already shipped. Serial-tracked lines are the exception — they wait until the
+  individual units have been named.
 - **Replacement despatch** — a second unit sent for the same order.
 - **Return to vendor** — units sent back to whoever supplied them.
 - **Manual adjustment (remove)** — damage, loss, or a correction.

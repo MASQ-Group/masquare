@@ -7,7 +7,7 @@ status: outline
 covers:
   - apps/api/src/sales-transactions/sales-transactions.service.ts
   - apps/web/src/components/sales/ResolveTransactionModal.tsx
-reviewed: 2026-09-08
+reviewed: 2026-09-10
 ---
 
 # Money in a return
