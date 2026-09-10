@@ -9,6 +9,7 @@ import { ActivityService, type ActivitySource } from '../activity/activity.servi
 import { diffRecords } from '../activity/diff';
 import { SALES_TX_FIELD_LABELS, SALES_TX_REF_FIELDS, SALES_TX_REF_NAME_FIELD } from '../activity/sales-transaction-fields';
 import { channelRemitsTheVat } from '../integrations/mappings/tax-collection';
+import { channelThresholdApplies, taxRegimeFor } from './vat-scope';
 // Type-only: importing the class value here would form a runtime ES-module cycle
 // (sales-transactions -> channel-listings -> integrations -> sales-transactions). Resolved at
 // call time via ModuleRef using the string token instead.
@@ -75,14 +76,14 @@ const include = {
 
 /** Destination tax regime, so VAT-submission reports never pull in GST/JCT/US sales tax.
  *  Derived from the destination country; snapshotted on the transaction at sale time. */
-export function taxTypeForCountry(c: { isoCode?: string | null; euVatZone?: boolean | null } | null | undefined): string {
-  if (!c) return 'none';
-  const iso = (c.isoCode ?? '').toUpperCase();
-  if (iso === 'JP') return 'jct'; // Japanese Consumption Tax
-  if (iso === 'AU') return 'gst'; // Goods and Services Tax
-  if (iso === 'US' || iso === 'CA' || iso === 'MX') return 'sales_tax';
-  return 'vat'; // EU VAT zone, GB and other VAT markets
-}
+/**
+ * Delegates to `taxRegimeFor`, which added the case this was missing: a destination outside the VAT
+ * area is an EXPORT and returns 'none', where this used to answer 'vat'. Calling a zero-rated export
+ * a VAT sale made it indistinguishable from a UK sale whose VAT had gone unrecorded.
+ *
+ * The name is kept because the serializer and the reports call it.
+ */
+export const taxTypeForCountry = taxRegimeFor;
 const TAX_LABELS: Record<string, string> = { vat: 'VAT', gst: 'GST', jct: 'Japanese Consumption Tax', sales_tax: 'Sales tax', none: 'Tax' };
 export const taxLabelFor = (taxType: string | null | undefined) => TAX_LABELS[taxType ?? 'vat'] ?? 'VAT';
 
@@ -1827,7 +1828,20 @@ export class SalesTransactionsService {
 
   /** Sales channel row plus its native/fee currencies (snapshotted on the transaction). */
   private async channelInfo(salesChannelId?: string | null) {
-    const channel = salesChannelId ? await this.prisma.salesChannel.findUnique({ where: { id: salesChannelId } }) : null;
+    /**
+     * `nativeCountry` is included because the VAT threshold is scoped by it.
+     *
+     * Without the relation the channel's home ISO reads undefined, `channelThresholdApplies` refuses
+     * every sale, and the £135 rule silently stops applying to UK orders — a far worse failure than
+     * the over-application it was added to fix, and one that would show up only as VAT quietly
+     * falling back to the country rate.
+     */
+    const channel = salesChannelId
+      ? await this.prisma.salesChannel.findUnique({
+        where: { id: salesChannelId },
+        include: { nativeCountry: { select: { isoCode: true } } },
+      })
+      : null;
     const currency = channel?.nativeCurrency ?? null;
     const feeCurrency = channel ? (channel.feeChargedInNativeCurrency ? channel.nativeCurrency ?? null : channel.feeCurrency ?? null) : null;
     return { channel, currency, feeCurrency };
@@ -1840,8 +1854,19 @@ export class SalesTransactionsService {
    * other charges — as HMRC defines the consignment threshold (and as the Pricing module
    * tests). `intrinsicValue` is the sum of the lines' net sales (net = ex-VAT, no shipping).
    */
-  private channelVatPct(channel: any, intrinsicValue: number): number | null {
-    if (!channel?.vatThresholdEnabled || channel.vatThresholdAmount == null) return null;
+  private channelVatPct(channel: any, intrinsicValue: number, destinationIso: string | null): number | null {
+    /**
+     * A consignment threshold belongs to the country the goods enter, and only governs sales into
+     * it. Applied on value alone it produced 20% on parcels to Israel, Taiwan and Turkey — zero-rated
+     * exports — because it outranked the destination's own rate. Scoped in `vat-scope.ts`, tested.
+     */
+    if (!channelThresholdApplies({
+      thresholdEnabled: !!channel?.vatThresholdEnabled,
+      thresholdAmount: channel?.vatThresholdAmount,
+      channelHomeIso: channel?.nativeCountry?.isoCode ?? null,
+      destinationIso,
+    })) return null;
+
     return intrinsicValue <= Number(channel.vatThresholdAmount)
       ? channel.vatBelowThresholdPct ?? null
       : channel.vatAboveThresholdPct ?? null;
@@ -1862,7 +1887,7 @@ export class SalesTransactionsService {
     destCountryId: string | null,
   ): Promise<{ pct: number | null; overridden: boolean }> {
     if (dto.vatOverridden && dto.destinationVatPct != null) return { pct: dto.destinationVatPct, overridden: true };
-    const ruleVat = this.channelVatPct(channel, intrinsicValue);
+    const ruleVat = this.channelVatPct(channel, intrinsicValue, await this.destinationIso(destCountryId));
     if (ruleVat != null) return { pct: ruleVat, overridden: false };
     return { pct: await this.countryVatRate(destCountryId), overridden: false };
   }
