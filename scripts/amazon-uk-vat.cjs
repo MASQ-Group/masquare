@@ -21,17 +21,28 @@ const line = (l, v) => console.log(`  ${l.padEnd(50)}${v}`);
   const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
   const prisma = app.get(PrismaService);
 
+  /**
+   * Live channels only, and named with their owner.
+   *
+   * The first version matched `contains: 'UK'` and ignored `deletedAt`, so it swept in eBay UK,
+   * OnBuy UK, a test channel and several soft-deleted rows — then presented the mixture as five
+   * Amazon UK channels disagreeing about the threshold. There is no disagreement: two companies
+   * each hold their own Amazon UK, which is how channels work here, and both carry the same rule.
+   * A report that cannot tell a per-company channel from a duplicate manufactures alarm.
+   */
   const channels = await prisma.salesChannel.findMany({
-    where: { name: { contains: 'UK', mode: 'insensitive' } },
+    where: { deletedAt: null, name: { contains: 'UK', mode: 'insensitive' } },
     select: {
       id: true, name: true, nativeCurrency: true,
       vatThresholdEnabled: true, vatThresholdAmount: true,
       vatBelowThresholdPct: true, vatAboveThresholdPct: true,
+      company: { select: { officialName: true } },
     },
   });
-  console.log('UK-ish sales channels and their threshold rule:\n');
+  console.log('Live UK sales channels and their threshold rule:\n');
   for (const c of channels) {
-    console.log(`  ${c.name} (${c.nativeCurrency ?? '?'}) threshold=${c.vatThresholdEnabled ? c.vatThresholdAmount : 'off'} `
+    console.log(`  ${(c.name + ' · ' + (c.company?.officialName ?? 'no company')).padEnd(52)}`
+      + `threshold=${c.vatThresholdEnabled ? c.vatThresholdAmount : 'off'} `
       + `below=${c.vatBelowThresholdPct ?? '—'}% above=${c.vatAboveThresholdPct ?? '—'}%`);
   }
 
@@ -69,6 +80,28 @@ const line = (l, v) => console.log(`  ${l.padEnd(50)}${v}`);
   line('  of those, carrying a collected-tax figure', belowWithTax);
   line('at or over the threshold', above);
   line('  of those, carrying a collected-tax figure', aboveWithTax);
+
+  /**
+   * Why a below-threshold order carries nothing, which is usually not a fault.
+   *
+   * If its own VAT is also zero the two agree: the order was zero-rated, exempt, or cancelled
+   * down to nothing, and there was no VAT for anyone to collect. Only an order WITH VAT and no
+   * collected figure is a real gap, so the two are counted apart rather than summed into one
+   * alarming number.
+   */
+  let consistent = 0, realGap = 0;
+  for (const t of txs) {
+    const intrinsic = t.items.reduce((s, i) => s + (i.netSalesAmount ?? 0), 0);
+    if (intrinsic > 135) continue;
+    const tax = t.items.reduce((s, i) => s + (i.salesTaxAmount ?? 0), 0);
+    if (tax > 0) continue;
+    const vat = t.items.reduce((s, i) => s + (i.vatAmount ?? 0), 0);
+    if (vat === 0) consistent += 1; else realGap += 1;
+  }
+  console.log('');
+  line('below-threshold orders with no collected figure', below - belowWithTax);
+  line('  their own VAT is zero too — consistent', consistent);
+  line('  they DO carry VAT — a real gap', realGap);
 
   console.log('\n  A few below-threshold orders:');
   for (const s of samples) console.log(`    ${s}`);
