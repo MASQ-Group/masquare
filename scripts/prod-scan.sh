@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 #
-# Read-only production health report: does the sale -> availability -> channel chain work?
+# Read-only production reports.
 #
-#   bash scripts/prod-scan.sh
+#   bash scripts/prod-scan.sh                              # health of the sale -> channel chain
+#   REPORT=unmatched-listings bash scripts/prod-scan.sh    # SKUs on channels with no product here
 #
 # Exists so the Claude Code permission rule can be ONE exact command instead of a wildcard over
-# `node scripts/*`. It takes no arguments and passes none through, so nothing it is granted can be
-# turned into a write — it runs one reporter, and that reporter only reads.
+# `node scripts/*`. No arguments are passed through to node. REPORT selects from a FIXED list and
+# anything else is refused rather than executed, so the grant cannot be widened by setting a
+# variable — an allowlist here, not a string substituted into a command.
 #
 # The connection string comes from the Railway CLI at run time and is never printed. Anything that
 # looks like a Postgres URL is stripped from the output as a second line of defence, in case a
@@ -14,6 +16,12 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+REPORT="${REPORT:-prod-health}"
+case "$REPORT" in
+  prod-health|unmatched-listings) ;;
+  *) echo "Unknown report: $REPORT (allowed: prod-health, unmatched-listings)" >&2; exit 1 ;;
+esac
 
 DATABASE_URL="$(railway variables --service Postgres --json 2>/dev/null \
   | python -c 'import json,sys; print(json.load(sys.stdin)["DATABASE_PUBLIC_URL"])')"
@@ -25,5 +33,5 @@ if [ -z "${DATABASE_URL}" ]; then
 fi
 
 echo "Connected to production (read-only; connection string not shown)."
-node --env-file=.env scripts/prod-health.cjs 2>&1 \
+node --env-file=.env "scripts/${REPORT}.cjs" 2>&1 \
   | sed -E 's#postgres(ql)?://[^[:space:]]*#<redacted>#g'

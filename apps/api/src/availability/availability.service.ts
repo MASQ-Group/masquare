@@ -34,17 +34,6 @@ export class AvailabilityService {
     private readonly moduleRef?: ModuleRef,
   ) {}
 
-  /**
-   * Resolved lazily by string token, with no runtime import of the class.
-   *
-   * Importing ChannelListingsModule here closes the cycle integrations -> sales-transactions ->
-   * channel-listings -> integrations, which `nest build` does not catch — it fails at boot with that
-   * module's first import undefined. The sell-through and the reconcile sweep reach the same service
-   * the same way, for the same reason.
-   */
-  private channelListings(): { schedulePush(ids: string[], reason?: string): void } | null {
-    return this.moduleRef?.get('CHANNEL_LISTINGS_SERVICE', { strict: false }) ?? null;
-  }
 
   private serialize(p: any) {
     return {
@@ -597,22 +586,16 @@ export class AvailabilityService {
      * honest about what it returns: what is actually stored.
      */
     /**
-     * Telling the channels is the point of setting the figure.
+     * Setting a figure by hand does NOT tell the channels. That is deliberate.
      *
-     * Nothing here ever queued a push, so only SALES reached the marketplaces: someone typing a
-     * quantity changed the number the platform holds and nothing else, and the listings kept
-     * advertising the old one indefinitely. On production that left 57 products and 645 listings out
-     * of step, and no amount of correct arithmetic here would have shown up on a marketplace.
+     * A briefly-wrong number typed while working through a catalogue would otherwise be broadcast to
+     * every marketplace the moment it was entered, and a half-finished count is exactly the kind of
+     * figure that must not reach a live listing. A person decides when their work is ready, using
+     * "Push to channels" on this page or the per-product button on the reconcile worklist.
      *
-     * Fire-and-forget through the persisted queue, so the save never waits on the network and never
-     * fails because a push did — and cannot lose the debt if the process restarts.
+     * Sales are the opposite case and DO push automatically: an order is a fact about stock that has
+     * already gone, and the channels need it immediately.
      */
-    try {
-      this.channelListings()?.schedulePush([productId], 'manual_set');
-    } catch (e: any) {
-      this.logger.error(`Could not queue a channel push for ${productId}: ${e?.message ?? e}`);
-    }
-
     return this.get(productId);
   }
 
