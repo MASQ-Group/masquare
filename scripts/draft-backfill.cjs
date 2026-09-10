@@ -219,18 +219,42 @@ const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '—');
      * Bookkeeping only. Each line is told it has already accounted for its units, so no later save
      * takes them a second time. No ledger entry and no movement: nothing physical happened here,
      * and writing one would be the double count in another form.
+     *
+     * ── Each flag marks ONLY its own side ──────────────────────────────────────
+     * This block used to run off `mark`, which is `markAvailability || markStock`, and then marked
+     * BOTH regardless of which flag was given. So `--mark-availability` silently wrote
+     * `stockDeductedQty` as well — on production, 112 stock lines that nobody asked to touch.
+     *
+     * The two were never independent despite the report offering them as separate decisions, and
+     * the stock one is the decision that actually needed an owner: marking stock locks in an
+     * overstatement if balances have not been maintained by hand, which is a question about how the
+     * warehouse is run and not one this script can answer. Taking it automatically was the one
+     * thing it must not do.
      */
     let done = 0;
-    for (const l of markLines.avail) {
-      await prisma.salesTransactionItem.update({ where: { id: l.id }, data: { availabilityDeductedQty: l.units } });
-      if (++done % 500 === 0) console.log(`  availability ${done}/${markLines.avail.length}`);
+    if (markAvailability) {
+      for (const l of markLines.avail) {
+        await prisma.salesTransactionItem.update({ where: { id: l.id }, data: { availabilityDeductedQty: l.units } });
+        if (++done % 500 === 0) console.log(`  availability ${done}/${markLines.avail.length}`);
+      }
     }
     done = 0;
-    for (const l of markLines.stock) {
-      await prisma.salesTransactionItem.update({ where: { id: l.id }, data: { stockDeductedQty: l.units } });
-      if (++done % 500 === 0) console.log(`  stock ${done}/${markLines.stock.length}`);
+    if (markStock) {
+      for (const l of markLines.stock) {
+        await prisma.salesTransactionItem.update({ where: { id: l.id }, data: { stockDeductedQty: l.units } });
+        if (++done % 500 === 0) console.log(`  stock ${done}/${markLines.stock.length}`);
+      }
     }
-    console.log(`\nMarked ${markLines.avail.length} availability line(s) and ${markLines.stock.length} stock line(s). Nothing moved.`);
+
+    // Reports what it DID, naming the untouched side rather than leaving it to be inferred.
+    const parts = [];
+    parts.push(markAvailability
+      ? `Marked ${markLines.avail.length} availability line(s).`
+      : `Left ${markLines.avail.length} availability line(s) untouched (--mark-availability not given).`);
+    parts.push(markStock
+      ? `Marked ${markLines.stock.length} stock line(s).`
+      : `Left ${markLines.stock.length} stock line(s) untouched (--mark-stock not given).`);
+    console.log(`\n${parts.join(' ')} Nothing moved.`);
   }
 
   if (apply) {
