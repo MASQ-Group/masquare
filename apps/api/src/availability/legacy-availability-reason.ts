@@ -1,58 +1,78 @@
 /**
- * Re-deriving what the 1,683 legacy `cancellation` rows actually were.
+ * Re-deriving what the legacy `cancellation` rows in the availability ledger actually were.
  *
  * Until the reason was decided rather than inferred, the sell-through wrote the ledger's reason from
  * the SIGN of the movement: `move > 0 ? 'sale' : 'cancellation'`. Every release therefore landed
  * under `cancellation`, whatever caused it.
  *
- * I said at the time that those rows could not be re-derived because their cause was never written
- * down. That was wrong. The cause was not written down, but the row carries the ORDER REFERENCE in
- * its note, and the order's own record still says what state it is in. For most of them that is
- * enough to settle the question outright.
+ * I said at first that those rows could not be re-derived because their cause was never written
+ * down. That was wrong twice over. The cause was not written down, but the row carries the ORDER
+ * REFERENCE in its note, and what happened next is in the ledger itself.
  *
  * (The `refId` column looks like the better key and is not: a channel re-sync recreates transactions
  * with fresh ids, so those references are stale. `transactionRef` survives.)
  *
- * ── What can be proved ──────────────────────────────────────────────────────────
+ * ── Two provable causes ─────────────────────────────────────────────────────────
  * The old release condition was `forceRelease || cancelledBeforeShipment || status !== 'submitted'`.
  *
- * An order that is STILL a draft was a draft when the row was written — status only ever moves
- * draft → submitted. So the third condition held, and it alone forces the release regardless of the
- * other two. Nothing else needs to be known: the units came back because the platform did not count
- * an unsubmitted order as an order. That is provable, not inferred.
+ * **The order was edited.** `forceRelease` is not only a delete. Any update that replaces an order's
+ * item rows returns their availability first and re-deducts against the new lines immediately after,
+ * inside the same request. That leaves an unmistakable pair in the ledger: a release, then a `sale`
+ * for the same order and product retaking exactly the same quantity. Measured on real data, all 265
+ * such pairs sat within TEN MILLISECONDS of each other and every one matched in size, with nothing
+ * else anywhere near that window. Net effect on availability: zero.
  *
- * It is also the case the complaint is about. Product BE-HT15 carries eight of these on one morning,
- * every one a draft with fulfilment `shipped` and channel status `shipped` — orders that went out
- * the door and were never returned or cancelled by anybody.
+ * **The order was never submitted.** An order that is STILL a draft was a draft when the row was
+ * written — status only ever moves draft → submitted — so the third condition held, and it alone
+ * forces the release regardless of the other two.
  *
- * ── What cannot ─────────────────────────────────────────────────────────────────
- * An order that is submitted TODAY may have been a draft when the row was written, so its release
- * could have come from the draft rule, from a force-release, or from the line simply shrinking.
- * Three candidate causes and no timestamp to separate them.
+ * The second rule alone settles most of a development copy and almost nothing on production, where
+ * orders get submitted after the fact. That asymmetry is why the first rule matters: it reads what
+ * happened to THIS row rather than the order's state today, so time cannot erode it.
  *
- * Those keep the vague label. Naming one of the three would be the original mistake in a new
- * costume — and the first version of the ledger view made exactly that mistake, relabelling these
- * rows "Cancelled before shipment" and so asserting, about real shipped orders, something that never
- * happened.
+ * ── What remains unknowable ─────────────────────────────────────────────────────
+ * A release on a submitted order that was never retaken could be a force-release, a shrunken line,
+ * or a draft rule that fired before the order was submitted. Three candidate causes and no timestamp
+ * to separate them, so those rows keep the vague label.
+ *
+ * Naming one would be the original mistake in a new costume — and the first version of the ledger
+ * view made exactly that mistake, relabelling these rows "Cancelled before shipment" and so
+ * asserting, about real shipped orders, something that never happened.
  */
-export type LegacyAvailabilityReason = 'order_not_submitted';
+export type LegacyAvailabilityReason = 'order_edited' | 'order_not_submitted';
 
-export function legacyAvailabilityReason(order: {
+/**
+ * How close a retake has to be to prove it belongs to the same request.
+ *
+ * Every real pair measured came in around ten milliseconds; the nearest unrelated movement was
+ * hours away. Five seconds is therefore loose enough to survive a slow request and nowhere near
+ * loose enough to sweep in a genuinely separate edit.
+ */
+export const RETAKE_WINDOW_MS = 5_000;
+
+export function legacyAvailabilityReason(input: {
   /** False when the note matches no order, or matches several that disagree. */
   found: boolean;
   status: string;
+  /**
+   * Milliseconds until a `sale` row for the same order and product retook the SAME quantity.
+   * Null when nothing retook it.
+   */
+  retakenAfterMs: number | null;
 }): LegacyAvailabilityReason | null {
-  if (!order.found) return null;
+  if (!input.found) return null;
 
   /**
-   * Draft today ⇒ draft then ⇒ the release is fully explained by the draft rule.
+   * Checked before the status, because it is evidence about this row rather than about the order.
    *
-   * Deliberately not conditioned on `resolution`. A returned or replaced order that is still a draft
-   * was released by the draft rule too — the resolution is a second fact about the order, not the
-   * cause of this row. Reading it as the cause would be inference again.
+   * An edit to a draft is still an edit, and "the units were returned and immediately retaken" says
+   * more about what the reader is looking at than "the order was not submitted" does.
    */
-  if (order.status === 'draft') return 'order_not_submitted';
+  if (input.retakenAfterMs != null && input.retakenAfterMs <= RETAKE_WINDOW_MS) return 'order_edited';
 
-  // Submitted: draft-then or submitted-then is unknowable, so the row keeps its vague label.
+  // Draft today ⇒ draft then ⇒ the release is fully explained by the draft rule.
+  if (input.status === 'draft') return 'order_not_submitted';
+
+  // Submitted and never retaken: draft-then or submitted-then is unknowable. Keep the vague label.
   return null;
 }

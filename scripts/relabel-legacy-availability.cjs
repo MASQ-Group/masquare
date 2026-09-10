@@ -9,8 +9,13 @@
  * was filed as `cancellation`. The ledger view then showed those rows as "Returned", which asserts
  * that a customer sent goods back — about orders that shipped and were never returned by anyone.
  *
- * I had said these rows could not be re-derived. They can. Each carries its ORDER REFERENCE in the
- * note, and the order still says what state it is in. The rule itself lives in the API, with tests:
+ * I had said these rows could not be re-derived. They can, two different ways. Each carries its
+ * ORDER REFERENCE in the note, the order still says what state it is in, and — the stronger signal —
+ * the ledger itself records what happened next. An update that replaces an order's item rows
+ * returns their availability and re-deducts inside the same request, so an edit leaves a release
+ * and a matching retake about ten milliseconds apart.
+ *
+ * The rule lives in the API, with tests:
  * apps/api/src/availability/legacy-availability-reason.ts.
  *
  * ── Safety ──────────────────────────────────────────────────────────────────────
@@ -37,8 +42,37 @@ const apply = process.argv.includes('--apply');
 
   const rows = await prisma.availabilityLedger.findMany({
     where: { reason: 'cancellation' },
-    select: { id: true, note: true, delta: true, productId: true },
+    select: { id: true, note: true, delta: true, productId: true, createdAt: true },
   });
+
+  /**
+   * Every sale row, keyed by product + order reference, so a release can be matched to the retake
+   * that undid it. One pass and a map rather than a query per row — there are thousands of these.
+   */
+  const sales = await prisma.availabilityLedger.findMany({
+    where: { reason: 'sale' },
+    select: { productId: true, note: true, delta: true, createdAt: true },
+  });
+  const salesByKey = new Map();
+  for (const s of sales) {
+    const k = `${s.productId}|${(s.note ?? '').trim()}`;
+    if (!salesByKey.has(k)) salesByKey.set(k, []);
+    salesByKey.get(k).push(s);
+  }
+
+  /**
+   * How long after a release the same quantity was taken back, or null if it never was.
+   *
+   * The size has to match. A release of +1 answered by a sale of -1 is the two halves of one edit;
+   * a release of +1 followed by a -3 is a different sale altogether and proves nothing about this
+   * row.
+   */
+  const retakenAfterMs = (r) => {
+    const after = (salesByKey.get(`${r.productId}|${(r.note ?? '').trim()}`) ?? [])
+      .filter((s) => s.createdAt > r.createdAt && s.delta === -r.delta);
+    if (!after.length) return null;
+    return Math.min(...after.map((s) => s.createdAt - r.createdAt));
+  };
 
   const refs = [...new Set(rows.map((r) => (r.note ?? '').trim()).filter(Boolean))];
   const txs = await prisma.salesTransaction.findMany({
@@ -59,14 +93,17 @@ const apply = process.argv.includes('--apply');
 
   const relabel = [];
   const tally = { unmatched: 0, ambiguous: 0, left: 0 };
+  const provable = { order_edited: 0, order_not_submitted: 0 };
   const leftBy = {};
   for (const r of rows) {
     const t = byRef.get((r.note ?? '').trim());
     if (t === undefined) { tally.unmatched += 1; continue; }
     if (t === null) { tally.ambiguous += 1; continue; }
 
-    const reason = legacyAvailabilityReason({ found: true, status: t.status });
-    if (reason) relabel.push({ id: r.id, reason });
+    const reason = legacyAvailabilityReason({
+      found: true, status: t.status, retakenAfterMs: retakenAfterMs(r),
+    });
+    if (reason) { relabel.push({ id: r.id, reason }); provable[reason] += 1; }
     else {
       tally.left += 1;
       const k = `${t.status}/${t.resolution ?? 'none'}`;
@@ -76,7 +113,8 @@ const apply = process.argv.includes('--apply');
 
   console.log(`${apply ? 'APPLY' : 'REPORT'} — legacy "cancellation" rows in the availability ledger\n`);
   console.log(`  rows carrying the legacy reason                    ${rows.length}`);
-  console.log(`  provable — the order is still a draft              ${relabel.length}  -> order_not_submitted`);
+  console.log(`  provable — units returned and retaken by an edit    ${provable.order_edited}  -> order_edited`);
+  console.log(`  provable — the order is still a draft              ${provable.order_not_submitted}  -> order_not_submitted`);
   console.log(`  left vague — cause genuinely unknowable            ${tally.left}`);
   for (const [k, v] of Object.entries(leftBy).sort((a, b) => b[1] - a[1])) {
     console.log(`      ${String(v).padStart(5)}  ${k}`);

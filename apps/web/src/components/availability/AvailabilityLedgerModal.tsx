@@ -35,13 +35,15 @@ interface Props {
  * goods is a different and more alarming thing than the platform quietly releasing units it should
  * have kept deducted.
  *
- * Most of these rows have since been re-derived from the order behind them and now read
- * `order_not_submitted`, which is provable. What is left is genuinely unknowable, and says so:
- * units came back, and nobody wrote down why.
+ * Most of these rows have since been re-derived — as `order_edited` where the ledger shows the same
+ * units taken straight back, and as `order_not_submitted` where the order behind them is still a
+ * draft. Both are provable. What is left is genuinely unknowable, and says so: units came back, and
+ * nobody wrote down why.
  */
 const REASON: Record<string, { label: string; tone: string }> = {
   sale: { label: 'Sold', tone: 'border-teal-100 bg-teal-50 text-teal-700' },
   order_cancelled: { label: 'Cancelled before shipment', tone: 'border-orange-100 bg-orange-50 text-orange-700' },
+  order_edited: { label: 'Order edited — units retaken', tone: 'border-n-200 bg-n-50 text-n-600' },
   order_not_submitted: { label: 'Released — order not submitted', tone: 'border-n-200 bg-n-50 text-n-600' },
   released: { label: 'Released', tone: 'border-n-200 bg-n-50 text-n-600' },
   quantity_reduced: { label: 'Quantity reduced', tone: 'border-n-200 bg-n-50 text-n-600' },
@@ -59,6 +61,10 @@ const REASON: Record<string, { label: string; tone: string }> = {
  * read as accusations against the orders they name.
  */
 const EXPLAIN: Record<string, string> = {
+  order_edited:
+    'Editing an order rebuilds its lines, so the platform returns their availability and takes it '
+    + 'again in the same moment. Both halves are recorded. The net effect on the quantity is nothing '
+    + '— derived from the matching entry that took these units straight back.',
   order_not_submitted:
     'The platform used to give units back for any order that was not marked submitted, even one the '
     + 'channel had already shipped. That rule is gone: a draft now consumes stock like any other order. '
