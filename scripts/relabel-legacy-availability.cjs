@@ -106,6 +106,8 @@ const apply = process.argv.includes('--apply');
   const provable = { released: 0, order_edited: 0, order_line_removed: 0, order_not_submitted: 0 };
   const leftBy = {};
   const residue = {};
+  const probe = {};
+  const bump = (k) => { probe[k] = (probe[k] ?? 0) + 1; };
   for (const r of rows) {
     const t = byRef.get((r.note ?? '').trim());
     if (t === undefined) { tally.unmatched += 1; continue; }
@@ -131,6 +133,31 @@ const apply = process.argv.includes('--apply');
        */
       const state = (line?.availabilityDeductedQty ?? 0) > 0 ? 'line now holds units' : 'line still holds nothing';
       residue[state] = (residue[state] ?? 0) + 1;
+
+      /**
+       * Diagnostic, not a cause: is there ANY later sale for this order and product?
+       *
+       * The retake test demands an exact opposite delta inside five seconds. If most of the residue
+       * turns out to have a later sale that simply misses one of those conditions, the test is too
+       * strict and can be widened on evidence. If there is no later sale at all, the test is right
+       * and these releases really were never undone. The two call for opposite work, and guessing
+       * which is which is how the labels went wrong in the first place.
+       */
+      const later = (salesByKey.get(`${r.productId}|${(r.note ?? '').trim()}`) ?? [])
+        .filter((sale) => sale.createdAt > r.createdAt);
+      if (!later.length) {
+        bump('  ...no later sale for this order and product at all');
+      } else {
+        const gapMs = Math.min(...later.map((sale) => sale.createdAt - r.createdAt));
+        // Bucketed. Printing the exact gap gives one line per row, which is a dump rather than a
+        // finding — the first version of this did exactly that.
+        const when = gapMs <= 5000 ? 'within 5s'
+          : gapMs <= 60_000 ? 'within a minute'
+          : gapMs <= 3_600_000 ? 'within an hour'
+          : gapMs <= 86_400_000 ? 'within a day'
+          : 'a day or more later';
+        bump(`  ...a later sale ${when}, but it did not pair (size or window)`);
+      }
     }
   }
 
@@ -146,6 +173,9 @@ const apply = process.argv.includes('--apply');
   }
   for (const [k, v] of Object.entries(residue).sort((a, b) => b[1] - a[1])) {
     console.log(`      ${String(v).padStart(5)}  ${k}`);
+  }
+  for (const [k, v] of Object.entries(probe).sort((a, b) => b[1] - a[1])) {
+    console.log(`      ${String(v).padStart(5)}${k}`);
   }
   if (tally.unmatched) console.log(`  no order behind the note                           ${tally.unmatched}`);
   if (tally.ambiguous) console.log(`  reference shared by disagreeing orders             ${tally.ambiguous}`);
