@@ -77,7 +77,12 @@ const apply = process.argv.includes('--apply');
   const refs = [...new Set(rows.map((r) => (r.note ?? '').trim()).filter(Boolean))];
   const txs = await prisma.salesTransaction.findMany({
     where: { transactionRef: { in: refs } },
-    select: { transactionRef: true, status: true, resolution: true },
+    select: {
+      id: true, transactionRef: true, status: true, resolution: true, deletedAt: true,
+      // Live lines only. An edit soft-deletes the rows it replaces, so the absence of a live line
+      // for a product is exactly the evidence that an edit dropped it.
+      items: { where: { deletedAt: null }, select: { productId: true, availabilityDeductedQty: true } },
+    },
   });
 
   /**
@@ -87,36 +92,59 @@ const apply = process.argv.includes('--apply');
    */
   const byRef = new Map();
   for (const t of txs) {
-    if (!byRef.has(t.transactionRef)) byRef.set(t.transactionRef, t);
-    else if (byRef.get(t.transactionRef)?.status !== t.status) byRef.set(t.transactionRef, null);
+    const seen = byRef.get(t.transactionRef);
+    if (seen === undefined) { byRef.set(t.transactionRef, t); continue; }
+    // Deletedness counts as disagreement too: one deleted and one live order behind the same
+    // reference read as different causes, and picking either would be a coin toss.
+    if (seen && (seen.status !== t.status || !!seen.deletedAt !== !!t.deletedAt)) {
+      byRef.set(t.transactionRef, null);
+    }
   }
 
   const relabel = [];
   const tally = { unmatched: 0, ambiguous: 0, left: 0 };
-  const provable = { order_edited: 0, order_not_submitted: 0 };
+  const provable = { released: 0, order_edited: 0, order_line_removed: 0, order_not_submitted: 0 };
   const leftBy = {};
+  const residue = {};
   for (const r of rows) {
     const t = byRef.get((r.note ?? '').trim());
     if (t === undefined) { tally.unmatched += 1; continue; }
     if (t === null) { tally.ambiguous += 1; continue; }
 
+    const line = t.items.find((i) => i.productId === r.productId);
     const reason = legacyAvailabilityReason({
-      found: true, status: t.status, retakenAfterMs: retakenAfterMs(r),
+      found: true,
+      status: t.status,
+      deleted: !!t.deletedAt,
+      retakenAfterMs: retakenAfterMs(r),
+      hasLiveLine: !!line,
     });
     if (reason) { relabel.push({ id: r.id, reason }); provable[reason] += 1; }
     else {
       tally.left += 1;
       const k = `${t.status}/${t.resolution ?? 'none'}`;
       leftBy[k] = (leftBy[k] ?? 0) + 1;
+      /**
+       * What the surviving line holds TODAY. Not a cause — the report refuses to name one for these
+       * — but it separates two very different residues: a line still holding nothing looks like a
+       * release that was never reconciled, while one holding units was settled later by something.
+       */
+      const state = (line?.availabilityDeductedQty ?? 0) > 0 ? 'line now holds units' : 'line still holds nothing';
+      residue[state] = (residue[state] ?? 0) + 1;
     }
   }
 
   console.log(`${apply ? 'APPLY' : 'REPORT'} — legacy "cancellation" rows in the availability ledger\n`);
   console.log(`  rows carrying the legacy reason                    ${rows.length}`);
+  console.log(`  provable — the order was deleted                   ${provable.released}  -> released`);
   console.log(`  provable — units returned and retaken by an edit    ${provable.order_edited}  -> order_edited`);
+  console.log(`  provable — an edit dropped the product             ${provable.order_line_removed}  -> order_line_removed`);
   console.log(`  provable — the order is still a draft              ${provable.order_not_submitted}  -> order_not_submitted`);
   console.log(`  left vague — cause genuinely unknowable            ${tally.left}`);
   for (const [k, v] of Object.entries(leftBy).sort((a, b) => b[1] - a[1])) {
+    console.log(`      ${String(v).padStart(5)}  ${k}`);
+  }
+  for (const [k, v] of Object.entries(residue).sort((a, b) => b[1] - a[1])) {
     console.log(`      ${String(v).padStart(5)}  ${k}`);
   }
   if (tally.unmatched) console.log(`  no order behind the note                           ${tally.unmatched}`);

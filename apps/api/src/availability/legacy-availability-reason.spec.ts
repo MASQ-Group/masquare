@@ -7,16 +7,44 @@ import { legacyAvailabilityReason, RETAKE_WINDOW_MS } from './legacy-availabilit
  * confident label that turns out to be false about a real order, which is how this whole line of
  * work started.
  */
-const base = { found: true, status: 'submitted', retakenAfterMs: null as number | null };
+const base = {
+  found: true,
+  status: 'submitted',
+  deleted: false,
+  retakenAfterMs: null as number | null,
+  hasLiveLine: true,
+};
 
 describe('legacyAvailabilityReason', () => {
+  it('names a deleted order a release', () => {
+    expect(legacyAvailabilityReason({ ...base, deleted: true })).toBe('released');
+  });
+
   /**
-   * The dominant case. Any update that replaces an order's item rows returns availability and
+   * Deletion force-releases everything the order held, so it explains the row on its own. Reading
+   * any of the later signals first would report a cause that the delete overrode.
+   */
+  it('lets deletion override every other signal', () => {
+    expect(legacyAvailabilityReason({
+      ...base, deleted: true, status: 'draft', retakenAfterMs: 5, hasLiveLine: false,
+    })).toBe('released');
+  });
+
+  /**
+   * The churn case. Any update that replaces an order's item rows returns availability and
    * re-deducts inside the same request; on real data every such pair sat about ten milliseconds
    * apart and matched in size.
    */
   it('names a release that was immediately retaken an edit', () => {
     expect(legacyAvailabilityReason({ ...base, retakenAfterMs: 10 })).toBe('order_edited');
+  });
+
+  /**
+   * The case the retake test is blind to: the edit dropped the product, so there is no sale to pair
+   * with and the units genuinely stayed returned.
+   */
+  it('names a release whose product left the order a removed line', () => {
+    expect(legacyAvailabilityReason({ ...base, hasLiveLine: false })).toBe('order_line_removed');
   });
 
   /**
@@ -31,8 +59,8 @@ describe('legacyAvailabilityReason', () => {
    * An edit to a draft is still an edit. The retake is evidence about this row; the status is
    * evidence about the order, and the more specific reading wins.
    */
-  it('prefers the edit reading when both would apply', () => {
-    expect(legacyAvailabilityReason({ found: true, status: 'draft', retakenAfterMs: 8 }))
+  it('prefers the edit reading over the draft reading', () => {
+    expect(legacyAvailabilityReason({ ...base, status: 'draft', retakenAfterMs: 8 }))
       .toBe('order_edited');
   });
 
@@ -50,10 +78,11 @@ describe('legacyAvailabilityReason', () => {
   });
 
   /**
-   * Submitted today says nothing about the state when the row was written, and nothing retook the
-   * units. Draft-then, a force-release, or a shrunken line — three causes, no way to separate them.
+   * Live, submitted, still carrying the product, never retaken. Draft-then or a shrunken line —
+   * two causes and no way to separate them. This is the row that keeps the vague label, and the
+   * test exists to stop a future rule quietly claiming it.
    */
-  it('refuses to name a cause for a submitted order that was never retaken', () => {
+  it('refuses to name a cause for a live submitted order that kept the line', () => {
     expect(legacyAvailabilityReason(base)).toBeNull();
   });
 
@@ -64,12 +93,12 @@ describe('legacyAvailabilityReason', () => {
 
   /**
    * `found: false` is also how an ambiguous reference arrives — one note matching several orders
-   * that disagree about their status. A guess would be a coin toss written into the audit trail.
-   *
-   * The retake evidence is deliberately not honoured here either: without a settled order behind
-   * the note there is no way to know the pairing describes the same sale.
+   * that disagree. None of the other signals is honoured either: without a settled order behind the
+   * note there is no way to know they describe the same sale.
    */
-  it('refuses on an ambiguous reference even when something retook the units', () => {
-    expect(legacyAvailabilityReason({ found: false, status: 'draft', retakenAfterMs: 9 })).toBeNull();
+  it('refuses on an ambiguous reference whatever else looks true', () => {
+    expect(legacyAvailabilityReason({
+      found: false, status: 'draft', deleted: true, retakenAfterMs: 9, hasLiveLine: false,
+    })).toBeNull();
   });
 });
