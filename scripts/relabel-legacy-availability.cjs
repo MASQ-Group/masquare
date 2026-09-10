@@ -74,6 +74,12 @@ const apply = process.argv.includes('--apply');
     return Math.min(...after.map((s) => s.createdAt - r.createdAt));
   };
 
+  const purge = await prisma.availabilityLedger.aggregate({
+    where: { reason: 'purge' }, _max: { createdAt: true },
+  });
+  const purgedAt = purge._max.createdAt ?? null;
+  const beforePurge = purgedAt ? rows.filter((r) => r.createdAt < purgedAt).length : 0;
+
   const refs = [...new Set(rows.map((r) => (r.note ?? '').trim()).filter(Boolean))];
   const txs = await prisma.salesTransaction.findMany({
     where: { transactionRef: { in: refs } },
@@ -176,6 +182,24 @@ const apply = process.argv.includes('--apply');
   }
   for (const [k, v] of Object.entries(probe).sort((a, b) => b[1] - a[1])) {
     console.log(`      ${String(v).padStart(5)}${k}`);
+  }
+
+  /**
+   * Why "no later sale" is not evidence that the units were never taken back.
+   *
+   * `adjust` opens with `if (!current) return null` — a product with no availability row moves
+   * nothing and writes NO ledger entry, while the order line's `availabilityDeductedQty` is updated
+   * either way. The purge emptied that table, so every reconcile after it against a purged product
+   * deducted the line silently.
+   *
+   * The ledger is therefore severed at the purge, and no rule can recover what happened across it.
+   * This line exists so the next person to look does not repeat the investigation.
+   */
+  if (purgedAt) {
+    console.log(`
+  Availability was purged ${purgedAt.toISOString().slice(0, 16)}, and ${beforePurge} of these rows predate it.`);
+    console.log('  A deduction against a product with no availability row writes no ledger entry, so a');
+    console.log('  retake after the purge leaves no trace here. "No later sale" is not proof of no retake.');
   }
   if (tally.unmatched) console.log(`  no order behind the note                           ${tally.unmatched}`);
   if (tally.ambiguous) console.log(`  reference shared by disagreeing orders             ${tally.ambiguous}`);
