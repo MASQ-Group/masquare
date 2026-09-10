@@ -98,6 +98,21 @@ export class AvailabilityController {
    * shared pool per product, but the pushes and listings beside it belong to a company's
    * integration and must not be read across that line.
    */
+  /**
+   * The reconcile worklist: products whose channels disagree with what we hold.
+   *
+   * Declared before ':productId' — Nest matches in order, so a literal path defined after a
+   * parameterised one is never reached and 'drift' would be read as a product id.
+   */
+  @Get('drift')
+  drift(
+    @VisibleCompanies() companyIds: string[],
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.svc.drift({ companyIds, page: Number(page) || 1, pageSize: Number(pageSize) || 50 });
+  }
+
   @Get(':productId')
   get(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
     return this.svc.get(productId, companyIds);

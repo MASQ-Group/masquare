@@ -740,6 +740,9 @@ export const availabilityApi = {
   // Every product id matching the filter — backs "select all N across pages".
   ids: (params: { q?: string; brandId?: string; vendorId?: string; productTypeId?: string } = {}) =>
     api.get<string[]>('/availability/ids', { params }).then((r) => r.data),
+  /** The reconcile worklist: products whose channels advertise a quantity we do not hold. */
+  drift: (params: { page?: number; pageSize?: number } = {}) =>
+    api.get<AvailabilityDriftResponse>('/availability/drift', { params }).then((r) => r.data),
   get: (productId: string) =>
     api.get<AvailabilityDetail>(`/availability/${productId}`).then((r) => r.data),
   setQuantity: (productId: string, quantity: number, note?: string) =>
@@ -776,6 +779,31 @@ export interface AvailabilityChannel {
   /** Not lastPushedAt: a full pull deletes and recreates listing rows, so that stamp never survives. */
   lastPulledAt: string | null;
   drifted: boolean;
+}
+
+export interface AvailabilityDriftRow {
+  productId: string;
+  mainSku: string;
+  title: string | null;
+  brand: string | null;
+  held: number | null;
+  channels: {
+    marketplace: string | null;
+    channelSku: string;
+    channelName: string | null;
+    channelType: string | null;
+    listedQuantity: number | null;
+    lastPulledAt: string | null;
+  }[];
+}
+
+export interface AvailabilityDriftResponse {
+  items: AvailabilityDriftRow[];
+  total: number;
+  /** Listings, not products — one product can be out of step on eight marketplaces. */
+  channelCount: number;
+  page: number;
+  pageSize: number;
 }
 
 export type AvailabilityDetail = AvailabilityRow & {

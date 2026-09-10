@@ -277,6 +277,95 @@ export class AvailabilityService {
   }
 
   /**
+   * Every product whose channels disagree with what we hold — the reconcile worklist.
+   *
+   * The per-product panel answers "was this one told?"; this answers "what is out of step right
+   * now?", which is the question nobody could ask at all. It is deliberately a QUERY rather than a
+   * stored table: drift is a comparison of two live numbers, and a stored copy would be one more
+   * thing that can be stale in its own right.
+   *
+   * `listedQuantity` is the marketplace's own figure as of the last pull, overwritten by any figure
+   * we later push successfully — so a row here means the channel really was advertising a different
+   * number when we last looked. `lastPulledAt` travels with it because that freshness is the whole
+   * caveat.
+   *
+   * Company scope is not optional. Availability is one shared pool per product, but listings belong
+   * to a company's integration and must never be read across that line.
+   */
+  async drift(opts: { companyIds?: string[]; page?: number; pageSize?: number } = {}) {
+    const page = Math.max(1, Number(opts.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(opts.pageSize) || 50));
+
+    /**
+     * Both sides in one pass, joined in memory.
+     *
+     * Prisma cannot compare two columns across a relation, and the alternative — raw SQL — would
+     * put the drift rule in a second place that can drift from `channelDrifted` itself. The volume
+     * is a few thousand rows on one side and tens of thousands on the other, which is a cheap join
+     * to do here and an expensive rule to duplicate.
+     */
+    const [held, listings] = await Promise.all([
+      this.prisma.productAvailability.findMany({ select: { productId: true, quantity: true } }),
+      this.prisma.channelListing.findMany({
+        where: { productId: { not: null }, ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : {}) },
+        select: {
+          productId: true, marketplace: true, channelSku: true, listedQuantity: true, lastPulledAt: true,
+          integration: { select: { name: true, channelType: true } },
+        },
+      }),
+    ]);
+
+    const heldBy = new Map(held.map((h) => [h.productId, h.quantity]));
+    const offBy = new Map<string, { channels: any[] }>();
+    for (const l of listings) {
+      const pid = l.productId!;
+      // A product with no availability row is not "out of step" — nothing was ever established for
+      // it to be out of step WITH. channelDrifted refuses that comparison and so does this.
+      if (!heldBy.has(pid)) continue;
+      if (!channelDrifted(heldBy.get(pid), l.listedQuantity)) continue;
+      if (!offBy.has(pid)) offBy.set(pid, { channels: [] });
+      offBy.get(pid)!.channels.push({
+        marketplace: l.marketplace || null,
+        channelSku: l.channelSku,
+        channelName: l.integration?.name ?? null,
+        channelType: l.integration?.channelType ?? null,
+        listedQuantity: l.listedQuantity,
+        lastPulledAt: l.lastPulledAt,
+      });
+    }
+
+    const ids = [...offBy.keys()];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: ids }, ...ACTIVE },
+      select: { id: true, mainSku: true, title: true, brand: { select: { name: true } } },
+    });
+
+    const rows = products.map((pr) => ({
+      productId: pr.id,
+      mainSku: pr.mainSku,
+      title: pr.title,
+      brand: pr.brand?.name ?? null,
+      held: heldBy.get(pr.id) ?? null,
+      channels: offBy.get(pr.id)!.channels,
+    }))
+      // Worst first: the products advertising the most stock they do not have are the ones that
+      // oversell, and a worklist nobody can triage is a worklist nobody reads.
+      .sort((a, b) => {
+        const over = (r: typeof a) => Math.max(...r.channels.map((c: any) => (c.listedQuantity ?? 0) - (r.held ?? 0)));
+        return over(b) - over(a) || a.mainSku.localeCompare(b.mainSku);
+      });
+
+    return {
+      items: rows.slice((page - 1) * pageSize, page * pageSize),
+      total: rows.length,
+      /** Listings, not products — one product can be out of step on eight marketplaces. */
+      channelCount: rows.reduce((n, r) => n + r.channels.length, 0),
+      page,
+      pageSize,
+    };
+  }
+
+  /**
    * Clear availability entirely, so it can be rebuilt from figures someone vouches for.
    *
    * Almost every row arrived by a route that is no longer allowed: `adjust` used to upsert, so an

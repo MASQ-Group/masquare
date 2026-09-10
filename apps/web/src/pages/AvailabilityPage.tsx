@@ -10,6 +10,7 @@ import { CHANNEL_GROUPS, channelGroupOf, channelPlatform, sortByChannelCanonical
 import { MissingFromAvailability } from '../components/availability/MissingFromAvailability';
 import { AddToAvailabilityModal } from '../components/availability/AddToAvailabilityModal';
 import { AvailabilityLedgerModal } from '../components/availability/AvailabilityLedgerModal';
+import { OutOfStepWithChannels } from '../components/availability/OutOfStepWithChannels';
 
 // The three ways a quantity can move: a person, a vendor file, or a sale. There is no Return —
 // a return never changes availability, and a cancellation before shipment is the sale reversing
@@ -34,7 +35,7 @@ export function AvailabilityPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [ledgerFor, setLedgerFor] = useState<AvailabilityRow | null>(null);
   // 'missing' is the onboarding worklist: listed on a channel, absent from availability.
-  const [tab, setTab] = usePersistentState<'in' | 'missing'>('availability.tab', 'in');
+  const [tab, setTab] = usePersistentState<'in' | 'missing' | 'drift'>('availability.tab', 'in');
 
   useEffect(() => { const t = setTimeout(() => { setQ(qInput); setPage(1); }, 250); return () => clearTimeout(t); }, [qInput]);
   useEffect(() => { setPage(1); }, [brandId, vendorId, productTypeId]);
@@ -98,9 +99,12 @@ export function AvailabilityPage() {
         tabs={[
           { key: 'in', label: 'In availability' },
           { key: 'missing', label: 'Missing from availability' },
+          // The reconcile worklist. Here rather than on its own page because it answers a question
+          // this screen raises: the figure is right, but does the channel know?
+          { key: 'drift', label: 'Out of step with channels' },
         ]}
         activeTab={tab}
-        onTabChange={(k) => setTab(k as 'in' | 'missing')}
+        onTabChange={(k) => setTab(k as 'in' | 'missing' | 'drift')}
         actions={
           <>
             {tab === 'in' && selected.size > 0 && (
@@ -118,14 +122,14 @@ export function AvailabilityPage() {
             </button>
           </>
         }
-        primary={tab === 'missing' ? undefined : (
+        primary={tab !== 'in' ? undefined : (
           <button disabled={selected.size === 0} onClick={() => setPushOpen(true)}
             className="hbtn-primary"
             title={selected.size === 0 ? 'Select products to push their availability to the channels' : 'Push the selected products’ availability to all their channel listings'}>
             <Send size={15} /> Push to channels{selected.size > 0 ? ` (${selected.size})` : ''}
           </button>
         )}
-        toolbar={tab === 'missing' ? undefined : (
+        toolbar={tab !== 'in' ? undefined : (
           <>
             <div className="flex h-8 min-w-[220px] max-w-[300px] flex-1 items-center gap-2 rounded-lg border border-n-200 bg-n-0 px-3">
               <Search size={15} className="text-n-400" />
@@ -141,6 +145,7 @@ export function AvailabilityPage() {
       />
 
       {tab === 'missing' && <MissingFromAvailability />}
+      {tab === 'drift' && <OutOfStepWithChannels />}
 
       {tab === 'in' && (<>
       <div className="card overflow-hidden">
