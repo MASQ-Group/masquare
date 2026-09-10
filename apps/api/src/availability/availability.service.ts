@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { ProgressSink } from '../jobs/jobs.service';
 import { channelDrifted } from './channel-drift';
+import { ModuleRef } from '@nestjs/core';
+import { Logger } from '@nestjs/common';
 
 export interface AvailabilityQuery {
   q?: string;
@@ -18,7 +20,31 @@ const ACTIVE = { deletedAt: null };
 
 @Injectable()
 export class AvailabilityService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(AvailabilityService.name);
+
+  /**
+   * `moduleRef` is OPTIONAL so the service stays constructible as `new AvailabilityService(prisma)`.
+   * The commit-ordering spec builds it that way deliberately — it models two database connections to
+   * catch a stale read, and forcing it to build a Nest container would trade a sharp test for a
+   * slow one. Without the ref the push is skipped, which is right for a unit test and would be
+   * loudly wrong in production, where Nest always supplies it.
+   */
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly moduleRef?: ModuleRef,
+  ) {}
+
+  /**
+   * Resolved lazily by string token, with no runtime import of the class.
+   *
+   * Importing ChannelListingsModule here closes the cycle integrations -> sales-transactions ->
+   * channel-listings -> integrations, which `nest build` does not catch — it fails at boot with that
+   * module's first import undefined. The sell-through and the reconcile sweep reach the same service
+   * the same way, for the same reason.
+   */
+  private channelListings(): { schedulePush(ids: string[], reason?: string): void } | null {
+    return this.moduleRef?.get('CHANNEL_LISTINGS_SERVICE', { strict: false }) ?? null;
+  }
 
   private serialize(p: any) {
     return {
@@ -340,12 +366,39 @@ export class AvailabilityService {
       select: { id: true, mainSku: true, title: true, brand: { select: { name: true } } },
     });
 
+    /**
+     * Which of these zeros anybody actually established.
+     *
+     * A product ADDED to availability carries zero meaning "tracked, not yet counted"; a product
+     * COUNTED at zero really is out of stock. They are the same number and opposite facts, and the
+     * difference decides whether the channels may be told. Pushing zero on an unestablished zero
+     * empties live listings on the strength of something nobody ever said — which is how roughly
+     * five thousand were emptied on 4 August.
+     *
+     * A count leaves a manual_set or vendor_import that MOVED the figure. The creation row is a
+     * delta of zero, so it cannot be mistaken for one. Deliberately setting zero on an uncounted
+     * product also records a zero delta and so reads as uncounted here: that is a false negative,
+     * and the safe direction — it withholds a push rather than inventing one, and the worklist
+     * still offers the button.
+     */
+    const counted = new Set(
+      (await this.prisma.availabilityLedger.groupBy({
+        by: ['productId'],
+        where: { productId: { in: ids }, reason: { in: ['manual_set', 'vendor_import'] }, delta: { not: 0 } },
+      })).map((r) => r.productId),
+    );
+
     const rows = products.map((pr) => ({
       productId: pr.id,
       mainSku: pr.mainSku,
       title: pr.title,
       brand: pr.brand?.name ?? null,
       held: heldBy.get(pr.id) ?? null,
+      /**
+       * True when we hold zero and no count ever established it. Such a row is a question, not a
+       * finding, and nothing may push it automatically.
+       */
+      unestablishedZero: (heldBy.get(pr.id) ?? 0) === 0 && !counted.has(pr.id),
       channels: offBy.get(pr.id)!.channels,
     }))
       // Worst first: the products advertising the most stock they do not have are the ones that
@@ -543,6 +596,23 @@ export class AvailabilityService {
      * it has no other use for. Reading once the transaction has committed is both simpler and more
      * honest about what it returns: what is actually stored.
      */
+    /**
+     * Telling the channels is the point of setting the figure.
+     *
+     * Nothing here ever queued a push, so only SALES reached the marketplaces: someone typing a
+     * quantity changed the number the platform holds and nothing else, and the listings kept
+     * advertising the old one indefinitely. On production that left 57 products and 645 listings out
+     * of step, and no amount of correct arithmetic here would have shown up on a marketplace.
+     *
+     * Fire-and-forget through the persisted queue, so the save never waits on the network and never
+     * fails because a push did — and cannot lose the debt if the process restarts.
+     */
+    try {
+      this.channelListings()?.schedulePush([productId], 'manual_set');
+    } catch (e: any) {
+      this.logger.error(`Could not queue a channel push for ${productId}: ${e?.message ?? e}`);
+    }
+
     return this.get(productId);
   }
 

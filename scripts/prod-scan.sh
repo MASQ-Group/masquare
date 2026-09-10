@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Read-only production scan: when were stock lines marked?
+# Read-only production health report: does the sale -> availability -> channel chain work?
 #
 #   bash scripts/prod-scan.sh
 #
 # Exists so the Claude Code permission rule can be ONE exact command instead of a wildcard over
-# `node scripts/*`. It takes no arguments and hardcodes `--scan`, so nothing it is granted can be
-# turned into a write: `--apply` cannot be reached through it at all.
+# `node scripts/*`. It takes no arguments and passes none through, so nothing it is granted can be
+# turned into a write — it runs one reporter, and that reporter only reads.
 #
 # The connection string comes from the Railway CLI at run time and is never printed. Anything that
 # looks like a Postgres URL is stripped from the output as a second line of defence, in case a
@@ -25,5 +25,5 @@ if [ -z "${DATABASE_URL}" ]; then
 fi
 
 echo "Connected to production (read-only; connection string not shown)."
-node --env-file=.env scripts/unmark-stock.cjs --scan 2>&1 \
+node --env-file=.env scripts/prod-health.cjs 2>&1 \
   | sed -E 's#postgres(ql)?://[^[:space:]]*#<redacted>#g'

@@ -789,6 +789,11 @@ export interface AvailabilityDriftRow {
   title: string | null;
   brand: string | null;
   held: number | null;
+  /**
+   * We hold zero and no count ever established it — "not yet counted", not "out of stock".
+   * The sweep never corrects these; a person can still push one deliberately.
+   */
+  unestablishedZero: boolean;
   channels: {
     marketplace: string | null;
     channelSku: string;

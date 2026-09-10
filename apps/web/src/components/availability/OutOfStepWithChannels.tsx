@@ -34,6 +34,8 @@ export function OutOfStepWithChannels() {
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
+  // Separated in the header so an uncounted product never inflates an overselling figure.
+  const uncounted = items.filter((i) => i.unestablishedZero).length;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   const push = useMutation({
@@ -79,6 +81,8 @@ export function OutOfStepWithChannels() {
           <span className="font-medium text-n-700">{total} product{total === 1 ? '' : 's'}</span>
           <span className="text-n-400">·</span>
           <span>{data?.channelCount} listing{data?.channelCount === 1 ? '' : 's'} advertising a different quantity</span>
+          {uncounted > 0 && <span className="text-n-400">·</span>}
+          {uncounted > 0 && <span>{uncounted} awaiting a count, not oversold</span>}
           <span className="text-n-400">·</span>
           <span>worst first</span>
         </div>
@@ -137,14 +141,32 @@ function DriftRow({ row, onPush, pushing }: { row: AvailabilityDriftRow; onPush:
             </span>
           ))}
         </div>
-        {worst > 0 && (
+        {worst > 0 && !row.unestablishedZero && (
           <p className="mt-1 text-[11.5px] text-orange-700">
             Up to {worst} unit{worst === 1 ? '' : 's'} more than we have, on one channel.
           </p>
         )}
+        {/*
+          Not an overselling alarm. This product was added to availability and never counted, so our
+          zero means "unknown" rather than "none left" — and pushing it would tell every marketplace
+          the product is gone on the strength of something nobody established.
+        */}
+        {row.unestablishedZero && (
+          <p className="mt-1 text-[11.5px] text-n-500">
+            We hold no counted figure for this — the zero means <strong>not yet counted</strong>, not
+            out of stock. Count it before sending anything to the channels.
+          </p>
+        )}
       </td>
       <td className="border-b border-n-100 px-4 py-2.5 text-right">
-        <button onClick={onPush} disabled={pushing} className="hbtn" title="Send what we hold to every channel this product is listed on">
+        <button
+          onClick={onPush}
+          disabled={pushing || row.unestablishedZero}
+          className="hbtn"
+          title={row.unestablishedZero
+            ? 'Count this product first — pushing an uncounted zero would empty its listings'
+            : 'Send what we hold to every channel this product is listed on'}
+        >
           {pushing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Push
         </button>
       </td>

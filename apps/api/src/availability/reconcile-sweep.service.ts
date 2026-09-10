@@ -71,7 +71,7 @@ export class ReconcileSweepService {
     const drift = await this.availability.drift({ pageSize: 200 });
     if (drift.total === 0) {
       this.logger.log('Reconcile sweep: every channel agrees with what we hold.');
-      return { drifted: 0, queued: 0, corrected: false };
+      return { drifted: 0, queued: 0, withheld: 0, corrected: false };
     }
 
     if (!mayCorrect) {
@@ -81,7 +81,7 @@ export class ReconcileSweepService {
       this.logger.warn(
         `Reconcile sweep: ${drift.total} product(s) and ${drift.channelCount} listing(s) are out of step — reporting only (${why}).`,
       );
-      return { drifted: drift.total, queued: 0, corrected: false };
+      return { drifted: drift.total, queued: 0, withheld: 0, corrected: false };
     }
 
     /**
@@ -89,9 +89,23 @@ export class ReconcileSweepService {
      * attempt ceiling and the failure record apply to a sweep correction exactly as they do to a
      * sale's — otherwise a permanently rejected SKU would be retried hourly, for ever, invisibly.
      */
-    const ids = drift.items.map((d) => d.productId);
-    this.listings().schedulePush(ids, 'reconcile_sweep');
-    this.logger.log(`Reconcile sweep: queued ${ids.length} product(s) of ${drift.total} out of step.`);
-    return { drifted: drift.total, queued: ids.length, corrected: true };
+    /**
+     * A zero nobody established is never pushed automatically.
+     *
+     * A product ADDED to availability holds zero meaning "not yet counted". Correcting toward it
+     * would tell every marketplace the product is out of stock on the strength of something nobody
+     * ever said — and emptying live listings on an unestablished zero is exactly the 4 August
+     * incident. Those rows stay on the worklist, where a person can push them deliberately.
+     */
+    const safe = drift.items.filter((d) => !d.unestablishedZero);
+    const withheld = drift.items.length - safe.length;
+    const ids = safe.map((d) => d.productId);
+
+    if (ids.length) this.listings().schedulePush(ids, 'reconcile_sweep');
+    this.logger.log(
+      `Reconcile sweep: queued ${ids.length} product(s) of ${drift.total} out of step`
+      + `${withheld ? `, withheld ${withheld} whose zero was never counted` : ''}.`,
+    );
+    return { drifted: drift.total, queued: ids.length, withheld, corrected: true };
   }
 }
