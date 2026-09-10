@@ -71,7 +71,7 @@ const line = (l, v) => console.log(`  ${l.padEnd(50)}${v}`);
     const isBelow = intrinsic <= 135;
     if (isBelow) { below += 1; if (tax > 0) belowWithTax += 1; }
     else { above += 1; if (tax > 0) aboveWithTax += 1; }
-    if (isBelow && samples.length < 8) {
+    if (isBelow && tax > 0 && samples.length < 8) {
       samples.push(`${t.transactionRef}  ${t.date.toISOString().slice(0, 10)}  net ${intrinsic.toFixed(2)}  vat ${t.items.reduce((s, i) => s + (i.vatAmount ?? 0), 0).toFixed(2)}  collected ${tax.toFixed(2)}`);
     }
   }
