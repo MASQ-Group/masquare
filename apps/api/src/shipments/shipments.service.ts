@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
+import { buildTrackingUrl } from '../carriers/tracking-url';
 import { PrismaService } from '../prisma/prisma.service';
 import { StockService } from '../warehouses/stock.service';
 import { CreateCombinedShipmentDto, CreateShipmentBatchDto, CreateShipmentDto, UpdateShipmentDto } from './dto/shipment.dto';
@@ -72,7 +73,9 @@ const txContext = {
 
 const include = {
   transaction: txContext,
-  shippingService: { select: { id: true, name: true } },
+  // The template comes along so the row can offer the carrier's own page. Whether we can LINK to a
+  // courier and whether we can POLL it are separate questions — only the second is FedEx-only.
+  shippingService: { select: { id: true, name: true, trackingUrlTemplate: true } },
   /**
    * Where the carrier says the parcel is.
    *
@@ -110,6 +113,8 @@ export class ShipmentsService {
       shippingServiceId: s.shippingServiceId,
       shippingService: s.shippingService ?? null,
       trackingNumber: s.trackingNumber,
+      /** The carrier's own tracking page for this number. Null until a template is set in settings. */
+      trackingUrl: buildTrackingUrl(s.shippingService?.trackingUrlTemplate, s.trackingNumber),
       shippingCostEur: s.shippingCostEur,
       costBorneBy: s.costBorneBy,
       dutyImportEur: s.dutyImportEur,
@@ -406,7 +411,7 @@ export class ShipmentsService {
             orderBy: [{ shipmentDate: 'asc' }, { createdAt: 'asc' }],
             select: {
               id: true, type: true, shipmentDate: true, trackingNumber: true,
-              shippingService: { select: { name: true } },
+              shippingService: { select: { name: true, trackingUrlTemplate: true } },
               tracking: {
                 select: {
                   statusDescription: true, estimatedDeliveryAt: true, deliveredAt: true,
@@ -436,6 +441,8 @@ export class ShipmentsService {
           shipmentDate: s.shipmentDate,
           serviceName: s.shippingService?.name ?? null,
           trackingNumber: s.trackingNumber,
+          /** The carrier's own page, when the service carries a URL template. */
+          trackingUrl: buildTrackingUrl(s.shippingService?.trackingUrlTemplate, s.trackingNumber),
           expectedAt: s.tracking?.estimatedDeliveryAt ?? null,
           deliveredAt: s.tracking?.deliveredAt ?? null,
           statusDescription: s.tracking?.statusDescription ?? null,
@@ -510,6 +517,9 @@ export class ShipmentsService {
         shippingServiceId: r.shippingServiceId ?? null,
         shippingService: r.shippingService ?? null,
         trackingNumber: tracking.length ? tracking.join(', ') : null,
+        // One row can carry several boxes' numbers joined into one string, so there is no single
+        // page to link to. The FBA module's own summary links them per box.
+        trackingUrl: null,
         shippingCostEur: r.actualCostEur != null ? Number(r.actualCostEur) : null,
         // We ship stock to Amazon, so this is always ours — there is no customer to bear it.
         costBorneBy: 'company',

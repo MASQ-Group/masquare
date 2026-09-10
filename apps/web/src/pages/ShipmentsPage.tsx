@@ -495,7 +495,13 @@ export function ShipmentsPage() {
                     </td>
                     <td className={td}>{s.shippingService?.name ?? '—'}</td>
                     <td className={td}>
-                      <div className="code">{s.trackingNumber ?? '—'}</div>
+                      <div className="code">
+                        {!s.trackingNumber
+                          ? '—'
+                          : s.trackingUrl
+                            ? <a href={s.trackingUrl} target="_blank" rel="noreferrer" className="hover:text-teal-700 hover:underline" title="Open the carrier’s tracking page">{s.trackingNumber}</a>
+                            : s.trackingNumber}
+                      </div>
                       {/* The carrier's own account, under the number it belongs to. Absent until the
                           sweep has asked, and absent for good on carriers we cannot ask. */}
                       {s.tracking && <TrackingLine tracking={s.tracking} />}

@@ -212,11 +212,26 @@ function Row({ row, td, chipFor, here }: { row: TrackingLogRow; td: string; chip
       */}
       <ParcelCell td={td} parcels={parcels} render={(p) => <span className="mono">{formatDate(p.shipmentDate)}</span>} />
       <ParcelCell td={td} parcels={parcels} render={(p) => <>{p.serviceName ?? '—'}</>} />
-      <ParcelCell td={td} parcels={parcels} render={(p) => (
-        p.trackingNumber
-          ? <span className={`code ${p.notRecognised ? 'text-warning' : ''}`} title={p.notRecognised ? 'The carrier does not recognise this number' : undefined}>{p.trackingNumber}</span>
-          : <>—</>
-      )} />
+      <ParcelCell td={td} parcels={parcels} render={(p) => {
+        if (!p.trackingNumber) return <>—</>;
+        const cls = `code ${p.notRecognised ? 'text-warning' : ''}`;
+        const warn = p.notRecognised ? 'The carrier does not recognise this number' : null;
+        // A link wherever the service has a tracking URL — including couriers we cannot poll, which
+        // is exactly where the carrier's own page is the only thing there is.
+        return p.trackingUrl
+          ? (
+            <a
+              href={p.trackingUrl}
+              target="_blank"
+              rel="noreferrer"
+              className={`${cls} hover:text-teal-700 hover:underline`}
+              title={warn ?? 'Open the carrier’s tracking page'}
+            >
+              {p.trackingNumber}
+            </a>
+          )
+          : <span className={cls} title={warn ?? undefined}>{p.trackingNumber}</span>;
+      }} />
       <ParcelCell td={td} parcels={parcels} render={(p) => (
         p.expectedAt ? <span className="mono">{formatDate(p.expectedAt)}</span> : <span className="text-n-400">—</span>
       )} />

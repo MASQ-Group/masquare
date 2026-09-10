@@ -2279,6 +2279,12 @@ export interface Shipment {
   shippingServiceId: string | null;
   shippingService: { id: string; name: string } | null;
   trackingNumber: string | null;
+  /**
+   * The carrier's own tracking page for this number, when the shipping service carries a URL
+   * template. Independent of whether we can poll that carrier — we can link to Cyprus Post's site
+   * without being able to ask its API anything.
+   */
+  trackingUrl?: string | null;
   shippingCostEur: number | null;
   costBorneBy: CostBorneBy;
   dutyImportEur: number | null;
@@ -2468,6 +2474,8 @@ export interface TrackingLogParcel {
   shipmentDate: string;
   serviceName: string | null;
   trackingNumber: string | null;
+  /** The carrier's own tracking page, when the service carries a URL template. */
+  trackingUrl: string | null;
   expectedAt: string | null;
   deliveredAt: string | null;
   statusDescription: string | null;

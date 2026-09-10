@@ -66,10 +66,32 @@ export function TrackingPanel({
 }) {
   const t = view.tracking;
 
-  if (!view.trackable) {
-    return <Note>{view.carrier ?? 'This carrier'} is not connected, so we cannot ask it where the parcel is. FedEx is the only one wired up so far.</Note>;
-  }
   if (!view.trackingNumber) return <Note>No tracking number has been recorded for this shipment.</Note>;
+
+  /**
+   * A carrier we cannot poll still has a number, and usually a website.
+   *
+   * This used to be a flat refusal, which threw away the two useful things we hold: the number
+   * itself, and — once a tracking URL is set in settings — a way straight to the courier's own
+   * page. That was the wrong line to draw. Whether we can ASK a carrier's API where a parcel is,
+   * and whether we can LINK to its website, are separate questions, and only the first is
+   * FedEx-only. For Cyprus Post the carrier's own page is the ONLY thing there is, so refusing to
+   * show it was worse than useless.
+   */
+  if (!view.trackable) {
+    return (
+      <div className="rounded-lg border border-n-200 bg-n-0 px-5 py-4 max-[767px]:px-4">
+        <TrackingNumber view={view} />
+        <p className="mt-3 text-[12.5px] text-n-500">
+          {view.carrier ?? 'This carrier'} is not connected to the platform, so we cannot ask it where
+          the parcel is or show its history here.{' '}
+          {view.trackingUrl
+            ? 'Open the number above for their own tracking page.'
+            : 'Adding a tracking URL for this service in Settings → Shipping services would make the number a link to their page.'}
+        </p>
+      </div>
+    );
+  }
   if (!t) {
     return (
       <div className="flex flex-col gap-2">

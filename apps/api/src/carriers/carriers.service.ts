@@ -12,6 +12,7 @@ import {
   type RateQuoteInput, type RateEndpoint, type RateParcel,
 } from './fedex-rate';
 import { parseRateReply } from './fedex-rate-parse';
+import { buildTrackingUrl } from './tracking-url';
 import {
   SHIP_CANCEL_PATH, SHIP_PATH, buildCancelRequest, buildShipRequest, missingForBooking,
   type ShipParty, type ShipRequestInput,
@@ -24,20 +25,6 @@ import {
   deliveryPromise, parseTrackReply, statusPill, trackStages,
   type TrackResult, type TrackScan,
 } from './fedex-track-parse';
-
-/**
- * The carrier's public tracking page for one number.
- *
- * The template lives on the shipping service — `{tracking}` is replaced — so a new courier is a
- * settings row rather than a code change. Returns null rather than a broken link when no template
- * has been set, which is the state every service is in until somebody fills one in.
- */
-function buildTrackingUrl(template: string | null | undefined, trackingNumber: string | null): string | null {
-  const t = (template ?? '').trim();
-  const n = (trackingNumber ?? '').trim();
-  if (!t || !n || !t.includes('{tracking}')) return null;
-  return t.replace('{tracking}', encodeURIComponent(n));
-}
 
 /** The credential fields a FedEx account holds. Nothing else is accepted or stored. */
 export const FEDEX_SECRET_FIELDS = ['apiKey', 'secretKey'] as const;
