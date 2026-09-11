@@ -18,9 +18,24 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REPORT="${REPORT:-prod-health}"
-case "$REPORT" in
-  prod-health|unmatched-listings|amazon-uk-vat|channel-duplicates|zero-vat-orders|vat-scope-impact|nonvat-country-rates|migration-state|vat-flag-drift|onbuy-vat-signal|sku-listing-trace|sku-phantom-origin|listing-row-collisions|push-coverage|sku-alias-check|alias-listing-coverage|vat-order-review|marketplace-vat-overstated|country-rate-check|regime-vat-impact|collected-tax-repair-preview|jct-classification-check) ;;
-  *) echo "Unknown report: $REPORT (allowed: prod-health, unmatched-listings, amazon-uk-vat, channel-duplicates, zero-vat-orders, vat-scope-impact, nonvat-country-rates, migration-state, vat-flag-drift)" >&2; exit 1 ;;
+
+# The allowlist, written once. It was two lists — a case pattern and a message — and they drifted:
+# the message still named nine reports when fifteen more had been added, so anyone who mistyped one
+# was handed a list that was mostly wrong. Still a fixed literal list, so the permission grant
+# cannot be widened by setting a variable; only the duplication is gone.
+REPORTS="
+prod-health unmatched-listings amazon-uk-vat channel-duplicates zero-vat-orders vat-scope-impact
+nonvat-country-rates migration-state vat-flag-drift onbuy-vat-signal sku-listing-trace
+sku-phantom-origin listing-row-collisions push-coverage sku-alias-check alias-listing-coverage
+vat-order-review marketplace-vat-overstated country-rate-check regime-vat-impact
+collected-tax-repair-preview jct-classification-check vat-flag-state when-did-vat-change
+"
+
+case " $(echo $REPORTS) " in
+  *" $REPORT "*) ;;
+  *) echo "Unknown report: $REPORT" >&2
+     echo "Allowed: $(echo $REPORTS)" >&2
+     exit 1 ;;
 esac
 
 DATABASE_URL="$(railway variables --service Postgres --json 2>/dev/null \
