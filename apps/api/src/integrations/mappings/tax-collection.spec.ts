@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   anyMarketplaceFacilitator, channelRemitsTheVat, isMarketplaceFacilitator, marketplaceRemitsTax,
+  withoutChannelCollectedTax,
 } from './tax-collection';
 
 const facilitator = { TaxCollection: { Model: 'MarketplaceFacilitator', ResponsibleParty: 'Amazon Services, Inc.' } };
@@ -202,5 +203,72 @@ describe('marketplaceRemitsTax', () => {
 
   it('reads the regime tolerantly', () => {
     expect(marketplaceRemitsTax({ taxType: ' SALES_TAX ', vatCollectedByChannel: false })).toBe(true);
+  });
+});
+
+/**
+ * The money fix. `netSalesAmount` is right already — Amazon's VAT report agrees with it on every
+ * order checked — so only the tax figure moves.
+ */
+describe('withoutChannelCollectedTax', () => {
+  const lines = [
+    { sku: 'A', netSalesAmount: 115.83, vatAmount: 23.17, shippingAmountVat: 0, salesTaxAmount: 23.17 },
+    { sku: 'B', netSalesAmount: 10, vatAmount: 2, shippingAmountVat: 0.5, salesTaxAmount: 2.5 },
+  ];
+
+  it('zeroes the tax on a VAT sale the channel collected', () => {
+    const out = withoutChannelCollectedTax(lines, { taxType: 'vat', vatCollectedByChannel: true });
+    expect(out.map((l) => l.vatAmount)).toEqual([0, 0]);
+    expect(out.map((l) => l.shippingAmountVat)).toEqual([0, 0]);
+  });
+
+  /** Net is not the defect and must not move — it is what revenue is built from. */
+  it('leaves net sales and the reported total alone', () => {
+    const out = withoutChannelCollectedTax(lines, { taxType: 'vat', vatCollectedByChannel: true });
+    expect(out.map((l) => l.netSalesAmount)).toEqual([115.83, 10]);
+    expect(out.map((l) => l.salesTaxAmount)).toEqual([23.17, 2.5]);
+  });
+
+  it('leaves our own VAT alone when the channel did not collect', () => {
+    const out = withoutChannelCollectedTax(lines, { taxType: 'vat', vatCollectedByChannel: false });
+    expect(out.map((l) => l.vatAmount)).toEqual([23.17, 2]);
+  });
+
+  /**
+   * The expensive one. Amazon reports itself facilitator for Japanese consumption tax, but the
+   * SELLER keeps it — ¥129,306 on file. Gating on the raw flag instead of the regime would have
+   * taken every yen of that out of revenue.
+   */
+  it('never touches Japanese consumption tax, whatever the flag says', () => {
+    const out = withoutChannelCollectedTax(lines, { taxType: 'jct', vatCollectedByChannel: true });
+    expect(out.map((l) => l.vatAmount)).toEqual([23.17, 2]);
+  });
+
+  /** Added at checkout on top of our price: never ours, whatever the VAT flag says. */
+  it('zeroes GST and US sales tax without needing the flag', () => {
+    for (const regime of ['gst', 'sales_tax']) {
+      const out = withoutChannelCollectedTax(lines, { taxType: regime, vatCollectedByChannel: false });
+      expect(out.map((l) => l.vatAmount)).toEqual([0, 0]);
+    }
+  });
+
+  /**
+   * Null is not zero. A line with no tax recorded is a line nobody has answered for, and turning
+   * that into a stated zero would claim a fact the channel never gave us.
+   */
+  it('leaves an unanswered tax field null rather than stating zero', () => {
+    const sparse = [{ sku: 'C', netSalesAmount: 5, vatAmount: null, shippingAmountVat: null }];
+    expect(withoutChannelCollectedTax(sparse, { taxType: 'vat', vatCollectedByChannel: true }))
+      .toEqual([{ sku: 'C', netSalesAmount: 5, vatAmount: null, shippingAmountVat: null }]);
+  });
+
+  it('returns a new array and does not mutate the caller’s', () => {
+    const out = withoutChannelCollectedTax(lines, { taxType: 'vat', vatCollectedByChannel: true });
+    expect(out).not.toBe(lines);
+    expect(lines[0].vatAmount).toBe(23.17);
+  });
+
+  it('copes with no lines at all', () => {
+    expect(withoutChannelCollectedTax([], { taxType: 'vat', vatCollectedByChannel: true })).toEqual([]);
   });
 });

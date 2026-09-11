@@ -133,3 +133,35 @@ export function marketplaceRemitsTax(input: {
   if (regime === 'jct') return false;
   return !!input.vatCollectedByChannel;
 }
+
+/**
+ * Strip tax the channel charged the buyer and keeps, so it is never counted as ours.
+ *
+ * The line still carries what the buyer paid, because that is what the marketplace reported — but
+ * none of it reached us. `netSalesAmount` is untouched and already correct; Amazon's own VAT report
+ * agrees with it on every order checked. Only the tax figure is wrong, and only because the order
+ * API reports the tax the MARKETPLACE took while the VAT report puts the seller's at zero.
+ *
+ * It matters beyond tidiness: `sellerBaseNative` is net + VAT + shipping + shipping VAT, and that is
+ * what `revenueIncVatEur` and the margin percentage are built from. Left in, it is revenue we never
+ * received — 702 orders and £5,175 of it on the UK channels alone.
+ *
+ * Gated on `marketplaceRemitsTax`, NOT on the channel's facilitator flag. Amazon reports itself as
+ * facilitator for Japanese consumption tax too, and the seller KEEPS that — ¥129,306 of it on file.
+ * Zeroing on the raw flag would have taken all of it out of revenue.
+ *
+ * The full figure survives in `salesTaxAmount`, which is what eBay's mapping has always done.
+ */
+export function withoutChannelCollectedTax<
+  T extends { vatAmount?: number | null; shippingAmountVat?: number | null },
+>(items: readonly T[], input: {
+  taxType: string | null | undefined;
+  vatCollectedByChannel: boolean | null | undefined;
+}): T[] {
+  if (!marketplaceRemitsTax(input)) return [...items];
+  return items.map((i) => ({
+    ...i,
+    ...(i.vatAmount == null ? {} : { vatAmount: 0 }),
+    ...(i.shippingAmountVat == null ? {} : { shippingAmountVat: 0 }),
+  }));
+}

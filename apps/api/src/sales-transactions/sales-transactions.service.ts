@@ -8,7 +8,7 @@ import { AvailabilityService } from '../availability/availability.service';
 import { ActivityService, type ActivitySource } from '../activity/activity.service';
 import { diffRecords } from '../activity/diff';
 import { SALES_TX_FIELD_LABELS, SALES_TX_REF_FIELDS, SALES_TX_REF_NAME_FIELD } from '../activity/sales-transaction-fields';
-import { channelRemitsTheVat, marketplaceRemitsTax } from '../integrations/mappings/tax-collection';
+import { channelRemitsTheVat, marketplaceRemitsTax, withoutChannelCollectedTax } from '../integrations/mappings/tax-collection';
 import { channelThresholdApplies, taxRegimeFor } from './vat-scope';
 // Type-only: importing the class value here would form a runtime ES-module cycle
 // (sales-transactions -> channel-listings -> integrations -> sales-transactions). Resolved at
@@ -2177,7 +2177,12 @@ export class SalesTransactionsService {
         unlockedForEdit: false,
         createdById: actorId,
         updatedById: actorId,
-        items: { create: await this.freezeUnitCosts(items) },
+        /**
+         * Tax the channel charged and keeps never reaches the line. `netSalesAmount` is untouched —
+         * it already agrees with Amazon's own VAT report — so only the tax figure moves, and with it
+         * `revenueIncVatEur` and the margin percentage, which are built from net + VAT.
+         */
+        items: { create: await this.freezeUnitCosts(withoutChannelCollectedTax(items, { taxType, vatCollectedByChannel })) },
       },
     });
 
@@ -2612,7 +2617,8 @@ export class SalesTransactionsService {
             at: e.costSnapshotAt ?? new Date(),
           });
         }
-        const frozen = await this.freezeUnitCosts(items, keep);
+        // Same rule as `create`: what the channel collected and keeps is not ours to record.
+        const frozen = await this.freezeUnitCosts(withoutChannelCollectedTax(items, { taxType, vatCollectedByChannel }), keep);
         await tx.salesTransactionItem.deleteMany({ where: { transactionId: id } });
         await tx.salesTransactionItem.createMany({
           data: frozen.map((i) => ({ ...i, transactionId: id, productId: i.productId ?? null })),

@@ -19,7 +19,7 @@ cd "$(dirname "$0")/.."
 
 REPORT="${REPORT:-prod-health}"
 case "$REPORT" in
-  prod-health|unmatched-listings|amazon-uk-vat|channel-duplicates|zero-vat-orders|vat-scope-impact|nonvat-country-rates|migration-state|vat-flag-drift|onbuy-vat-signal|sku-listing-trace|sku-phantom-origin|listing-row-collisions|push-coverage|sku-alias-check|alias-listing-coverage) ;;
+  prod-health|unmatched-listings|amazon-uk-vat|channel-duplicates|zero-vat-orders|vat-scope-impact|nonvat-country-rates|migration-state|vat-flag-drift|onbuy-vat-signal|sku-listing-trace|sku-phantom-origin|listing-row-collisions|push-coverage|sku-alias-check|alias-listing-coverage|vat-order-review|marketplace-vat-overstated|country-rate-check|regime-vat-impact) ;;
   *) echo "Unknown report: $REPORT (allowed: prod-health, unmatched-listings, amazon-uk-vat, channel-duplicates, zero-vat-orders, vat-scope-impact, nonvat-country-rates, migration-state, vat-flag-drift)" >&2; exit 1 ;;
 esac
 
