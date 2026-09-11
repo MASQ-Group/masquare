@@ -1,3 +1,4 @@
+import { pickLiveListing } from '../channel-listings/pick-live-listing';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { evaluateEligibility, type MarketProfile, type ProductTechnical } from './eligibility';
@@ -208,11 +209,17 @@ export class ListingService {
 
       const profile = profileFor(integration.channelType, integration.marketplace);
 
-      // eBay splits one integration across marketplaces, so match on both where it carries one.
-      const live = liveListings.find(
+      /**
+       * eBay splits one integration across marketplaces, so match on both where it carries one.
+       *
+       * `find` took whichever row the query returned first, and the query has no ORDER BY — so a
+       * marketplace holding a second SKU with no offer could hand the card the empty one. It did:
+       * Amazon UK read as Paused with no quantity while the listing beside it had 19 units.
+       */
+      const live = pickLiveListing(liveListings.filter(
         (l) => l.integrationId === integration.id
           && (l.marketplace === '' || l.marketplace === (integration.marketplace ?? '')),
-      );
+      ));
 
       return {
         integrationId: integration.id,

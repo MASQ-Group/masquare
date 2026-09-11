@@ -10,6 +10,7 @@ import { planTransition } from './plan-transition';
 import { fullScopeIntegrationWhere } from '../common/amazon-scope';
 import { settlePushQueue, type PushResult } from './push-queue-settle';
 import { buildSkuOwnerIndex, normaliseSku, relinkAction } from './sku-match';
+import { pickLiveListing, pickLiveListingsByKey } from './pick-live-listing';
 
 const ACTIVE = { deletedAt: null };
 // Per-channel accent dots (fallback palette; overridden by the SalesChannel chip colour if set).
@@ -1219,7 +1220,9 @@ export class ChannelListingsService implements OnApplicationBootstrap {
           id: true, mainSku: true, title: true,
           brand: { select: { name: true } },
           availability: { select: { quantity: true } },
-          channelListings: { where: query.companyIds ? { companyId: { in: query.companyIds } } : undefined, select: { integrationId: true, marketplace: true, channelSku: true, asin: true, listedPrice: true, currency: true, listedQuantity: true, fulfilmentChannel: true, listingStatus: true } },
+          channelListings: { where: query.companyIds ? { companyId: { in: query.companyIds } } : undefined, // lastPulledAt so this screen breaks a tie on the same evidence the detail page has; without
+            // it the two could pick different SKUs for one product.
+            select: { integrationId: true, marketplace: true, channelSku: true, asin: true, listedPrice: true, currency: true, listedQuantity: true, fulfilmentChannel: true, listingStatus: true, lastPulledAt: true } },
         },
       }),
     ]);
@@ -1228,7 +1231,12 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     const colId = (l: any) => (l.marketplace ? `${l.integrationId}:${l.marketplace}` : l.integrationId);
     const rows = products.map((p) => {
       const cells: Record<string, any> = {};
-      for (const l of p.channelListings) cells[colId(l)] = this.cellOf(l);
+      /**
+       * One cell per column, and the LISTING in it — not whichever row the loop happened to write
+       * last. A marketplace can return a second SKU with no offer behind it, and assigning blindly
+       * let that decide the cell: IT68277 showed no stock on Amazon UK while 19 units sat live.
+       */
+      for (const [key, l] of pickLiveListingsByKey(p.channelListings, colId)) cells[key] = this.cellOf(l);
       return {
         productId: p.id, sku: p.mainSku, title: p.title, brand: p.brand?.name ?? null,
         masterStock: p.availability?.quantity ?? null,
@@ -1377,7 +1385,12 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     // Amazon and OnBuy. Keying by it meant every eBay lookup missed and the product page reported
     // "Not listed" on all eight — and even had it matched, eight rows sharing one integration id
     // would have collapsed to whichever came last.
-    const byInt = new Map(p.channelListings.map((l) => [l.marketplace ? `${l.integrationId}:${l.marketplace}` : l.integrationId, l]));
+    // Same collapse the note above warns about, and the same fix: where a column holds more than
+    // one row, the one carrying an offer wins rather than the one that happened to come last.
+    const byInt = pickLiveListingsByKey(
+      p.channelListings,
+      (l) => (l.marketplace ? `${l.integrationId}:${l.marketplace}` : l.integrationId),
+    );
     const econInputs = channels
       .filter((ch) => ch.salesChannelId && byInt.get(ch.id)?.listedPrice != null)
       .map((ch) => ({ key: ch.id, productId: p.id, salesChannelId: ch.salesChannelId!, grossNative: byInt.get(ch.id)!.listedPrice, currency: byInt.get(ch.id)!.currency }));
