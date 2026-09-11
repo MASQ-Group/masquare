@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { channelThresholdApplies, taxRegimeFor } from './vat-scope';
+import { channelThresholdApplies, rateBeforeCountryFallback, taxRegimeFor } from './vat-scope';
 
 const uk = { thresholdEnabled: true, thresholdAmount: 135, channelHomeIso: 'GB', destinationIso: 'GB' };
 
@@ -89,5 +89,38 @@ describe('taxRegimeFor', () => {
   /** GB is not in the EU VAT zone and must not depend on that flag being set. */
   it('does not rely on euVatZone for the UK', () => {
     expect(taxRegimeFor({ isoCode: 'GB', euVatZone: false })).toBe('vat');
+  });
+});
+
+describe('rateBeforeCountryFallback', () => {
+  /**
+   * The ordering, which is the whole reason this is a function. Both rows describe a UK channel
+   * selling into the UK under £135 with a 20% threshold configured — and Amazon gives them
+   * opposite answers, because one is VOEC and the other is Northern Ireland.
+   */
+  it('zeroes a collected order even where the threshold would have charged 20%', () => {
+    expect(rateBeforeCountryFallback({ collectedByChannel: true, thresholdPct: 20 })).toBe(0);
+  });
+
+  it('keeps the threshold rate where the channel did not collect', () => {
+    expect(rateBeforeCountryFallback({ collectedByChannel: false, thresholdPct: 20 })).toBe(20);
+  });
+
+  /** Above the threshold the channel rule already answers 0 — for a different reason, same number. */
+  it('passes an above-threshold zero through', () => {
+    expect(rateBeforeCountryFallback({ collectedByChannel: false, thresholdPct: 0 })).toBe(0);
+  });
+
+  /**
+   * Null is "no rule of ours applies", not "zero". The caller then reads the DESTINATION's rate —
+   * which is how an Amazon UK sale into Ireland gets 23% rather than the UK's 20%.
+   */
+  it('falls through when no channel rule applies', () => {
+    expect(rateBeforeCountryFallback({ collectedByChannel: false, thresholdPct: null })).toBeNull();
+  });
+
+  /** Collection outranks the fall-through as well: there is nothing to look up if it is not ours. */
+  it('still zeroes a collected order with no threshold configured', () => {
+    expect(rateBeforeCountryFallback({ collectedByChannel: true, thresholdPct: null })).toBe(0);
   });
 });

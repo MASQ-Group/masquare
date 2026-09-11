@@ -9,7 +9,7 @@ import { ActivityService, type ActivitySource } from '../activity/activity.servi
 import { diffRecords } from '../activity/diff';
 import { SALES_TX_FIELD_LABELS, SALES_TX_REF_FIELDS, SALES_TX_REF_NAME_FIELD } from '../activity/sales-transaction-fields';
 import { channelRemitsTheVat, marketplaceRemitsTax, withoutChannelCollectedTax } from '../integrations/mappings/tax-collection';
-import { channelThresholdApplies, taxRegimeFor } from './vat-scope';
+import { channelThresholdApplies, rateBeforeCountryFallback, taxRegimeFor } from './vat-scope';
 import type { ProgressSink } from '../jobs/jobs.service';
 // Type-only: importing the class value here would form a runtime ES-module cycle
 // (sales-transactions -> channel-listings -> integrations -> sales-transactions). Resolved at
@@ -1911,7 +1911,7 @@ export class SalesTransactionsService {
       : channel.vatAboveThresholdPct ?? null;
   }
 
-  /** Destination VAT %: user override → channel threshold rule → country rate. */
+  /** Destination VAT %: user override → zero where the channel collected → threshold rule → country rate. */
   /** ISO-2 of a destination country, or null. The VAT scope rule turns on it. */
   private async destinationIso(countryId: string | null): Promise<string | null> {
     if (!countryId) return null;
@@ -1924,9 +1924,27 @@ export class SalesTransactionsService {
     channel: any,
     intrinsicValue: number,
     destCountryId: string | null,
+    vatCollectedByChannel: boolean,
   ): Promise<{ pct: number | null; overridden: boolean }> {
     if (dto.vatOverridden && dto.destinationVatPct != null) return { pct: dto.destinationVatPct, overridden: true };
-    const ruleVat = this.channelVatPct(channel, intrinsicValue, await this.destinationIso(destCountryId));
+
+    /**
+     * Where the marketplace collected and keeps the tax, OUR rate is zero.
+     *
+     * It has to come before the threshold rule, because the threshold cannot tell the two apart. A
+     * UK channel, a UK destination and a value under £135 describes both a VOEC order Amazon
+     * collects on AND a Northern Ireland order that is ours at 20% — the same three facts, opposite
+     * answers. Only the channel's report separates them, which is why the rate now turns on it.
+     *
+     * Amazon's own VAT report agrees: rate 0 and VAT 0 on every UK_VOEC-IMPORT order, against 20%
+     * on the three Newry and Portadown ones in the same month.
+     */
+    const ruleVat = rateBeforeCountryFallback({
+      collectedByChannel: vatCollectedByChannel,
+      thresholdPct: vatCollectedByChannel
+        ? null
+        : this.channelVatPct(channel, intrinsicValue, await this.destinationIso(destCountryId)),
+    });
     if (ruleVat != null) return { pct: ruleVat, overridden: false };
 
     /**
@@ -2116,10 +2134,6 @@ export class SalesTransactionsService {
       : feeCurrency && feeCurrency !== currency ? await this.rateForChannel(channel, feeCurrency, dto.date) : exchangeRate;
     // Intrinsic (ex-VAT, goods-only) value for the marketplace VAT threshold — net sales, no VAT, no shipping.
     const overall = (dto.items ?? []).reduce((s, i) => s + n(i.netSalesAmount), 0);
-    // Local VAT lives per line, so the transaction-level destination rate stays null.
-    const { pct: destinationVatPct, overridden: vatOverridden } = isLocal
-      ? { pct: null, overridden: false }
-      : await this.resolveDestinationVat(dto, channel, overall, dto.destinationCountryId ?? null);
     /**
      * Does the MARKETPLACE owe this order's VAT instead of us?
      *
@@ -2140,6 +2154,13 @@ export class SalesTransactionsService {
       taxType,
       belowChannelThreshold: this.belowChannelThreshold(channel, overall),
     });
+    /**
+     * The rate comes AFTER, because it depends on the answer above. Local VAT lives per line, so
+     * the transaction-level destination rate stays null there.
+     */
+    const { pct: destinationVatPct, overridden: vatOverridden } = isLocal
+      ? { pct: null, overridden: false }
+      : await this.resolveDestinationVat(dto, channel, overall, dto.destinationCountryId ?? null, vatCollectedByChannel);
     // Refuse an incomplete submission before the row exists, so a rejected transaction
     // leaves nothing behind.
     const serialWork = await this.resolveSerialConsumption(
@@ -2555,9 +2576,6 @@ export class SalesTransactionsService {
     const resolvedServiceId = isLocal ? null : await this.resolveShippingService(dto.shippingServiceId, destCountryId);
     // Intrinsic (ex-VAT, goods-only) value for the marketplace VAT threshold — net sales, no VAT, no shipping.
     const overall = (dto.items ?? existing.items).reduce((s: number, i: any) => s + n(i.netSalesAmount), 0);
-    const { pct: destinationVatPct, overridden: vatOverridden } = isLocal
-      ? { pct: null, overridden: false }
-      : await this.resolveDestinationVat(dto, channel, overall, destCountryId);
     // Same decision on update; an omitted items array leaves the existing lines to speak.
     const taxType = isLocal ? 'vat' : await this.resolveTaxType(destCountryId);
     const vatCollectedByChannel = !isLocal && channelRemitsTheVat({
@@ -2569,6 +2587,10 @@ export class SalesTransactionsService {
       taxType,
       belowChannelThreshold: this.belowChannelThreshold(channel, overall),
     });
+    // The rate depends on the answer above, so it is resolved after it.
+    const { pct: destinationVatPct, overridden: vatOverridden } = isLocal
+      ? { pct: null, overridden: false }
+      : await this.resolveDestinationVat(dto, channel, overall, destCountryId, vatCollectedByChannel);
     // An omitted discount field means "leave as it was", not "clear it".
     const discountType = dto.discountType === undefined ? existing.discountType : dto.discountType;
     const discountValue = dto.discountValue === undefined ? existing.discountValue : dto.discountValue;
@@ -2789,8 +2811,16 @@ export class SalesTransactionsService {
           : await this.resolveShippingService(t.shippingServiceId, t.destinationCountryId);
       // Intrinsic (ex-VAT, goods-only) value for the marketplace VAT threshold — net sales, no VAT, no shipping.
       const overall = t.items.reduce((s: number, i: any) => s + n(i.netSalesAmount), 0);
+      /**
+       * The STORED answer to who collected, not a fresh one. This sweep re-derives money from facts
+       * already established; whether the marketplace took the tax is the channel's statement, made
+       * when the order was imported, and is not this job's to revisit.
+       */
       const { pct: destinationVatPct, overridden: vatOverridden } =
-        await this.resolveDestinationVat({ vatOverridden: t.vatOverridden, destinationVatPct: t.destinationVatPct }, channel, overall, t.destinationCountryId);
+        await this.resolveDestinationVat(
+          { vatOverridden: t.vatOverridden, destinationVatPct: t.destinationVatPct },
+          channel, overall, t.destinationCountryId, t.vatCollectedByChannel ?? false,
+        );
 
       const itemUpdates = t.items
         .map((it) => ({ id: it.id, current: it.productId ?? null, next: skuToProduct.get((it.sku ?? '').trim().toLowerCase()) ?? null }))

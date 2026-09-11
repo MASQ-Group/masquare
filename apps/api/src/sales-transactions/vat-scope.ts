@@ -70,3 +70,28 @@ export function taxRegimeFor(c: { isoCode?: string | null; euVatZone?: boolean |
    */
   return 'none';
 }
+
+/**
+ * The rate before the destination country's own is consulted, or null to fall through to it.
+ *
+ * Exists for its ORDER, which is the part that can regress without anybody noticing. Where the
+ * marketplace collected and keeps the tax, our rate is zero — and that has to be settled BEFORE the
+ * consignment threshold, because the threshold cannot tell the two cases apart:
+ *
+ *   a UK channel, a UK destination, under £135, VOEC        Amazon's — our rate is 0%
+ *   a UK channel, a UK destination, under £135, N. Ireland  ours — 20%
+ *
+ * Three identical facts, opposite answers. Only the channel's own report separates them. Amazon's
+ * VAT report says as much: rate 0 on all 61 UK_VOEC orders in May, 20% on the three Newry and
+ * Portadown ones beside them.
+ *
+ * Returns null rather than a number when neither rule applies, so the caller can keep the country
+ * lookup lazy — most saves never need it.
+ */
+export function rateBeforeCountryFallback(input: {
+  collectedByChannel: boolean;
+  thresholdPct: number | null;
+}): number | null {
+  if (input.collectedByChannel) return 0;
+  return input.thresholdPct;
+}
