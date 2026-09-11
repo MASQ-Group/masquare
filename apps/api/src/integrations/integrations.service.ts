@@ -2731,8 +2731,17 @@ export class IntegrationsService implements OnModuleInit {
       ctx?.note(`${row.name}: ${orders.length} order(s)`);
 
       for (const t of orders) {
+        let ok = true;
         try {
           const items = await this.amazonGetOrderItems(endpoint, token, t.transactionRef);
+          /**
+           * getOrderItems allows roughly 0.5 requests a second. Without this the loop ran flat out,
+           * took its 429s and leaned on retry-with-backoff to absorb them — which mostly works, and
+           * costs a retry budget and a lot of waiting to arrive where a pause would have gone
+           * directly. The fee repair beside this one has always paused; this one was written without
+           * it and a 670-order run found the difference.
+           */
+          await sleep(300);
           /**
            * `some`, not `every`. The threshold applies to the whole consignment so the lines agree
            * in practice, but a line Amazon flagged must not be dropped by a sibling that carried no
@@ -2768,10 +2777,19 @@ export class IntegrationsService implements OnModuleInit {
             notCollected += 1;
           }
         } catch (e: any) {
+          ok = false;
           failed += 1;
           ctx?.note(`${t.transactionRef}: ${e?.message ?? e}`);
         }
-        ctx?.tick(true);
+        /**
+         * `ok`, not `true`.
+         *
+         * This ticked every order as a success, including the ones it had just counted as failures,
+         * so the job reported "0 failed" while orders were dropping out of a run somebody was
+         * watching. The honest count only appeared at the end, in the returned result, by which
+         * point the reassuring number had already been believed.
+         */
+        ctx?.tick(ok);
       }
     }
 
