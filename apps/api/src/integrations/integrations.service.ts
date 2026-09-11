@@ -2581,7 +2581,7 @@ export class IntegrationsService implements OnModuleInit {
             nativeCountry: { select: { isoCode: true } },
           },
         },
-        items: { where: { deletedAt: null }, select: { netSalesAmount: true } },
+        items: { where: { deletedAt: null }, select: { netSalesAmount: true, vatAmount: true } },
       },
     });
 
@@ -2591,6 +2591,7 @@ export class IntegrationsService implements OnModuleInit {
     for (const t of rows) {
       const ch = t.salesChannel;
       const net = t.items.reduce((s, i) => s + (i.netSalesAmount ?? 0), 0);
+      const vat = t.items.reduce((s, i) => s + (i.vatAmount ?? 0), 0);
       const scope = {
         channelConnector: t.source,
         channelHomeIso: ch?.nativeCountry?.isoCode ?? null,
@@ -2604,7 +2605,16 @@ export class IntegrationsService implements OnModuleInit {
 
       if (t.source === 'onbuy') {
         const want = channelRemitsTheVat({ ...scope, reportedByChannel: false });
-        if (want && !t.vatCollectedByChannel) toTrue.push(t.id);
+        /**
+         * `vat > 0` to set it, and not to clear it.
+         *
+         * An order with no VAT recorded has nothing for anyone to have collected, so flagging it
+         * would assert something about money that never moved — the same reason the Amazon pass
+         * filters those out, and four real OnBuy orders on production sit exactly there. Clearing
+         * carries no such claim: taking back a flag that should not be there is right whatever the
+         * amounts say.
+         */
+        if (want && !t.vatCollectedByChannel && vat > 0) toTrue.push(t.id);
         if (!want && t.vatCollectedByChannel) toFalse.push(t.id);
         continue;
       }
