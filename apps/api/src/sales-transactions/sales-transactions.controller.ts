@@ -227,6 +227,24 @@ export class SalesTransactionsController {
     return this.svc.recalculate(body?.ids);
   }
 
+  /**
+   * Take the channel's own tax off historical orders — what `withoutChannelCollectedTax` now
+   * prevents on the way in.
+   *
+   * Admin only and off every page, like the other repairs: it rewrites figures the revenue and
+   * margin reports are built from. Without `confirm` it writes nothing and returns the totals by
+   * channel and by month, so the movement can be checked against the channels' own reports first.
+   */
+  @Post('repair-channel-collected-tax')
+  repairChannelCollectedTax(
+    @Body() dto: { confirm?: boolean },
+    @CurrentUser() user: AuthUser,
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    if (!user.isAdmin) throw new ForbiddenException('Admin only');
+    return this.svc.repairChannelCollectedTax({ confirm: dto?.confirm === true, companyIds });
+  }
+
   @Get('unlock-requests')
   listUnlockRequests(@CurrentUser() user: AuthUser) {
     if (!user.isAdmin) throw new ForbiddenException('Admin only');

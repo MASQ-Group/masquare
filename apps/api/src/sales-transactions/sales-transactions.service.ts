@@ -10,6 +10,7 @@ import { diffRecords } from '../activity/diff';
 import { SALES_TX_FIELD_LABELS, SALES_TX_REF_FIELDS, SALES_TX_REF_NAME_FIELD } from '../activity/sales-transaction-fields';
 import { channelRemitsTheVat, marketplaceRemitsTax, withoutChannelCollectedTax } from '../integrations/mappings/tax-collection';
 import { channelThresholdApplies, taxRegimeFor } from './vat-scope';
+import type { ProgressSink } from '../jobs/jobs.service';
 // Type-only: importing the class value here would form a runtime ES-module cycle
 // (sales-transactions -> channel-listings -> integrations -> sales-transactions). Resolved at
 // call time via ModuleRef using the string token instead.
@@ -3087,5 +3088,108 @@ export class SalesTransactionsService {
         : []),
     ]);
     return { ok: true };
+  }
+
+  /**
+   * Take the channel's own tax off orders that predate the rule, line by line.
+   *
+   * Going forward, tax the marketplace charged and keeps never reaches `vatAmount` — see
+   * `withoutChannelCollectedTax`. Orders already stored still carry it, and it still lands in
+   * `sellerBaseNative`, which is what `revenueIncVatEur` and the margin percentage are built from.
+   * So until this runs, the reported revenue of every historical order the channel collected on is
+   * overstated by exactly the tax somebody else kept.
+   *
+   * Reversible by construction. `salesTaxAmount` holds the same figure and is never touched, so
+   * nothing is lost — an order whose line VAT this zeroes can still say what the buyer paid. Rows
+   * where that is NOT true are refused rather than emptied, because there the figure would be gone.
+   *
+   * The RATE is deliberately left alone. `destinationVatPct` is still derived from the channel
+   * threshold, and repairing it before that rule is fixed would only let the next sync undo the
+   * repair. It belongs with its own forward fix, not this one.
+   *
+   * @param confirm false counts and totals without writing.
+   */
+  async repairChannelCollectedTax(
+    opts: { confirm?: boolean; companyIds?: string[] } = {},
+    ctx?: ProgressSink,
+  ) {
+    const txs = await this.prisma.salesTransaction.findMany({
+      where: {
+        deletedAt: null,
+        salesChannelId: { not: null },
+        /**
+         * Never a row somebody set by hand. A person who typed a VAT figure was answering a
+         * question about this order, and a sweep must not overrule them without being asked.
+         */
+        vatOverridden: false,
+        ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : {}),
+      },
+      select: {
+        id: true, transactionRef: true, date: true, taxType: true, vatCollectedByChannel: true,
+        salesChannel: { select: { name: true } },
+        items: {
+          where: { deletedAt: null },
+          select: { id: true, vatAmount: true, shippingAmountVat: true, salesTaxAmount: true },
+        },
+      },
+    });
+
+    const toZero: string[] = [];
+    const byChannel: Record<string, { orders: number; tax: number }> = {};
+    const byMonth: Record<string, number> = {};
+    const refused: string[] = [];
+    let orders = 0;
+    let tax = 0;
+
+    for (const t of txs) {
+      if (!marketplaceRemitsTax({ taxType: t.taxType, vatCollectedByChannel: t.vatCollectedByChannel })) continue;
+      const carrying = t.items.filter((i) => (i.vatAmount ?? 0) !== 0 || (i.shippingAmountVat ?? 0) !== 0);
+      if (carrying.length === 0) continue;
+
+      /**
+       * Only where the figure survives elsewhere. `salesTaxAmount` is what every mapping records the
+       * channel as having charged; if a line has VAT but no such total, zeroing it would delete the
+       * only copy. Those are reported instead — a short list somebody can look at.
+       */
+      const wouldLose = carrying.filter((i) => (i.salesTaxAmount ?? 0) === 0);
+      if (wouldLose.length) {
+        if (refused.length < 50) refused.push(t.transactionRef);
+        continue;
+      }
+
+      orders += 1;
+      const amount = carrying.reduce((sum, i) => sum + (i.vatAmount ?? 0) + (i.shippingAmountVat ?? 0), 0);
+      tax += amount;
+      const ch = t.salesChannel?.name ?? '—';
+      byChannel[ch] = { orders: (byChannel[ch]?.orders ?? 0) + 1, tax: (byChannel[ch]?.tax ?? 0) + amount };
+      const mth = t.date.toISOString().slice(0, 7);
+      byMonth[mth] = (byMonth[mth] ?? 0) + amount;
+      for (const i of carrying) toZero.push(i.id);
+    }
+
+    const summary = {
+      orders,
+      lines: toZero.length,
+      /** Native currency, summed across channels — GBP, USD and AUD do not add up to one figure. */
+      taxRemoved: Math.round(tax * 100) / 100,
+      byChannel,
+      byMonth,
+      refusedNoSalesTax: refused.length,
+      refusedExamples: refused.slice(0, 10),
+    };
+
+    if (!opts.confirm) return { dryRun: true as const, ...summary };
+
+    ctx?.setTotal(toZero.length);
+    for (let i = 0; i < toZero.length; i += 500) {
+      const slice = toZero.slice(i, i + 500);
+      await this.prisma.salesTransactionItem.updateMany({
+        where: { id: { in: slice } },
+        data: { vatAmount: 0, shippingAmountVat: 0 },
+      });
+      for (let n = 0; n < slice.length; n += 1) ctx?.tick(true);
+    }
+    this.logger.log(`Channel-collected tax repair: ${orders} order(s), ${toZero.length} line(s), ${summary.taxRemoved} removed.`);
+    return { dryRun: false as const, ...summary };
   }
 }
