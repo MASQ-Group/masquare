@@ -231,7 +231,7 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
                 it is deliberately outside the VAT total above — but it is real money that moved
                 through the order, and a VAT return has to be able to account for it. Shown only
                 where there is some, so it never adds an empty row to a domestic sale. */}
-            {t.salesTax > 0 && (
+            {t.salesTax > 0 && t.marketplaceRemitsTax && (
               <Fact label={`${t.taxLabel} collected by the marketplace`} value={money(t.salesTax, ccy)} mono />
             )}
             <Fact label="Package weight (kg)" value={t.overallPackageWeight != null ? String(t.overallPackageWeight) : '—'} mono />
@@ -292,7 +292,7 @@ export function SalesTransactionSummaryModal({ transaction: t0, onClose, onEdit,
             */}
             {t.salesTax > 0 && (
               <Fact
-                label={`${t.taxLabel} collected · ${t.vatCollectedByChannel ? 'remitted by the channel' : 'neutral'}`}
+                label={`${t.taxLabel} ${t.marketplaceRemitsTax ? 'collected · remitted by the channel' : 'charged · ours to remit'}`}
                 value={`${money(t.salesTax, ccy)}${t.salesTaxEur != null && ccy !== 'EUR' ? ` · €${t.salesTaxEur.toFixed(2)}` : ''}`}
                 mono
               />

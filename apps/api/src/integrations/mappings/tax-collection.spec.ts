@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { anyMarketplaceFacilitator, channelRemitsTheVat, isMarketplaceFacilitator } from './tax-collection';
+import {
+  anyMarketplaceFacilitator, channelRemitsTheVat, isMarketplaceFacilitator, marketplaceRemitsTax,
+} from './tax-collection';
 
 const facilitator = { TaxCollection: { Model: 'MarketplaceFacilitator', ResponsibleParty: 'Amazon Services, Inc.' } };
 const standard = { TaxCollection: { Model: 'Standard' } };
@@ -61,20 +63,21 @@ describe('anyMarketplaceFacilitator', () => {
   });
 });
 
-/**
- * The scope rule, which is where I got it wrong: I let the channel's report alone decide, so every
- * facilitator order on every marketplace read as "not our VAT". Amazon is a facilitator for US sales
- * tax, Australian GST and Japanese consumption tax too, and EU-destined sales carry VAT we collect
- * and remit ourselves whatever an API reports.
- */
 describe('channelRemitsTheVat', () => {
-  const uk = { reportedByChannel: true, channelHomeIso: 'GB', destinationIso: 'GB', taxType: 'vat' };
+  const uk = {
+    reportedByChannel: true,
+    channelConnector: 'amazon',
+    channelHomeIso: 'GB',
+    destinationIso: 'GB',
+    taxType: 'vat',
+    belowChannelThreshold: true,
+  };
 
   it('is true for a UK-destined VAT sale the channel says it collected', () => {
     expect(channelRemitsTheVat(uk)).toBe(true);
   });
 
-  /** The half I originally omitted. An EU sale is our liability however Amazon reports it. */
+  /** The half originally omitted. An EU sale is our liability however Amazon reports it. */
   it('is false for an EU destination even when the channel reported collecting', () => {
     for (const iso of ['DE', 'FR', 'IE', 'ES', 'IT', 'CY']) {
       expect(channelRemitsTheVat({ ...uk, destinationIso: iso })).toBe(false);
@@ -88,47 +91,116 @@ describe('channelRemitsTheVat', () => {
     expect(channelRemitsTheVat({ ...uk, taxType: 'sales_tax', destinationIso: 'US' })).toBe(false);
   });
 
-  /** Without the channel saying so there is nothing to act on — the threshold must not stand in. */
-  it('is false when the channel reported nothing, UK or not', () => {
+  it('is false when a reporting channel reported nothing', () => {
     expect(channelRemitsTheVat({ ...uk, reportedByChannel: false })).toBe(false);
+    expect(channelRemitsTheVat({ ...uk, reportedByChannel: false, channelConnector: 'ebay' })).toBe(false);
   });
 
-  it('is false when the destination is unknown', () => {
+  /**
+   * A missing report from Amazon is a fault in the sync, not evidence of anything. Inferring from
+   * the threshold there would paper over exactly the gap worth noticing — which is why the
+   * exception below is a list of channels and not a rule about absent data.
+   */
+  it('does not let the threshold stand in for a report Amazon should have sent', () => {
+    expect(channelRemitsTheVat({ ...uk, reportedByChannel: false, belowChannelThreshold: true })).toBe(false);
+  });
+
+  it('is false when the destination or the channel home is unknown', () => {
     expect(channelRemitsTheVat({ ...uk, destinationIso: null })).toBe(false);
     expect(channelRemitsTheVat({ ...uk, destinationIso: '' })).toBe(false);
+    expect(channelRemitsTheVat({ ...uk, channelHomeIso: null })).toBe(false);
   });
 
-  /** Stored ISO codes vary in case and padding; the rule must not turn that into a tax decision. */
-  it('reads the destination code tolerantly', () => {
-    expect(channelRemitsTheVat({ ...uk, destinationIso: 'gb' })).toBe(true);
-    expect(channelRemitsTheVat({ ...uk, destinationIso: ' GB ' })).toBe(true);
+  it('reads country codes tolerantly', () => {
+    expect(channelRemitsTheVat({ ...uk, destinationIso: ' gb ', channelHomeIso: 'gb' })).toBe(true);
   });
 
-  /** A missing regime means the ordinary one — VAT — rather than a reason to refuse. */
   it('treats an unset tax type as VAT', () => {
     expect(channelRemitsTheVat({ ...uk, taxType: null })).toBe(true);
   });
 
-  /**
-   * Both ends must be the UK, not the destination alone.
-   *
-   * Amazon DE collects on a sale into the UK under the threshold too, and by destination alone that
-   * would read as relief on a German sale. Whether it is relief is a question about which VAT
-   * registration the sale sits under — a question for the business, not for this function — so the
-   * narrow answer stands until somebody widens it deliberately.
-   */
+  /** Both ends must be the UK — an Amazon DE sale into the UK is deliberately excluded. */
   it('needs the selling channel to be the UK one, not just the destination', () => {
     for (const iso of ['DE', 'FR', 'US', 'IE']) {
       expect(channelRemitsTheVat({ ...uk, channelHomeIso: iso })).toBe(false);
     }
   });
 
-  it('is false when the channel has no home country recorded', () => {
-    expect(channelRemitsTheVat({ ...uk, channelHomeIso: null })).toBe(false);
-    expect(channelRemitsTheVat({ ...uk, channelHomeIso: '' })).toBe(false);
+  /**
+   * OnBuy collects under the threshold but has no field in which to say so — no equivalent of
+   * Amazon's TaxCollection or eBay's collect-and-remit lines. Held to the report like the others,
+   * every OnBuy order would read as our liability when none of it is.
+   */
+  describe('OnBuy, which never reports', () => {
+    const onbuy = { ...uk, channelConnector: 'onbuy', reportedByChannel: false };
+
+    it('is true under the threshold, on the evidence of the threshold alone', () => {
+      expect(channelRemitsTheVat(onbuy)).toBe(true);
+    });
+
+    /**
+     * Above £135 OnBuy does not collect, and a channel with no threshold configured is not "under"
+     * it either. Nothing known means nothing claimed — this is the only evidence OnBuy gives us,
+     * and its absence is not a yes.
+     */
+    it('is false above the threshold, and when no threshold is configured', () => {
+      expect(channelRemitsTheVat({ ...onbuy, belowChannelThreshold: false })).toBe(false);
+    });
+
+    /** The exception is about the missing report, not about OnBuy escaping the other rules. */
+    it('still needs a UK channel, a UK destination and a VAT regime', () => {
+      expect(channelRemitsTheVat({ ...onbuy, destinationIso: 'DE' })).toBe(false);
+      expect(channelRemitsTheVat({ ...onbuy, channelHomeIso: 'DE' })).toBe(false);
+      expect(channelRemitsTheVat({ ...onbuy, taxType: 'sales_tax' })).toBe(false);
+    });
+
+    it('reads the connector name tolerantly', () => {
+      expect(channelRemitsTheVat({ ...onbuy, channelConnector: ' OnBuy ' })).toBe(true);
+    });
+
+    it('does not extend the exception to a channel with no integration', () => {
+      expect(channelRemitsTheVat({ ...onbuy, channelConnector: null })).toBe(false);
+    });
+  });
+});
+
+/**
+ * The display rule. Every screen was gating on "is there any tax at all", which put "collected by
+ * the marketplace — not ours to pay" on an Amazon FR sale's own French VAT: the same money already
+ * inside the gross, shown again beneath it under someone else's name.
+ */
+describe('marketplaceRemitsTax', () => {
+  it('is false for our own VAT, which is inside the gross already', () => {
+    expect(marketplaceRemitsTax({ taxType: 'vat', vatCollectedByChannel: false })).toBe(false);
   });
 
-  it('reads the channel code tolerantly too', () => {
-    expect(channelRemitsTheVat({ ...uk, channelHomeIso: ' gb ' })).toBe(true);
+  it('is true for VAT the channel reported collecting', () => {
+    expect(marketplaceRemitsTax({ taxType: 'vat', vatCollectedByChannel: true })).toBe(true);
+  });
+
+  /** Added at checkout on top of our price — never ours, whatever the VAT flag says. */
+  it('is true for GST and US sales tax regardless of the VAT flag', () => {
+    for (const regime of ['gst', 'sales_tax']) {
+      expect(marketplaceRemitsTax({ taxType: regime, vatCollectedByChannel: false })).toBe(true);
+    }
+  });
+
+  /**
+   * Japan is the trap. Amazon collects the consumption tax but the SELLER keeps it — "Your
+   * earnings" retains it, which is how the revenue basis already treats it. Lumping JCT in with
+   * the other channel-collected taxes would take it out of revenue.
+   */
+  it('is false for Japanese consumption tax, which the seller keeps', () => {
+    expect(marketplaceRemitsTax({ taxType: 'jct', vatCollectedByChannel: false })).toBe(false);
+    expect(marketplaceRemitsTax({ taxType: 'jct', vatCollectedByChannel: true })).toBe(false);
+  });
+
+  it('treats an absent regime as VAT', () => {
+    expect(marketplaceRemitsTax({ taxType: null, vatCollectedByChannel: false })).toBe(false);
+    expect(marketplaceRemitsTax({ taxType: undefined, vatCollectedByChannel: true })).toBe(true);
+  });
+
+  it('reads the regime tolerantly', () => {
+    expect(marketplaceRemitsTax({ taxType: ' SALES_TAX ', vatCollectedByChannel: false })).toBe(true);
   });
 });

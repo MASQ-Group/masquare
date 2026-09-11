@@ -2280,6 +2280,8 @@ export interface SalesTransaction {
    * declare. Read from the marketplace's own payload, never inferred from the £135 threshold.
    */
   vatCollectedByChannel: boolean;
+  /** `salesTax` is money the channel keeps, not tax we collect and hand over. Decided server-side. */
+  marketplaceRemitsTax: boolean;
   destinationCountryVatPct: number | null;
   taxType: string | null;
   taxLabel: string;

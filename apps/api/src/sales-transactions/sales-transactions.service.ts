@@ -8,7 +8,7 @@ import { AvailabilityService } from '../availability/availability.service';
 import { ActivityService, type ActivitySource } from '../activity/activity.service';
 import { diffRecords } from '../activity/diff';
 import { SALES_TX_FIELD_LABELS, SALES_TX_REF_FIELDS, SALES_TX_REF_NAME_FIELD } from '../activity/sales-transaction-fields';
-import { channelRemitsTheVat } from '../integrations/mappings/tax-collection';
+import { channelRemitsTheVat, marketplaceRemitsTax } from '../integrations/mappings/tax-collection';
 import { channelThresholdApplies, taxRegimeFor } from './vat-scope';
 // Type-only: importing the class value here would form a runtime ES-module cycle
 // (sales-transactions -> channel-listings -> integrations -> sales-transactions). Resolved at
@@ -709,6 +709,15 @@ export class SalesTransactionsService {
       vatOverridden: t.vatOverridden,
       /** The marketplace charged and remits this order's VAT, so none of it is ours to declare. */
       vatCollectedByChannel: t.vatCollectedByChannel ?? false,
+      /**
+       * Whether `salesTax` is money the CHANNEL keeps, rather than tax we collect and hand over.
+       *
+       * Answered here so the three screens that show the figure cannot each decide differently.
+       * They were all gating on "is there any tax at all", which labelled an Amazon FR sale's own
+       * French VAT as collected by the marketplace — the same money already inside the gross,
+       * shown a second time and described as not ours.
+       */
+      marketplaceRemitsTax: marketplaceRemitsTax({ taxType, vatCollectedByChannel: t.vatCollectedByChannel }),
       overallPackageWeight,
       fulfilmentType: t.fulfilmentType ?? null,
       estimatedShippingCost,
@@ -1842,9 +1851,38 @@ export class SalesTransactionsService {
         include: { nativeCountry: { select: { isoCode: true } } },
       })
       : null;
+    /**
+     * Which marketplace connector sits behind this channel, if any.
+     *
+     * Needed because OnBuy never reports whether it collected the tax, so the rule has to know it is
+     * OnBuy. Taken from the integration rather than the channel's name — a channel someone renamed
+     * must not quietly change who owes HMRC. Null for a channel with no integration (a local or
+     * hand-made channel), which the rule treats as "no exception applies".
+     */
+    const integration = channel
+      ? await this.prisma.channelIntegration.findFirst({
+        where: { targetSalesChannelId: channel.id, deletedAt: null },
+        select: { channelType: true },
+      })
+      : null;
+
     const currency = channel?.nativeCurrency ?? null;
     const feeCurrency = channel ? (channel.feeChargedInNativeCurrency ? channel.nativeCurrency ?? null : channel.feeCurrency ?? null) : null;
-    return { channel, currency, feeCurrency };
+    return { channel, currency, feeCurrency, channelConnector: integration?.channelType ?? null };
+  }
+
+  /**
+   * Is this order under the channel's own consignment threshold?
+   *
+   * The same comparison `channelVatPct` makes, named once so the rate rule and the who-owes-it rule
+   * cannot drift apart — they are two answers to the same £135 question and must agree.
+   *
+   * A channel with no threshold configured is not "under" it: nothing is known, so nothing is
+   * claimed. That matters because this is the only evidence OnBuy gives us.
+   */
+  private belowChannelThreshold(channel: any, intrinsicValue: number): boolean {
+    if (!channel?.vatThresholdEnabled || channel.vatThresholdAmount == null) return false;
+    return intrinsicValue <= Number(channel.vatThresholdAmount);
   }
 
   /**
@@ -2059,7 +2097,7 @@ export class SalesTransactionsService {
 
   /** @param source 'sync' when the importer creates the order, 'user' when a person does. */
   async create(dto: CreateSalesTransactionDto, actorId?: string, source: ActivitySource = 'user') {
-    const { channel, currency, feeCurrency } = await this.channelInfo(dto.salesChannelId);
+    const { channel, currency, feeCurrency, channelConnector } = await this.channelInfo(dto.salesChannelId);
     // A local sale is invoiced by us in EUR: no FX, no marketplace fee, no carrier, and VAT
     // per line from the VAT class instead of a destination/threshold rule.
     const isLocal = channel?.kind === 'local';
@@ -2095,9 +2133,11 @@ export class SalesTransactionsService {
     const taxType = isLocal ? 'vat' : await this.resolveTaxType(dto.destinationCountryId ?? null);
     const vatCollectedByChannel = !isLocal && channelRemitsTheVat({
       reportedByChannel: (dto.items ?? []).some((it: any) => it.channelReportedTaxCollection === true),
+      channelConnector,
       channelHomeIso: (channel as any)?.nativeCountry?.isoCode ?? null,
       destinationIso: await this.destinationIso(dto.destinationCountryId ?? null),
       taxType,
+      belowChannelThreshold: this.belowChannelThreshold(channel, overall),
     });
     // Refuse an incomplete submission before the row exists, so a rejected transaction
     // leaves nothing behind.
@@ -2495,7 +2535,7 @@ export class SalesTransactionsService {
     this.assertCanEdit(existing, user);
 
     const channelId = dto.salesChannelId === undefined ? existing.salesChannelId : dto.salesChannelId;
-    const { channel, currency, feeCurrency } = await this.channelInfo(channelId);
+    const { channel, currency, feeCurrency, channelConnector } = await this.channelInfo(channelId);
     const isLocal = channel?.kind === 'local';
     const nextStatus = dto.status ?? existing.status;
     // Submitting re-locks it (unless the actor is an admin, who always retains access).
@@ -2517,9 +2557,11 @@ export class SalesTransactionsService {
     const vatCollectedByChannel = !isLocal && channelRemitsTheVat({
       reportedByChannel: ((dto.items ?? existing.items ?? []) as any[])
         .some((it: any) => it.channelReportedTaxCollection === true),
+      channelConnector,
       channelHomeIso: (channel as any)?.nativeCountry?.isoCode ?? null,
       destinationIso: await this.destinationIso(destCountryId),
       taxType,
+      belowChannelThreshold: this.belowChannelThreshold(channel, overall),
     });
     // An omitted discount field means "leave as it was", not "clear it".
     const discountType = dto.discountType === undefined ? existing.discountType : dto.discountType;

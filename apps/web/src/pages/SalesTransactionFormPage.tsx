@@ -828,7 +828,13 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                     received it, so folding it into the total would overstate the sale. It is here
                     because a VAT return still has to account for it. Read-only — the channel owns
                     this number, not us. */}
-                {!isLocal && (transaction?.salesTax ?? 0) > 0 && (
+                {/*
+                  Only where the CHANNEL keeps the money. Gated on "is there any tax at all", this
+                  claimed an Amazon FR sale's own French VAT was collected and remitted by Amazon —
+                  the same €6.62 already inside the gross, shown again below it and described as not
+                  ours to pay. The server decides; see `marketplaceRemitsTax`.
+                */}
+                {!isLocal && (transaction?.salesTax ?? 0) > 0 && transaction?.marketplaceRemitsTax && (
                   <div className="mt-4 border-t border-dashed border-n-200 pt-3">
                     <div className="flex items-baseline justify-between">
                       <span className="text-[13.5px] text-n-500">{taxShortLabel(transaction?.taxType)} collected by the marketplace</span>
@@ -931,15 +937,15 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                       {!isLocal && (t.salesTax ?? 0) > 0 && (
                         <div className="flex items-baseline justify-between border-t border-dashed border-n-200 pt-3">
                           <span className="text-[12.5px] text-n-500">
-                            {taxShortLabel(t.taxType)} collected by the marketplace
                             {/*
-                              "Neutral" describes the arithmetic; this says who owes it, which is
-                              what a VAT return needs. The flag comes from the channel's own payload
-                              — Amazon's TaxCollection, eBay's collect-and-remit lines — so the
-                              stronger wording only appears where the marketplace stated it.
+                              The label has to follow who owes it, not merely that a figure exists.
+                              "Collected by the marketplace · neutral" was a contradiction shown on
+                              every EU order: it said Amazon took the VAT and then that the sum was
+                              neutral, when in fact we charged it and we remit it.
                             */}
+                            {taxShortLabel(t.taxType)} {t.marketplaceRemitsTax ? 'collected by the marketplace' : 'charged on this order'}
                             <span className="ml-1 text-n-400">
-                              {t.vatCollectedByChannel ? '· remitted by the channel, not ours' : '· neutral'}
+                              {t.marketplaceRemitsTax ? '· remitted by the channel, not ours' : '· ours to remit, already in the totals'}
                             </span>
                           </span>
                           <div className="text-right">

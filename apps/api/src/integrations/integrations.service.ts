@@ -2634,9 +2634,16 @@ export class IntegrationsService implements OnModuleInit {
            */
           const collected = channelRemitsTheVat({
             reportedByChannel: anyMarketplaceFacilitator(items),
+            channelConnector: 'amazon',
             channelHomeIso: t.salesChannel?.nativeCountry?.isoCode ?? null,
             destinationIso: t.destinationCountry?.isoCode ?? null,
             taxType: t.taxType,
+            /**
+             * Never consulted on this path. The threshold only stands in for a report on channels
+             * that cannot send one, and Amazon does — a missing report here means the sync is
+             * wrong, and inferring from the value would hide that rather than find it.
+             */
+            belowChannelThreshold: false,
           });
           if (collected) {
             await this.prisma.salesTransaction.update({

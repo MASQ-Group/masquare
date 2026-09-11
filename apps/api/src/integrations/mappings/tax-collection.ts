@@ -43,24 +43,48 @@ export function anyMarketplaceFacilitator(items: readonly unknown[]): boolean {
 const CHANNEL_REMITS_TO = 'GB';
 
 /**
+ * Marketplaces that collect under the UK threshold but tell us nothing about it.
+ *
+ * OnBuy's order payload has no field for it — there is no equivalent of Amazon's `TaxCollection` or
+ * eBay's collect-and-remit lines — so "rely on the report" has nothing to rely on and every OnBuy
+ * order would read as our liability. For these, and ONLY these, the threshold stands in for the
+ * report that does not exist.
+ *
+ * Deliberately a list of channels rather than a rule about missing data. A missing report from
+ * Amazon means something is wrong with the sync, and inferring from the threshold there would paper
+ * over exactly the gap worth noticing. If OnBuy ever starts reporting, take it off this list — until
+ * then the assumption stays where it is visible.
+ */
+const CHANNELS_WITHOUT_A_TAX_REPORT = new Set(['onbuy']);
+
+/**
  * Does the marketplace's collection mean this order's VAT is not ours to declare?
  *
- * Both halves are required. The channel must have SAID it collected — never inferred from the value
- * of the goods, because that would make our own threshold configuration decide who owes HMRC. And
- * the sale must be UK-destined VAT, because that is the only regime where the marketplace's
- * collection discharges our liability.
+ * The regime and both countries must line up first. Only then does the question of evidence arise:
+ * normally the channel must have SAID it collected, never inferred from the value of the goods,
+ * because that would make our own threshold configuration decide who owes HMRC. The exception is a
+ * channel that has no way of saying so at all — see `CHANNELS_WITHOUT_A_TAX_REPORT`.
  */
 export function channelRemitsTheVat(input: {
   /** What the channel's own payload said. */
   reportedByChannel: boolean;
+  /** The connector behind this channel: 'amazon' | 'ebay' | 'onbuy'. Null for a channel with no integration. */
+  channelConnector: string | null | undefined;
   /** ISO-2 of the SELLING channel's own country — the marketplace must be the UK one. */
   channelHomeIso: string | null | undefined;
   /** ISO-2 of the destination country, as stored on the order. */
   destinationIso: string | null | undefined;
   /** The order's tax regime: vat | gst | jct | sales_tax | none. */
   taxType: string | null | undefined;
+  /** Whether the order sits under the channel's own configured consignment threshold. */
+  belowChannelThreshold: boolean;
 }): boolean {
-  if (!input.reportedByChannel) return false;
+  /**
+   * A facilitator report on GST, consumption tax or US sales tax says nothing about VAT. Those are
+   * separate regimes the platform accounts for elsewhere, and letting one of them set a VAT flag
+   * would put a claim about HMRC into a row describing a sale to Sydney.
+   */
+  if ((input.taxType ?? 'vat') !== 'vat') return false;
 
   /**
    * The UK channel, not merely a UK destination.
@@ -72,13 +96,40 @@ export function channelRemitsTheVat(input: {
    * that silently claimed relief on a German sale would be found by an auditor, not by us.
    */
   if ((input.channelHomeIso ?? '').trim().toUpperCase() !== CHANNEL_REMITS_TO) return false;
+  if ((input.destinationIso ?? '').trim().toUpperCase() !== CHANNEL_REMITS_TO) return false;
 
-  /**
-   * A facilitator report on GST, consumption tax or US sales tax says nothing about VAT. Those are
-   * separate regimes the platform accounts for elsewhere, and letting one of them set a VAT flag
-   * would put a claim about HMRC into a row describing a sale to Sydney.
-   */
-  if ((input.taxType ?? 'vat') !== 'vat') return false;
+  // What the channel actually told us always wins.
+  if (input.reportedByChannel) return true;
 
-  return (input.destinationIso ?? '').trim().toUpperCase() === CHANNEL_REMITS_TO;
+  // Failing that, only where there was never a report to be had.
+  const connector = (input.channelConnector ?? '').trim().toLowerCase();
+  return CHANNELS_WITHOUT_A_TAX_REPORT.has(connector) && input.belowChannelThreshold;
+}
+
+/**
+ * Is this order's channel-charged tax money that never becomes ours — as opposed to tax we collect
+ * and hand over ourselves?
+ *
+ * `salesTaxAmount` records what the channel charged the buyer, whatever the regime, and on its own
+ * says nothing about who ends up with it. Reading it as "the marketplace kept this" is wrong in two
+ * regimes at once and was being shown that way on every order that carried any tax at all:
+ *
+ *   vat        ours, unless the channel reported collecting it — an Amazon FR sale into France is
+ *              VAT we charge and remit, and the figure is the SAME money already inside the gross;
+ *   jct        ours. Japan's consumption tax stays with the seller — Amazon's own "Your earnings"
+ *              retains it, which is how the revenue basis treats it;
+ *   gst        the channel's. Added at checkout, never part of our price;
+ *   sales_tax  the channel's, for the same reason.
+ *
+ * Kept here with the rest of the regime rules so there is one place that knows this, rather than
+ * three screens each deciding for themselves.
+ */
+export function marketplaceRemitsTax(input: {
+  taxType: string | null | undefined;
+  vatCollectedByChannel: boolean | null | undefined;
+}): boolean {
+  const regime = (input.taxType ?? 'vat').trim().toLowerCase();
+  if (regime === 'gst' || regime === 'sales_tax') return true;
+  if (regime === 'jct') return false;
+  return !!input.vatCollectedByChannel;
 }
