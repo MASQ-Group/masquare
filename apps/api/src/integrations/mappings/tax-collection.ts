@@ -12,7 +12,8 @@
  *      taxes, different regimes, and reading any of them as "the VAT is not ours" is simply wrong.
  *
  * The business rule this platform runs on: the marketplace collects and remits only on UK-destined
- * sales through the UK channels, under the £135 consignment threshold. Everything shipping into the
+ * sales through the UK CHANNELS, under the £135 consignment threshold. Both ends must be the UK —
+ * an Amazon DE sale into the UK is deliberately excluded until somebody decides otherwise. Everything shipping into the
  * EU VAT zone carries VAT that WE collect and remit, whatever an API happens to report about it.
  *
  * The first version of this treated the reported flag alone as the answer and would have marked
@@ -52,12 +53,25 @@ const CHANNEL_REMITS_TO = 'GB';
 export function channelRemitsTheVat(input: {
   /** What the channel's own payload said. */
   reportedByChannel: boolean;
+  /** ISO-2 of the SELLING channel's own country — the marketplace must be the UK one. */
+  channelHomeIso: string | null | undefined;
   /** ISO-2 of the destination country, as stored on the order. */
   destinationIso: string | null | undefined;
   /** The order's tax regime: vat | gst | jct | sales_tax | none. */
   taxType: string | null | undefined;
 }): boolean {
   if (!input.reportedByChannel) return false;
+
+  /**
+   * The UK channel, not merely a UK destination.
+   *
+   * Amazon DE shipping into the UK under £135 also collects, so destination alone would flag it.
+   * That is a real case and arguably the same treatment — but it is a question about which VAT
+   * registration the sale sits under, and the answer here is the one the business gave: the
+   * marketplace relieves us on the UK channels. A rule this narrow is easy to widen later; a rule
+   * that silently claimed relief on a German sale would be found by an auditor, not by us.
+   */
+  if ((input.channelHomeIso ?? '').trim().toUpperCase() !== CHANNEL_REMITS_TO) return false;
 
   /**
    * A facilitator report on GST, consumption tax or US sales tax says nothing about VAT. Those are

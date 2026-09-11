@@ -1889,6 +1889,14 @@ export class SalesTransactionsService {
     if (dto.vatOverridden && dto.destinationVatPct != null) return { pct: dto.destinationVatPct, overridden: true };
     const ruleVat = this.channelVatPct(channel, intrinsicValue, await this.destinationIso(destCountryId));
     if (ruleVat != null) return { pct: ruleVat, overridden: false };
+
+    /**
+     * No rule of ours decides an export's rate — the CHANNEL does, and the channels disagree.
+     * Amazon UK collects VAT into Norway where eBay does not, so "outside the VAT area means 0%"
+     * is not a rule that can be asserted from here. What each channel actually took is reported
+     * per line and stored on the transaction; this resolves the RATE only, and where no channel
+     * rule applies the destination's own rate stands.
+     */
     return { pct: await this.countryVatRate(destCountryId), overridden: false };
   }
 
@@ -1940,9 +1948,21 @@ export class SalesTransactionsService {
   private async linkItemsToCatalogue<T extends { sku: string; productId?: string | null }>(items: T[]): Promise<T[]> {
     const skuMap = await this.buildSkuToProduct(items.map((i) => i.sku));
     return items.map((i) => {
-      // `serials` rides along on the DTO but belongs to the serial register, not to the
-      // item row — spreading it into the item create would hand Prisma an unknown column.
-      const { serials: _ignored, ...rest } = i as T & { serials?: string[] };
+      /**
+       * Fields that ride along on the DTO but are NOT columns on the item row. Both write paths
+       * spread this result straight into Prisma, so anything left here is handed over as an
+       * unknown column and the whole order fails to save.
+       *
+       *   serials — belongs to the serial register.
+       *   channelReportedTaxCollection — what the channel said about collecting the tax. It is
+       *     read off `dto.items` before this runs and stored once on the TRANSACTION, as
+       *     `vatCollectedByChannel`; the line itself has nowhere to put it.
+       *
+       * The second one was missed when it was added, and every Amazon and eBay sync since has
+       * been failing the orders that carried it — silently, as a bare "N errors" count.
+       */
+      const { serials: _s, channelReportedTaxCollection: _t, ...rest } =
+        i as T & { serials?: string[]; channelReportedTaxCollection?: boolean };
       return { ...(rest as T), productId: skuMap.get((i.sku ?? '').trim().toLowerCase()) ?? i.productId ?? null };
     });
   }
@@ -2075,6 +2095,7 @@ export class SalesTransactionsService {
     const taxType = isLocal ? 'vat' : await this.resolveTaxType(dto.destinationCountryId ?? null);
     const vatCollectedByChannel = !isLocal && channelRemitsTheVat({
       reportedByChannel: (dto.items ?? []).some((it: any) => it.channelReportedTaxCollection === true),
+      channelHomeIso: (channel as any)?.nativeCountry?.isoCode ?? null,
       destinationIso: await this.destinationIso(dto.destinationCountryId ?? null),
       taxType,
     });
@@ -2496,6 +2517,7 @@ export class SalesTransactionsService {
     const vatCollectedByChannel = !isLocal && channelRemitsTheVat({
       reportedByChannel: ((dto.items ?? existing.items ?? []) as any[])
         .some((it: any) => it.channelReportedTaxCollection === true),
+      channelHomeIso: (channel as any)?.nativeCountry?.isoCode ?? null,
       destinationIso: await this.destinationIso(destCountryId),
       taxType,
     });

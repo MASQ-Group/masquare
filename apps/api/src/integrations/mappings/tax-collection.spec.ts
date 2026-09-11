@@ -68,7 +68,7 @@ describe('anyMarketplaceFacilitator', () => {
  * and remit ourselves whatever an API reports.
  */
 describe('channelRemitsTheVat', () => {
-  const uk = { reportedByChannel: true, destinationIso: 'GB', taxType: 'vat' };
+  const uk = { reportedByChannel: true, channelHomeIso: 'GB', destinationIso: 'GB', taxType: 'vat' };
 
   it('is true for a UK-destined VAT sale the channel says it collected', () => {
     expect(channelRemitsTheVat(uk)).toBe(true);
@@ -107,5 +107,28 @@ describe('channelRemitsTheVat', () => {
   /** A missing regime means the ordinary one — VAT — rather than a reason to refuse. */
   it('treats an unset tax type as VAT', () => {
     expect(channelRemitsTheVat({ ...uk, taxType: null })).toBe(true);
+  });
+
+  /**
+   * Both ends must be the UK, not the destination alone.
+   *
+   * Amazon DE collects on a sale into the UK under the threshold too, and by destination alone that
+   * would read as relief on a German sale. Whether it is relief is a question about which VAT
+   * registration the sale sits under — a question for the business, not for this function — so the
+   * narrow answer stands until somebody widens it deliberately.
+   */
+  it('needs the selling channel to be the UK one, not just the destination', () => {
+    for (const iso of ['DE', 'FR', 'US', 'IE']) {
+      expect(channelRemitsTheVat({ ...uk, channelHomeIso: iso })).toBe(false);
+    }
+  });
+
+  it('is false when the channel has no home country recorded', () => {
+    expect(channelRemitsTheVat({ ...uk, channelHomeIso: null })).toBe(false);
+    expect(channelRemitsTheVat({ ...uk, channelHomeIso: '' })).toBe(false);
+  });
+
+  it('reads the channel code tolerantly too', () => {
+    expect(channelRemitsTheVat({ ...uk, channelHomeIso: ' gb ' })).toBe(true);
   });
 });

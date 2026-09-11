@@ -2534,6 +2534,8 @@ export class IntegrationsService implements OnModuleInit {
       items: { some: { deletedAt: null, vatAmount: { gt: 0 } } },
       // Only where the marketplace's collection could possibly relieve us: UK-destined VAT.
       destinationCountry: { isoCode: 'GB' },
+      // A UK CHANNEL as well as a UK destination — an Amazon DE sale into the UK is out of scope.
+      salesChannel: { nativeCountry: { isoCode: 'GB' } },
       OR: [{ taxType: null }, { taxType: 'vat' }],
       ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : {}),
     };
@@ -2544,6 +2546,7 @@ export class IntegrationsService implements OnModuleInit {
         id: true, transactionRef: true, integrationId: true, date: true, taxType: true,
         company: { select: { officialName: true } },
         destinationCountry: { select: { isoCode: true } },
+        salesChannel: { select: { nativeCountry: { select: { isoCode: true } } } },
       },
       orderBy: { date: 'desc' },
     });
@@ -2605,6 +2608,7 @@ export class IntegrationsService implements OnModuleInit {
            */
           const collected = channelRemitsTheVat({
             reportedByChannel: anyMarketplaceFacilitator(items),
+            channelHomeIso: t.salesChannel?.nativeCountry?.isoCode ?? null,
             destinationIso: t.destinationCountry?.isoCode ?? null,
             taxType: t.taxType,
           });
