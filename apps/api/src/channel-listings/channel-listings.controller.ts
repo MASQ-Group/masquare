@@ -78,6 +78,23 @@ export class ChannelListingsController {
     return this.svc.channels(companyIds);
   }
 
+  /**
+   * Link live listings to the product whose SKU they carry.
+   *
+   * Runs automatically whenever a product's SKUs change; this is for the backlog that built up
+   * while it did not. Idempotent — a second run finds nothing left to do.
+   */
+  @Post('relink')
+  relink(@VisibleCompanies() companyIds: string[]) {
+    return this.svc.relinkListings({ companyIds });
+  }
+
+  /** The listing SKUs the catalogue cannot name an owner for — the worklist, not a guess. */
+  @Get('unknown-skus')
+  unknownSkus(@VisibleCompanies() companyIds: string[]) {
+    return this.svc.unknownListingSkus(companyIds);
+  }
+
   @Post('sync')
   sync(@VisibleCompanies() companyIds: string[], @Body() body?: { integrationIds?: string[] }) {
     // A job, not a result: a full sync pulls every listing from every channel and runs for

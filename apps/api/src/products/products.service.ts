@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ActivityService } from '../activity/activity.service';
@@ -6,6 +7,9 @@ import { diffRecords } from '../activity/diff';
 import { PRODUCT_FIELD_LABELS, PRODUCT_REF_FIELDS } from '../activity/product-fields';
 import { StorageService } from '../storage/storage.service';
 import { BulkUpdateDto, CreateProductDto, MoneyDto, UpdateProductDto } from './dto/product.dto';
+// Type-only: the live instance comes from the module registry below, so this file never pulls
+// ChannelListingsModule into ProductsModule and cannot create an import cycle.
+import type { ChannelListingsService } from '../channel-listings/channel-listings.service';
 
 export interface ProductQuery {
   q?: string;
@@ -85,7 +89,28 @@ function volumetric(l: Prisma.Decimal | null, w: Prisma.Decimal | null, h: Prism
 @Injectable()
 export class ProductsService {
   constructor(private readonly prisma: PrismaService,
-    private readonly storage: StorageService, private readonly activity: ActivityService) {}
+    private readonly storage: StorageService, private readonly activity: ActivityService,
+    private readonly moduleRef: ModuleRef) {}
+
+  /**
+   * Re-link this product's channel listings after its SKUs change.
+   *
+   * A listing is only reachable by the availability push once something has linked it to a product,
+   * and that linking happened only while a listing was being PULLED. So defining an alias for a SKU
+   * already live on a channel did nothing: the listing stayed unlinked and its stock quietly stopped
+   * being maintained. Doing it here closes the gap at the moment the alias is created.
+   *
+   * Best-effort on purpose. A product edit must not fail because a follow-up link did — the SKUs are
+   * saved either way, and the sweep picks up anything missed.
+   */
+  private async relinkListings(productId: string) {
+    try {
+      const listings = this.moduleRef.get<ChannelListingsService>('CHANNEL_LISTINGS_SERVICE', { strict: false });
+      await listings?.relinkListings({ productId });
+    } catch {
+      // Channel listings unavailable (or nothing to link): the SKUs are saved, which is the job here.
+    }
+  }
 
   private serialize(p: any) {
     return {
@@ -431,6 +456,9 @@ export class ProductsService {
       entityType: 'product', entityId: product.id, entityLabel: product.mainSku,
       action: 'create', actorId, summary: product.title,
     });
+    // Its SKUs may already be live on a channel — one of the 2,000 rows nobody could name an owner
+    // for. Claim them now rather than waiting for the next full pull.
+    await this.relinkListings(product.id);
     return this.serialize(product);
   }
 
@@ -472,6 +500,12 @@ export class ProductsService {
     // Only the fields this update actually carried — partialScalarData is already that set, so a
     // patch cannot report the columns it left alone as cleared.
     await this.logProductUpdate(id, product.mainSku, before as any, this.partialScalarData(dto), actorId);
+    /**
+     * The point of the whole change: an alias added here is a way into this product's stock, and a
+     * listing already live under it has to be linked for the push to find it. Only when the SKUs
+     * were actually part of this patch — a title edit has nothing to re-link.
+     */
+    if (dto.aliases !== undefined || dto.mainSku !== undefined) await this.relinkListings(id);
     return this.serialize(product);
   }
 

@@ -9,6 +9,7 @@ import { deriveListingStatus } from './listing-status';
 import { planTransition } from './plan-transition';
 import { fullScopeIntegrationWhere } from '../common/amazon-scope';
 import { settlePushQueue, type PushResult } from './push-queue-settle';
+import { buildSkuOwnerIndex, normaliseSku, relinkAction } from './sku-match';
 
 const ACTIVE = { deletedAt: null };
 // Per-channel accent dots (fallback palette; overridden by the SalesChannel chip colour if set).
@@ -1434,6 +1435,113 @@ export class ChannelListingsService implements OnApplicationBootstrap {
       unitsLive: perChannel.filter((c) => c.listed).reduce((s, c) => s + (c.quantity ?? 0), 0),
       lastSyncedAt: p.channelListings.map((l) => l.lastPulledAt).filter(Boolean).sort().slice(-1)[0] ?? null,
       channels: perChannel,
+    };
+  }
+
+  /**
+   * Link listing rows to the product that owns their SKU.
+   *
+   * Availability belongs to the product, and the push finds listings BY product — so a listing that
+   * nothing has linked is a live offer whose stock we silently stop maintaining. Linking used to
+   * happen only while a listing was being pulled, which meant an alias defined after its listing was
+   * last synced never took effect. Fourteen rows on production sat like that.
+   *
+   * Call it for one product after its SKUs change, or with no product to sweep the backlog.
+   *
+   * @param productId limit to one product's SKUs; omit to examine every row the catalogue can claim.
+   */
+  async relinkListings(
+    opts: { productId?: string; companyIds?: string[] } = {},
+  ): Promise<{ examined: number; claimed: number; moved: number; unknownSku: number; byProduct: Record<string, number> }> {
+    const products = await this.prisma.product.findMany({
+      where: { ...ACTIVE, ...(opts.productId ? { id: opts.productId } : {}) },
+      select: { id: true, mainSku: true, aliases: { where: ACTIVE, select: { skuValue: true } } },
+    });
+    const index = buildSkuOwnerIndex(products);
+    if (index.size === 0) return { examined: 0, claimed: 0, moved: 0, unknownSku: 0, byProduct: {} };
+
+    /**
+     * For one product, ask only about its own SKUs. For the sweep, read the rows that have no owner
+     * and match them in memory — 17k rows against a map beats 17k case-insensitive comparisons in
+     * SQL, and the collation of `channel_sku` is then not something this depends on.
+     */
+    const rows = opts.productId
+      ? await this.prisma.channelListing.findMany({
+        where: {
+          AND: [
+            { OR: [...index.keys()].map((k) => ({ channelSku: { equals: k, mode: 'insensitive' as const } })) },
+            /**
+             * Spelt out because `{ not: id }` alone drops NULLs in SQL — and NULL is precisely the
+             * case this exists to fix. The same trap the FBA filter documents further up.
+             */
+            { OR: [{ productId: null }, { productId: { not: opts.productId } }] },
+            ...(opts.companyIds ? [{ companyId: { in: opts.companyIds } }] : []),
+          ],
+        },
+        select: { id: true, channelSku: true, productId: true },
+      })
+      : await this.prisma.channelListing.findMany({
+        where: { productId: null, ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : {}) },
+        select: { id: true, channelSku: true, productId: true },
+      });
+
+    const claimBy = new Map<string, string[]>();
+    let claimed = 0;
+    let moved = 0;
+    let unknownSku = 0;
+    for (const r of rows) {
+      const { action, productId } = relinkAction(r, index);
+      if (action === 'unknown-sku') { unknownSku += 1; continue; }
+      if (action === 'none' || !productId) continue;
+      if (action === 'claim') claimed += 1; else moved += 1;
+      claimBy.set(productId, [...(claimBy.get(productId) ?? []), r.id]);
+    }
+
+    const byProduct: Record<string, number> = {};
+    for (const [productId, ids] of claimBy) {
+      byProduct[productId] = ids.length;
+      // Chunked: an `IN` list costs a parameter per id and the backlog is not small.
+      for (let i = 0; i < ids.length; i += 500) {
+        await this.prisma.channelListing.updateMany({
+          where: { id: { in: ids.slice(i, i + 500) } },
+          data: { productId },
+        });
+      }
+    }
+
+    if (claimed || moved) {
+      this.logger.log(
+        `Re-linked listings${opts.productId ? ` for ${opts.productId}` : ''}: `
+        + `${claimed} claimed, ${moved} moved${unknownSku ? `, ${unknownSku} on unknown SKUs left alone` : ''}.`,
+      );
+    }
+    return { examined: rows.length, claimed, moved, unknownSku, byProduct };
+  }
+
+  /**
+   * Every listing SKU the catalogue cannot name an owner for — the worklist behind `unknownSku`.
+   *
+   * Reported rather than guessed. Attaching a stock figure to a listing on a hunch is how a channel
+   * gets told we hold units of something else.
+   */
+  async unknownListingSkus(companyIds?: string[]) {
+    const [rows, products] = await Promise.all([
+      this.prisma.channelListing.findMany({
+        where: { productId: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+        select: { channelSku: true, title: true, listedQuantity: true, integration: { select: { name: true } } },
+      }),
+      this.prisma.product.findMany({ where: ACTIVE, select: { id: true, mainSku: true, aliases: { where: ACTIVE, select: { skuValue: true } } } }),
+    ]);
+    const index = buildSkuOwnerIndex(products);
+    const unknown = rows.filter((r) => !index.has(normaliseSku(r.channelSku)));
+    const byChannel: Record<string, number> = {};
+    for (const r of unknown) byChannel[r.integration.name] = (byChannel[r.integration.name] ?? 0) + 1;
+    return {
+      total: unknown.length,
+      byChannel,
+      rows: unknown.slice(0, 500).map((r) => ({
+        channelSku: r.channelSku, channel: r.integration.name, title: r.title, quantity: r.listedQuantity,
+      })),
     };
   }
 }
