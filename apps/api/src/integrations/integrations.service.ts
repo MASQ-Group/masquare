@@ -2541,6 +2541,94 @@ export class IntegrationsService implements OnModuleInit {
    * Idempotent: a second run reads the same values and writes nothing new. A deploy mid-run ends it,
    * and restarting simply re-reads the orders already done.
    */
+  /**
+   * The half of the VAT-flag repair that needs no marketplace call at all.
+   *
+   * Two corrections, both decidable from what is already stored:
+   *
+   *   OnBuy never reports whether it collected, so the £135 threshold is the whole of the evidence
+   *   and always was. Nothing to ask anyone — the answer is in the order.
+   *
+   *   Any channel's stored `true` whose SCOPE the rules now reject. The `true` was written from a
+   *   real report, so the report is not in doubt; what can be wrong is the frame around it. An
+   *   Amazon DE sale into the UK was flagged while the rule looked at the destination alone, and no
+   *   report could rescue that — a German sale is not relieved by a UK threshold.
+   *
+   * Only the second direction is available to reporting channels here. Going false → true for them
+   * needs the report itself, which means asking the marketplace; that is the Amazon pass.
+   *
+   * @param apply false counts without writing, for the dry run.
+   */
+  private async repairVatFlagFromStoredData(
+    companyIds: string[] | undefined,
+    apply: boolean,
+    ctx?: ProgressSink,
+  ): Promise<{ flagged: number; cleared: number; examined: number }> {
+    const rows = await this.prisma.salesTransaction.findMany({
+      where: {
+        deletedAt: null,
+        salesChannelId: { not: null },
+        // Everything OnBuy (either direction), plus every stored `true` whose scope may have lapsed.
+        OR: [{ source: 'onbuy' }, { vatCollectedByChannel: true }],
+        ...(companyIds ? { companyId: { in: companyIds } } : {}),
+      },
+      select: {
+        id: true, source: true, taxType: true, vatCollectedByChannel: true,
+        destinationCountry: { select: { isoCode: true } },
+        salesChannel: {
+          select: {
+            vatThresholdEnabled: true, vatThresholdAmount: true,
+            nativeCountry: { select: { isoCode: true } },
+          },
+        },
+        items: { where: { deletedAt: null }, select: { netSalesAmount: true } },
+      },
+    });
+
+    const toTrue: string[] = [];
+    const toFalse: string[] = [];
+
+    for (const t of rows) {
+      const ch = t.salesChannel;
+      const net = t.items.reduce((s, i) => s + (i.netSalesAmount ?? 0), 0);
+      const scope = {
+        channelConnector: t.source,
+        channelHomeIso: ch?.nativeCountry?.isoCode ?? null,
+        destinationIso: t.destinationCountry?.isoCode ?? null,
+        taxType: t.taxType,
+        // The same comparison the sale itself makes; an unconfigured threshold is not "under" it.
+        belowChannelThreshold: !!ch?.vatThresholdEnabled
+          && ch?.vatThresholdAmount != null
+          && net <= Number(ch.vatThresholdAmount),
+      };
+
+      if (t.source === 'onbuy') {
+        const want = channelRemitsTheVat({ ...scope, reportedByChannel: false });
+        if (want && !t.vatCollectedByChannel) toTrue.push(t.id);
+        if (!want && t.vatCollectedByChannel) toFalse.push(t.id);
+        continue;
+      }
+
+      if (t.vatCollectedByChannel && !channelRemitsTheVat({ ...scope, reportedByChannel: true })) {
+        toFalse.push(t.id);
+      }
+    }
+
+    if (apply) {
+      // Chunked: an `IN` list is a parameter per id, and this is bounded only by how many orders exist.
+      const chunk = <T>(xs: T[], n = 500) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+      for (const ids of chunk(toTrue)) {
+        await this.prisma.salesTransaction.updateMany({ where: { id: { in: ids } }, data: { vatCollectedByChannel: true } });
+      }
+      for (const ids of chunk(toFalse)) {
+        await this.prisma.salesTransaction.updateMany({ where: { id: { in: ids } }, data: { vatCollectedByChannel: false } });
+      }
+      ctx?.note(`Decided from stored data, no marketplace called: ${toTrue.length} flagged, ${toFalse.length} cleared.`);
+    }
+
+    return { flagged: toTrue.length, cleared: toFalse.length, examined: rows.length };
+  }
+
   async repairChannelVatFlag(
     opts: { confirm?: boolean; companyIds?: string[] },
     ctx?: ProgressSink,
@@ -2579,17 +2667,31 @@ export class IntegrationsService implements OnModuleInit {
 
     if (!opts.confirm) {
       /**
-       * The preview cannot say how many will flip without asking Amazon, and says so rather than
-       * implying a number. Counting the candidates is honest; predicting the outcome would be the
+       * Two halves, reported separately because only one of them is knowable in advance.
+       *
+       * The stored-data half is exact: nothing is asked of anyone, so the counts below are what a
+       * confirmed run would write. The Amazon half cannot say how many will flip without asking
+       * Amazon, and says so rather than implying a number — predicting the outcome would be the
        * same derivation this repair exists to avoid.
        */
+      const offline = await this.repairVatFlagFromStoredData(opts.companyIds, false);
       return {
         dryRun: true as const,
         orders: txs.length,
-        note: 'Each order is read back from Amazon; how many carry MarketplaceFacilitator is not knowable without asking.',
+        note: 'Each Amazon order is read back from the marketplace; how many carry MarketplaceFacilitator '
+          + 'is not knowable without asking. The OnBuy and scope corrections need no call and the counts for '
+          + 'those are exact.',
+        willFlagFromStoredData: offline.flagged,
+        willClearFromStoredData: offline.cleared,
         companies: [...new Set(txs.map((t) => t.company?.officialName ?? 'Unknown'))],
       };
     }
+
+    /**
+     * Everything decidable without a call goes first, so a later failure to reach Amazon cannot cost
+     * the corrections that never needed it.
+     */
+    const offline = await this.repairVatFlagFromStoredData(opts.companyIds, true, ctx);
 
     const byIntegration = new Map<string, typeof txs>();
     for (const t of txs) {
@@ -2663,8 +2765,22 @@ export class IntegrationsService implements OnModuleInit {
       }
     }
 
-    this.logger.log(`VAT flag repair: ${flagged} flagged, ${notCollected} not collected by Amazon, ${failed} failed.`);
-    return { dryRun: false as const, orders: txs.length, flagged, notCollected, failed, changed };
+    this.logger.log(
+      `VAT flag repair: ${flagged} flagged from Amazon's report, ${notCollected} not collected by Amazon, ${failed} failed; `
+      + `${offline.flagged} flagged and ${offline.cleared} cleared from stored data.`,
+    );
+    return {
+      dryRun: false as const,
+      orders: txs.length,
+      flagged,
+      notCollected,
+      failed,
+      changed,
+      /** OnBuy orders the threshold settles, with no report to ask for. */
+      flaggedFromStoredData: offline.flagged,
+      /** Flags whose scope the rules now reject — an Amazon DE sale into the UK, and the like. */
+      clearedFromStoredData: offline.cleared,
+    };
   }
 
   async repairAmazonFees(

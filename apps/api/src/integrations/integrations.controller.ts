@@ -212,21 +212,33 @@ export class IntegrationsController {
   }
 
   /**
-   * Backfill "the marketplace collected the VAT" onto orders that predate the flag.
+   * Bring "the marketplace collected the VAT" into line on orders the rules have since moved past.
+   *
+   * Three things, in one pass:
+   *
+   *   Amazon — each candidate is read back from the marketplace, because only Amazon knows whether
+   *   it invoked MarketplaceFacilitator on that order;
+   *
+   *   OnBuy — no call, because OnBuy has never reported it. The £135 threshold is the whole of the
+   *   evidence, which is why these orders all sat at false while none of the VAT was ours;
+   *
+   *   any channel — a stored `true` whose scope the rules now reject is cleared. The report behind
+   *   it stands; the frame around it does not, as when the rule looked at the destination alone and
+   *   flagged an Amazon DE sale into the UK.
    *
    * Kept off any page, like the fee repair and for the same reasons: it spends SP-API budget and
    * rewrites a field a VAT return depends on. Call it deliberately.
    *
-   * Without confirm it counts the candidates and calls nothing. It will not predict how many flip —
-   * that is only knowable by asking Amazon, and guessing it from the £135 threshold is precisely the
-   * derivation this whole mechanism exists to avoid.
+   * Without confirm it writes nothing. The two no-call halves report exact counts; the Amazon half
+   * will not predict how many flip, because that is knowable only by asking Amazon and guessing it
+   * from the threshold is precisely the derivation this whole mechanism exists to avoid.
    */
   @Post('repair-vat-flag')
   repairChannelVatFlag(@Body() dto: { confirm?: boolean }, @VisibleCompanies() companyIds: string[]) {
     if (!dto?.confirm) return this.svc.repairChannelVatFlag({ confirm: false, companyIds });
     return this.jobs.start(
       'integrations.repair-vat-flag',
-      'Reading VAT collection back from Amazon',
+      'Settling who collected the VAT',
       (ctx) => this.svc.repairChannelVatFlag({ confirm: true, companyIds }, ctx),
     );
   }
