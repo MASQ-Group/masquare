@@ -11,7 +11,7 @@ covers:
   # The sale and replacement routes out are performed here. Absent from this list, the freshness
   # check could not see that changing when a sale deducts had made this page wrong.
   - apps/api/src/sales-transactions/sales-transactions.service.ts
-reviewed: 2026-09-10
+reviewed: 2026-09-11
 ---
 
 # What can change a stock quantity

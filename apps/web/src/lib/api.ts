@@ -1216,6 +1216,14 @@ export interface SpApiNotificationSetup {
   message?: string;
 }
 
+/** The per-order failures behind a sync's "N errors" count, for its most recent run. */
+export type ChannelSyncErrors = {
+  integrationId: string;
+  name: string;
+  lastSyncRunAt: string | null;
+  errors: { transactionRef: string; reason: string; createdAt: string }[];
+};
+
 export const integrationsApi = {
   /** Create the keypair eBay requires to sign Finances requests. */
   createEbaySigningKey: (integrationId: string) =>
@@ -1226,6 +1234,9 @@ export const integrationsApi = {
   connectors: () => api.get<ConnectorDef[]>('/integrations/connectors').then((r) => r.data),
   list: () => api.get<ChannelIntegration[]>('/integrations').then((r) => r.data),
   get: (id: string) => api.get<ChannelIntegration>(`/integrations/${id}`).then((r) => r.data),
+  /** Why each order failed in the last sync — what the "N errors" chip opens. */
+  syncErrors: (id: string) =>
+    api.get<ChannelSyncErrors>(`/integrations/${id}/sync-errors`).then((r) => r.data),
   create: (body: { name: string; channelType: string; marketplace?: string | null; config?: Record<string, string>; secrets?: Record<string, string> }) =>
     api.post<ChannelIntegration>('/integrations', body).then((r) => r.data),
   update: (id: string, body: { name?: string; marketplace?: string | null; config?: Record<string, string>; secrets?: Record<string, string>; status?: 'active' | 'disabled'; targetSalesChannelId?: string | null; targetCompanyId?: string | null; autoSyncEnabled?: boolean; backfillDays?: number }) =>

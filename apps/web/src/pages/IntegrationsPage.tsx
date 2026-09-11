@@ -13,6 +13,7 @@ import { PageHeader } from '../components/common/PageHeader';
 import { IntegrationModal } from '../components/integrations/IntegrationModal';
 import { MappingVerifyModal } from '../components/integrations/MappingVerifyModal';
 import { ListingsPreviewModal } from '../components/integrations/ListingsPreviewModal';
+import { SyncErrorsModal } from '../components/integrations/SyncErrorsModal';
 import { BackfillModal } from '../components/integrations/BackfillModal';
 import { GroupBackfillModal } from '../components/integrations/GroupBackfillModal';
 import { ChannelLogoTile } from '../components/integrations/ChannelLogoTile';
@@ -76,7 +77,7 @@ const syncFailed = (i: ChannelIntegration) => i.lastSyncStatus === 'error' && !s
  *  The message format is fixed by the sync service: "N created, N updated,
  *  N cancelled, N errors[, N fees backfilled]…". Per-order errors still show chips
  *  (with a danger "errors" chip) — only a run that couldn't complete shows no chips. */
-function syncChips(i: ChannelIntegration): { text: string; tone: ChipTone }[] {
+function syncChips(i: ChannelIntegration): { text: string; tone: ChipTone; kind?: 'errors' }[] {
   if (!i.lastSyncRunAt || !syncCompleted(i)) return [];
   const msg = i.lastSyncMessage ?? '';
   const num = (re: RegExp) => { const m = msg.match(re); return m ? Number(m[1]) : 0; };
@@ -86,12 +87,14 @@ function syncChips(i: ChannelIntegration): { text: string; tone: ChipTone }[] {
   const skipped = num(/(\d+) cancelled\/refunded skipped/);
   const errors = num(/(\d+) errors/);
   const fees = num(/(\d+) fees/);
-  const chips: { text: string; tone: ChipTone }[] = [];
+  const chips: { text: string; tone: ChipTone; kind?: 'errors' }[] = [];
   if (created > 0) chips.push({ text: `+${created} new`, tone: 'teal' });
   if (updated > 0) chips.push({ text: `~${updated} updated`, tone: 'neutral' });
   if (cancelled > 0) chips.push({ text: `${cancelled} cancelled`, tone: 'neutral' });
   if (skipped > 0) chips.push({ text: `${skipped} skipped`, tone: 'neutral' });
-  if (errors > 0) chips.push({ text: `${errors} errors`, tone: 'danger' });
+  // Marked so it can be rendered as a button: the count alone is a dead end, and the reasons
+  // behind it are stored per order for exactly this.
+  if (errors > 0) chips.push({ text: `${errors} errors`, tone: 'danger', kind: 'errors' });
   if (fees > 0) chips.push({ text: `${fees} fees`, tone: 'warning' });
   if (chips.length === 0) chips.push({ text: 'No changes', tone: 'muted' });
   return chips;
@@ -119,6 +122,7 @@ export function IntegrationsPage() {
   const { activeCompany } = useAuth();
   const qc = useQueryClient();
   const [modal, setModal] = useState<ModalTarget>(undefined);
+  const [syncErrors, setSyncErrors] = useState<ChannelIntegration | undefined>(undefined);
   const [mapVerify, setMapVerify] = useState<ChannelIntegration | undefined>();
   const [backfill, setBackfill] = useState<ChannelIntegration | undefined>();
   const [groupBackfill, setGroupBackfill] = useState<{ label: string; list: ChannelIntegration[] } | undefined>();
@@ -137,7 +141,12 @@ export function IntegrationsPage() {
   const { data: integrations = [], isLoading } = useQuery({ queryKey: ['integrations'], queryFn: () => integrationsApi.list() });
   const { data: channelLogos = {} } = useQuery({ queryKey: ['channel-logos'], queryFn: () => integrationsApi.channelLogos() });
   const refetchLogos = () => qc.invalidateQueries({ queryKey: ['channel-logos'] });
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['integrations'] });
+  // 'sync-errors' too: a fresh run replaces the stored reasons, so a cached list from the previous
+  // run would explain a count that is no longer on screen.
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['integrations'] });
+    qc.invalidateQueries({ queryKey: ['sync-errors'] });
+  };
 
   // Sync automation: the configurable daily auto-sync time.
   const { data: syncSettings } = useQuery({ queryKey: ['integrations', 'sync-settings'], queryFn: () => integrationsApi.getSyncSettings() });
@@ -539,6 +548,7 @@ export function IntegrationsPage() {
                             onBackfill={() => setBackfill(i)}
                             onMapping={() => setMapVerify(i)}
                             onPreviewListings={() => setListingsPreview(i)}
+                            onShowErrors={() => setSyncErrors(i)}
                             onRemove={() => confirm(`Remove integration “${i.name}”? Stored keys will be deleted.`) && del.mutate(i.id)}
                           />
                         ))}
@@ -575,6 +585,9 @@ export function IntegrationsPage() {
       {listingsPreview && (
         <ListingsPreviewModal integration={listingsPreview} onClose={() => setListingsPreview(undefined)} />
       )}
+      {syncErrors && (
+        <SyncErrorsModal integration={syncErrors} onClose={() => setSyncErrors(undefined)} />
+      )}
     </div>
   );
 }
@@ -603,6 +616,31 @@ function StatCard({ label, value, sub, icon, tone, active, onClick }: {
   );
 }
 
+/**
+ * A result chip. The errors one is a button; the rest are plain text.
+ *
+ * `stopPropagation` because the chip sits inside a row that expands on click — opening the reasons
+ * must not also toggle the row underneath the dialog.
+ */
+function SyncChip({ chip, onShowErrors, className = '' }: {
+  chip: { text: string; tone: ChipTone; kind?: 'errors' };
+  onShowErrors: () => void;
+  className?: string;
+}) {
+  const base = `rounded px-1.5 py-px text-[11px] font-semibold tabular-nums ${CHIP_TONE[chip.tone]} ${className}`;
+  if (chip.kind !== 'errors') return <span className={base}>{chip.text}</span>;
+  return (
+    <button
+      type="button"
+      className={`${base} cursor-pointer underline decoration-dotted underline-offset-2 hover:brightness-95`}
+      title="See which orders failed, and why"
+      onClick={(e) => { e.stopPropagation(); onShowErrors(); }}
+    >
+      {chip.text}
+    </button>
+  );
+}
+
 function HealthChip({ dot, color, text }: { dot: string; color: string; text: string }) {
   return (
     <span className={`inline-flex items-center gap-1.5 text-[12px] font-semibold ${color}`}>
@@ -613,10 +651,11 @@ function HealthChip({ dot, color, text }: { dot: string; color: string; text: st
 
 function IntegrationRow({
   i, last, selected, expanded, syncing, maskSecrets, canSync, countryCode, logoUrl,
-  onToggleSel, onToggleExpand, onSync, onEdit, onBackfill, onMapping, onPreviewListings, onRemove,
+  onToggleSel, onToggleExpand, onSync, onEdit, onBackfill, onMapping, onPreviewListings, onRemove, onShowErrors,
 }: {
   i: ChannelIntegration; last: boolean; selected: boolean; expanded: boolean; syncing: boolean; maskSecrets: boolean; canSync: boolean;
   onToggleSel: () => void; onToggleExpand: () => void; onSync: () => void; onEdit: () => void; onBackfill: () => void; onMapping: () => void; onPreviewListings: () => void; onRemove: () => void;
+  onShowErrors: () => void;
   countryCode?: string | null;
   // Some channels (eBay) run one account across every marketplace, so a single country flag
   // is misleading — show the channel logo (or a globe) instead.
@@ -644,7 +683,7 @@ function IntegrationRow({
               : <span className="flex shrink-0 items-center gap-1 font-semibold text-warning"><AlertTriangle size={12} /> Verify mapping</span>}
             <span className="shrink-0 text-n-300">·</span>
             <span className={`shrink-0 ${syncing ? 'text-teal-700' : syncFailed(i) ? 'text-danger' : !i.lastSyncRunAt ? 'text-warning' : 'text-n-500'}`}>{syncing ? 'Syncing…' : relTime(i.lastSyncRunAt)}</span>
-            {chips[0] && <span className={`min-w-0 truncate rounded px-1.5 py-px text-[11px] font-semibold ${CHIP_TONE[chips[0].tone]}`}>{chips[0].text}</span>}
+            {chips[0] && <SyncChip chip={chips[0]} onShowErrors={onShowErrors} className="min-w-0 truncate" />}
           </div>
           <div className="mt-2.5 flex items-center gap-1.5">
             <button
@@ -704,7 +743,7 @@ function IntegrationRow({
           {!syncing && syncFailed(i) && <div className="mt-0.5 truncate text-[11.5px] text-danger" title={i.lastSyncMessage ?? undefined}>{i.lastSyncMessage ?? 'Last sync failed'}</div>}
           {!syncing && chips.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1.5">
-              {chips.map((c, n) => <span key={n} className={`rounded px-1.5 py-px text-[11px] font-semibold tabular-nums ${CHIP_TONE[c.tone]}`}>{c.text}</span>)}
+              {chips.map((c, n) => <SyncChip key={n} chip={c} onShowErrors={onShowErrors} />)}
             </div>
           )}
         </div>

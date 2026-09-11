@@ -79,6 +79,12 @@ export class IntegrationsController {
     return this.svc.list(companyIds);
   }
 
+  /** The failures behind the "N errors" chip on the last sync run. */
+  @Get(':id/sync-errors')
+  syncErrors(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.syncErrors(id, companyIds);
+  }
+
   @Get(':id')
   get(@Param('id') id: string, @VisibleCompanies() companyIds: string[]) {
     return this.svc.get(id, companyIds);

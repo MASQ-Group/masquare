@@ -2250,6 +2250,7 @@ model ChannelIntegration {
 
   secrets             IntegrationSecret[]
   audits              IntegrationAudit[]
+  syncErrors          ChannelSyncError[]
   channelListings     ChannelListing[]
   channelAvailability ProductChannelAvailability[]
   productPlans        ProductChannelPlan[]
@@ -2578,6 +2579,32 @@ model IntegrationAudit {
   integration ChannelIntegration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
 
   @@map("integration_audit")
+}
+
+/**
+ * Why an individual order failed to import, for the LAST sync run of each integration.
+ *
+ * The sync catches per order so that one bad order cannot abandon the rest — which is right — but
+ * the reason then went only to the log, and the page could say no more than "6 errors". A defect
+ * that failed every order carrying a particular field survived a day of syncs that way.
+ *
+ * Replaced wholesale at the start of each run, so these rows always describe the count currently on
+ * screen. History is not the job here: the audit trail already records every run, and a reason that
+ * outlived the count it explains would be worse than none.
+ */
+model ChannelSyncError {
+  id             String   @id @default(uuid()) @db.Uuid
+  integrationId  String   @map("integration_id") @db.Uuid
+  /** The channel's order id, so the failure can be looked up on the marketplace. */
+  transactionRef String   @map("transaction_ref")
+  /** One line, already distilled from the exception by `syncFailureReason`. */
+  reason         String
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  integration ChannelIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([integrationId])
+  @@map("channel_sync_error")
 }
 
 /**

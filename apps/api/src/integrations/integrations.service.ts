@@ -16,6 +16,7 @@ import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
 import { readOrderMoney, readFinances, impliedEbayRate, type EbayFinancesRead } from './ebay-money-diagnostic';
 import { signedRequest, type SigningCipher, type SigningKey } from './ebay-signature';
 import { anyMarketplaceFacilitator, channelRemitsTheVat } from './mappings/tax-collection';
+import { syncFailureReason } from './sync-failure-reason';
 
 /**
  * Outcome of a read-only SP-API role probe.
@@ -220,6 +221,31 @@ export class IntegrationsService implements OnModuleInit {
     // leaking, and there is nothing the caller can do with the difference.
     if (!row) throw new NotFoundException('Integration not found');
     return this.serialize(row, row.secrets);
+  }
+
+  /**
+   * Why each order failed in the LAST sync of this connection — what the "N errors" chip opens.
+   *
+   * Scoped through the same visibility check as everything else on this page: a sync failure names
+   * a real order id, and one company's order references are not another's to read.
+   */
+  async syncErrors(id: string, companyIds?: string[]) {
+    const row = await this.prisma.channelIntegration.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+        ...(companyIds ? { OR: [{ targetCompanyId: { in: companyIds } }, { targetCompanyId: null }] } : {}),
+      },
+      select: { id: true, name: true, lastSyncRunAt: true },
+    });
+    if (!row) throw new NotFoundException('Integration not found');
+
+    const errors = await this.prisma.channelSyncError.findMany({
+      where: { integrationId: id },
+      orderBy: { createdAt: 'asc' },
+      select: { transactionRef: true, reason: true, createdAt: true },
+    });
+    return { integrationId: row.id, name: row.name, lastSyncRunAt: row.lastSyncRunAt, errors };
   }
 
   /** Keep only known config keys as strings (drops unknown/secret keys). */
@@ -3037,7 +3063,16 @@ export class IntegrationsService implements OnModuleInit {
       return true;
     } catch (e: any) {
       counts.errors++;
-      this.logger.warn(`Import failed for order ${dto.transactionRef}: ${e?.message ?? e}`);
+      const reason = syncFailureReason(e);
+      this.logger.warn(`Import failed for order ${dto.transactionRef}: ${reason}`);
+      /**
+       * Kept so the "N errors" chip can be opened and read. Best-effort on purpose: if writing the
+       * reason fails too, the order failure is still counted and logged. A diagnostic that can turn
+       * one failed order into a failed sync would be worse than the gap it closes.
+       */
+      await this.prisma.channelSyncError
+        .create({ data: { integrationId: row.id, transactionRef: String(dto.transactionRef ?? '—'), reason } })
+        .catch(() => undefined);
       return false;
     }
   }
@@ -3129,6 +3164,9 @@ export class IntegrationsService implements OnModuleInit {
     const upper = isRange ? (range!.to ? new Date(new Date(range!.to).setHours(23, 59, 59, 999)) : new Date()) : null;
 
     const counts = { scanned: 0, created: 0, updated: 0, skipped: 0, cancelled: 0, cancelledUpdated: 0, cancelledImported: 0, refunded: 0, errors: 0 };
+    // Last run only: these rows explain the count this run is about to write, so the previous run's
+    // reasons must not outlive the count they belonged to.
+    await this.prisma.channelSyncError.deleteMany({ where: { integrationId: id } });
     // Gate for applying pulled cancellations/refunds. Off keeps the sync at its pre-feature
     // behaviour (cancels skipped, refunds not applied) so it stays dormant on live until enabled.
     const applyResolutions = (await this.prisma.platformSettings.findFirst({ select: { applyChannelResolutions: true } }))?.applyChannelResolutions ?? false;
