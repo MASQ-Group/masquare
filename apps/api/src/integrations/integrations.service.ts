@@ -2568,8 +2568,16 @@ export class IntegrationsService implements OnModuleInit {
       where: {
         deletedAt: null,
         salesChannelId: { not: null },
-        // Everything OnBuy (either direction), plus every stored `true` whose scope may have lapsed.
-        OR: [{ source: 'onbuy' }, { vatCollectedByChannel: true }],
+        /**
+         * Every order from a channel that told us what it collected, in either direction, plus every
+         * stored `true` whose scope may have lapsed.
+         *
+         * eBay belongs here and was missing. The repair was built for Amazon, extended to OnBuy, and
+         * eBay looked as though it needed nothing — its money was already right, because its mapping
+         * declines to extract VAT when the collect-and-remit block is present. The money was right.
+         * The FLAG was not, on 139 UK orders.
+         */
+        OR: [{ source: { in: ['ebay', 'onbuy'] } }, { vatCollectedByChannel: true }],
         ...(companyIds ? { companyId: { in: companyIds } } : {}),
       },
       select: {
@@ -2581,7 +2589,7 @@ export class IntegrationsService implements OnModuleInit {
             nativeCountry: { select: { isoCode: true } },
           },
         },
-        items: { where: { deletedAt: null }, select: { netSalesAmount: true, vatAmount: true } },
+        items: { where: { deletedAt: null }, select: { netSalesAmount: true, vatAmount: true, salesTaxAmount: true } },
       },
     });
 
@@ -2592,6 +2600,19 @@ export class IntegrationsService implements OnModuleInit {
       const ch = t.salesChannel;
       const net = t.items.reduce((s, i) => s + (i.netSalesAmount ?? 0), 0);
       const vat = t.items.reduce((s, i) => s + (i.vatAmount ?? 0), 0);
+      /**
+       * What the CHANNEL says it took.
+       *
+       * For eBay and OnBuy this IS the collect-and-remit figure — eBay's mapping stores
+       * `ebayCollectAndRemitTaxes` here and nothing else; OnBuy's stores its deemed-supplier tax. A
+       * number above zero is therefore the channel's own report, and both can be settled without
+       * asking anyone.
+       *
+       * Amazon is why that cannot be generalised. Its `salesTaxAmount` is the tax CHARGED, present
+       * whether Amazon kept it or we did — a different question wearing the same name, and the
+       * reason the Amazon pass still has to ask.
+       */
+      const channelTax = t.items.reduce((s, i) => s + (i.salesTaxAmount ?? 0), 0);
       const scope = {
         channelConnector: t.source,
         channelHomeIso: ch?.nativeCountry?.isoCode ?? null,
@@ -2602,6 +2623,20 @@ export class IntegrationsService implements OnModuleInit {
           && ch?.vatThresholdAmount != null
           && net <= Number(ch.vatThresholdAmount),
       };
+
+      /**
+       * `channelTax > 0`, never `vat > 0`.
+       *
+       * eBay's mapping does not extract VAT when the collect-and-remit block is present — which is
+       * precisely why eBay's money never needed repairing — so `vatAmount` is zero on every order
+       * this exists to catch. OnBuy's guard, copied across, would have flipped none of them.
+       */
+      if (t.source === 'ebay') {
+        const want = channelRemitsTheVat({ ...scope, reportedByChannel: channelTax > 0 });
+        if (want && !t.vatCollectedByChannel && channelTax > 0) toTrue.push(t.id);
+        if (!want && t.vatCollectedByChannel) toFalse.push(t.id);
+        continue;
+      }
 
       if (t.source === 'onbuy') {
         const want = channelRemitsTheVat({ ...scope, reportedByChannel: false });
