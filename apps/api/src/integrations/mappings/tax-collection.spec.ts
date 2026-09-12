@@ -128,6 +128,36 @@ describe('channelRemitsTheVat', () => {
   });
 
   /**
+   * eBay says what it collected, and we store it — in `salesTaxAmount`, because its mapping puts the
+   * collect-and-remit block there and declines to extract VAT. That is why eBay's money was right
+   * from the start, and it is also the trap: `vatAmount` is ZERO on every order eBay collected on,
+   * so a guard written for OnBuy's shape would flip none of them.
+   */
+  describe('eBay, whose report we already hold', () => {
+    const ebay = { ...uk, channelConnector: 'ebay' };
+
+    it('is true for a UK sale eBay collected on', () => {
+      expect(channelRemitsTheVat({ ...ebay, reportedByChannel: true })).toBe(true);
+    });
+
+    it('is false where eBay collected nothing', () => {
+      expect(channelRemitsTheVat({ ...ebay, reportedByChannel: false })).toBe(false);
+    });
+
+    /** The threshold is not eBay's evidence — its own report is, and it either exists or it does not. */
+    it('does not fall back to the threshold the way OnBuy does', () => {
+      expect(channelRemitsTheVat({ ...ebay, reportedByChannel: false, belowChannelThreshold: true })).toBe(false);
+    });
+
+    /** One eBay connection serves eight marketplaces; only the UK-destined ones are relieved. */
+    it('is false for an EU destination even when eBay collected', () => {
+      for (const iso of ['DE', 'FR', 'IE']) {
+        expect(channelRemitsTheVat({ ...ebay, reportedByChannel: true, destinationIso: iso })).toBe(false);
+      }
+    });
+  });
+
+  /**
    * OnBuy collects under the threshold but has no field in which to say so — no equivalent of
    * Amazon's TaxCollection or eBay's collect-and-remit lines. Held to the report like the others,
    * every OnBuy order would read as our liability when none of it is.
