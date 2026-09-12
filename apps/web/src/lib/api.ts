@@ -3096,10 +3096,21 @@ export interface ProductStock {
     warehouseId: string; warehouseName: string; warehouseType: string;
     includeInInventory: boolean; isActive: boolean; quantityOnHand: number;
   }[];
-  /** Sum over warehouses flagged include_in_inventory — what we can actually sell. */
-  available: number;
+  /**
+   * Stock physically on a shelf in warehouses flagged include_in_inventory.
+   *
+   * NOT "what we can sell" — that was the old name and the old comment, and it collided with the
+   * Availability module's own figure, which is a different number kept somewhere else. A product
+   * can be published to the channels with nothing received against it.
+   */
+  sellableOnHand: number;
   /** Everything we physically hold, including excluded warehouses. */
   total: number;
+  /** What the channels have been told we hold. Null means never added to availability at all. */
+  published: number | null;
+  /** manual | vendor_import | sale | return — what last moved it. */
+  publishedSource: string | null;
+  publishedAt: string | null;
 }
 
 export interface StockImportRowResult {
