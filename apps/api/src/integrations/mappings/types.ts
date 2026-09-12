@@ -12,7 +12,8 @@ export interface MappedField {
   target: string; // maSquare field
   label: string;
   source: string; // channel field / derivation
-  value: string | number | null;
+  /** `unknown` because a raw channel block travels through here too; the rest are scalars. */
+  value: string | number | boolean | null | unknown;
   resolved?: string | null; // e.g. country name looked up from a code
 }
 
@@ -37,6 +38,18 @@ export interface MappedItemPayload {
    * marketplace changed its policy or a rule was edited after the fact.
    */
   channelReportedTaxCollection: boolean;
+  /**
+   * The channel's tax fields verbatim, before anything above interpreted them.
+   *
+   * Every other figure here is an answer to a question somebody already knew to ask. This is for
+   * the ones nobody did: whether a zero was reported or simply absent, what `TaxCollection` said
+   * when the tax was nil, which field the money was actually in. `money()` flattens absent and zero
+   * to the same number, and that collapse is what makes a tenth of Amazon's orders unexplainable.
+   *
+   * Diagnostic only, and deliberately untyped beyond `unknown` — giving a channel's payload a shape
+   * here would be promising to keep that shape.
+   */
+  channelTaxRaw?: { [key: string]: unknown };
 }
 
 export interface MappedItem {
@@ -57,6 +70,11 @@ export interface MappedOrderPayload {
   // different currencies), the ISO country of the marketplace the order was placed on. Used to
   // route the transaction to the matching per-country sales channel. Null → use the default.
   marketplaceCountryCode?: string | null;
+  /**
+   * Whether the channel called it a business order. Null where the channel does not say — which is
+   * every channel but Amazon, and Amazon too when it has no opinion.
+   */
+  isBusinessOrder?: boolean | null;
 }
 
 export interface MappedOrder {

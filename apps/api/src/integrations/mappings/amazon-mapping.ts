@@ -66,6 +66,7 @@ export function mapAmazonOrder(o: any, orderItems: any[], defaultCountry: string
   const fc = String(o.FulfillmentChannel ?? '');
   const fulfilmentType: 'FBA' | 'FBM' | null = fc === 'AFN' ? 'FBA' : fc === 'MFN' ? 'FBM' : null;
   const destCode = o.ShippingAddress?.CountryCode ?? defaultCountry ?? null;
+  const businessOrder = typeof o.IsBusinessOrder === 'boolean' ? o.IsBusinessOrder : null;
   const currency = o.OrderTotal?.CurrencyCode ?? orderItems[0]?.ItemPrice?.CurrencyCode ?? null;
 
   const header: MappedField[] = [
@@ -77,6 +78,14 @@ export function mapAmazonOrder(o: any, orderItems: any[], defaultCountry: string
     { target: 'channelShipmentStatus', label: 'Channel shipment status', source: 'OrderStatus', value: channelShipmentStatus },
     { target: 'resolution', label: 'Resolution', source: 'OrderStatus', value: resolution },
     { target: 'cancelStage', label: 'Cancelled at', source: 'OrderTotal (absent while Pending)', value: cancelStage },
+    /**
+     * Kept undefined rather than false when Amazon says nothing.
+     *
+     * `IsBusinessOrder` arrives as a real boolean on orders Amazon has an opinion about, and is
+     * simply absent otherwise. Collapsing absent to false would answer a question nobody asked, and
+     * the whole reason this is stored is that "no answer" and "no" are currently indistinguishable.
+     */
+    { target: 'isBusinessOrder', label: 'Business order', source: 'IsBusinessOrder', value: businessOrder },
   ];
 
   const items: MappedItem[] = (orderItems ?? []).map((it: any) => {
@@ -113,6 +122,23 @@ export function mapAmazonOrder(o: any, orderItems: any[], defaultCountry: string
      * the goods, because Amazon is the party that actually took it.
      */
     const collectedByChannel = isMarketplaceFacilitator(it);
+    /**
+     * The tax fields as they arrived, before any of the above interpreted them.
+     *
+     * `money()` turns an absent `ItemTax` and a reported zero into the same 0, and that collapse is
+     * precisely what makes 182 no-tax orders unexplainable. Recorded with `null` for absent and the
+     * object for present, so the two can be told apart later.
+     *
+     * Diagnostic only. Nothing computes from this and nothing may start to — the moment a
+     * calculation depends on a raw channel payload, Amazon's schema becomes ours to keep stable.
+     */
+    const channelTaxRaw = {
+      ItemTax: it.ItemTax ?? null,
+      ShippingTax: it.ShippingTax ?? null,
+      PromotionDiscountTax: it.PromotionDiscountTax ?? null,
+      ItemPrice: it.ItemPrice ?? null,
+      TaxCollection: it.TaxCollection ?? null,
+    };
     const quantity = n(it.QuantityOrdered) || 1;
     const sku = it.SellerSKU ?? null;
     return {
@@ -129,8 +155,9 @@ export function mapAmazonOrder(o: any, orderItems: any[], defaultCountry: string
         { target: 'amazonPointsAmount', label: 'Amazon points awarded', source: 'OrderItems[].PointsGranted.PointsMonetaryValue', value: points },
         { target: 'salesTaxAmount', label: 'Tax charged (reporting)', source: 'ItemTax + ShippingTax', value: salesTax },
         { target: 'channelReportedTaxCollection', label: 'Collected & remitted by Amazon', source: 'OrderItems[].TaxCollection.Model', value: collectedByChannel },
+        { target: 'channelTaxRaw', label: 'Channel tax fields, verbatim', source: 'OrderItems[] tax block', value: channelTaxRaw },
       ],
-      payload: { sku, quantity, netSalesAmount: netSales, vatAmount: vat, shippingAmount: shipping, shippingAmountVat: shipVat, salesChannelSalesFeeAmount: 0, fbaFulfilmentFeeAmount: 0, amazonPointsAmount: points, salesTaxAmount: salesTax, channelReportedTaxCollection: collectedByChannel },
+      payload: { sku, quantity, netSalesAmount: netSales, vatAmount: vat, shippingAmount: shipping, shippingAmountVat: shipVat, salesChannelSalesFeeAmount: 0, fbaFulfilmentFeeAmount: 0, amazonPointsAmount: points, salesTaxAmount: salesTax, channelReportedTaxCollection: collectedByChannel, channelTaxRaw },
     };
   });
 
@@ -138,7 +165,7 @@ export function mapAmazonOrder(o: any, orderItems: any[], defaultCountry: string
     orderId: o.AmazonOrderId,
     header,
     items,
-    payload: { transactionRef: o.AmazonOrderId, date: o.PurchaseDate, currency, destinationCountryCode: destCode, channelShipmentStatus, resolution, fulfilmentType },
+    payload: { transactionRef: o.AmazonOrderId, date: o.PurchaseDate, currency, destinationCountryCode: destCode, channelShipmentStatus, resolution, fulfilmentType, isBusinessOrder: businessOrder },
     raw: { ...o, OrderItems: orderItems },
   };
 }

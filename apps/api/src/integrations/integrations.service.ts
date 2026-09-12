@@ -3336,6 +3336,12 @@ export class IntegrationsService implements OnModuleInit {
       channelShipmentStatus: mapped.payload.channelShipmentStatus,
       // Only Amazon can be FBA; anything without an explicit type is FBM.
       fulfilmentType: mapped.payload.fulfilmentType ?? 'FBM',
+      /**
+       * Only sent when the channel actually said. Passing `null` would overwrite a real answer with
+       * a blank on any channel that does not report it, and every re-sync of an eBay or OnBuy order
+       * would erase what an Amazon import had established for the same field.
+       */
+      ...(mapped.payload.isBusinessOrder == null ? {} : { isBusinessOrder: mapped.payload.isBusinessOrder }),
       source: row.channelType,
       integrationId: row.id,
       items,

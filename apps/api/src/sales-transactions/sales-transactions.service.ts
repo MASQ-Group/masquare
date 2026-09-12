@@ -2195,6 +2195,8 @@ export class SalesTransactionsService {
         channelShipmentStatus: dto.channelShipmentStatus ?? null,
         // FBA exists only on Amazon; default everything else (manual, OnBuy) to FBM.
         fulfilmentType: dto.fulfilmentType ?? 'FBM',
+        /** Null where the channel did not say — which is not the same as it saying no. */
+        isBusinessOrder: dto.isBusinessOrder ?? null,
         source: dto.source ?? 'manual',
         integrationId: dto.integrationId ?? null,
         unlockedForEdit: false,
@@ -2673,6 +2675,11 @@ export class SalesTransactionsService {
           fulfilmentStatus: dto.fulfilmentStatus,
           channelShipmentStatus: dto.channelShipmentStatus,
           fulfilmentType: dto.fulfilmentType,
+          /**
+           * Absent from the DTO means leave it alone, not blank it. A re-sync of an order whose
+           * channel never reports the flag must not erase what another import established.
+           */
+          ...(dto.isBusinessOrder === undefined ? {} : { isBusinessOrder: dto.isBusinessOrder }),
           unlockedForEdit,
           updatedById: user.sub,
         },
