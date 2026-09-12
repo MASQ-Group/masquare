@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { buildInventoryItem, buildOffer, ebaySafeSku, missingForPublish, type EbayOfferInput } from './offer-payload';
+import { aspectsForPayload, missingAspects, resolveAspects } from './category-plan';
 
 /**
  * Creating an eBay listing through the Inventory API.
@@ -39,10 +40,19 @@ export class EbayListingService {
     return settings?.listingLiveWrites ?? false;
   }
 
-  private async ebayIntegration(integrationId?: string) {
+  /**
+   * The eBay connection this request may use.
+   *
+   * `companyIds` is not optional decoration. Both companies sell on eBay, and an integration id is
+   * enough to reach a seller account — so a request that names one it may not see must fail here
+   * rather than quietly act through the other company's token. Omitted only by callers with no user
+   * behind them, which is background work and correctly unscoped.
+   */
+  private async ebayIntegration(integrationId?: string, companyIds?: string[]) {
+    const scope = companyIds ? { targetCompanyId: { in: companyIds } } : {};
     const row = integrationId
-      ? await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'ebay' } })
-      : await this.prisma.channelIntegration.findFirst({ where: { deletedAt: null, channelType: 'ebay', status: 'active' } });
+      ? await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'ebay', ...scope } })
+      : await this.prisma.channelIntegration.findFirst({ where: { deletedAt: null, channelType: 'ebay', status: 'active', ...scope } });
     if (!row) throw new NotFoundException('No eBay integration');
     return row;
   }
@@ -90,6 +100,103 @@ export class EbayListingService {
     return res;
   }
 
+  /**
+   * Where eBay would file this product, asked of eBay.
+   *
+   * Its tree is its own and the LEAF decides which aspects are compulsory, so a category cannot be
+   * derived from our taxonomy — only requested. Searched on the eBay title where there is one,
+   * because that is the text written for this channel, falling back to the catalogue title.
+   *
+   * Read-only. Nothing is stored until somebody chooses.
+   */
+  async categorySuggestions(productId: string, integrationId?: string, query?: string, companyIds?: string[]) {
+    const row = await this.ebayIntegration(integrationId, companyIds);
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, deletedAt: null },
+      select: { ebayTitle: true, title: true, brand: { select: { name: true } } },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+    const q = (query ?? product.ebayTitle ?? product.title ?? '').trim();
+    const res = await this.integrations.ebayCategorySuggestions(row.id, q);
+    return { integrationId: row.id, searchedFor: q, ...res };
+  }
+
+  /**
+   * The aspects a category demands, married to what the product already answers.
+   *
+   * The saved plan wins over everything; Brand and MPN come off the product because they always
+   * mean the same thing wherever they appear. What comes back is a form: which aspects exist, which
+   * are compulsory, what is already answered and by what, and which answers eBay would refuse.
+   */
+  async categoryAspects(productId: string, categoryId: string, integrationId?: string, companyIds?: string[]) {
+    const row = await this.ebayIntegration(integrationId, companyIds);
+    const [product, plan, res] = await Promise.all([
+      this.prisma.product.findFirst({
+        where: { id: productId, deletedAt: null },
+        select: { manufacturerSku: true, brand: { select: { name: true } } },
+      }),
+      this.prisma.productChannelPlan.findFirst({
+        where: { productId, integrationId: row.id },
+        select: { aspects: true, categoryRef: true },
+      }),
+      this.integrations.ebayCategoryAspects(row.id, categoryId),
+    ]);
+    if (!product) throw new NotFoundException('Product not found');
+    if (!res.ok) throw new BadRequestException(`eBay would not describe that category: ${res.message}`);
+
+    const planned = (plan?.aspects && typeof plan.aspects === 'object' ? plan.aspects : {}) as Record<string, string>;
+    const resolved = resolveAspects(res.aspects, planned, {
+      brand: product.brand?.name ?? null,
+      mpn: product.manufacturerSku ?? null,
+    });
+    return {
+      integrationId: row.id,
+      categoryId,
+      /** True when this is the category already saved, so the form can say so. */
+      isSaved: plan?.categoryRef === categoryId,
+      aspects: resolved.map((a, i) => ({
+        ...a,
+        mode: res.aspects[i]?.mode ?? null,
+        values: res.aspects[i]?.values ?? [],
+        valueCount: res.aspects[i]?.valueCount ?? 0,
+      })),
+      missing: missingAspects(resolved),
+    };
+  }
+
+  /**
+   * Save the category and aspects for this product.
+   *
+   * Kept on `ProductChannelPlan`, the same table Amazon's launch plans use, so the answer survives
+   * the page and a publish months later sends what was decided rather than what a form last held.
+   *
+   * eBaymag republishes an eBay UK listing to every other eBay marketplace, so ONE plan per product
+   * is the whole requirement here — there is no per-marketplace fan-out for us to store.
+   */
+  async savePlan(
+    productId: string,
+    args: { integrationId?: string; categoryId: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null; companyIds?: string[] },
+  ) {
+    const row = await this.ebayIntegration(args.integrationId, args.companyIds);
+    const existing = await this.prisma.productChannelPlan.findFirst({
+      where: { productId, integrationId: row.id },
+      select: { id: true },
+    });
+    const data = {
+      categoryRef: args.categoryId,
+      categoryName: args.categoryName ?? null,
+      aspects: args.aspects ?? {},
+      ...(args.condition ? { condition: args.condition } : {}),
+      ...(args.handlingTimeDays !== undefined ? { handlingTimeDays: args.handlingTimeDays } : {}),
+      ...(args.offerPriceCents !== undefined ? { offerPriceCents: args.offerPriceCents } : {}),
+    };
+    const saved = existing
+      ? await this.prisma.productChannelPlan.update({ where: { id: existing.id }, data })
+      : await this.prisma.productChannelPlan.create({ data: { productId, integrationId: row.id, marketplace: '', ...data } });
+    this.logger.log(`eBay plan saved for ${productId}: category ${args.categoryId}`);
+    return { ok: true as const, planId: saved.id, categoryId: saved.categoryRef };
+  }
+
   /** Assemble the payload from the product, so preview and publish cannot disagree. */
   private async buildInput(productId: string, args: PublishArgs): Promise<{ input: EbayOfferInput; productSku: string }> {
     const product = await this.prisma.product.findFirst({
@@ -100,6 +207,18 @@ export class EbayListingService {
       },
     });
     if (!product) throw new NotFoundException('Product not found');
+
+    /**
+     * The saved plan is the default for everything a category decides. Arguments still win, so a
+     * preview can try a different category without disturbing what was agreed — but a publish with
+     * no arguments sends what somebody chose, rather than nothing.
+     */
+    const row = await this.ebayIntegration(args.integrationId);
+    const plan = await this.prisma.productChannelPlan.findFirst({
+      where: { productId, integrationId: row.id },
+      select: { categoryRef: true, aspects: true, condition: true, handlingTimeDays: true, offerPriceCents: true },
+    });
+    const planned = (plan?.aspects && typeof plan.aspects === 'object' ? plan.aspects : {}) as Record<string, string>;
 
     return {
       productSku: product.mainSku,
@@ -113,18 +232,30 @@ export class EbayListingService {
         brand: product.brand?.name ?? null,
         mpn: product.manufacturerSku ?? null,
         ean: product.ean ?? null,
-        condition: args.condition ?? 'NEW',
+        condition: args.condition ?? ebayCondition(plan?.condition) ?? 'NEW',
         quantity: args.quantity ?? null,
-        priceValue: args.priceValue ?? null,
+        priceValue: args.priceValue ?? (plan?.offerPriceCents != null ? plan.offerPriceCents / 100 : null),
         currency: args.currency ?? 'GBP',
         marketplaceId: args.marketplaceId ?? 'EBAY_GB',
-        categoryId: args.categoryId ?? null,
+        categoryId: args.categoryId ?? plan?.categoryRef ?? null,
         merchantLocationKey: args.merchantLocationKey ?? null,
         fulfillmentPolicyId: args.fulfillmentPolicyId ?? null,
         paymentPolicyId: args.paymentPolicyId ?? null,
         returnPolicyId: args.returnPolicyId ?? null,
-        handlingTimeDays: args.handlingTimeDays ?? null,
-        extraAspects: args.aspects,
+        handlingTimeDays: args.handlingTimeDays ?? plan?.handlingTimeDays ?? null,
+        /**
+         * The plan stores one value per aspect; the payload wants a list. Converted here rather than
+         * stored as lists, because a form that can only ever set one value should not pretend
+         * otherwise — and an explicit argument still overrides the whole aspect.
+         */
+        extraAspects: {
+          ...Object.fromEntries(
+            Object.entries(planned)
+              .filter(([, v]) => typeof v === 'string' && v.trim())
+              .map(([k, v]) => [k, [String(v).trim()]]),
+          ),
+          ...(args.aspects ?? {}),
+        },
       },
     };
   }
@@ -258,6 +389,17 @@ export class EbayListingService {
     this.logger.log(`eBay offer withdrawn: ${offerId}`);
     return { ok: true, offerId };
   }
+}
+
+/**
+ * The plan's condition column is free text, and eBay accepts three values.
+ *
+ * Narrowed rather than cast: a row holding something else — typed by hand, or left over from a
+ * channel with a different vocabulary — falls back to NEW instead of being sent and refused.
+ */
+function ebayCondition(value: string | null | undefined): 'NEW' | 'USED_EXCELLENT' | 'USED_GOOD' | null {
+  const v = (value ?? '').trim().toUpperCase();
+  return v === 'NEW' || v === 'USED_EXCELLENT' || v === 'USED_GOOD' ? v : null;
 }
 
 export interface PublishArgs {
