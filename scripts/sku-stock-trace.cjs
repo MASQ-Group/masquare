@@ -49,6 +49,23 @@ if (!SKU) { console.error('Set SKU.'); process.exit(1); }
     + `   lastSource=${product.availability?.lastSource ?? '—'}`
     + `   updated=${product.availability?.updatedAt?.toISOString() ?? '—'}`);
 
+  /**
+   * Listings hang off the PRODUCT, not the SKU, so a rename cannot detach them — but that is the
+   * kind of claim worth being able to check rather than reason about, which is why it is here.
+   */
+  const listings = await p.channelListing.findMany({
+    where: { productId: product.id },
+    select: { channelSku: true, marketplace: true, listedQuantity: true, listingStatus: true,
+      integration: { select: { name: true } } },
+  });
+  console.log(`
+    channel listings (${listings.length})`);
+  if (!listings.length) console.log(`      (none)`);
+  for (const l of listings) {
+    console.log(`      ${String(l.integration?.name ?? '?').padEnd(18)}${String(l.marketplace || '').padEnd(4)}`
+      + `  sku ${String(l.channelSku).padEnd(22)} qty ${l.listedQuantity ?? '—'}`);
+  }
+
   const ledger = await p.availabilityLedger.findMany({
     where: { productId: product.id }, orderBy: { createdAt: 'desc' }, take: 12,
   });
