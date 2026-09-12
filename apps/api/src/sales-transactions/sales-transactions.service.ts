@@ -2844,18 +2844,37 @@ export class SalesTransactionsService {
         }
       }
 
+      /**
+       * The destination's tax REGIME, re-derived like everything else here.
+       *
+       * It was the one snapshot this sweep left alone, and nothing else revisited it either — so an
+       * order kept whatever answer `taxTypeForCountry` gave on the day it was saved. 548 orders on
+       * production still called themselves VAT sales into Saudi Arabia and Switzerland, carrying
+       * 1,187.08 as our liability on sales where we charge no VAT at all.
+       *
+       * It is not cosmetic. `marketplaceRemitsTax` reads the stored regime to decide whether the tax
+       * was ours: GST and US sales tax are the channel's, Japanese consumption tax is ours, VAT is
+       * ours unless the channel said otherwise. A Swiss sale stored as 'vat' therefore reads as our
+       * liability for tax eBay actually took.
+       *
+       * A LOCAL sale is invoiced by us and is always 'vat' — the destination rule has no say there,
+       * exactly as `create` and `update` treat it.
+       */
+      const taxType = isLocal ? 'vat' : await this.resolveTaxType(t.destinationCountryId);
+
       const headerChanged =
         (currency ?? null) !== (t.currency ?? null) ||
         (feeCurrency ?? null) !== (t.feeCurrency ?? null) ||
         !same(exchangeRate, t.exchangeRate) || !same(feeExchangeRate, t.feeExchangeRate) ||
         (shippingServiceId ?? null) !== (t.shippingServiceId ?? null) ||
+        (taxType ?? null) !== (t.taxType ?? null) ||
         !same(destinationVatPct, t.destinationVatPct) || vatOverridden !== t.vatOverridden;
 
       if (!headerChanged && itemUpdates.length === 0 && vatUpdates.length === 0) continue;
       await this.prisma.$transaction([
         this.prisma.salesTransaction.update({
           where: { id: t.id },
-          data: { currency, feeCurrency, exchangeRate, feeExchangeRate, shippingServiceId, destinationVatPct, vatOverridden },
+          data: { currency, feeCurrency, exchangeRate, feeExchangeRate, shippingServiceId, taxType, destinationVatPct, vatOverridden },
         }),
         ...itemUpdates.map((u) => this.prisma.salesTransactionItem.update({ where: { id: u.id }, data: { productId: u.next } })),
         ...vatUpdates.map((u) => this.prisma.salesTransactionItem.update({
