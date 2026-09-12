@@ -155,3 +155,34 @@ export function relinkAction(
   }
   return { action: row.productId ? 'move' : 'claim', productId: match.owner.productId, how: match.how };
 }
+
+/**
+ * A product the catalogue nearly knows, for a SKU it does not.
+ *
+ * Thirty-eight unlinked SKUs are a known SKU with something on the end — `IT40779-FBA`,
+ * `3G-011-631-00-750-FBA`. Those are almost certainly the same product listed under a fulfilment
+ * alias nobody defined. But `BE-BS39 MIT` also matches `BE-BS39` this way, and MIT may well be a
+ * colour, which would be a different product entirely.
+ *
+ * So this never links anything. It is only ever a SUGGESTION for the worklist — the difference
+ * between "the catalogue may already have this" and "attach a live listing to it", and the whole
+ * reason it is separate from `matchSku`.
+ *
+ * The longest prefix wins, so `A-B-C-FBA` is offered as `A-B-C` rather than `A-B`: the fewer
+ * segments thrown away, the likelier the guess.
+ */
+export function suggestOwnerBySuffix(
+  sku: string,
+  index: Map<string, SkuOwner>,
+  loose?: LooseSkuIndex,
+): { owner: SkuOwner; matched: string; dropped: string } | null {
+  const parts = normaliseSku(sku).split(/[-_.\s]+/).filter(Boolean);
+  for (let n = parts.length - 1; n >= 1; n--) {
+    const prefix = parts.slice(0, n).join('-');
+    const match = matchSku(prefix, index, loose);
+    if (match.owner) {
+      return { owner: match.owner, matched: prefix, dropped: parts.slice(n).join('-') };
+    }
+  }
+  return null;
+}

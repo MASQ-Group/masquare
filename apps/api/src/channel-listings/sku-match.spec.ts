@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLooseSkuIndex, buildSkuOwnerIndex, looseSkuKey, matchSku, normaliseSku, relinkAction } from './sku-match';
+import { buildLooseSkuIndex, buildSkuOwnerIndex, looseSkuKey, matchSku, normaliseSku, relinkAction, suggestOwnerBySuffix } from './sku-match';
 
 const catalogue = [
   { id: 'p1', mainSku: 'IT68277', aliases: [{ skuValue: 'IT-68277' }] },
@@ -168,5 +168,40 @@ describe('matching through punctuation', () => {
   it('ignores a SKU that is nothing but punctuation', () => {
     expect(matchSku('---', index, loose)).toEqual({ owner: null, how: 'unknown' });
     expect(looseSkuKey(' -- ')).toBe('');
+  });
+});
+
+describe('suggestOwnerBySuffix', () => {
+  const products = [
+    { id: 'p1', mainSku: 'IT40779', aliases: [] },
+    { id: 'p2', mainSku: '3G-011-631-00-750', aliases: [] },
+    { id: 'p3', mainSku: 'BE-BS39', aliases: [] },
+  ];
+  const index = buildSkuOwnerIndex(products);
+
+  it('offers the product a fulfilment suffix was added to', () => {
+    expect(suggestOwnerBySuffix('IT40779-FBA', index))
+      .toEqual({ owner: { productId: 'p1', sku: 'IT40779', isMain: true }, matched: 'it40779', dropped: 'fba' });
+  });
+
+  /** The longest prefix wins — fewer segments thrown away is the likelier guess. */
+  it('drops as little as it can', () => {
+    expect(suggestOwnerBySuffix('3G-011-631-00-750-FBA', index)?.matched).toBe('3g-011-631-00-750');
+  });
+
+  /**
+   * `MIT` may be a colour, in which case this is a different product. The function offers it anyway
+   * and the caller must present it as a question — which is why it is not part of `matchSku` and
+   * cannot link anything.
+   */
+  it('offers a guess that may well be wrong, and says what it dropped', () => {
+    expect(suggestOwnerBySuffix('BE-BS39 MIT', index))
+      .toEqual({ owner: { productId: 'p3', sku: 'BE-BS39', isMain: true }, matched: 'be-bs39', dropped: 'mit' });
+  });
+
+  it('offers nothing when no prefix is known, and never suggests the whole SKU', () => {
+    expect(suggestOwnerBySuffix('COMPLETELY-NEW-THING', index)).toBeNull();
+    expect(suggestOwnerBySuffix('IT40779', index)).toBeNull();
+    expect(suggestOwnerBySuffix('', index)).toBeNull();
   });
 });
