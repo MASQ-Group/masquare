@@ -65,7 +65,14 @@ export class StockService {
     return rows.map((r) => r.productId);
   }
 
-  /** Per-warehouse breakdown for one product, including excluded warehouses (flagged). */
+  /**
+   * Per-warehouse breakdown for one product, including excluded warehouses (flagged).
+   *
+   * It also returns what the channels have been TOLD we hold, which is a different number kept in a
+   * different table and moved by different things. The card showed only the shelf figure under the
+   * words "available to sell", so a product with an availability of 1 and nothing received against
+   * it read as a contradiction rather than as the two facts it is.
+   */
   async byProduct(productId: string, companyIds?: string[]) {
     const product = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
@@ -88,11 +95,24 @@ export class StockService {
       quantityOnHand: l.quantityOnHand,
     }));
 
+    /**
+     * Null is not zero here. No row means this product was never added to availability — nothing
+     * has been published about it at all — where a zero is somebody having said "none". The card
+     * must be able to tell those apart, so the absence travels rather than being flattened.
+     */
+    const published = await this.prisma.productAvailability.findUnique({
+      where: { productId },
+      select: { quantity: true, lastSource: true, updatedAt: true },
+    });
+
     return {
       product,
       rows,
-      available: rows.filter((r) => r.includeInInventory && r.isActive).reduce((s, r) => s + r.quantityOnHand, 0),
+      sellableOnHand: rows.filter((r) => r.includeInInventory && r.isActive).reduce((s, r) => s + r.quantityOnHand, 0),
       total: rows.reduce((s, r) => s + r.quantityOnHand, 0),
+      published: published?.quantity ?? null,
+      publishedSource: published?.lastSource ?? null,
+      publishedAt: published?.updatedAt ?? null,
     };
   }
 
