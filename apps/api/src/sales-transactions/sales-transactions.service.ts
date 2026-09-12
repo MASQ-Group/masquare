@@ -9,6 +9,7 @@ import { ActivityService, type ActivitySource } from '../activity/activity.servi
 import { diffRecords } from '../activity/diff';
 import { SALES_TX_FIELD_LABELS, SALES_TX_REF_FIELDS, SALES_TX_REF_NAME_FIELD } from '../activity/sales-transaction-fields';
 import { channelRemitsTheVat, marketplaceRemitsTax, withoutChannelCollectedTax } from '../integrations/mappings/tax-collection';
+import { planChannelTaxRepair } from './channel-tax-repair-plan';
 import { channelThresholdApplies, rateBeforeCountryFallback, taxRegimeFor } from './vat-scope';
 import type { ProgressSink } from '../jobs/jobs.service';
 // Type-only: importing the class value here would form a runtime ES-module cycle
@@ -3149,8 +3150,20 @@ export class SalesTransactionsService {
    * overstated by exactly the tax somebody else kept.
    *
    * Reversible by construction. `salesTaxAmount` holds the same figure and is never touched, so
-   * nothing is lost — an order whose line VAT this zeroes can still say what the buyer paid. Rows
-   * where that is NOT true are refused rather than emptied, because there the figure would be gone.
+   * nothing is lost — an order whose line VAT this zeroes can still say what the buyer paid.
+   *
+   * Where that is NOT true, what happens next turns on whether the destination has a VAT at all:
+   *
+   *   - It does. The amount could genuinely be ours and merely unreported, so the order is REFUSED.
+   *     Emptying it would delete the only copy of a figure nobody has ruled on.
+   *   - It does not — the United States, or a GST country. Then a figure in `vatAmount` is not a
+   *     disputed amount but a misfiled one, because there is no tax it could be. So it MOVES into
+   *     `salesTaxAmount`, where its correctly-stored siblings already sit.
+   *
+   * The move is what the single refusal on file actually wanted. 114-3886483-9295419 is an Amazon
+   * US order carrying 8.26 of `vatAmount` with nothing in `salesTaxAmount` — imported weeks after
+   * the rest, alone among 1,164 orders to the US, Canada and Mexico. Zeroing it would have destroyed
+   * the figure; refusing it left an order that reconciles against nothing. Moving it does neither.
    *
    * The RATE is deliberately left alone. `destinationVatPct` is still derived from the channel
    * threshold, and repairing it before that rule is fixed would only let the next sync undo the
@@ -3184,52 +3197,60 @@ export class SalesTransactionsService {
     });
 
     const toZero: string[] = [];
+    const toMove: { id: string; salesTaxAmount: number }[] = [];
     const byChannel: Record<string, { orders: number; tax: number }> = {};
     const byMonth: Record<string, number> = {};
     const refused: string[] = [];
+    const moved: string[] = [];
     let orders = 0;
     let tax = 0;
+    let taxMoved = 0;
 
     for (const t of txs) {
-      if (!marketplaceRemitsTax({ taxType: t.taxType, vatCollectedByChannel: t.vatCollectedByChannel })) continue;
-      const carrying = t.items.filter((i) => (i.vatAmount ?? 0) !== 0 || (i.shippingAmountVat ?? 0) !== 0);
-      if (carrying.length === 0) continue;
-
-      /**
-       * Only where the figure survives elsewhere. `salesTaxAmount` is what every mapping records the
-       * channel as having charged; if a line has VAT but no such total, zeroing it would delete the
-       * only copy. Those are reported instead — a short list somebody can look at.
-       */
-      const wouldLose = carrying.filter((i) => (i.salesTaxAmount ?? 0) === 0);
-      if (wouldLose.length) {
+      /** The whole of the judgement, and tested on its own in `channel-tax-repair-plan.spec.ts`. */
+      const plan = planChannelTaxRepair(t);
+      if (plan.action === 'skip') continue;
+      if (plan.action === 'refuse') {
         if (refused.length < 50) refused.push(t.transactionRef);
         continue;
       }
 
       orders += 1;
-      const amount = carrying.reduce((sum, i) => sum + (i.vatAmount ?? 0) + (i.shippingAmountVat ?? 0), 0);
-      tax += amount;
+      tax += plan.amount;
       const ch = t.salesChannel?.name ?? '—';
-      byChannel[ch] = { orders: (byChannel[ch]?.orders ?? 0) + 1, tax: (byChannel[ch]?.tax ?? 0) + amount };
+      byChannel[ch] = { orders: (byChannel[ch]?.orders ?? 0) + 1, tax: (byChannel[ch]?.tax ?? 0) + plan.amount };
       const mth = t.date.toISOString().slice(0, 7);
-      byMonth[mth] = (byMonth[mth] ?? 0) + amount;
-      for (const i of carrying) toZero.push(i.id);
+      byMonth[mth] = (byMonth[mth] ?? 0) + plan.amount;
+
+      toZero.push(...plan.zero);
+      toMove.push(...plan.move);
+      for (const mv of plan.move) taxMoved += mv.salesTaxAmount;
+      if (plan.move.length && moved.length < 50) moved.push(t.transactionRef);
     }
 
     const summary = {
       orders,
-      lines: toZero.length,
+      lines: toZero.length + toMove.length,
       /** Native currency, summed across channels — GBP, USD and AUD do not add up to one figure. */
       taxRemoved: Math.round(tax * 100) / 100,
       byChannel,
       byMonth,
+      /**
+       * A subset of `taxRemoved`, not a total beside it. The figure leaves `vatAmount` either way,
+       * so revenue moves by the same amount — this says how much of it was relocated rather than
+       * dropped, which is the part worth reading, because it is the part that was in the wrong
+       * column to begin with.
+       */
+      linesMoved: toMove.length,
+      taxMoved: Math.round(taxMoved * 100) / 100,
+      movedExamples: moved.slice(0, 10),
       refusedNoSalesTax: refused.length,
       refusedExamples: refused.slice(0, 10),
     };
 
     if (!opts.confirm) return { dryRun: true as const, ...summary };
 
-    ctx?.setTotal(toZero.length);
+    ctx?.setTotal(toZero.length + toMove.length);
     for (let i = 0; i < toZero.length; i += 500) {
       const slice = toZero.slice(i, i + 500);
       await this.prisma.salesTransactionItem.updateMany({
@@ -3238,7 +3259,19 @@ export class SalesTransactionsService {
       });
       for (let n = 0; n < slice.length; n += 1) ctx?.tick(true);
     }
-    this.logger.log(`Channel-collected tax repair: ${orders} order(s), ${toZero.length} line(s), ${summary.taxRemoved} removed.`);
+    /**
+     * One at a time, because each line carries its own figure and there is no `updateMany` that
+     * writes a different value per row. This is the handful the mappings got wrong, not a sweep.
+     */
+    for (const mv of toMove) {
+      await this.prisma.salesTransactionItem.update({
+        where: { id: mv.id },
+        data: { salesTaxAmount: mv.salesTaxAmount, vatAmount: 0, shippingAmountVat: 0 },
+      });
+      ctx?.tick(true);
+    }
+    this.logger.log(`Channel-collected tax repair: ${orders} order(s), ${summary.lines} line(s), `
+      + `${summary.taxRemoved} removed, of which ${summary.taxMoved} moved into salesTaxAmount.`);
     return { dryRun: false as const, ...summary };
   }
 }
