@@ -965,6 +965,24 @@ export interface Product {
   companyIds: string[];
   aliasCount: number;
   featuredImage: string | null;
+  /**
+   * The channels this product actually reached, one entry per channel it is listed on.
+   *
+   * Present on the LIST only — `get` and the card do not carry it. Aliases need no separate
+   * treatment: a listing is attached to whichever product owns the SKU it carries, main or alias,
+   * so a product listed only under an alias appears here exactly like any other.
+   *
+   * `channelId` matches `ChannelListingChannel.id`, which is how the unlisted half is worked out —
+   * everything in the channels list that is absent from here.
+   */
+  listedOn?: ProductChannelListing[];
+}
+export interface ProductChannelListing {
+  channelId: string;
+  /** live | low | oos | paused | error — the same word the Channel Listings grid colours by. */
+  status: string;
+  /** The SKU the channel knows it as, which is an alias whenever the listing went out under one. */
+  channelSku: string;
 }
 export interface ProductListResponse {
   items: Product[];
