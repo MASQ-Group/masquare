@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { JobsService } from './jobs.service';
 import { NoAccessCheck } from '../access/access.decorators';
+import { looksLikeJobId } from './job-id';
 
 /** Progress for long-running actions. Read-only apart from cancel; the ids are unguessable UUIDs. */
 @ApiTags('jobs')
@@ -17,10 +18,20 @@ export class JobsController {
   @Get(':id')
   get(@Param('id') id: string) {
     const job = this.jobs.get(id);
-    // A job that no longer exists is almost always a restarted server rather than a bad id, and
-    // the difference matters: the work stopped partway and has to be run again.
-    if (!job) throw new NotFoundException('That run is no longer being tracked — the server restarted, so it stopped partway. Run it again.');
-    return job;
+    if (job) return job;
+
+    /**
+     * Two different situations wearing one 404, and the advice is opposite.
+     *
+     * A well-formed id we no longer hold really is a restarted server: the work stopped partway and
+     * has to be run again. But an id that was never a UUID cannot have been a job — and telling
+     * somebody their run "stopped partway, run it again" when they simply pasted the placeholder
+     * sends them to re-trigger a job that may be running perfectly well.
+     */
+    if (!looksLikeJobId(id)) {
+      throw new NotFoundException(`"${id}" is not a run id. Use the id the action returned when it started.`);
+    }
+    throw new NotFoundException('That run is no longer being tracked — the server restarted, so it stopped partway. Run it again.');
   }
 
   @Post(':id/cancel')

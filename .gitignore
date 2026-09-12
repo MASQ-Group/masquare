@@ -42,3 +42,6 @@ coverage/
 apps/api/.tmp/
 
 unmatched-listings.csv
+
+# Rule modules compiled fresh by prod-scan.sh so reports can require the real thing.
+scripts/.compiled/

@@ -69,8 +69,14 @@ export function taxRegimeFor(c: { isoCode?: string | null; euVatZone?: boolean |
    * our side of the books. 267 orders in the first half of 2026, 708.79 of Amazon's own GST, booked
    * as though we owed it. The figures always matched Amazon to the cent — only the question of
    * whose money it was had never been asked.
+   *
+   * New Zealand is the same arrangement and turned up the same way — one order, sold through the
+   * Australian storefront to a New Zealand address, left holding AUD 14.54 of GST that Amazon had
+   * charged and kept. Amazon collects NZ GST on imported goods below the NZD 1,000 threshold as the
+   * marketplace operator. This assumes we hold no New Zealand registration, as with the other two;
+   * if that is ever wrong, this line is where to correct it.
    */
-  if (iso === 'AU' || iso === 'SG') return 'gst';
+  if (iso === 'AU' || iso === 'SG' || iso === 'NZ') return 'gst';
   if (iso === 'US' || iso === 'CA' || iso === 'MX') return 'sales_tax';
   if (iso === GB) return 'vat';
   if (c.euVatZone) return 'vat';
