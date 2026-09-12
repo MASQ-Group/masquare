@@ -75,3 +75,43 @@ describe('readValidation', () => {
     expect(readValidation([]).blocked).toBe(false);
   });
 });
+
+/**
+ * The case the gate existed for and could not reach.
+ *
+ * `readValidation` was applied on the submit path from the start, but the PREVIEW still reported
+ * "Amazon raised nothing" and the page hides its List button on that. So a lone SKU-in-use refusal
+ * left the button absent — not disabled, absent — and the tolerance the gate provides was
+ * unreachable through the interface. 90-ELIT200BL sat in DRAFT on Amazon BE while Seller Central
+ * listed the identical SKU on request.
+ *
+ * These assert the shape the preview now returns, which is what decides whether the button appears.
+ */
+describe('what the preview reports to the page', () => {
+  const skuInUse = { code: '100398', message: "SKU '90-ELIT200BL' already exists in other Amazon marketplace(s). Use a new SKU and resubmit your listing.", severity: 'ERROR' };
+  const warranty = { code: '90000900', message: 'You submitted an attribute Product Warranty that does not belong', severity: 'WARNING' };
+
+  /** Exactly the screenshot: one SKU error, one warning. The button has to appear. */
+  it('does not block on the SKU refusal even alongside a warning', () => {
+    const v = readValidation([warranty, skuInUse]);
+    expect(v.blocked).toBe(false);
+    expect(v.skuInUse).toBe(true);
+    expect(v.blockingIssues).toEqual([]);
+  });
+
+  /** A real error alongside it still stops, and names itself rather than the SKU complaint. */
+  it('blocks on a genuine error beside the SKU refusal, and reports that one', () => {
+    const missing = { code: '4000001', message: 'The attribute brand is required', severity: 'ERROR' };
+    const v = readValidation([skuInUse, missing]);
+    expect(v.blocked).toBe(true);
+    expect(v.skuInUse).toBe(true);
+    expect(v.blockingIssues.map((i) => i.code)).toEqual(['4000001']);
+  });
+
+  /** Nothing wrong at all is not the same state, and must not show the SKU wording. */
+  it('separates a clean pass from a tolerated SKU refusal', () => {
+    const clean = readValidation([]);
+    expect(clean.blocked).toBe(false);
+    expect(clean.skuInUse).toBe(false);
+  });
+});

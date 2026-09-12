@@ -394,6 +394,37 @@ function Verdict({ preview: p }: { preview: Preview }) {
     );
   }
 
+  /**
+   * Amazon objected to the SKU NAME and to nothing else.
+   *
+   * Not a green tick — Amazon did refuse — and not the red "would reject" either, because that
+   * refusal is unreliable: `VALIDATION_PREVIEW` returns it for SKUs Seller Central creates on
+   * request, which is exactly what happened to 90-ELIT200BL on Amazon BE. Saying "would reject"
+   * made a listing look impossible when the submit would have gone through, so the page now says
+   * what is actually true and leaves the decision where it belongs.
+   */
+  if (p.validated && p.skuInUse) {
+    return (
+      <div className="flex flex-col gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[12px] text-amber-900">
+        <span className="inline-flex items-center gap-1.5 font-semibold">
+          <AlertTriangle size={13} className="text-amber-600" /> Amazon objects to the SKU name — nothing else
+        </span>
+        <span className="text-[11.5px]">
+          Its check says this SKU exists on another marketplace. That check is often wrong: the same SKU is
+          normally accepted across marketplaces, and Seller Central creates these without complaint. Listing
+          will ask Amazon for real rather than take the check's word for it. If Amazon refuses then, a
+          different SKU is offered here.
+        </span>
+        {!p.liveWritesEnabled && (
+          <span className="inline-flex items-start gap-1.5 text-[11.5px]">
+            <Lock size={11} className="mt-0.5 shrink-0" />
+            Nothing was created. Live listing writes are switched off on this server.
+          </span>
+        )}
+      </div>
+    );
+  }
+
   if (p.validated) {
     return (
       <div className="flex flex-col gap-1.5 rounded-md border border-teal-200 bg-teal-50 px-2.5 py-2 text-[12px] text-teal-900">
@@ -414,7 +445,8 @@ function Verdict({ preview: p }: { preview: Preview }) {
   return (
     <div className="flex items-start gap-2 rounded-md border border-danger-bd bg-danger-bg px-2.5 py-2 text-[12px] text-danger">
       <Ban size={13} className="mt-0.5 shrink-0" />
-      <span>{p.message ?? 'Amazon would reject this offer.'}</span>
+      {/* The reason that actually blocks, not whichever issue came first. */}
+      <span>{p.blockingIssues?.[0]?.message ?? p.message ?? 'Amazon would reject this offer.'}</span>
     </div>
   );
 }
