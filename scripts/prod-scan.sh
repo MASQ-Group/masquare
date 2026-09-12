@@ -28,7 +28,7 @@ prod-health unmatched-listings amazon-uk-vat channel-duplicates zero-vat-orders 
 nonvat-country-rates migration-state vat-flag-drift onbuy-vat-signal sku-listing-trace
 sku-phantom-origin listing-row-collisions push-coverage sku-alias-check alias-listing-coverage
 vat-order-review marketplace-vat-overstated country-rate-check regime-vat-impact
-collected-tax-repair-preview jct-classification-check vat-flag-state when-did-vat-change channel-vat-review ebay-flag-gap sku-listing-attempts ebay-nonuk-collected stale-tax-regime export-vat-origin
+collected-tax-repair-preview jct-classification-check vat-flag-state when-did-vat-change channel-vat-review ebay-flag-gap sku-listing-attempts ebay-nonuk-collected stale-tax-regime export-vat-origin vat2026-review regular-seller-vat
 "
 
 case " $(echo $REPORTS) " in
