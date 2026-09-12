@@ -198,13 +198,18 @@ export class EbayListingService {
   }
 
   /** Assemble the payload from the product, so preview and publish cannot disagree. */
-  private async buildInput(productId: string, args: PublishArgs): Promise<{ input: EbayOfferInput; productSku: string }> {
+  private async buildInput(productId: string, args: PublishArgs): Promise<{
+    input: EbayOfferInput; productSku: string; integrationId: string;
+    planned: Record<string, string>; facts: { brand: string | null; mpn: string | null };
+  }> {
     const product = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
       include: {
         brand: { select: { name: true } },
         media: { where: { deletedAt: null }, select: { url: true }, orderBy: { createdAt: 'asc' } },
       },
+      // `manufacturerSku` is already selected by `include`'s implicit scalar set; named here only
+      // so the aspect resolution below is obviously reading a real column.
     });
     if (!product) throw new NotFoundException('Product not found');
 
@@ -222,6 +227,9 @@ export class EbayListingService {
 
     return {
       productSku: product.mainSku,
+      integrationId: row.id,
+      planned,
+      facts: { brand: product.brand?.name ?? null, mpn: product.manufacturerSku ?? null },
       input: {
         sku: ebaySafeSku(product.mainSku),
         // eBay's own title field, falling back to the catalogue title.
@@ -260,13 +268,36 @@ export class EbayListingService {
     };
   }
 
-  /** What we WOULD send, and what is missing. Sends nothing to eBay. */
+  /**
+   * What we WOULD send, and everything that would stop it. Sends nothing to eBay.
+   *
+   * Item specifics are part of "missing" even though `missingForPublish` cannot see them: which
+   * aspects a category demands is only knowable by asking eBay, so the answer is fetched here and
+   * folded in. Without it the gate could read READY on a listing eBay would refuse — which is the
+   * one thing a preview must never do.
+   */
   async preview(productId: string, args: PublishArgs) {
-    const { input, productSku } = await this.buildInput(productId, args);
+    const { input, productSku, integrationId, planned, facts } = await this.buildInput(productId, args);
+    const missing = missingForPublish(input);
+
+    if (input.categoryId) {
+      const res = await this.integrations.ebayCategoryAspects(integrationId, input.categoryId);
+      /**
+       * A failed lookup is not an empty one. If eBay could not be asked, the aspects are unknown and
+       * saying "nothing missing" would be inventing an answer — so it says so instead.
+       */
+      if (!res.ok) missing.push({ key: 'aspects', label: `Could not check item specifics (${res.message})` });
+      else {
+        const resolved = resolveAspects(res.aspects, planned, facts);
+        for (const name of missingAspects(resolved)) missing.push({ key: `aspect:${name}`, label: name });
+      }
+    }
+
     return {
       productSku,
       ebaySku: input.sku,
-      missing: missingForPublish(input),
+      categoryId: input.categoryId ?? null,
+      missing,
       inventoryItem: buildInventoryItem(input),
       offer: buildOffer(input),
     };
@@ -289,9 +320,23 @@ export class EbayListingService {
     if (!args.confirm) throw new BadRequestException('Publishing a real listing needs an explicit confirmation.');
 
     const row = await this.ebayIntegration(args.integrationId);
-    const { input, productSku } = await this.buildInput(productId, args);
+    const { input, productSku, integrationId, planned, facts } = await this.buildInput(productId, args);
     const missing = missingForPublish(input);
     if (missing.length > 0) throw new BadRequestException(`Not ready to list: ${missing.map((m) => m.label).join(', ')}`);
+
+    /**
+     * The same aspect check the preview makes, repeated here rather than trusted from it. A preview
+     * can be minutes old and a category's demands are eBay's to change; publishing on a stale pass
+     * would fail at the marketplace, which is the expensive place to find out.
+     */
+    if (input.categoryId) {
+      const res = await this.integrations.ebayCategoryAspects(integrationId, input.categoryId);
+      if (!res.ok) throw new BadRequestException(`Could not check the category's item specifics: ${res.message}`);
+      const resolved = resolveAspects(res.aspects, planned, facts);
+      const gaps = missingAspects(resolved);
+      if (gaps.length) throw new BadRequestException(`Not ready to list — item specifics: ${gaps.join(', ')}`);
+      input.extraAspects = { ...aspectsForPayload(resolved), ...(args.aspects ?? {}) };
+    }
 
     const item = await this.integrations.ebayPutInventoryItem(row.id, input.sku, buildInventoryItem(input));
     if (!item.ok) throw new BadRequestException(`eBay refused the inventory item: ${item.message}`);

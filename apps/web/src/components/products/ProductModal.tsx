@@ -8,6 +8,7 @@ import { ProductChannelIdentifiers } from './ProductChannelIdentifiers';
 import { ProductChannelsTab } from './ProductChannelsTab';
 import { EntityHistory } from '../common/EntityHistory';
 import { ProductDocuments } from './ProductDocuments';
+import { EbayCategoryPicker } from './EbayCategoryPicker';
 import { RichTextEditor } from '../common/RichTextEditor';
 import { FeatureList } from './FeatureList';
 import { FileDrop, ModalShell, Select } from '@masquare/ui';
@@ -523,6 +524,32 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
             <label className="label">Search keywords</label>
             <input className="input" value={content.searchKeywords} onChange={(e) => { setContent((s) => ({ ...s, searchKeywords: e.target.value })); touch(); }} placeholder="Comma separated" />
           </div>
+
+          {/*
+            * The eBay category, and whatever item specifics it demands.
+            *
+            * Here rather than only on Channels because this IS content — eBay decides the compulsory
+            * fields from the category, so which fields even exist is not knowable until one is
+            * chosen. Filling them beside the title and description is what makes listing later a
+            * single button instead of a form nobody expected.
+            *
+            * Edit mode only, like documents and the store preview above: the category is saved
+            * against the product and there is no id to hang it on until the product exists.
+            */}
+          {product ? (
+            <div className="border-t border-n-100 pt-4">
+              <EbayCategoryPicker productId={product.id} defaultQuery={content.ebayTitle || undefined} />
+            </div>
+          ) : (
+            <div className="border-t border-n-100 pt-4">
+              <label className="label">eBay category</label>
+              <p className="-mt-0.5 text-[12px] text-n-400">
+                Save the product first. eBay decides which item specifics are compulsory from the
+                category, so the fields to fill in cannot be known until there is a product to save
+                them against.
+              </p>
+            </div>
+          )}
         </div>
       )}
 

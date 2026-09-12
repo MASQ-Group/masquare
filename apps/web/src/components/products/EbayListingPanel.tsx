@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Loader2, Search, Send } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, Send } from 'lucide-react';
 import { toast } from 'sonner';
-import { ebayListingApi, type EbayCategorySuggestion, type EbayResolvedAspect } from '../../lib/api';
+import { ebayListingApi } from '../../lib/api';
+import { EbayCategoryPicker } from './EbayCategoryPicker';
 
 /**
  * Creating the eBay listing for one product.
@@ -18,41 +19,13 @@ import { ebayListingApi, type EbayCategorySuggestion, type EbayResolvedAspect } 
  */
 export function EbayListingPanel({ productId }: { productId: string }) {
   const qc = useQueryClient();
-  const [query, setQuery] = useState('');
-  const [chosen, setChosen] = useState<EbayCategorySuggestion | null>(null);
-  const [edits, setEdits] = useState<Record<string, string>>({});
+  /** The only state left here: the category and its answers belong to the picker. */
   const [confirming, setConfirming] = useState(false);
 
   const pre = useQuery({ queryKey: ['ebay', 'prerequisites'], queryFn: () => ebayListingApi.prerequisites() });
   const preview = useQuery({
     queryKey: ['ebay', 'preview', productId],
     queryFn: () => ebayListingApi.preview(productId),
-  });
-
-  const suggest = useMutation({
-    mutationFn: () => ebayListingApi.categorySuggestions(productId, query || undefined),
-    onError: () => toast.error('Could not ask eBay for categories'),
-  });
-
-  const aspects = useQuery({
-    queryKey: ['ebay', 'aspects', productId, chosen?.categoryId],
-    queryFn: () => ebayListingApi.categoryAspects(productId, chosen!.categoryId),
-    enabled: !!chosen,
-  });
-
-  const save = useMutation({
-    mutationFn: () => ebayListingApi.savePlan(productId, {
-      categoryId: chosen!.categoryId,
-      categoryName: chosen!.categoryName,
-      /** Only what a person typed. Everything auto-filled is re-derived, never frozen into the plan. */
-      aspects: Object.fromEntries(Object.entries(edits).filter(([, v]) => v.trim())),
-    }),
-    onSuccess: () => {
-      toast.success('Category saved for this product');
-      qc.invalidateQueries({ queryKey: ['ebay', 'preview', productId] });
-      qc.invalidateQueries({ queryKey: ['ebay', 'aspects', productId] });
-    },
-    onError: () => toast.error('Could not save the category'),
   });
 
   const publish = useMutation({
@@ -69,12 +42,15 @@ export function EbayListingPanel({ productId }: { productId: string }) {
     },
   });
 
+  /**
+   * `preview.missing` is now the whole answer — the server folds the category's required item
+   * specifics into it, so the gate cannot read READY on a listing eBay would refuse. It used to be
+   * assembled here from two half-answers, and the aspect half only existed while a category was
+   * selected on screen.
+   */
   const missing = preview.data?.missing ?? [];
-  const missingAspects = aspects.data?.missing ?? [];
   const blockers = pre.data?.blockers ?? [];
-  /** Everything that must be true, in one place, so the button cannot be the thing that explains it. */
-  const canPublish = missing.length === 0 && missingAspects.length === 0 && blockers.length === 0
-    && (pre.data?.liveWritesEnabled ?? false);
+  const canPublish = missing.length === 0 && blockers.length === 0 && (pre.data?.liveWritesEnabled ?? false);
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-n-200 bg-n-25 p-3.5">
@@ -104,63 +80,17 @@ export function EbayListingPanel({ productId }: { productId: string }) {
         <div className="rounded-lg border border-warning-bd bg-warning-bg px-3 py-2 text-[12.5px] text-warning">
           <b>Still needed:</b> {missing.map((m) => m.label).join(', ')}
           <div className="mt-0.5 text-[11.5px] opacity-80">
-            Title, description and images are on the Content tab. Category is below.
+            Title, description and images are on the Content tab, beside the category.
           </div>
         </div>
       )}
 
-      {/* ── the category, which nothing can infer ── */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <input
-            className="input h-8 flex-1 text-[13px]"
-            placeholder="Search eBay categories — defaults to the product title"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') suggest.mutate(); }}
-          />
-          <button className="hbtn shrink-0" onClick={() => suggest.mutate()} disabled={suggest.isPending}>
-            {suggest.isPending ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />} Suggest
-          </button>
-        </div>
-
-        {suggest.data && !suggest.data.ok && <Line icon="bad">{suggest.data.message ?? 'eBay returned nothing'}</Line>}
-        {suggest.data?.ok && suggest.data.suggestions.length === 0 && (
-          <Line icon="bad">eBay had no suggestion for “{suggest.data.searchedFor}”. Try different words.</Line>
-        )}
-        {suggest.data?.suggestions.map((s) => (
-          <button
-            key={s.categoryId}
-            onClick={() => { setChosen(s); setEdits({}); }}
-            className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-left text-[12.5px] ${
-              chosen?.categoryId === s.categoryId ? 'border-teal-300 bg-teal-50' : 'border-n-200 bg-n-0 hover:bg-n-50'}`}
-          >
-            <span className="mt-[3px] shrink-0">{chosen?.categoryId === s.categoryId ? <Check size={13} className="text-teal-600" /> : <span className="block h-3 w-3 rounded-full border border-n-300" />}</span>
-            <span>
-              <span className="font-medium text-n-800">{s.categoryName}</span>
-              <span className="mono ml-2 text-[11px] text-n-400">{s.categoryId}</span>
-              <span className="block text-[11.5px] text-n-500">{s.path}</span>
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {/* ── what that category demands ── */}
-      {chosen && aspects.isLoading && <Line icon="wait">Asking eBay what this category needs…</Line>}
-      {aspects.data && (
-        <div className="flex flex-col gap-2 rounded-lg border border-n-200 bg-n-0 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-n-500">
-            {chosen?.categoryName} — {aspects.data.aspects.filter((a) => a.required).length} required
-            {aspects.data.isSaved && <span className="ml-2 text-teal-700">saved</span>}
-          </div>
-          {aspects.data.aspects.filter((a) => a.required).map((a) => (
-            <AspectField key={a.name} aspect={a} value={edits[a.name]} onChange={(v) => setEdits({ ...edits, [a.name]: v })} />
-          ))}
-          <button className="hbtn self-start" onClick={() => save.mutate()} disabled={save.isPending || !chosen}>
-            {save.isPending ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save category
-          </button>
-        </div>
-      )}
+      {/*
+        * The same picker the Content tab uses. Filling it in there is the intended path — a category
+        * and its item specifics are product copy — but somebody who gets here and finds one missing
+        * should not be sent away to another tab to fix it.
+        */}
+      <EbayCategoryPicker productId={productId} compact />
 
       {/* ── the only step a buyer can see ── */}
       <div className="flex items-center gap-2 border-t border-n-200 pt-3">
@@ -184,7 +114,7 @@ export function EbayListingPanel({ productId }: { productId: string }) {
         )}
         {!canPublish && (
           <span className="text-[11.5px] text-n-500">
-            {[...missing.map((m) => m.label), ...missingAspects].slice(0, 4).join(', ') || 'Account not ready'}
+            {missing.map((m) => m.label).slice(0, 4).join(', ') || 'Account not ready'}
           </span>
         )}
       </div>
@@ -192,43 +122,6 @@ export function EbayListingPanel({ productId }: { productId: string }) {
   );
 }
 
-function AspectField({ aspect, value, onChange }: {
-  aspect: EbayResolvedAspect;
-  value: string | undefined;
-  onChange: (v: string) => void;
-}) {
-  /**
-   * An auto-filled value is shown as the placeholder rather than as content, so the field reads as
-   * answered without pretending somebody typed it — and typing still overrides it.
-   */
-  const auto = aspect.source && aspect.source !== 'plan' ? aspect.value : null;
-  return (
-    <label className="flex items-center gap-2">
-      <span className="w-40 shrink-0 text-[12.5px] text-n-700">
-        {aspect.name}
-        {aspect.rejectedBecause && <span className="ml-1 text-[11px] text-danger">not accepted</span>}
-      </span>
-      {aspect.mode === 'SELECTION_ONLY' && aspect.values.length ? (
-        <select
-          className="input h-8 flex-1 text-[13px]"
-          value={value ?? aspect.value ?? ''}
-          onChange={(e) => onChange(e.target.value)}
-        >
-          <option value="">— choose —</option>
-          {aspect.values.map((v) => <option key={v} value={v}>{v}</option>)}
-          {aspect.valueCount > aspect.values.length && <option disabled>…{aspect.valueCount - aspect.values.length} more on eBay</option>}
-        </select>
-      ) : (
-        <input
-          className="input h-8 flex-1 text-[13px]"
-          placeholder={auto ? `${auto}  (from the product)` : 'required'}
-          value={value ?? (aspect.source === 'plan' ? aspect.value ?? '' : '')}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      )}
-    </label>
-  );
-}
 
 function Line({ icon, children }: { icon: 'ok' | 'bad' | 'wait'; children: React.ReactNode }) {
   const Icon = icon === 'ok' ? Check : icon === 'bad' ? AlertTriangle : Loader2;
