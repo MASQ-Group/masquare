@@ -367,6 +367,7 @@ export function ProductsPage() {
         <GridView
           items={items}
           loading={isLoading}
+          channels={channels.data ?? []}
           selected={selected}
           onToggleOne={toggleOne}
           onEdit={setEditing}
@@ -509,9 +510,10 @@ function ListView({ items, loading, cols, channels, selected, allSelected, onTog
   );
 }
 
-function GridView({ items, loading, selected, onToggleOne, onEdit, rangeStart, total }: {
+function GridView({ items, loading, channels, selected, onToggleOne, onEdit, rangeStart, total }: {
   items: Product[];
   loading: boolean;
+  channels: ChannelListingChannel[];
   selected: Set<string>;
   onToggleOne: (id: string) => void;
   onEdit: (p: Product) => void;
@@ -549,6 +551,14 @@ function GridView({ items, loading, selected, onToggleOne, onEdit, rangeStart, t
                   {p.fulfilmentType.code ?? p.fulfilmentType.name}
                 </span>
               )}
+              {/**
+                * Overlaid rather than placed in the body, because the body's last row is brand and
+                * price and a card five to a row has no width to spare. Bottom-left keeps it clear of
+                * both the select box above it and the fulfilment badge opposite.
+                */}
+              <div className="absolute bottom-2.5 left-2.5">
+                <ListedChip product={p} channels={channels} />
+              </div>
             </div>
 
             <div className="p-3">
