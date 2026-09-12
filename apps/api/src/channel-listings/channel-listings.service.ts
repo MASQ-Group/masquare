@@ -9,7 +9,7 @@ import { deriveListingStatus } from './listing-status';
 import { planTransition } from './plan-transition';
 import { fullScopeIntegrationWhere } from '../common/amazon-scope';
 import { settlePushQueue, type PushResult } from './push-queue-settle';
-import { buildSkuOwnerIndex, normaliseSku, relinkAction } from './sku-match';
+import { buildLooseSkuIndex, buildSkuOwnerIndex, matchSku, relinkAction } from './sku-match';
 import { pickLiveListing, pickLiveListingsByKey } from './pick-live-listing';
 import { channelKey } from './channel-key';
 
@@ -1467,13 +1467,18 @@ export class ChannelListingsService implements OnApplicationBootstrap {
    */
   async relinkListings(
     opts: { productId?: string; companyIds?: string[] } = {},
-  ): Promise<{ examined: number; claimed: number; moved: number; unknownSku: number; byProduct: Record<string, number> }> {
+  ): Promise<{ examined: number; claimed: number; moved: number; unknownSku: number; byPunctuation: number; byProduct: Record<string, number> }> {
     const products = await this.prisma.product.findMany({
       where: { ...ACTIVE, ...(opts.productId ? { id: opts.productId } : {}) },
       select: { id: true, mainSku: true, aliases: { where: ACTIVE, select: { skuValue: true } } },
     });
     const index = buildSkuOwnerIndex(products);
-    if (index.size === 0) return { examined: 0, claimed: 0, moved: 0, unknownSku: 0, byProduct: {} };
+    /**
+     * Built from the SAME products as the exact index, so a single-product call can only ever loosely
+     * match that product's own SKUs — and a key two different products claim resolves to nobody.
+     */
+    const loose = buildLooseSkuIndex(products);
+    if (index.size === 0) return { examined: 0, claimed: 0, moved: 0, unknownSku: 0, byPunctuation: 0, byProduct: {} };
 
     /**
      * For one product, ask only about its own SKUs. For the sweep, read the rows that have no owner
@@ -1484,7 +1489,23 @@ export class ChannelListingsService implements OnApplicationBootstrap {
       ? await this.prisma.channelListing.findMany({
         where: {
           AND: [
-            { OR: [...index.keys()].map((k) => ({ channelSku: { equals: k, mode: 'insensitive' as const } })) },
+            {
+              OR: [
+                ...[...index.keys()].map((k) => ({ channelSku: { equals: k, mode: 'insensitive' as const } })),
+                /**
+                 * Every unlinked row, not only the ones spelling this product's SKU exactly.
+                 *
+                 * The rule now also matches on punctuation, and a SQL `equals` cannot see through a
+                 * separator — so selecting by exact spelling would have left the widened rule with
+                 * nothing new to decide about. Same trap as the VAT repair, whose candidate query
+                 * kept a UK assumption the rule had already dropped.
+                 *
+                 * It costs reading the unlinked rows, which the sweep below does anyway, and the
+                 * index here holds ONE product's SKUs so nothing else can be claimed by it.
+                 */
+                { productId: null },
+              ],
+            },
             /**
              * Spelt out because `{ not: id }` alone drops NULLs in SQL — and NULL is precisely the
              * case this exists to fix. The same trap the FBA filter documents further up.
@@ -1504,11 +1525,14 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     let claimed = 0;
     let moved = 0;
     let unknownSku = 0;
+    let byPunctuation = 0;
     for (const r of rows) {
-      const { action, productId } = relinkAction(r, index);
+      const { action, productId, how } = relinkAction(r, index, loose);
       if (action === 'unknown-sku') { unknownSku += 1; continue; }
       if (action === 'none' || !productId) continue;
       if (action === 'claim') claimed += 1; else moved += 1;
+      /** Counted separately: a claim made on a separator is the one worth being able to audit. */
+      if (how === 'punctuation') byPunctuation += 1;
       claimBy.set(productId, [...(claimBy.get(productId) ?? []), r.id]);
     }
 
@@ -1527,10 +1551,12 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     if (claimed || moved) {
       this.logger.log(
         `Re-linked listings${opts.productId ? ` for ${opts.productId}` : ''}: `
-        + `${claimed} claimed, ${moved} moved${unknownSku ? `, ${unknownSku} on unknown SKUs left alone` : ''}.`,
+        + `${claimed} claimed, ${moved} moved`
+        + `${byPunctuation ? `, ${byPunctuation} of them on punctuation alone` : ''}`
+        + `${unknownSku ? `, ${unknownSku} on unknown SKUs left alone` : ''}.`,
       );
     }
-    return { examined: rows.length, claimed, moved, unknownSku, byProduct };
+    return { examined: rows.length, claimed, moved, unknownSku, byPunctuation, byProduct };
   }
 
   /**
@@ -1548,7 +1574,13 @@ export class ChannelListingsService implements OnApplicationBootstrap {
       this.prisma.product.findMany({ where: ACTIVE, select: { id: true, mainSku: true, aliases: { where: ACTIVE, select: { skuValue: true } } } }),
     ]);
     const index = buildSkuOwnerIndex(products);
-    const unknown = rows.filter((r) => !index.has(normaliseSku(r.channelSku)));
+    const loose = buildLooseSkuIndex(products);
+    /**
+     * Asked through the same matcher the relink uses, so the worklist cannot go on naming SKUs that
+     * would now be placed. A SKU two products claim stays here — it is a real question for a person,
+     * and the honest place for it is the list of things nobody has answered.
+     */
+    const unknown = rows.filter((r) => !matchSku(r.channelSku, index, loose).owner);
     const byChannel: Record<string, number> = {};
     for (const r of unknown) byChannel[r.integration.name] = (byChannel[r.integration.name] ?? 0) + 1;
     return {
