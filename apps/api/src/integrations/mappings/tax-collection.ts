@@ -70,7 +70,7 @@ export function channelRemitsTheVat(input: {
   reportedByChannel: boolean;
   /** The connector behind this channel: 'amazon' | 'ebay' | 'onbuy'. Null for a channel with no integration. */
   channelConnector: string | null | undefined;
-  /** ISO-2 of the SELLING channel's own country — the marketplace must be the UK one. */
+  /** ISO-2 of the SELLING channel's own country. */
   channelHomeIso: string | null | undefined;
   /** ISO-2 of the destination country, as stored on the order. */
   destinationIso: string | null | undefined;
@@ -79,31 +79,58 @@ export function channelRemitsTheVat(input: {
   /** Whether the order sits under the channel's own configured consignment threshold. */
   belowChannelThreshold: boolean;
 }): boolean {
-  /**
-   * A facilitator report on GST, consumption tax or US sales tax says nothing about VAT. Those are
-   * separate regimes the platform accounts for elsewhere, and letting one of them set a VAT flag
-   * would put a claim about HMRC into a row describing a sale to Sydney.
-   */
-  if ((input.taxType ?? 'vat') !== 'vat') return false;
+  const regime = (input.taxType ?? 'vat').trim().toLowerCase();
+  const dest = (input.destinationIso ?? '').trim().toUpperCase();
+  const home = (input.channelHomeIso ?? '').trim().toUpperCase();
+  if (!dest) return false; // nothing may be concluded from an unknown destination
 
   /**
-   * The UK channel, not merely a UK destination.
+   * Japan first, and unconditionally. Amazon reports itself facilitator for consumption tax and the
+   * SELLER KEEPS IT — "Your earnings" pays out the tax-inclusive amount. ¥76,066 in the first half
+   * of 2026, and a flag saying the channel remits it would be a false statement about all of it.
+   */
+  if (regime === 'jct') return false;
+
+  /**
+   * Inside the EU VAT zone the sale is ours under OSS, whatever a marketplace reports. 966 such
+   * orders in the same period reconcile to Amazon's own report at €12,431.87 — they are right, and
+   * a facilitator flag must not take them away.
    *
-   * Amazon DE shipping into the UK under £135 also collects, so destination alone would flag it.
-   * That is a real case and arguably the same treatment — but it is a question about which VAT
-   * registration the sale sits under, and the answer here is the one the business gave: the
-   * marketplace relieves us on the UK channels. A rule this narrow is easy to widen later; a rule
-   * that silently claimed relief on a German sale would be found by an auditor, not by us.
+   * Read from the regime rather than re-queried: `taxRegimeFor` answers 'vat' only for the UK and
+   * for the EU VAT zone, so VAT to somewhere other than the UK IS the EU zone.
    */
-  if ((input.channelHomeIso ?? '').trim().toUpperCase() !== CHANNEL_REMITS_TO) return false;
-  if ((input.destinationIso ?? '').trim().toUpperCase() !== CHANNEL_REMITS_TO) return false;
+  if (regime === 'vat' && dest !== CHANNEL_REMITS_TO) return false;
 
-  // What the channel actually told us always wins.
-  if (input.reportedByChannel) return true;
+  /**
+   * The UK arrangement, unchanged: a UK CHANNEL as well as a UK destination.
+   *
+   * Amazon DE shipping into the UK under £135 also collects, and by destination alone it would be
+   * caught here. That is deliberately excluded — it is a question about which VAT registration the
+   * sale sits under, and the answer is the business's rather than this function's.
+   */
+  if (dest === CHANNEL_REMITS_TO) {
+    if (home !== CHANNEL_REMITS_TO) return false;
+    /**
+     * And a VAT sale. A UK destination always derives a VAT regime, so this should be unreachable —
+     * which is exactly why it is stated: dropping it while widening the rule would have let the UK
+     * threshold answer a question about some other tax, and nothing downstream would have objected.
+     */
+    if (regime !== 'vat') return false;
+    if (input.reportedByChannel) return true;
+    const connector = (input.channelConnector ?? '').trim().toLowerCase();
+    return CHANNELS_WITHOUT_A_TAX_REPORT.has(connector) && input.belowChannelThreshold;
+  }
 
-  // Failing that, only where there was never a report to be had.
-  const connector = (input.channelConnector ?? '').trim().toLowerCase();
-  return CHANNELS_WITHOUT_A_TAX_REPORT.has(connector) && input.belowChannelThreshold;
+  /**
+   * Everywhere else: outside the UK and outside the EU VAT zone, so outside every registration we
+   * hold. A marketplace that says it collected there collected under that country's own regime and
+   * remits it itself — Amazon's report names the schemes: CH_VOEC for Switzerland, JE_VOEC for
+   * Jersey, AU_VOEC, and plain REGULAR where responsibility still reads MARKETPLACE.
+   *
+   * Seventeen Swiss orders carried 93.10 of Amazon's VAT as ours because this branch did not exist,
+   * and the rule could not express the answer its own file had already given.
+   */
+  return input.reportedByChannel;
 }
 
 /**
@@ -164,4 +191,30 @@ export function withoutChannelCollectedTax<
     ...(i.vatAmount == null ? {} : { vatAmount: 0 }),
     ...(i.shippingAmountVat == null ? {} : { shippingAmountVat: 0 }),
   }));
+}
+
+/**
+ * Could a marketplace's report possibly relieve us on this order?
+ *
+ * The repair has to SELECT candidates before it can ask Amazon about them, and its query was written
+ * around the only case the rule then knew: UK channel, UK destination. So when the rule learned that
+ * Switzerland, Australia and the rest are outside every registration we hold, nothing changed —
+ * 26 orders Amazon had plainly called its own were never candidates to begin with.
+ *
+ * The cheap half of `channelRemitsTheVat`, in other words: everything decidable WITHOUT the report,
+ * so a query can narrow to the orders where the report is worth the call.
+ */
+export function couldChannelRemit(input: {
+  channelHomeIso: string | null | undefined;
+  destinationIso: string | null | undefined;
+  taxType: string | null | undefined;
+}): boolean {
+  const regime = (input.taxType ?? 'vat').trim().toLowerCase();
+  const dest = (input.destinationIso ?? '').trim().toUpperCase();
+  const home = (input.channelHomeIso ?? '').trim().toUpperCase();
+  if (!dest) return false;
+  if (regime === 'jct') return false;
+  if (regime === 'vat' && dest !== CHANNEL_REMITS_TO) return false;
+  if (dest === CHANNEL_REMITS_TO) return home === CHANNEL_REMITS_TO && regime === 'vat';
+  return true;
 }

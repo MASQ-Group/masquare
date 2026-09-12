@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   anyMarketplaceFacilitator, channelRemitsTheVat, isMarketplaceFacilitator, marketplaceRemitsTax,
-  withoutChannelCollectedTax,
+  couldChannelRemit, withoutChannelCollectedTax,
 } from './tax-collection';
 
 const facilitator = { TaxCollection: { Model: 'MarketplaceFacilitator', ResponsibleParty: 'Amazon Services, Inc.' } };
@@ -85,11 +85,45 @@ describe('channelRemitsTheVat', () => {
     }
   });
 
-  /** A facilitator report about GST or sales tax is not a statement about VAT. */
-  it('ignores a report against a different tax regime', () => {
-    expect(channelRemitsTheVat({ ...uk, taxType: 'gst', destinationIso: 'AU' })).toBe(false);
+  /**
+   * Japan, unconditionally. Amazon reports itself facilitator for consumption tax and the SELLER
+   * KEEPS IT — ¥76,066 in the first half of 2026. A flag saying the channel remits it would be a
+   * false statement about every yen.
+   */
+  it('never accepts a report about Japanese consumption tax', () => {
     expect(channelRemitsTheVat({ ...uk, taxType: 'jct', destinationIso: 'JP' })).toBe(false);
-    expect(channelRemitsTheVat({ ...uk, taxType: 'sales_tax', destinationIso: 'US' })).toBe(false);
+    expect(channelRemitsTheVat({ ...uk, taxType: 'jct', destinationIso: 'JP', reportedByChannel: true })).toBe(false);
+  });
+
+  /**
+   * Australia and the United States are outside every registration we hold, so a marketplace that
+   * says it collected there did so under that country's own regime. Amazon's own file names them:
+   * AU_VOEC, and plain REGULAR where responsibility still reads MARKETPLACE.
+   *
+   * This USED to be false, on the reasoning that a GST report says nothing about VAT. True as far
+   * as it went — and it left 26 orders unable to record what Amazon had plainly stated.
+   */
+  it('accepts a report for a destination outside the UK and the EU', () => {
+    expect(channelRemitsTheVat({ ...uk, taxType: 'gst', destinationIso: 'AU' })).toBe(true);
+    expect(channelRemitsTheVat({ ...uk, taxType: 'sales_tax', destinationIso: 'US' })).toBe(true);
+    expect(channelRemitsTheVat({ ...uk, taxType: 'none', destinationIso: 'CH' })).toBe(true);
+  });
+
+  /** Without a report there is still nothing to act on, wherever the parcel went. */
+  it('claims nothing outside the UK when the channel reported nothing', () => {
+    for (const iso of ['AU', 'US', 'CH', 'SG']) {
+      expect(channelRemitsTheVat({ ...uk, taxType: 'none', destinationIso: iso, reportedByChannel: false })).toBe(false);
+    }
+  });
+
+  /**
+   * The seventeen Swiss orders. Amazon states CH_VOEC and MARKETPLACE, collects 8.1% and remits it,
+   * and 93.10 of it sat on our books because the rule had no branch that could say so.
+   */
+  it('accepts Switzerland, which Amazon collects for from its German and French stores', () => {
+    expect(channelRemitsTheVat({
+      ...uk, channelHomeIso: 'DE', destinationIso: 'CH', taxType: 'none', reportedByChannel: true,
+    })).toBe(true);
   });
 
   it('is false when a reporting channel reported nothing', () => {
@@ -300,5 +334,62 @@ describe('withoutChannelCollectedTax', () => {
 
   it('copes with no lines at all', () => {
     expect(withoutChannelCollectedTax([], { taxType: 'vat', vatCollectedByChannel: true })).toEqual([]);
+  });
+});
+
+/**
+ * The half a QUERY can apply, which is why it exists separately.
+ *
+ * The repair has to select candidates before it can ask Amazon about them, and its query was built
+ * around the only case the rule then knew — UK channel, UK destination. So when the rule learned
+ * about Switzerland, nothing changed: those orders were never candidates. This is the part that
+ * narrows, and it must agree with the rule on every answer it gives.
+ */
+describe('couldChannelRemit', () => {
+  it('admits the UK arrangement', () => {
+    expect(couldChannelRemit({ channelHomeIso: 'GB', destinationIso: 'GB', taxType: 'vat' })).toBe(true);
+  });
+
+  it('admits a destination outside the UK and the EU', () => {
+    for (const iso of ['CH', 'AU', 'US', 'SG', 'NO']) {
+      expect(couldChannelRemit({ channelHomeIso: 'DE', destinationIso: iso, taxType: 'none' })).toBe(true);
+    }
+  });
+
+  it('refuses the EU VAT zone, where the sale is ours under OSS', () => {
+    for (const iso of ['DE', 'FR', 'IE', 'ES']) {
+      expect(couldChannelRemit({ channelHomeIso: 'GB', destinationIso: iso, taxType: 'vat' })).toBe(false);
+    }
+  });
+
+  it('refuses Japan whatever else is true', () => {
+    expect(couldChannelRemit({ channelHomeIso: 'GB', destinationIso: 'JP', taxType: 'jct' })).toBe(false);
+  });
+
+  it('refuses a UK destination reached from a non-UK channel', () => {
+    expect(couldChannelRemit({ channelHomeIso: 'DE', destinationIso: 'GB', taxType: 'vat' })).toBe(false);
+  });
+
+  it('refuses an unknown destination', () => {
+    expect(couldChannelRemit({ channelHomeIso: 'GB', destinationIso: null, taxType: 'vat' })).toBe(false);
+  });
+
+  /**
+   * The property that matters: it may be no NARROWER than the rule. Anything the rule would accept
+   * has to survive selection, or the repair never sees it — which is the defect this pair exists to
+   * end, and it would return silently.
+   */
+  it('never excludes an order the rule would accept', () => {
+    const isos = ['GB', 'DE', 'FR', 'CH', 'AU', 'US', 'JP', 'SG', 'NO', 'IE'];
+    const regimes = ['vat', 'gst', 'jct', 'sales_tax', 'none'];
+    for (const home of ['GB', 'DE']) {
+      for (const dest of isos) {
+        for (const taxType of regimes) {
+          const scope = { channelHomeIso: home, destinationIso: dest, taxType };
+          const ruleSaysYes = channelRemitsTheVat({ ...scope, reportedByChannel: true, channelConnector: 'amazon', belowChannelThreshold: true });
+          if (ruleSaysYes) expect(couldChannelRemit(scope)).toBe(true);
+        }
+      }
+    }
   });
 });
