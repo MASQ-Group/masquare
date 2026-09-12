@@ -61,6 +61,7 @@ describe('taxRegimeFor', () => {
     expect(taxRegimeFor({ isoCode: 'JP' })).toBe('jct');
     expect(taxRegimeFor({ isoCode: 'AU' })).toBe('gst');
     expect(taxRegimeFor({ isoCode: 'SG' })).toBe('gst');
+    expect(taxRegimeFor({ isoCode: 'NZ' })).toBe('gst');
     for (const iso of ['US', 'CA', 'MX']) expect(taxRegimeFor({ isoCode: iso })).toBe('sales_tax');
   });
 
@@ -90,6 +91,19 @@ describe('taxRegimeFor', () => {
   it('treats Singapore GST as Australia GST, because neither is ours', () => {
     expect(taxRegimeFor({ isoCode: 'SG', euVatZone: false })).toBe('gst');
     expect(taxRegimeFor({ isoCode: 'SG' })).toBe(taxRegimeFor({ isoCode: 'AU' }));
+  });
+
+  /**
+   * And New Zealand with them. It surfaced as a single order — sold through the Australian
+   * storefront to a New Zealand address, holding AUD 14.54 of GST Amazon had charged and kept —
+   * which is precisely how Singapore had hidden: too small to notice, wrong for the same reason.
+   *
+   * Sold through an Australian channel and still New Zealand's regime: the DESTINATION decides,
+   * never the storefront. Getting that backwards is what left it behind in the first place.
+   */
+  it('treats New Zealand GST the same way, whichever storefront sold it', () => {
+    expect(taxRegimeFor({ isoCode: 'NZ', euVatZone: false })).toBe('gst');
+    expect(taxRegimeFor({ isoCode: 'NZ' })).toBe(taxRegimeFor({ isoCode: 'AU' }));
   });
 
   /** No destination is no regime; nothing may be assumed from an absent country. */
