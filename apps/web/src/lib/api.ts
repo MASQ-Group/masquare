@@ -1748,8 +1748,18 @@ export interface AmazonOfferPreview {
   eligible: boolean;
   eligibilityReasons: string[];
   liveWritesEnabled: boolean;
-  /** True when Amazon accepted the payload in validation. */
+  /**
+   * Nothing is BLOCKING this — not "Amazon raised nothing".
+   *
+   * Amazon's validation returns 100398 ("SKU already exists in other marketplaces") for SKUs Seller
+   * Central creates on request, so that one refusal no longer counts as blocking. Anything else
+   * still does. See `skuInUse` for how to say which case this is.
+   */
   validated: boolean;
+  /** Amazon objected to the SKU NAME and nothing else — a refusal worth putting to it for real. */
+  skuInUse?: boolean;
+  /** The errors that justify stopping, so the reason shown is the real one rather than the first. */
+  blockingIssues?: AmazonIssue[];
   submissionStatus: string | null;
   issues: AmazonIssue[];
   /**

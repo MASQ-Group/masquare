@@ -944,6 +944,8 @@ export class AmazonListingService {
         carriedForward: [] as string[],
         carriedFulfilmentChannels: [] as string[],
         validated: false,
+        skuInUse: false,
+        blockingIssues: [],
         submissionStatus: null,
         issues: [],
         message: 'Fill in what is missing before validating.',
@@ -960,6 +962,8 @@ export class AmazonListingService {
         carriedForward: [] as string[],
         carriedFulfilmentChannels: [] as string[],
         validated: false,
+        skuInUse: false,
+        blockingIssues: [],
         submissionStatus: null,
         issues: [],
         message: payload.message,
@@ -972,6 +976,8 @@ export class AmazonListingService {
       { productType: payload.productType, attributes: payload.attributes },
       true,
     );
+    // The same reading the submit path uses, so the page cannot offer less than the submit allows.
+    const verdict = readValidation(result.issues ?? []);
     return {
       ...built,
       // The merged payload, because that is the one that would go — the preview showing a different
@@ -981,7 +987,23 @@ export class AmazonListingService {
       existingListing: payload.existing,
       carriedForward: payload.carriedForward,
       carriedFulfilmentChannels: payload.carriedFulfilmentChannels,
-      validated: result.ok,
+      /**
+       * "Nothing is blocking this", not "Amazon raised nothing".
+       *
+       * The submit path has always treated a lone SKU-in-use refusal as worth testing for real —
+       * `VALIDATION_PREVIEW` returns 100398 for SKUs Seller Central creates without complaint, and
+       * believing it once cost a permanent SKU split. But the preview still reported `result.ok`,
+       * which is false for that very refusal, and the page hides the List button on it. So the
+       * tolerance existed and could not be reached: 90-ELIT200BL on Amazon BE sat in DRAFT with the
+       * button absent, while Seller Central listed the same SKU on request.
+       *
+       * The two now agree. A genuine error still blocks; the SKU objection does not.
+       */
+      validated: !verdict.blocked,
+      /** Amazon objected to the SKU NAME — the refusal worth putting to it for real. */
+      skuInUse: verdict.skuInUse,
+      /** The errors that justify stopping, so the page can name the real reason rather than the first. */
+      blockingIssues: verdict.blockingIssues,
       submissionStatus: result.submissionStatus,
       issues: result.issues,
       // Offered only because Amazon actually refused the name, never in anticipation of it.
