@@ -60,7 +60,17 @@ export function taxRegimeFor(c: { isoCode?: string | null; euVatZone?: boolean |
   if (!c) return 'none';
   const iso = (c.isoCode ?? '').toUpperCase();
   if (iso === 'JP') return 'jct';          // Japanese Consumption Tax
-  if (iso === 'AU') return 'gst';          // Goods and Services Tax
+  /**
+   * Australia and Singapore both run a GST the MARKETPLACE charges on its own storefront and keeps
+   * — we are registered in neither, so none of it is ours to remit.
+   *
+   * Singapore was missing, and the asymmetry was ours rather than the world's: Australia was named
+   * here and Singapore fell through to 'none', where a regime of 'none' leaves the tax sitting on
+   * our side of the books. 267 orders in the first half of 2026, 708.79 of Amazon's own GST, booked
+   * as though we owed it. The figures always matched Amazon to the cent — only the question of
+   * whose money it was had never been asked.
+   */
+  if (iso === 'AU' || iso === 'SG') return 'gst';
   if (iso === 'US' || iso === 'CA' || iso === 'MX') return 'sales_tax';
   if (iso === GB) return 'vat';
   if (c.euVatZone) return 'vat';

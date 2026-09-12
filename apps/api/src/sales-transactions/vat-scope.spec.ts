@@ -60,6 +60,7 @@ describe('taxRegimeFor', () => {
   it('keeps the regimes that are not VAT', () => {
     expect(taxRegimeFor({ isoCode: 'JP' })).toBe('jct');
     expect(taxRegimeFor({ isoCode: 'AU' })).toBe('gst');
+    expect(taxRegimeFor({ isoCode: 'SG' })).toBe('gst');
     for (const iso of ['US', 'CA', 'MX']) expect(taxRegimeFor({ isoCode: iso })).toBe('sales_tax');
   });
 
@@ -78,6 +79,17 @@ describe('taxRegimeFor', () => {
     for (const iso of ['IL', 'TW', 'TR', 'HK', 'AL', 'MU', 'PH', 'CH', 'NO']) {
       expect(taxRegimeFor({ isoCode: iso, euVatZone: false })).toBe('none');
     }
+  });
+
+  /**
+   * Singapore and Australia are the same arrangement: a marketplace charging its own GST on its own
+   * storefront, in a country we are not registered in. Naming one and not the other left 708.79 of
+   * Amazon's Singapore GST on our books for the first half of 2026 — the amounts had always matched
+   * Amazon exactly, so nothing looked wrong until somebody asked whose money it was.
+   */
+  it('treats Singapore GST as Australia GST, because neither is ours', () => {
+    expect(taxRegimeFor({ isoCode: 'SG', euVatZone: false })).toBe('gst');
+    expect(taxRegimeFor({ isoCode: 'SG' })).toBe(taxRegimeFor({ isoCode: 'AU' }));
   });
 
   /** No destination is no regime; nothing may be assumed from an absent country. */
