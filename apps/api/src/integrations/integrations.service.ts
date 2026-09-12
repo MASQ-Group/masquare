@@ -15,7 +15,7 @@ import { amazonCancelStage, mapAmazonOrder } from './mappings/amazon-mapping';
 import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
 import { readOrderMoney, readFinances, impliedEbayRate, type EbayFinancesRead } from './ebay-money-diagnostic';
 import { signedRequest, type SigningCipher, type SigningKey } from './ebay-signature';
-import { anyMarketplaceFacilitator, channelRemitsTheVat } from './mappings/tax-collection';
+import { anyMarketplaceFacilitator, channelRemitsTheVat, couldChannelRemit } from './mappings/tax-collection';
 import { syncFailureReason } from './sync-failure-reason';
 
 /**
@@ -2691,11 +2691,23 @@ export class IntegrationsService implements OnModuleInit {
       integrationId: { not: null },
       vatCollectedByChannel: false,
       items: { some: { deletedAt: null, vatAmount: { gt: 0 } } },
-      // Only where the marketplace's collection could possibly relieve us: UK-destined VAT.
-      destinationCountry: { isoCode: 'GB' },
-      // A UK CHANNEL as well as a UK destination — an Amazon DE sale into the UK is out of scope.
-      salesChannel: { nativeCountry: { isoCode: 'GB' } },
-      OR: [{ taxType: null }, { taxType: 'vat' }],
+      /**
+       * Everywhere the report could possibly matter, not just the UK.
+       *
+       * This asked for a UK channel and a UK destination, which was the whole rule when it was
+       * written. The rule has since learned that outside the UK and the EU we hold no registration
+       * at all — but the QUERY had not, so 17 Swiss orders Amazon states it collected on were never
+       * candidates and the widened rule changed nothing for them.
+       *
+       * Two shapes, kept deliberately explicit: the UK arrangement needs both ends British; anywhere
+       * outside the EU VAT zone needs only that it is outside. `couldChannelRemit` decides each row,
+       * so this narrows and the rule still judges.
+       */
+      OR: [
+        { destinationCountry: { isoCode: 'GB' }, salesChannel: { nativeCountry: { isoCode: 'GB' } },
+          AND: [{ OR: [{ taxType: null }, { taxType: 'vat' }] }] },
+        { destinationCountry: { isoCode: { not: 'GB' }, euVatZone: false }, taxType: { not: 'jct' } },
+      ],
       ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : {}),
     };
 
@@ -2766,6 +2778,17 @@ export class IntegrationsService implements OnModuleInit {
       ctx?.note(`${row.name}: ${orders.length} order(s)`);
 
       for (const t of orders) {
+        /**
+         * Decide what can be decided before spending a call on it. The query narrows in SQL, which
+         * cannot express the rule exactly; this applies the cheap half of it per row, so an order the
+         * rule would refuse anyway never costs an SP-API request.
+         */
+        if (!couldChannelRemit({
+          channelHomeIso: t.salesChannel?.nativeCountry?.isoCode ?? null,
+          destinationIso: t.destinationCountry?.isoCode ?? null,
+          taxType: t.taxType,
+        })) { notCollected += 1; ctx?.tick(true); continue; }
+
         let ok = true;
         try {
           const items = await this.amazonGetOrderItems(endpoint, token, t.transactionRef);
