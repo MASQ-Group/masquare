@@ -2726,6 +2726,15 @@ model SalesTransaction {
    * VAT treatment from today's configuration would rewrite history.
    */
   vatCollectedByChannel Boolean   @default(false) @map("vat_collected_by_channel")
+
+  /// Whether the marketplace called this a BUSINESS order (Amazon `IsBusinessOrder`).
+  ///
+  /// Null means the channel did not say, which is not the same as false — eBay and OnBuy never
+  /// report it at all, and an Amazon order imported before this column existed has no answer either.
+  /// Stored because roughly a tenth of Amazon orders to a rated destination arrive with no tax
+  /// figure of any kind, steadily, across every EU marketplace and both fulfilment types, and
+  /// nothing we keep can currently say why.
+  isBusinessOrder Boolean? @map("is_business_order")
   // Destination tax regime for this sale, so reports can separate VAT from GST (AU),
   // Japanese Consumption Tax (JP) and US-style sales tax. Derived from the destination
   // country and snapshotted at sale time. vat | gst | jct | sales_tax | none.
@@ -2964,6 +2973,17 @@ model SalesTransactionItem {
   fbaFulfilmentFeeAmount     Float? @map("fba_fulfilment_fee_amount") // Amazon FBA fulfilment fee (FBA orders)
   amazonPointsAmount         Float? @map("amazon_points_amount") // Amazon Points awarded (JP); a deduction from our proceeds
   salesTaxAmount             Float? @map("sales_tax_amount") // total tax the channel charged (item+shipping); reporting only, not used in calcs
+
+  /// The channel's tax fields exactly as they arrived, before anything interpreted them.
+  ///
+  /// Every derived tax column answers a question we already knew to ask. This answers the ones we
+  /// did not: whether a zero was reported as zero or simply absent, what `TaxCollection` said, which
+  /// of the several tax fields carried the figure. Those are indistinguishable once mapped, and the
+  /// distinction is exactly what 182 no-tax orders turn on.
+  ///
+  /// Diagnostic only. Nothing reads it to compute anything, and nothing may start — the moment a
+  /// calculation depends on a raw channel payload, its shape becomes our problem to keep stable.
+  channelTaxRaw Json? @map("channel_tax_raw")
 
   // Per-line unit purchase cost override (EUR). When set, it replaces the product's stored
   // purchase cost in this transaction's profit calc — for the times the actual cost of the

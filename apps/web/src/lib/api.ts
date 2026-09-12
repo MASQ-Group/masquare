@@ -2147,6 +2147,73 @@ export const listingApi = {
     api.delete<{ removed: boolean }>(`/listing/products/${productId}/channels/${integrationId}`, { params: { marketplace } }).then((r) => r.data),
 };
 
+/**
+ * Creating an eBay listing.
+ *
+ * One listing, not fourteen: eBaymag republishes an eBay UK listing to every other eBay
+ * marketplace, so a product needs a single category and a single set of aspects — which is why
+ * there is one panel here rather than a row per marketplace.
+ */
+export interface EbayCategorySuggestion {
+  categoryId: string;
+  categoryName: string | null;
+  /** Ancestors first, so a leaf called "Cables" reads as the choice it actually is. */
+  path: string;
+  relevancy: string | null;
+}
+export interface EbayResolvedAspect {
+  name: string;
+  value: string | null;
+  required: boolean;
+  /** plan | brand | mpn | model-from-mpn — where the value came from, or null if nowhere. */
+  source: string | null;
+  /** Set when eBay would refuse the value it has. */
+  rejectedBecause?: string;
+  /** SELECTION_ONLY refuses anything off `values`. */
+  mode: string | null;
+  values: string[];
+  valueCount: number;
+}
+export interface EbayPrerequisites {
+  integrationId: string;
+  liveWritesEnabled: boolean;
+  marketplaceId: string;
+  fulfillmentPolicies: { id: string; name: string | null }[];
+  paymentPolicies: { id: string; name: string | null }[];
+  returnPolicies: { id: string; name: string | null }[];
+  locations: { key: string; status: string | null; city: string | null; country: string | null }[];
+  blockers: string[];
+}
+export interface EbayPreview {
+  productSku: string;
+  ebaySku: string;
+  missing: { key: string; label: string }[];
+  inventoryItem: unknown;
+  offer: unknown;
+}
+
+export const ebayListingApi = {
+  prerequisites: () => api.get<EbayPrerequisites>('/listing/ebay/prerequisites').then((r) => r.data),
+  categorySuggestions: (productId: string, query?: string) =>
+    api.post<{ searchedFor: string; ok: boolean; message?: string; suggestions: EbayCategorySuggestion[] }>(
+      `/listing/ebay/products/${productId}/category-suggestions`, { productId, query },
+    ).then((r) => r.data),
+  categoryAspects: (productId: string, categoryId: string) =>
+    api.post<{ categoryId: string; isSaved: boolean; aspects: EbayResolvedAspect[]; missing: string[] }>(
+      `/listing/ebay/products/${productId}/category-aspects`, { productId, categoryId },
+    ).then((r) => r.data),
+  savePlan: (productId: string, body: { categoryId: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null }) =>
+    api.post<{ ok: true; planId: string; categoryId: string | null }>(
+      `/listing/ebay/products/${productId}/plan`, { productId, ...body },
+    ).then((r) => r.data),
+  preview: (productId: string, body: Record<string, unknown> = {}) =>
+    api.post<EbayPreview>(`/listing/ebay/products/${productId}/preview`, { productId, ...body }).then((r) => r.data),
+  publish: (productId: string, body: Record<string, unknown>) =>
+    api.post<{ ok: true; listingId?: string; offerId?: string; ebaySku?: string }>(
+      '/listing/ebay/publish', { productId, confirm: true, ...body },
+    ).then((r) => r.data),
+};
+
 export interface RepricingRetention {
   decisions: number; snapshots: number; fees: number;
   decisionDays: number; feeDays: number;

@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { AdminGuard } from '../../auth/admin.guard';
 import { EbayListingService, type PublishArgs } from './ebay-listing.service';
 import { AccessArea, RequireCapability, Requires } from '../../access/access.decorators';
+import { VisibleCompanies, WriteCompany } from '../../common/active-company.decorator';
 
 /**
  * Creating an eBay listing through the Inventory API.
@@ -37,6 +38,47 @@ export class EbayListingController {
     @Body() dto: { integrationId?: string; key: string; addressLine1: string; addressLine2?: string; city: string; postalCode: string; country: string; stateOrProvince?: string },
   ) {
     return this.svc.createLocation(dto);
+  }
+
+  /**
+   * Where eBay would file this product. Asks eBay; stores nothing.
+   *
+   * Scoped even though it only reads a category tree: an integration id is enough to reach a seller
+   * account, and both companies sell on eBay. Unscoped, a caller could ask through the other
+   * company's token.
+   */
+  @Post('products/:productId/category-suggestions')
+  @Requires('view')
+  categorySuggestions(
+    @VisibleCompanies() companyIds: string[],
+    @Body() dto: { productId: string; integrationId?: string; query?: string },
+  ) {
+    return this.svc.categorySuggestions(dto.productId, dto.integrationId, dto.query, companyIds);
+  }
+
+  /** What a category demands, and which of it the product already answers. Read-only. */
+  @Post('products/:productId/category-aspects')
+  @Requires('view')
+  categoryAspects(
+    @VisibleCompanies() companyIds: string[],
+    @Body() dto: { productId: string; categoryId: string; integrationId?: string },
+  ) {
+    return this.svc.categoryAspects(dto.productId, dto.categoryId, dto.integrationId, companyIds);
+  }
+
+  /**
+   * Save the chosen category and aspects. Writes to our database, never to eBay — nothing here
+   * reaches a marketplace, which is why it is not behind `marketplace_write`.
+   *
+   * `@WriteCompany` rather than `@VisibleCompanies` because a plan is filed AGAINST one integration,
+   * and a user who can see two must say which before one is written.
+   */
+  @Post('products/:productId/plan')
+  savePlan(
+    @WriteCompany() companyId: string,
+    @Body() dto: { productId: string; integrationId?: string; categoryId: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null },
+  ) {
+    return this.svc.savePlan(dto.productId, { ...dto, companyIds: [companyId] });
   }
 
   /** Exactly what would be sent, and what is missing. Sends nothing to eBay. */

@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Select } from '@masquare/ui';
 import { amazonListingApi, listingApi, type AmazonSweep, type ProductChannelRow } from '../../lib/api';
 import { ChannelGroup, SweepResult } from './ChannelGroup';
+import { EbayListingPanel } from './EbayListingPanel';
 import { PlanEditor } from './ChannelPlanEditor';
 import { useJobProgress } from '../../lib/useJobProgress';
 import { CHANNEL_GROUPS, channelGroupOf } from '../../lib/channelGroups';
@@ -86,6 +87,19 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
     : grouped;
 
   const hasAmazon = data.channels.some((c) => c.channelType === 'amazon');
+  /**
+   * The eBay group that carries eBay UK — where the listing is actually made.
+   *
+   * Found rather than hard-coded to `ebay-eu`: if the UK ever moves group, or the account has eBay
+   * without a UK marketplace, the panel follows the marketplace instead of appearing under a
+   * heading that no longer contains it. Falls back to the first eBay group so the panel cannot
+   * vanish entirely, which would leave no way to list at all.
+   */
+  const ebayGroups = groups.filter((g) => g.platform === 'ebay');
+  const ebayHomeGroup =
+    ebayGroups.find((g) => g.rows.some((r) => isoOf(r.marketplace) === 'GB'))?.key
+    ?? ebayGroups[0]?.key
+    ?? null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -145,6 +159,15 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
 
       {groups.map(({ key, label, rows }) => (
         <ChannelGroup key={key} label={label} rows={rows}>
+          {/*
+            * Inside the eBay group holding eBay UK, above its marketplaces.
+            *
+            * There is one panel and not one per market because eBaymag republishes an eBay UK
+            * listing to every other eBay market — so the listing is MADE here and appears in the
+            * other eBay groups by itself. Putting it in its own slab above the groups said the
+            * same thing while implying eBay had two places to look.
+            */}
+          {key === ebayHomeGroup && <div className="border-b border-n-100 p-3"><EbayListingPanel productId={productId} /></div>}
           {rows.map((row, i) => (
             <ChannelRow
               key={row.integrationId}

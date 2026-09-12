@@ -1,8 +1,17 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsPositive, IsString, IsUUID,
+  ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsPositive, IsString, IsUUID,
   Min, MinLength, ValidateNested,
 } from 'class-validator';
+
+/**
+ * A JSON value, spelt out rather than borrowed from Prisma.
+ *
+ * The DTO layer describes what a request may contain; importing the database client here to say
+ * "an object" would point the wrong way. Recursive because a channel's tax block nests.
+ */
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type JsonObject = { [key: string]: JsonValue };
 
 export class SalesTransactionItemDto {
   @IsOptional() @IsUUID() productId?: string | null;
@@ -30,6 +39,19 @@ export class SalesTransactionItemDto {
    */
   @IsOptional() @IsArray() @IsString({ each: true }) serials?: string[];
   @IsOptional() @IsNumber() salesTaxAmount?: number | null;
+  /**
+   * The channel's tax fields verbatim. Diagnostic only — nothing computes from it.
+   *
+   * A real column, so it travels through the write untouched. That is deliberate: the alternative
+   * is another DTO field that is neither column nor stripped, which is what silently failed every
+   * sync when `channelReportedTaxCollection` was added.
+   */
+  /**
+   * No `| null` and not `unknown`. Prisma's nullable JSON refuses a literal null — absence is the
+   * field being omitted — and rejects `unknown` values because it cannot know they serialise.
+   * `JsonValue` says what is actually true of a channel payload and satisfies both.
+   */
+  @IsOptional() @IsObject() channelTaxRaw?: JsonObject;
   // The channel reported that IT collected and remits this line's tax (Amazon
   // TaxCollection.Model = MarketplaceFacilitator, eBay ebayCollectAndRemitTaxes).
   @IsOptional() @IsBoolean() channelReportedTaxCollection?: boolean;
@@ -57,6 +79,13 @@ export class CreateSalesTransactionDto {
   @IsOptional() @IsIn(['shipped', 'not_shipped']) channelShipmentStatus?: 'shipped' | 'not_shipped';
   // Fulfilment type from the channel (Amazon AFN→FBA, MFN→FBM). Importers only.
   @IsOptional() @IsIn(['FBA', 'FBM']) fulfilmentType?: 'FBA' | 'FBM';
+  /**
+   * Whether the channel called this a business order. Importers only; diagnostic.
+   *
+   * Undefined and false are different answers and both are kept — eBay and OnBuy never report it,
+   * and "the channel did not say" must not read as "a consumer bought it".
+   */
+  @IsOptional() @IsBoolean() isBusinessOrder?: boolean | null;
 
   // --- Local sales only (channel.kind === 'local') ---
   // How the goods left us. A label for the record; there is no carrier to derive it from.

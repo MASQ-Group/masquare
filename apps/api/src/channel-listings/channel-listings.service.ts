@@ -9,7 +9,7 @@ import { deriveListingStatus } from './listing-status';
 import { planTransition } from './plan-transition';
 import { fullScopeIntegrationWhere } from '../common/amazon-scope';
 import { settlePushQueue, type PushResult } from './push-queue-settle';
-import { buildLooseSkuIndex, buildSkuOwnerIndex, matchSku, relinkAction } from './sku-match';
+import { buildLooseSkuIndex, buildSkuOwnerIndex, matchSku, normaliseSku, relinkAction, suggestOwnerBySuffix } from './sku-match';
 import { pickLiveListing, pickLiveListingsByKey } from './pick-live-listing';
 import { channelKey } from './channel-key';
 
@@ -1569,7 +1569,11 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     const [rows, products] = await Promise.all([
       this.prisma.channelListing.findMany({
         where: { productId: null, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
-        select: { channelSku: true, title: true, listedQuantity: true, integration: { select: { name: true } } },
+        select: {
+          channelSku: true, title: true, listedQuantity: true, marketplace: true, lastPulledAt: true,
+          listingStatus: true, fulfilmentChannel: true,
+          integration: { select: { name: true } },
+        },
       }),
       this.prisma.product.findMany({ where: ACTIVE, select: { id: true, mainSku: true, aliases: { where: ACTIVE, select: { skuValue: true } } } }),
     ]);
@@ -1581,14 +1585,71 @@ export class ChannelListingsService implements OnApplicationBootstrap {
      * and the honest place for it is the list of things nobody has answered.
      */
     const unknown = rows.filter((r) => !matchSku(r.channelSku, index, loose).owner);
+
     const byChannel: Record<string, number> = {};
     for (const r of unknown) byChannel[r.integration.name] = (byChannel[r.integration.name] ?? 0) + 1;
+
+    /**
+     * One entry per SKU, not per row. The flat list was two thousand rows for a thousand SKUs —
+     * the same product on fourteen marketplaces, fourteen times over — which made the pile look
+     * twice its size and put no two copies of the same question next to each other.
+     */
+    const bySku = new Map<string, {
+      channelSku: string; title: string | null; quantity: number;
+      channels: string[]; rows: number; buyable: number; lastPulledAt: Date | null;
+    }>();
+    for (const r of unknown) {
+      const key = normaliseSku(r.channelSku);
+      const e = bySku.get(key) ?? {
+        channelSku: r.channelSku, title: null, quantity: 0, channels: [], rows: 0, buyable: 0, lastPulledAt: null,
+      };
+      e.rows += 1;
+      e.quantity += r.listedQuantity ?? 0;
+      /** The channel's own title is the only clue to what the thing IS. Any of them will do. */
+      if (!e.title && r.title) e.title = r.title;
+      const channel = r.marketplace ? `${r.integration.name} ${r.marketplace}` : r.integration.name;
+      if (!e.channels.includes(channel)) e.channels.push(channel);
+      if (this.deriveStatus(r) !== 'paused') e.buyable += 1;
+      if (r.lastPulledAt && (!e.lastPulledAt || r.lastPulledAt > e.lastPulledAt)) e.lastPulledAt = r.lastPulledAt;
+      bySku.set(key, e);
+    }
+
+    const items = [...bySku.values()].map((e) => {
+      const suggestion = suggestOwnerBySuffix(e.channelSku, index, loose);
+      return {
+        ...e,
+        channels: e.channels.sort(),
+        /**
+         * A suggestion, never a link. `IT40779-FBA` is almost certainly `IT40779` under a fulfilment
+         * alias nobody defined; `BE-BS39 MIT` matches the same way and MIT may be a colour. Deciding
+         * between those is the person's job and the reason this is offered rather than applied.
+         */
+        suggestion: suggestion
+          ? { sku: suggestion.owner.sku, productId: suggestion.owner.productId, dropped: suggestion.dropped }
+          : null,
+      };
+    })
+      /**
+       * Worst first, and "worst" is what it costs rather than how many rows it has. A SKU buyable on
+       * nine marketplaces with 38 units behind it is stock being published and never maintained; one
+       * that is paused everywhere is a dead listing, and a worklist that mixes them is one nobody can
+       * triage.
+       */
+      .sort((a, b) =>
+        b.buyable - a.buyable
+        || b.quantity - a.quantity
+        || b.channels.length - a.channels.length
+        || a.channelSku.localeCompare(b.channelSku));
+
     return {
-      total: unknown.length,
+      /** Distinct SKUs — the size of the actual job. `rows` is what it looks like from the database. */
+      total: items.length,
+      rows: unknown.length,
+      /** Buyable somewhere, or carrying stock. The rest are dead listings nobody can buy. */
+      worthChasing: items.filter((i) => i.buyable > 0 || i.quantity > 0).length,
+      withSuggestion: items.filter((i) => i.suggestion).length,
       byChannel,
-      rows: unknown.slice(0, 500).map((r) => ({
-        channelSku: r.channelSku, channel: r.integration.name, title: r.title, quantity: r.listedQuantity,
-      })),
+      items,
     };
   }
 }

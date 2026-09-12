@@ -632,6 +632,107 @@ export class IntegrationsService implements OnModuleInit {
   }
 
   /** Step 1 of a publish: the private product record. Deleteable, invisible to buyers. */
+  /**
+   * eBay's category tree id for this marketplace.
+   *
+   * Every taxonomy call needs it and it is not the marketplace id — EBAY_GB is tree `3`. It changes
+   * about never, so it is fetched once per integration and kept; a wrong one fails loudly on the
+   * next call rather than quietly returning another country's categories.
+   */
+  private ebayTreeIds = new Map<string, string>();
+
+  private async ebayCategoryTreeId(integrationId: string): Promise<string> {
+    const cached = this.ebayTreeIds.get(integrationId);
+    if (cached) return cached;
+    const { base, headers, marketplaceId } = await this.ebayCtx(integrationId);
+    const r = await fetch(
+      `${base}/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=${marketplaceId}`,
+      { headers, signal: AbortSignal.timeout(20000) },
+    );
+    const json = await r.json().catch(() => null);
+    const id = json?.categoryTreeId;
+    if (!r.ok || !id) {
+      throw new BadRequestException(`eBay would not name its category tree: ${r.status} ${IntegrationsService.ebayErr(json)}`);
+    }
+    this.ebayTreeIds.set(integrationId, String(id));
+    return String(id);
+  }
+
+  /**
+   * What eBay thinks a product belongs under, from its title.
+   *
+   * A category cannot be guessed from our own taxonomy — eBay's tree is its own, the leaf decides
+   * which aspects are compulsory, and `publish` refuses without one. Asking eBay is the only way to
+   * get an id it will accept.
+   *
+   * Read-only.
+   */
+  async ebayCategorySuggestions(integrationId: string, query: string) {
+    const q = (query ?? '').trim();
+    if (!q) return { ok: false as const, message: 'Nothing to search for', suggestions: [] };
+    const treeId = await this.ebayCategoryTreeId(integrationId);
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const r = await fetch(
+      `${base}/commerce/taxonomy/v1/category_tree/${treeId}/get_category_suggestions?q=${encodeURIComponent(q.slice(0, 350))}`,
+      { headers, signal: AbortSignal.timeout(20000) },
+    );
+    const json = await r.json().catch(() => null);
+    if (!r.ok) return { ok: false as const, message: `${r.status}: ${IntegrationsService.ebayErr(json)}`, suggestions: [] };
+    return {
+      ok: true as const,
+      treeId,
+      suggestions: (json?.categorySuggestions ?? []).map((s: any) => ({
+        categoryId: s.category?.categoryId ?? null,
+        categoryName: s.category?.categoryName ?? null,
+        /**
+         * Ancestors arrive deepest-first. Reversed and joined, a leaf called "Cables" becomes
+         * "Sound & Vision > … > Cables", which is the difference between a choice and a guess.
+         */
+        path: [...(s.categoryTreeNodeAncestors ?? [])]
+          .reverse()
+          .map((a: any) => a.categoryName)
+          .concat(s.category?.categoryName ?? [])
+          .filter(Boolean)
+          .join(' > '),
+        relevancy: s.relevancy ?? null,
+      })).filter((x: any) => x.categoryId),
+    };
+  }
+
+  /**
+   * The aspects a category demands, and what it will accept for each.
+   *
+   * Compulsory ones differ per leaf and are discoverable only at runtime — a category that wants
+   * "Capacity" says so nowhere until it refuses the publish. Fetching them is what lets the form ask
+   * for the right things before anything is sent.
+   *
+   * Read-only.
+   */
+  async ebayCategoryAspects(integrationId: string, categoryId: string) {
+    const treeId = await this.ebayCategoryTreeId(integrationId);
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const r = await fetch(
+      `${base}/commerce/taxonomy/v1/category_tree/${treeId}/get_item_aspects_for_category?category_id=${encodeURIComponent(categoryId)}`,
+      { headers, signal: AbortSignal.timeout(20000) },
+    );
+    const json = await r.json().catch(() => null);
+    if (!r.ok) return { ok: false as const, message: `${r.status}: ${IntegrationsService.ebayErr(json)}`, aspects: [] };
+    return {
+      ok: true as const,
+      categoryId,
+      aspects: (json?.aspects ?? []).map((a: any) => ({
+        name: a.localizedAspectName,
+        required: a.aspectConstraint?.aspectRequired === true,
+        /** FREE_TEXT or SELECTION_ONLY — whether a value not on the list is allowed. */
+        mode: a.aspectConstraint?.aspectMode ?? null,
+        multiValued: a.aspectConstraint?.itemToAspectCardinality === 'MULTI',
+        /** Capped: some categories offer thousands, and a form cannot use them all. */
+        values: (a.aspectValues ?? []).slice(0, 60).map((v: any) => v.localizedValue).filter(Boolean),
+        valueCount: (a.aspectValues ?? []).length,
+      })),
+    };
+  }
+
   async ebayPutInventoryItem(integrationId: string, sku: string, item: unknown) {
     const { base, headers } = await this.ebayCtx(integrationId);
     const res = await fetch(base + '/sell/inventory/v1/inventory_item/' + encodeURIComponent(sku), {
@@ -3235,6 +3336,12 @@ export class IntegrationsService implements OnModuleInit {
       channelShipmentStatus: mapped.payload.channelShipmentStatus,
       // Only Amazon can be FBA; anything without an explicit type is FBM.
       fulfilmentType: mapped.payload.fulfilmentType ?? 'FBM',
+      /**
+       * Only sent when the channel actually said. Passing `null` would overwrite a real answer with
+       * a blank on any channel that does not report it, and every re-sync of an eBay or OnBuy order
+       * would erase what an Amazon import had established for the same field.
+       */
+      ...(mapped.payload.isBusinessOrder == null ? {} : { isBusinessOrder: mapped.payload.isBusinessOrder }),
       source: row.channelType,
       integrationId: row.id,
       items,
