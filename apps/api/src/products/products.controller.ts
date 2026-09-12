@@ -12,6 +12,7 @@ import {
 } from './dto/product.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
+import { VisibleCompanies } from '../common/active-company.decorator';
 import { AccessArea, RequireCapability } from '../access/access.decorators';
 
 const toArray = (v?: string | string[]) => (v == null ? undefined : Array.isArray(v) ? v : [v]);
@@ -26,6 +27,12 @@ export class ProductsController {
 
   @Get()
   list(
+    /**
+     * Listings only. The product rows stay estate-wide — products are co-owned and always have
+     * been — but a channel listing belongs to one seller account, so "is it listed" must be scoped
+     * the same way the Channel Listings page scopes it or the two screens would disagree.
+     */
+    @VisibleCompanies() companyIds: string[],
     @Query('q') q?: string,
     @Query('field') field?: string,
     @Query('vendorId') vendorId?: string | string[],
@@ -46,6 +53,7 @@ export class ProductsController {
       categoryId: toArray(categoryId),
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
+      companyIds,
     };
     return this.products.list(query);
   }

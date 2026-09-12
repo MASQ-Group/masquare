@@ -11,6 +11,7 @@ import { fullScopeIntegrationWhere } from '../common/amazon-scope';
 import { settlePushQueue, type PushResult } from './push-queue-settle';
 import { buildSkuOwnerIndex, normaliseSku, relinkAction } from './sku-match';
 import { pickLiveListing, pickLiveListingsByKey } from './pick-live-listing';
+import { channelKey } from './channel-key';
 
 const ACTIVE = { deletedAt: null };
 // Per-channel accent dots (fallback palette; overridden by the SalesChannel chip colour if set).
@@ -88,7 +89,7 @@ export class ChannelListingsService implements OnApplicationBootstrap {
         for (const m of markets.slice().sort((a, b) => a.marketplace.localeCompare(b.marketplace))) {
           const sc = r.targetCompanyId ? ebayScByCompanyIso.get(`${r.targetCompanyId}:${m.marketplace}`) : null;
           out.push({
-            id: `${r.id}:${m.marketplace}`,
+            id: channelKey({ integrationId: r.id, marketplace: m.marketplace }),
             name: sc?.name ?? `${r.name} ${m.marketplace}`,
             marketplace: m.marketplace,
             channelType: r.channelType,
@@ -105,7 +106,8 @@ export class ChannelListingsService implements OnApplicationBootstrap {
       const sc = r.targetSalesChannelId ? scById.get(r.targetSalesChannelId) : null;
       const a = byInt.get(r.id);
       out.push({
-        id: r.id,
+        /** Keyed on the LISTING's marketplace (empty here), never the integration's own label. */
+        id: channelKey({ integrationId: r.id, marketplace: '' }),
         name: r.name,
         marketplace: r.marketplace,
         channelType: r.channelType,

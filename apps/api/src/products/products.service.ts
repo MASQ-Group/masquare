@@ -10,6 +10,9 @@ import { BulkUpdateDto, CreateProductDto, MoneyDto, UpdateProductDto } from './d
 // Type-only: the live instance comes from the module registry below, so this file never pulls
 // ChannelListingsModule into ProductsModule and cannot create an import cycle.
 import type { ChannelListingsService } from '../channel-listings/channel-listings.service';
+import { channelKey } from '../channel-listings/channel-key';
+import { deriveListingStatus } from '../channel-listings/listing-status';
+import { pickLiveListingsByKey } from '../channel-listings/pick-live-listing';
 
 export interface ProductQuery {
   q?: string;
@@ -22,6 +25,12 @@ export interface ProductQuery {
   country?: string;
   page?: number;
   pageSize?: number;
+  /**
+   * Which companies' CHANNEL LISTINGS the caller may see. Products themselves are estate-wide and
+   * deliberately unscoped — they are co-owned — but a listing belongs to one seller account, so the
+   * listed/not-listed answer has to be the one the Channel Listings page would give the same user.
+   */
+  companyIds?: string[];
 }
 
 const MAX_MEDIA = 8;
@@ -330,6 +339,51 @@ export class ProductsService {
     return rows.map((r) => r.id);
   }
 
+  /**
+   * Which channels each of these products actually reached.
+   *
+   * One query for the whole page rather than one per row. Aliases need no special handling here and
+   * that is the point: a listing carries the SKU the channel knows, and `relinkListings` has already
+   * attached it to the product that owns that SKU whether it is the main one or an alias. Asking
+   * about aliases again would be asking the same question twice and risking two answers.
+   *
+   * A product can hold more than one row per channel — a SKU submitted once and never completed, an
+   * old SKU the marketplace still returns — so `pickLiveListingsByKey` chooses which row IS the
+   * listing, the same way the Channel Listings grid does. Without it a product live on Amazon UK
+   * could report the status of a dead stub sitting beside it.
+   */
+  private async listingsByProduct(productIds: string[], companyIds?: string[]) {
+    const out = new Map<string, { channelId: string; status: string; channelSku: string }[]>();
+    if (productIds.length === 0) return out;
+
+    const rows = await this.prisma.channelListing.findMany({
+      where: {
+        productId: { in: productIds },
+        ...(companyIds ? { companyId: { in: companyIds } } : {}),
+      },
+      select: {
+        productId: true, integrationId: true, marketplace: true, channelSku: true,
+        listedQuantity: true, listingStatus: true, fulfilmentChannel: true, lastPulledAt: true,
+      },
+    });
+
+    const picked = pickLiveListingsByKey(
+      rows,
+      (r) => `${r.productId}|${channelKey({ integrationId: r.integrationId, marketplace: r.marketplace })}`,
+    );
+    for (const r of picked.values()) {
+      if (!r.productId) continue;
+      const list = out.get(r.productId) ?? [];
+      list.push({
+        channelId: channelKey({ integrationId: r.integrationId, marketplace: r.marketplace }),
+        status: deriveListingStatus(r),
+        channelSku: r.channelSku,
+      });
+      out.set(r.productId, list);
+    }
+    return out;
+  }
+
   async list(query: ProductQuery) {
     const page = Math.max(1, Number(query.page) || 1);
     const pageSize = Math.min(500, Math.max(1, Number(query.pageSize) || 25));
@@ -345,7 +399,14 @@ export class ProductsService {
       }),
     ]);
 
-    return { items: rows.map((r) => this.serialize(r)), total, page, pageSize };
+    const listings = await this.listingsByProduct(rows.map((r) => r.id), query.companyIds);
+
+    return {
+      items: rows.map((r) => ({ ...this.serialize(r), listedOn: listings.get(r.id) ?? [] })),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   async get(id: string) {

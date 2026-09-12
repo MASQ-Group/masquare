@@ -5,8 +5,9 @@ import { Columns3, ChevronsUpDown, Download, Filter, Grid, List, Package, Pencil
 import { toast } from 'sonner';
 import { downloadTemplate, Pagination } from '@masquare/ui';
 import {
-  brandsApi, categoriesApi, fulfilmentTypesApi, productClassesApi, productsApi, productTypesApi, vatClassesApi, vendorsApi,
-  type Product, type ProductListParams,
+  brandsApi, categoriesApi, channelListingsApi, fulfilmentTypesApi, productClassesApi, productsApi, productTypesApi,
+  vatClassesApi, vendorsApi,
+  type ChannelListingChannel, type Product, type ProductListParams,
 } from '../lib/api';
 import { categoryOptions, categoryPath } from '../lib/categoryPaths';
 import { useAuth } from '../lib/auth';
@@ -18,6 +19,7 @@ import { BulkEditModal } from '../components/products/BulkEditModal';
 import { ProductImportModal } from '../components/products/ProductImportModal';
 import { ConfirmDeleteModal } from '../components/products/ConfirmDeleteModal';
 import { EXPORT_COLUMNS } from '../components/products/columns';
+import { ListedChip } from '../components/products/ListedChip';
 import { PageHeader } from '../components/common/PageHeader';
 import { AnchoredPanel } from '../components/common/AnchoredPanel';
 import { useIsMobile } from '../lib/useIsMobile';
@@ -113,6 +115,11 @@ export function ProductsPage() {
   const params: ProductListParams = { ...filterParams, page, pageSize };
 
   const { data, isLoading } = useQuery({ queryKey: ['products', params], queryFn: () => productsApi.list(params) });
+  /**
+   * The channels a product COULD be on. Needed only for the unlisted half of the chip's toast — the
+   * listed half travels on each row — so it is fetched once and shared, not per page of results.
+   */
+  const channels = useQuery({ queryKey: ['channel-listing-channels'], queryFn: () => channelListingsApi.channels() });
   const vendors = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
   const brands = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
   const ftypes = useQuery({ queryKey: ['fulfilment-types'], queryFn: () => fulfilmentTypesApi.list() });
@@ -355,7 +362,7 @@ export function ProductsPage() {
       )}
 
       {!effectiveGrid ? (
-        <ListView items={items} loading={isLoading} cols={cols} selected={selected} allSelected={allSelected} onToggleAll={toggleAll} onToggleOne={toggleOne} onEdit={setEditing} onDelete={(p) => setPendingDelete({ kind: 'single', product: p })} />
+        <ListView items={items} loading={isLoading} cols={cols} channels={channels.data ?? []} selected={selected} allSelected={allSelected} onToggleAll={toggleAll} onToggleOne={toggleOne} onEdit={setEditing} onDelete={(p) => setPendingDelete({ kind: 'single', product: p })} />
       ) : (
         <GridView
           items={items}
@@ -402,13 +409,19 @@ export function ProductsPage() {
   );
 }
 
-function ListView({ items, loading, cols, selected, allSelected, onToggleAll, onToggleOne, onEdit, onDelete }: {
-  items: Product[]; loading: boolean; cols: Set<string>;
+function ListView({ items, loading, cols, channels, selected, allSelected, onToggleAll, onToggleOne, onEdit, onDelete }: {
+  items: Product[]; loading: boolean; cols: Set<string>; channels: ChannelListingChannel[];
   selected: Set<string>; allSelected: boolean; onToggleAll: () => void; onToggleOne: (id: string) => void;
   onEdit: (p: Product) => void; onDelete: (p: Product) => void;
 }) {
   const extra = OPTIONAL_COLUMNS.filter((c) => cols.has(c.key));
-  const span = 11 + extra.length;
+  /**
+   * Checkbox, image, SKU, aliases, product, brand, vendor, fulfilment, category, attributes,
+   * listed, then the optional columns, then purchase cost and the actions cell. Counted rather
+   * than carried forward: it was 11 against thirteen real columns, so the "No products match" row
+   * stopped short of the table's width.
+   */
+  const span = 13 + extra.length;
   return (
     <div className="card overflow-hidden">
       <div className="overflow-x-auto">
@@ -418,7 +431,7 @@ function ListView({ items, loading, cols, selected, allSelected, onToggleAll, on
               <th className="border-b border-n-200 bg-n-25 px-3 py-3">
                 <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={allSelected} onChange={onToggleAll} title="Select all" />
               </th>
-              {['', 'SKU', 'Aliases SKUs', 'Product', 'Brand', 'Vendor', 'Fulfilment', 'Category', 'Attributes'].map((h, i) => (
+              {['', 'SKU', 'Aliases SKUs', 'Product', 'Brand', 'Vendor', 'Fulfilment', 'Category', 'Attributes', 'Listed'].map((h, i) => (
                 <th key={i} className="border-b border-n-200 bg-n-25 px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap">{h}</th>
               ))}
               {extra.map((c) => <th key={c.key} className={`border-b border-n-200 bg-n-25 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-n-500 whitespace-nowrap ${c.right ? 'text-right' : 'text-left'}`}>{c.label}</th>)}
@@ -464,6 +477,9 @@ function ListView({ items, loading, cols, selected, allSelected, onToggleAll, on
                       {p.attributes.length > 1 && <span className="shrink-0 rounded bg-n-100 px-1.5 py-0.5 text-[11px] font-semibold text-n-500">+{p.attributes.length - 1}</span>}
                     </div>
                   )}
+                </td>
+                <td className="border-b border-n-100 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+                  <ListedChip product={p} channels={channels} />
                 </td>
                 {extra.map((c) => <td key={c.key} className={`border-b border-n-100 px-4 py-2.5 text-[13px] text-n-700 ${c.mono ? 'mono' : ''} ${c.right ? 'text-right' : ''}`}>{c.render(p)}</td>)}
                 <td className="border-b border-n-100 px-4 py-2.5 text-right"><span className="mono font-medium text-n-800">{formatMoney(p.purchaseCost)}</span></td>
