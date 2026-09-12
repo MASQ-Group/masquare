@@ -139,11 +139,27 @@ await (await fetch('/api/sales-transactions/repair-channel-collected-tax', { met
 - **Margin % shifts in both directions** — better on profitable orders, worse on loss-making ones.
   The denominator loses the tax, so a loss becomes a larger share of a smaller base. Profit in
   currency did not change.
-- `refusedNoSalesTax` counts orders where VAT sits on the line with no reported total behind it.
-  Those are **refused, not emptied** — zeroing would destroy the only copy of the figure. They need
-  a person.
+- `linesMoved` / `taxMoved` counts tax that was **relocated rather than dropped** — a figure sitting
+  in `vatAmount` on an order to a country that has no VAT (the US, or a GST country) is misfiled
+  rather than disputed, so it moves into `salesTaxAmount` instead. It is a subset of `taxRemoved`,
+  not a total beside it: revenue moves by the same amount either way.
+- `refusedNoSalesTax` counts orders where VAT sits on the line with no reported total behind it **and
+  the destination really does have a VAT** — so the money might be yours and nothing on file says.
+  Those are **refused, not emptied**; zeroing would destroy the only copy of the figure. They need a
+  person.
 
 Nothing here is destructive: `salesTaxAmount` always keeps the full figure.
+
+To see the decision rather than the totals — which orders take which branch — from Git Bash in
+`C:\dev\masquare`:
+
+```bash
+REPORT=step3-plan bash scripts/prod-scan.sh
+```
+
+It runs the shipped planner over production and writes nothing. Use it when a dry run returns a
+different count than you expected: `step3-candidates` lists what would be cleared straight from the
+database, with no date window, which a comparison against a spreadsheet cannot do.
 
 ---
 
@@ -193,6 +209,10 @@ REPORT=vat-flag-state bash scripts/prod-scan.sh
 | `alias-listing-coverage` | Whether alias-SKU listings are linked |
 | `jct-classification-check` | The one tax classification that moves profit |
 | `country-rate-check` | The destination rates the VAT fallback depends on |
+| `step3-plan` | Which branch step 3 takes on each order — move, zero or refuse |
+| `step3-candidates` | What step 3 would clear, from the database, with no date window |
+| `order-forensics` | Everything stored about one order (`REF=...`), for the ones a repair refuses |
+| `us-tax-shape` | Whether US sales tax landed in the right column |
 
 `REPORT=` with anything unrecognised prints the full list.
 

@@ -28,7 +28,7 @@ prod-health unmatched-listings amazon-uk-vat channel-duplicates zero-vat-orders 
 nonvat-country-rates migration-state vat-flag-drift onbuy-vat-signal sku-listing-trace
 sku-phantom-origin listing-row-collisions push-coverage sku-alias-check alias-listing-coverage
 vat-order-review marketplace-vat-overstated country-rate-check regime-vat-impact
-collected-tax-repair-preview jct-classification-check vat-flag-state when-did-vat-change channel-vat-review ebay-flag-gap sku-listing-attempts ebay-nonuk-collected stale-tax-regime export-vat-origin vat2026-review regular-seller-vat gst-rate-check wrongly-flagged step3-preview-gst aus-residue
+collected-tax-repair-preview jct-classification-check vat-flag-state when-did-vat-change channel-vat-review ebay-flag-gap sku-listing-attempts ebay-nonuk-collected stale-tax-regime export-vat-origin vat2026-review regular-seller-vat gst-rate-check wrongly-flagged step3-preview-gst aus-residue step3-candidates order-forensics us-tax-shape step3-plan
 "
 
 case " $(echo $REPORTS) " in
@@ -54,9 +54,16 @@ fi
 #
 # So the rule modules are compiled here, fresh on every run, and reports `require` them. Rebuilt
 # each time rather than committed, so a stale copy cannot quietly disagree with the source.
+RULE_MODULES="
+integrations/mappings/tax-collection
+sales-transactions/vat-scope
+sales-transactions/channel-tax-repair-plan
+"
+
 mkdir -p scripts/.compiled
-for MODULE in integrations/mappings/tax-collection sales-transactions/vat-scope; do
-  if ! npx esbuild "apps/api/src/${MODULE}.ts" --bundle --platform=node --format=cjs        --outfile="scripts/.compiled/$(basename "${MODULE}").cjs" --log-level=warning; then
+for MODULE in $RULE_MODULES; do
+  if ! npx esbuild "apps/api/src/${MODULE}.ts" --bundle --platform=node --format=cjs \
+       --outfile="scripts/.compiled/$(basename "${MODULE}").cjs" --log-level=warning; then
     echo "Could not compile ${MODULE}; reports that require it will fail." >&2
   fi
 done

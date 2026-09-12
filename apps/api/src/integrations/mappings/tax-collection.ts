@@ -162,6 +162,23 @@ export function marketplaceRemitsTax(input: {
 }
 
 /**
+ * Does this destination have a VAT at all?
+ *
+ * Not "is the VAT ours" — whether the concept exists there. The United States has sales tax and no
+ * VAT; Australia, Singapore and New Zealand have GST. A figure sitting in `vatAmount` on an order to
+ * any of them is not a disputed amount, it is a misfiled one: there is no tax it could be.
+ *
+ * That distinction is what lets the repair move such a figure instead of refusing it. Where a VAT
+ * genuinely exists and merely lacks a reported total behind it, the amount could still be ours and
+ * guessing is not allowed — so this stays false for `vat`, and false for `jct`, which is a real
+ * consumption tax that the seller keeps.
+ */
+export function regimeHasNoVat(taxType: string | null | undefined): boolean {
+  const regime = (taxType ?? 'vat').trim().toLowerCase();
+  return regime === 'gst' || regime === 'sales_tax';
+}
+
+/**
  * Strip tax the channel charged the buyer and keeps, so it is never counted as ours.
  *
  * The line still carries what the buyer paid, because that is what the marketplace reported — but
