@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Select } from '@masquare/ui';
 import { amazonListingApi, listingApi, type AmazonSweep, type ProductChannelRow } from '../../lib/api';
 import { ChannelGroup, SweepResult } from './ChannelGroup';
+import { EbayListingPanel } from './EbayListingPanel';
 import { PlanEditor } from './ChannelPlanEditor';
 import { useJobProgress } from '../../lib/useJobProgress';
 import { CHANNEL_GROUPS, channelGroupOf } from '../../lib/channelGroups';
@@ -86,6 +87,7 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
     : grouped;
 
   const hasAmazon = data.channels.some((c) => c.channelType === 'amazon');
+  const hasEbay = data.channels.some((c) => c.channelType === 'ebay');
 
   return (
     <div className="flex flex-col gap-3">
@@ -142,6 +144,14 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
           <SweepResult sweep={sweep.result as AmazonSweep} />
         </div>
       )}
+
+      {/*
+        * eBay gets a panel rather than a row per marketplace, because eBaymag republishes an eBay UK
+        * listing to every other eBay market. One category, one set of aspects, one publish — asking
+        * per market would be the same question fourteen times and fourteen listings where eBaymag
+        * wants one.
+        */}
+      {hasEbay && <EbayListingPanel productId={productId} />}
 
       {groups.map(({ key, label, rows }) => (
         <ChannelGroup key={key} label={label} rows={rows}>
