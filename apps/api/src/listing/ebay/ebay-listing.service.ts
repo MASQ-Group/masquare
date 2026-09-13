@@ -48,6 +48,20 @@ export class EbayListingService {
    * rather than quietly act through the other company's token. Omitted only by callers with no user
    * behind them, which is background work and correctly unscoped.
    */
+  /**
+   * The row a plan is filed under.
+   *
+   * `listing.service.upsertPlan` keys on the INTEGRATION's own marketplace — `"GB"` for eBay — and
+   * this used to hard-code `''`. Same product, same integration, two rows: a category chosen on the
+   * Content tab was written somewhere the Channels tab never looked, so it read as unsaved.
+   *
+   * Derived here rather than passed in, because the two places that write a plan have to agree and
+   * the only way to guarantee that is for them to compute it the same way.
+   */
+  private planKey(integration: { id: string; marketplace: string | null }) {
+    return { integrationId: integration.id, marketplace: integration.marketplace ?? '' };
+  }
+
   private async ebayIntegration(integrationId?: string, companyIds?: string[]) {
     const scope = companyIds ? { targetCompanyId: { in: companyIds } } : {};
     const row = integrationId
@@ -136,7 +150,7 @@ export class EbayListingService {
         select: { manufacturerSku: true, brand: { select: { name: true } } },
       }),
       this.prisma.productChannelPlan.findFirst({
-        where: { productId, integrationId: row.id },
+        where: { productId, ...this.planKey(row) },
         select: { aspects: true, categoryRef: true },
       }),
       this.integrations.ebayCategoryAspects(row.id, categoryId),
@@ -178,8 +192,9 @@ export class EbayListingService {
     args: { integrationId?: string; categoryId: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null; companyIds?: string[] },
   ) {
     const row = await this.ebayIntegration(args.integrationId, args.companyIds);
+    const key = this.planKey(row);
     const existing = await this.prisma.productChannelPlan.findFirst({
-      where: { productId, integrationId: row.id },
+      where: { productId, ...key },
       select: { id: true },
     });
     const data = {
@@ -192,7 +207,7 @@ export class EbayListingService {
     };
     const saved = existing
       ? await this.prisma.productChannelPlan.update({ where: { id: existing.id }, data })
-      : await this.prisma.productChannelPlan.create({ data: { productId, integrationId: row.id, marketplace: '', ...data } });
+      : await this.prisma.productChannelPlan.create({ data: { productId, ...key, ...data } });
     this.logger.log(`eBay plan saved for ${productId}: category ${args.categoryId}`);
     return { ok: true as const, planId: saved.id, categoryId: saved.categoryRef };
   }
@@ -220,7 +235,7 @@ export class EbayListingService {
      */
     const row = await this.ebayIntegration(args.integrationId);
     const plan = await this.prisma.productChannelPlan.findFirst({
-      where: { productId, integrationId: row.id },
+      where: { productId, ...this.planKey(row) },
       select: { categoryRef: true, aspects: true, condition: true, handlingTimeDays: true, offerPriceCents: true },
     });
     const planned = (plan?.aspects && typeof plan.aspects === 'object' ? plan.aspects : {}) as Record<string, string>;

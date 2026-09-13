@@ -334,7 +334,24 @@ export function PlanEditor({
               <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">
                 {isEbay ? 'eBay category id' : 'Category'}
               </span>
-              <input value={categoryRef} onChange={(e) => setCategoryRef(e.target.value)} className="input mono h-8 text-[12.5px]" />
+              {/*
+                * Shown, not typed, for eBay. The category is chosen on the Content tab because eBay
+                * decides the compulsory item specifics from it — which fields exist is not knowable
+                * until one is picked. A second editable copy here would let the two disagree, and
+                * the publish sends whichever the plan holds.
+                */}
+              {isEbay ? (
+                <div className={`flex h-8 items-center rounded-lg border px-2.5 text-[12.5px] ${categoryRef ? 'border-n-200 bg-n-50 text-n-700' : 'border-amber-300 bg-amber-50 text-amber-800'}`}>
+                  <span className="mono font-semibold">{categoryRef || 'not chosen yet'}</span>
+                </div>
+              ) : (
+                <input value={categoryRef} onChange={(e) => setCategoryRef(e.target.value)} className="input mono h-8 text-[12.5px]" />
+              )}
+              {isEbay && (
+                <span className="text-[11px] text-n-400">
+                  {categoryRef ? 'From the Content tab' : 'Choose one on the Content tab — it decides the required item specifics'}
+                </span>
+              )}
             </label>
           )}
 
@@ -354,7 +371,13 @@ export function PlanEditor({
 
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Category name</span>
-            <input value={categoryName} onChange={(e) => setCategoryName(e.target.value)} placeholder="for people, not the API" className="input h-8 text-[12.5px]" />
+            {isEbay ? (
+              <div className="flex h-8 items-center rounded-lg border border-n-200 bg-n-50 px-2.5 text-[12.5px] text-n-700">
+                {categoryName || <span className="text-n-400">—</span>}
+              </div>
+            ) : (
+              <input value={categoryName} onChange={(e) => setCategoryName(e.target.value)} placeholder="for people, not the API" className="input h-8 text-[12.5px]" />
+            )}
           </label>
         </div>
       </Step>
@@ -380,7 +403,19 @@ export function PlanEditor({
           />
         ) : (
           <div className="rounded-md border border-n-200 bg-n-0 px-3 py-2.5 text-[12px] text-n-500">
-            Listing on {row.channelType} is not built yet. The plan is saved and will be used when it is.
+            {isEbay ? (
+              <>
+                {/*
+                  * eBay listing IS built now, and it is not here. One listing goes to eBay UK and
+                  * eBaymag republishes it to every other eBay market, so a publish button on each
+                  * market's row would offer the same action a dozen times over.
+                  */}
+                Listing happens once, on the eBay UK panel above — eBaymag republishes it to the
+                other eBay markets. The category and item specifics saved here are what it sends.
+              </>
+            ) : (
+              <>Listing on {row.channelType} is not built yet. The plan is saved and will be used when it is.</>
+            )}
           </div>
         )}
       </Step>
