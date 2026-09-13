@@ -3500,6 +3500,7 @@ export class IntegrationsService implements OnModuleInit {
     let feesRefreshed = 0;
     let mcfSkipped = 0;
     let pendingSkipped = 0;
+    let pendingWithdrawn = 0;
 
     try {
       if (row.channelType === 'onbuy') {
@@ -3605,7 +3606,43 @@ export class IntegrationsService implements OnModuleInit {
              */
             const action = amazonOrderAction(order);
             if (action === 'skip-mcf') { mcfSkipped++; continue; }
-            if (action === 'skip-pending') { pendingSkipped++; continue; }
+            if (action === 'skip-pending') {
+              pendingSkipped++;
+              /**
+               * Withdraw one we imported before this rule existed.
+               *
+               * Skipping alone only stops NEW pending orders. An order pulled while the importer
+               * still took them sits in sales transactions indefinitely — Amazon has not changed it,
+               * so `LastUpdatedAfter` has no reason to send it again, and the skip above means it is
+               * never reached even when it does. 406-2114196-1553949 was exactly that.
+               *
+               * `remove` rather than a direct soft-delete: it releases the stock the draft reserved,
+               * gives back the Availability it consumed, and records the deletion against the order
+               * reference. Deleting the row alone would leave the stock held for a sale that is not
+               * there.
+               *
+               * Reversible by the thing that caused it. When the order leaves Pending it arrives as
+               * a fresh import, complete, exactly as one that was never pulled early.
+               */
+              const alreadyHere = await this.prisma.salesTransaction.findFirst({
+                where: { integrationId: row.id, transactionRef: order.AmazonOrderId, deletedAt: null },
+                select: { id: true, unlockedForEdit: true },
+              });
+              /**
+               * Left alone if somebody is working on it. An unlocked order is one a person asked to
+               * edit, and a sweep must not delete what somebody opened deliberately.
+               */
+              if (alreadyHere && !alreadyHere.unlockedForEdit) {
+                try {
+                  await this.salesTx.remove(alreadyHere.id, sysUser);
+                  pendingWithdrawn++;
+                } catch (e: any) {
+                  // Never fails the sync: the order staying is the status quo, not a new fault.
+                  this.logger.warn(`Could not withdraw pending order ${order.AmazonOrderId}: ${e?.message ?? e}`);
+                }
+              }
+              continue;
+            }
             if (action === 'cancelled') {
               // Which kind of cancellation: one that never became an order, or one that did.
               const cancelStage = amazonCancelStage(order);
@@ -3677,7 +3714,9 @@ export class IntegrationsService implements OnModuleInit {
        * Reported rather than silent. "Five orders I can see in Seller Central are not here" is a
        * reasonable thing to notice, and the sync message is where the answer belongs.
        */
-      const pendingNote = pendingSkipped ? `, ${pendingSkipped} pending payment (not imported yet)` : '';
+      const pendingNote = pendingSkipped
+        ? `, ${pendingSkipped} pending payment (not imported yet${pendingWithdrawn ? `, ${pendingWithdrawn} withdrawn` : ''})`
+        : '';
       const cancelledDone = counts.cancelledImported + counts.cancelledUpdated;
       const defectNote =
         (cancelledDone ? `, ${cancelledDone} cancelled registered` : '') +
