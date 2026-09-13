@@ -8,7 +8,7 @@ import { ProductChannelIdentifiers } from './ProductChannelIdentifiers';
 import { ProductChannelsTab } from './ProductChannelsTab';
 import { EntityHistory } from '../common/EntityHistory';
 import { ProductDocuments } from './ProductDocuments';
-import { EbayCategoryPicker } from './EbayCategoryPicker';
+import { EbayContentTab } from './EbayContentTab';
 import { RichTextEditor } from '../common/RichTextEditor';
 import { FeatureList } from './FeatureList';
 import { FileDrop, ModalShell, Select } from '@masquare/ui';
@@ -49,6 +49,14 @@ const STOCK_TAB = { key: 'stock', label: 'Stock levels' };
 const CHANNELS_TAB = { key: 'channels', label: 'Channels' };
 // Last, and edit-only: a product being created has no history, and the tab is for looking back
 // rather than for filling anything in.
+/**
+ * Edit-only, and hidden wherever Channels is.
+ *
+ * Everything on it is saved against the product — a category chosen before the product exists has
+ * nothing to belong to — and an orders-only company cannot list, so the tab would be a dead end
+ * rather than a to-do.
+ */
+const EBAY_TAB = { key: 'ebay', label: 'eBay content' };
 const HISTORY_TAB = { key: 'history', label: 'History' };
 
 const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s));
@@ -223,7 +231,11 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   return (
     <ModalShell
       open title={product ? 'Edit product' : 'New product'} subtitle={product?.mainSku}
-      tabs={product ? [...TABS, STOCK_TAB, ...(canListOnChannels ? [CHANNELS_TAB] : []), HISTORY_TAB] : TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
+      tabs={product
+        /* eBay content sits next to Content, not out by History: they are read together. */
+        ? [...TABS, ...(canListOnChannels ? [EBAY_TAB] : []), STOCK_TAB,
+           ...(canListOnChannels ? [CHANNELS_TAB] : []), HISTORY_TAB]
+        : TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
       primaryLabel={product ? 'Save changes' : 'Create product'} onPrimary={save} primaryDisabled={!canSave} busy={busy} onClose={onClose}
     >
       {tab === 'general' && (
@@ -472,18 +484,11 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
             Only eBay shows any of this. Amazon and OnBuy attach our offer to their own catalogue entry and
             never display our copy.
           </p>
-          <div>
-            <label className="label">eBay title</label>
-            <input
-              className="input"
-              maxLength={80}
-              value={content.ebayTitle}
-              onChange={(e) => { setContent((s) => ({ ...s, ebayTitle: e.target.value })); touch(); }}
-              placeholder="Search-optimised, English"
-            />
-            {/* eBay rejects anything longer, so the limit is shown rather than discovered. */}
-            <p className="mt-1 text-[12px] text-n-400">{content.ebayTitle.length}/80 characters</p>
-          </div>
+          {/*
+            * The eBay title and the category used to sit here. They moved to the eBay content tab:
+            * they are not shared copy, they are one channel's requirements, and mixing them made
+            * Content read as "eBay content plus some other things".
+            */}
           {/* The copy on this tab is what the store page shows, so the preview belongs beside it
               rather than only back on the list. Edit mode only — there is nothing to preview until
               the product exists. */}
@@ -525,32 +530,16 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
             <input className="input" value={content.searchKeywords} onChange={(e) => { setContent((s) => ({ ...s, searchKeywords: e.target.value })); touch(); }} placeholder="Comma separated" />
           </div>
 
-          {/*
-            * The eBay category, and whatever item specifics it demands.
-            *
-            * Here rather than only on Channels because this IS content — eBay decides the compulsory
-            * fields from the category, so which fields even exist is not knowable until one is
-            * chosen. Filling them beside the title and description is what makes listing later a
-            * single button instead of a form nobody expected.
-            *
-            * Edit mode only, like documents and the store preview above: the category is saved
-            * against the product and there is no id to hang it on until the product exists.
-            */}
-          {product ? (
-            <div className="border-t border-n-100 pt-4">
-              <EbayCategoryPicker productId={product.id} defaultQuery={content.ebayTitle || undefined} />
-            </div>
-          ) : (
-            <div className="border-t border-n-100 pt-4">
-              <label className="label">eBay category</label>
-              <p className="-mt-0.5 text-[12px] text-n-400">
-                Save the product first. eBay decides which item specifics are compulsory from the
-                category, so the fields to fill in cannot be known until there is a product to save
-                them against.
-              </p>
-            </div>
-          )}
         </div>
+      )}
+
+      {tab === 'ebay' && product && (
+        <EbayContentTab
+          productId={product.id}
+          ebayTitle={content.ebayTitle}
+          onEbayTitleChange={(v) => { setContent((s) => ({ ...s, ebayTitle: v })); touch(); }}
+          productTitle={title}
+        />
       )}
 
       {tab === 'compliance' && (

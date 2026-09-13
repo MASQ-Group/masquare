@@ -1,21 +1,22 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Loader2, Search } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { ebayListingApi, type EbayCategorySuggestion, type EbayResolvedAspect } from '../../lib/api';
 
 /**
  * Choosing the eBay category, and answering what it demands.
  *
- * Lives in one file and appears in two places on purpose. The Content tab is where this gets
- * FILLED IN, beside the title and description it belongs with — a category and its item specifics
- * are product copy, not a publishing step. The Channels tab shows the same thing next to the
- * publish button, because that is where somebody discovers it is missing.
+ * Lives in one file and appears in two places on purpose. The eBay content tab is where this gets
+ * FILLED IN, as step 2 of a sequence — the category has to come before the item specifics, because
+ * eBay decides which specifics exist from it. The Channels tab shows the same picker beside the
+ * publish button, because that is where somebody discovers one is missing and should not be sent to
+ * another tab to fix it.
  *
  * Two copies of this would drift, and the half that drifted would be the one nobody was looking at.
  *
- * Everything saves to the product's eBay plan, which `publish` already reads — so filling this in
- * on Content is what makes listing later a single button.
+ * Everything saves to the product's eBay plan, which `publish` already reads — so filling it in
+ * beforehand is what makes listing later a single button.
  */
 export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
   productId: string;
@@ -28,6 +29,8 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
   const [query, setQuery] = useState('');
   const [chosen, setChosen] = useState<EbayCategorySuggestion | null>(null);
   const [edits, setEdits] = useState<Record<string, string>>({});
+  /** Optional aspects are collapsed by default: a category can demand four and offer forty. */
+  const [showOptional, setShowOptional] = useState(false);
 
   /** What is already saved, so the section opens showing the answer rather than a blank search. */
   const saved = useQuery({
@@ -65,6 +68,7 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
   });
 
   const required = aspects.data?.aspects.filter((a) => a.required) ?? [];
+  const optional = aspects.data?.aspects.filter((a) => !a.required) ?? [];
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -134,7 +138,7 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
       {aspects.data && (
         <div className="flex flex-col gap-2 rounded-lg border border-n-200 bg-n-25 p-3">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-n-500">
-            {chosen?.categoryName} — {required.length} required item specific{required.length === 1 ? '' : 's'}
+            {chosen?.categoryName} — {required.length} required, {optional.length} optional
             {aspects.data.isSaved && <span className="ml-2 text-teal-700">saved</span>}
           </div>
           {required.length === 0 && (
@@ -148,6 +152,34 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
               onChange={(v) => setEdits({ ...edits, [a.name]: v })}
             />
           ))}
+
+          {/*
+            * Optional aspects, behind a toggle. eBay marks a handful compulsory and offers dozens
+            * more; showing all of them open would bury the four that actually block a publish. They
+            * are worth having — an unanswered optional aspect is a filter the listing drops out of —
+            * but they are never the reason somebody cannot list.
+            */}
+          {optional.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowOptional((v) => !v)}
+                className="mt-1 flex items-center gap-1.5 self-start text-[12px] font-semibold text-n-600 hover:text-n-800"
+              >
+                {showOptional ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                {optional.length} optional {optional.length === 1 ? 'specific' : 'specifics'}
+                <span className="font-normal text-n-400">— not required to list, but they are search filters</span>
+              </button>
+              {showOptional && optional.map((a) => (
+                <AspectField
+                  key={a.name}
+                  aspect={a}
+                  value={edits[a.name]}
+                  onChange={(v) => setEdits({ ...edits, [a.name]: v })}
+                />
+              ))}
+            </>
+          )}
           <button type="button" className="hbtn self-start" onClick={() => save.mutate()} disabled={save.isPending}>
             {save.isPending ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save category
           </button>
@@ -174,6 +206,7 @@ function AspectField({ aspect, value, onChange }: {
     <label className="flex items-center gap-2 max-[560px]:flex-col max-[560px]:items-stretch">
       <span className="w-40 shrink-0 text-[12.5px] text-n-700">
         {aspect.name}
+        {aspect.required && <span className="ml-1 text-danger" title="Required by eBay">*</span>}
         {aspect.rejectedBecause && <span className="ml-1 text-[11px] text-danger">not accepted</span>}
       </span>
       {aspect.mode === 'SELECTION_ONLY' && aspect.values.length ? (
