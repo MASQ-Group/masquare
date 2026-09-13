@@ -2478,8 +2478,10 @@ export class IntegrationsService implements OnModuleInit {
    * adjustments — the Finances API reports these already ex-tax, Tax being its own charge type)
    * and note whether the referral fee was credited back (a net-positive fee adjustment).
    */
-  private async fetchAmazonRefunds(endpoint: string, token: string, postedAfter: Date): Promise<Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }>> {
-    const out = new Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }>();
+  private async fetchAmazonRefunds(endpoint: string, token: string, postedAfter: Date): Promise<Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }> & { capped?: boolean }> {
+    const out = new Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }>() as
+      Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }> & { capped?: boolean };
+    let capped = false;
     const amt = (m: any) => num(m?.CurrencyAmount ?? m?.Amount);
     const REVENUE_CHARGES = new Set(['Principal', 'ShippingCharge']);
     const MAX_PAGES = 50;
@@ -2512,10 +2514,29 @@ export class IntegrationsService implements OnModuleInit {
         }
         nextToken = events?.NextToken ?? json?.payload?.NextToken ?? null;
         if (!nextToken) break;
+        /**
+         * Say so when the cap is reached, rather than returning a partial answer as a whole one.
+         *
+         * Fifty pages of a hundred is five thousand events, and a busy account across
+         * forty-five days can exceed that. The loop simply stopped, and the refunds past the cap
+         * were indistinguishable from refunds that did not exist — an order stayed unmarked and
+         * nothing anywhere said why.
+         *
+         * Still capped: an unbounded walk over a marketplace's financial history is how a nightly
+         * sync becomes an hour long. But a truncated answer now announces itself.
+         */
+        if (page === MAX_PAGES - 1) {
+          this.logger.warn(
+            `Amazon refund fetch hit the ${MAX_PAGES}-page cap with more to read — refunds posted `
+            + `beyond it were not seen this run. Narrow the window with a range sync to reach them.`,
+          );
+          capped = true;
+        }
       }
     } catch (e: any) {
       this.logger.warn(`Amazon refund fetch failed: ${e?.message ?? e}`);
     }
+    out.capped = capped;
     return out;
   }
 
@@ -3501,6 +3522,7 @@ export class IntegrationsService implements OnModuleInit {
     let mcfSkipped = 0;
     let pendingSkipped = 0;
     let pendingWithdrawn = 0;
+    let refundsCapped = false;
 
     try {
       if (row.channelType === 'onbuy') {
@@ -3694,6 +3716,8 @@ export class IntegrationsService implements OnModuleInit {
         // Gated: dormant until channel-resolution handling is switched on for the environment.
         const refundsAfter = isRange ? cutoff : new Date(Date.now() - 45 * 24 * 3600 * 1000);
         const refunds = applyResolutions ? await this.fetchAmazonRefunds(endpoint, token, refundsAfter) : new Map();
+        /** A truncated read is reported where somebody reads sync results, not only in the logs. */
+        if ((refunds as any).capped) refundsCapped = true;
         for (const [orderId, info] of refunds) {
           if (info.refundedExVat <= 0) continue;
           const tx = await this.prisma.salesTransaction.findFirst({ where: { integrationId: row.id, transactionRef: orderId, deletedAt: null }, select: { id: true } });
@@ -3717,11 +3741,12 @@ export class IntegrationsService implements OnModuleInit {
       const pendingNote = pendingSkipped
         ? `, ${pendingSkipped} pending payment (not imported yet${pendingWithdrawn ? `, ${pendingWithdrawn} withdrawn` : ''})`
         : '';
+      const cappedNote = refundsCapped ? ', REFUND SCAN TRUNCATED — some refunds not seen' : '';
       const cancelledDone = counts.cancelledImported + counts.cancelledUpdated;
       const defectNote =
         (cancelledDone ? `, ${cancelledDone} cancelled registered` : '') +
         (counts.refunded ? `, ${counts.refunded} refunds applied` : '');
-      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled, ${counts.errors} errors${defectNote}${feeNote}${relinkNote}${mcfNote}${pendingNote}${rangeNote}${note}`;
+      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled, ${counts.errors} errors${defectNote}${feeNote}${relinkNote}${mcfNote}${pendingNote}${cappedNote}${rangeNote}${note}`;
       // The run completed — status is 'ok' even if some individual orders failed (those surface
       // as the "N errors" count in the message / a danger chip). Only a thrown failure (caught
       // below, e.g. auth/API down) is a real 'error'.
