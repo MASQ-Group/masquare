@@ -37,7 +37,23 @@ const STATUS_WORD: Record<string, string> = {
 
 export function ListedChip({ product, channels }: { product: Product; channels: ChannelListingChannel[] }) {
   const listed = product.listedOn ?? [];
-  const isListed = listed.length > 0;
+
+  /**
+   * Three states, because "listed" was answering a weaker question than it looked like it answered.
+   *
+   *   all    on every connected channel — the only case that earns green
+   *   some   listed, but somewhere is missing it. The interesting one: a product nobody would look
+   *          at twice, quietly absent from half the marketplaces it could be selling on
+   *   none   nowhere
+   *
+   * `some` is also what an UNKNOWN denominator gets. The channels list arrives from its own query,
+   * and until it does `channels.length` is 0 — which would make one listing look like all of them.
+   * Green is the strong claim here, so it waits for the evidence rather than assuming it.
+   */
+  const state: 'all' | 'some' | 'none' =
+    listed.length === 0 ? 'none'
+      : channels.length > 0 && listed.length >= channels.length ? 'all'
+        : 'some';
 
   const byId = new Map(channels.map((c) => [c.id, c]));
   const listedChannels = listed
@@ -72,12 +88,21 @@ export function ListedChip({ product, channels }: { product: Product; channels: 
       type="button"
       {...{ [CHIP_ATTR]: '' }}
       onClick={(e) => { e.stopPropagation(); show(); }}
-      className={`tag whitespace-nowrap ${isListed
-        ? 'border border-success-bd bg-success-bg text-success hover:brightness-95'
-        : 'border border-danger-bd bg-danger-bg text-danger hover:brightness-95'}`}
-      title={isListed ? 'Click to see which channels' : 'Click to see the channels it could go to'}
+      className={`tag whitespace-nowrap hover:brightness-95 ${
+        state === 'all' ? 'border border-success-bd bg-success-bg text-success'
+          : state === 'some' ? 'border border-warning-bd bg-warning-bg text-warning'
+            : 'border border-danger-bd bg-danger-bg text-danger'}`}
+      /**
+       * Both "Listed" chips carry the same word, so the count goes in the tooltip. Colour alone is
+       * the whole difference between them on screen, and colour alone is not readable by everyone.
+       */
+      title={
+        state === 'none' ? 'Not listed anywhere — click to see the channels it could go to'
+          : channels.length === 0 ? `Listed on ${listed.length} — click to see which`
+            : `Listed on ${listed.length} of ${channels.length} channels — click to see which`
+      }
     >
-      {isListed ? 'Listed' : 'Not Listed'}
+      {state === 'none' ? 'Not Listed' : 'Listed'}
     </button>
   );
 }

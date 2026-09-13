@@ -12,6 +12,7 @@ import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFi
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
 import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 import { amazonCancelStage, mapAmazonOrder } from './mappings/amazon-mapping';
+import { amazonOrderAction } from './mappings/amazon-order-action';
 import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
 import { readOrderMoney, readFinances, impliedEbayRate, type EbayFinancesRead } from './ebay-money-diagnostic';
 import { signedRequest, type SigningCipher, type SigningKey } from './ebay-signature';
@@ -3498,6 +3499,7 @@ export class IntegrationsService implements OnModuleInit {
     let note = '';
     let feesRefreshed = 0;
     let mcfSkipped = 0;
+    let pendingSkipped = 0;
 
     try {
       if (row.channelType === 'onbuy') {
@@ -3597,11 +3599,14 @@ export class IntegrationsService implements OnModuleInit {
             if (counts.scanned > MAX_ORDERS) { capped = true; break; }
             const orderDate = new Date(String(order.PurchaseDate ?? ''));
             if (isNaN(orderDate.getTime())) { counts.skipped++; continue; }
-            // Multi-Channel Fulfillment: Amazon only SHIPPED these (from FBA stock); the sale +
-            // its revenue belong to the non-Amazon channel it was placed on. Not Amazon sales —
-            // skip whatever their status (checked before the cancel branch so MCF cancels skip too).
-            if (String(order.SalesChannel ?? '') === 'Non-Amazon') { mcfSkipped++; continue; }
-            if (String(order.OrderStatus) === 'Canceled') {
+            /**
+             * Skip, register, or import — decided in one place and tested there, because the ORDER
+             * these run in carries meaning that none of them states on its own.
+             */
+            const action = amazonOrderAction(order);
+            if (action === 'skip-mcf') { mcfSkipped++; continue; }
+            if (action === 'skip-pending') { pendingSkipped++; continue; }
+            if (action === 'cancelled') {
               // Which kind of cancellation: one that never became an order, or one that did.
               const cancelStage = amazonCancelStage(order);
               counts.cancelled++;
@@ -3668,11 +3673,16 @@ export class IntegrationsService implements OnModuleInit {
       const feeNote = feesRefreshed ? `, ${feesRefreshed} fees backfilled` : '';
       const relinkNote = relinked ? `, ${relinked} products re-linked` : '';
       const mcfNote = mcfSkipped ? `, ${mcfSkipped} MCF (non-Amazon) skipped` : '';
+      /**
+       * Reported rather than silent. "Five orders I can see in Seller Central are not here" is a
+       * reasonable thing to notice, and the sync message is where the answer belongs.
+       */
+      const pendingNote = pendingSkipped ? `, ${pendingSkipped} pending payment (not imported yet)` : '';
       const cancelledDone = counts.cancelledImported + counts.cancelledUpdated;
       const defectNote =
         (cancelledDone ? `, ${cancelledDone} cancelled registered` : '') +
         (counts.refunded ? `, ${counts.refunded} refunds applied` : '');
-      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled, ${counts.errors} errors${defectNote}${feeNote}${relinkNote}${mcfNote}${rangeNote}${note}`;
+      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled, ${counts.errors} errors${defectNote}${feeNote}${relinkNote}${mcfNote}${pendingNote}${rangeNote}${note}`;
       // The run completed — status is 'ok' even if some individual orders failed (those surface
       // as the "N errors" count in the message / a danger chip). Only a thrown failure (caught
       // below, e.g. auth/API down) is a real 'error'.
