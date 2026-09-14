@@ -10,6 +10,29 @@ import { addressFromEbayOrder, addressFromOnBuyOrder } from '../sales-transactio
 import type { ProgressSink } from '../jobs/jobs.service';
 import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFieldKeys, type ConnectorDef } from './connectors';
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
+
+/**
+ * Where a human goes to read the page an Amazon finding came from.
+ *
+ * Only for the link on a provenance chip — nothing is fetched from these hosts. Keyed by our own
+ * country id so an unlisted marketplace falls back rather than building a broken link.
+ */
+const AMAZON_DETAIL_HOST: Record<string, string> = {
+  GB: 'https://www.amazon.co.uk',
+  DE: 'https://www.amazon.de',
+  FR: 'https://www.amazon.fr',
+  IT: 'https://www.amazon.it',
+  ES: 'https://www.amazon.es',
+  NL: 'https://www.amazon.nl',
+  SE: 'https://www.amazon.se',
+  PL: 'https://www.amazon.pl',
+  BE: 'https://www.amazon.com.be',
+  IE: 'https://www.amazon.ie',
+  US: 'https://www.amazon.com',
+  CA: 'https://www.amazon.ca',
+  JP: 'https://www.amazon.co.jp',
+  AU: 'https://www.amazon.com.au',
+};
 import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 import { amazonCancelStage, mapAmazonOrder } from './mappings/amazon-mapping';
 import { amazonOrderAction } from './mappings/amazon-order-action';
@@ -563,6 +586,76 @@ export class IntegrationsService implements OnModuleInit {
         'X-EBAY-C-MARKETPLACE-ID': marketplaceId,
       },
     };
+  }
+
+  /**
+   * What other sellers are charging for the same product on eBay (Browse API).
+   *
+   * Searched by barcode, never by title: a title search returns what LOOKS like this product, and
+   * pricing against a different model is worse than having no comparison at all.
+   *
+   * eBay gates the Buy APIs behind a per-application approval, so this may simply be refused on an
+   * account that has not been granted it. That is reported as its own outcome — `available: false`
+   * with eBay's reason — rather than as an empty result, because "nobody else sells this" and "we
+   * are not allowed to look" must never price a listing the same way.
+   */
+  async ebayCompetingOffers(
+    integrationId: string,
+    gtin: string,
+    /**
+     * `query` searches words instead of the barcode. Kept separate and never a silent fallback: a
+     * word search returns what LOOKS like this product, which is how a neighbouring model's price
+     * ends up setting ours. Only a caller that has decided to accept that may pass it.
+     */
+    opts: { limit?: number; query?: string } = {},
+  ): Promise<{
+    ok: boolean; available: boolean; message?: string;
+    offers: Array<{ title: string | null; priceCents: number | null; currency: string | null; condition: string | null; seller: string | null; url: string | null; freeShipping: boolean | null }>;
+  }> {
+    const clean = gtin.trim();
+    const words = opts.query?.trim() ?? '';
+    if (!clean && !words) return { ok: false, available: true, message: 'No barcode to search on', offers: [] };
+
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const params = new URLSearchParams({
+      ...(clean ? { gtin: clean } : { q: words }),
+      limit: String(Math.min(opts.limit ?? 20, 50)),
+    });
+    const r = await fetch(`${base}/buy/browse/v1/item_summary/search?${params.toString()}`, {
+      headers,
+      signal: AbortSignal.timeout(20000),
+    });
+    const json: any = await r.json().catch(() => null);
+
+    if (!r.ok) {
+      /**
+       * 403 is the shape an ungranted Buy API takes, and it means something different from a bad
+       * request: no amount of retrying or re-authorising fixes it, only eBay approving the app.
+       */
+      const denied = r.status === 403 || /access|not authorized|insufficient permission/i.test(IntegrationsService.ebayErr(json));
+      return {
+        ok: false,
+        available: !denied,
+        message: `${r.status}: ${IntegrationsService.ebayErr(json) || 'eBay refused the search'}`,
+        offers: [],
+      };
+    }
+
+    const offers = (json?.itemSummaries ?? []).map((it: any) => {
+      const price = it.price?.value != null ? Math.round(Number(it.price.value) * 100) : null;
+      return {
+        title: it.title ?? null,
+        priceCents: Number.isFinite(price as number) ? price : null,
+        currency: it.price?.currency ?? null,
+        condition: it.condition ?? null,
+        seller: it.seller?.username ?? null,
+        url: it.itemWebUrl ?? null,
+        freeShipping: Array.isArray(it.shippingOptions)
+          ? it.shippingOptions.some((s: any) => Number(s?.shippingCost?.value) === 0)
+          : null,
+      };
+    });
+    return { ok: true, available: true, offers };
   }
 
   private static ebayErr(json: any): string {
@@ -1377,6 +1470,114 @@ export class IntegrationsService implements OnModuleInit {
       };
     });
     return { ok: true, status: res.status, items };
+  }
+
+  /**
+   * What Amazon's catalogue says ABOUT the product, as raw field/value pairs.
+   *
+   * Separate from `searchAmazonCatalog`, which asks "which ASIN is this" and wants a title and an
+   * image. This asks "what is it made of, how heavy is it, how many watts" — `attributes`, which the
+   * other call deliberately does not request because it does not need it and it is not small.
+   *
+   * Everything comes back VERBATIM, including Amazon's own field names and its own unit words. No
+   * mapping, no conversion, no cleaning: this is a witness statement, and the judging happens in
+   * `gather-rules` where it can be tested without a network. Amazon is frequently wrong, and a
+   * source that tidied itself up on the way in would be harder to disbelieve later.
+   */
+  async amazonCatalogAttributes(
+    integrationId: string,
+    identifier: string,
+    identifiersType: 'EAN' | 'UPC' | 'GTIN' | 'ASIN' = 'EAN',
+  ): Promise<{ ok: boolean; status?: number; message?: string; asin: string | null; detailUrl: string | null;
+    /** Who Amazon thinks this is, so the caller can check it is who we asked about. */
+    identity: { brand: string | null; mpns: string[]; title: string | null };
+    found: Array<{ field: string; value: string }> }> {
+    const nobody = { brand: null, mpns: [] as string[], title: null };
+    const clean = identifier.trim();
+    if (!clean) return { ok: false, message: 'No identifier to search on', asin: null, detailUrl: null, identity: nobody, found: [] };
+
+    const { meta, token } = await this.amazonCtx(integrationId);
+    const params = new URLSearchParams({
+      identifiers: clean,
+      identifiersType,
+      marketplaceIds: meta.marketplaceId,
+      includedData: 'attributes,summaries,identifiers',
+    });
+    const res = await this.amzFetch(`${meta.endpoint}/catalog/2022-04-01/items?${params.toString()}`, token);
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) {
+      return { ok: false, status: res.status, message: IntegrationsService.amzErr(json) || `catalog ${res.status}`, asin: null, detailUrl: null, identity: nobody, found: [] };
+    }
+
+    const items = json?.items ?? [];
+    /**
+     * More than one ASIN behind one barcode means Amazon holds variants we cannot tell apart from
+     * here. Picking one would attach another variant's specification to this product — the exact
+     * failure the identifier requirement exists to prevent — so it reports nothing instead.
+     */
+    if (items.length > 1) {
+      return { ok: false, status: res.status, message: `Amazon returned ${items.length} products for this barcode; which one is this cannot be decided from here`, asin: null, detailUrl: null, identity: nobody, found: [] };
+    }
+    const item = items[0];
+    if (!item) return { ok: true, status: res.status, asin: null, detailUrl: null, identity: nobody, found: [] };
+
+    const found: Array<{ field: string; value: string }> = [];
+    for (const [field, raw] of Object.entries(item.attributes ?? {})) {
+      const entries = Array.isArray(raw) ? raw : [raw];
+      /** Amazon returns one entry per marketplace; ours is the one that describes what we sell. */
+      const entry: any = entries.find((e: any) => e?.marketplace_id === meta.marketplaceId) ?? entries[0];
+      const value = IntegrationsService.amzAttributeValue(entry);
+      if (value) found.push({ field, value });
+    }
+
+    /**
+     * Identity, gathered from wherever Amazon happens to put it. Summaries and attributes carry the
+     * same facts under different names depending on the product type, so both are read and every
+     * part number found is offered — the caller needs one of them to match, not all of them.
+     */
+    const summary = (item.summaries ?? []).find((x: any) => x.marketplaceId === meta.marketplaceId) ?? item.summaries?.[0];
+    const attrText = (name: string) => IntegrationsService.amzAttributeValue(
+      (Array.isArray(item.attributes?.[name]) ? item.attributes[name] : [])
+        .find((e: any) => e?.marketplace_id === meta.marketplaceId) ?? item.attributes?.[name]?.[0],
+    );
+    const identity = {
+      brand: summary?.brand ?? summary?.manufacturer ?? attrText('brand') ?? null,
+      mpns: [summary?.partNumber, summary?.modelNumber, attrText('part_number'), attrText('model_number'), attrText('model_name')]
+        .filter((x: unknown): x is string => typeof x === 'string' && x.trim().length > 0),
+      title: summary?.itemName ?? null,
+    };
+
+    return {
+      ok: true,
+      status: res.status,
+      identity,
+      asin: item.asin ?? null,
+      detailUrl: item.asin ? `${AMAZON_DETAIL_HOST[meta.defaultCountry] ?? 'https://www.amazon.com'}/dp/${item.asin}` : null,
+      found,
+    };
+  }
+
+  /**
+   * One attribute entry, as a string, or nothing.
+   *
+   * Only the flat `{ value, unit? }` shape is read. Amazon also nests — `item_dimensions` carries a
+   * width, a height and a depth, each with its own unit — and flattening that into one string would
+   * be this code deciding what the value MEANS. It does not know, so it declines: an aspect left
+   * empty is a visible gap somebody can fill, and a wrong one is not.
+   */
+  private static amzAttributeValue(entry: any): string | null {
+    if (entry == null) return null;
+    if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
+      return String(entry).trim() || null;
+    }
+    if (typeof entry !== 'object') return null;
+
+    const v = entry.value;
+    if (v == null || (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean')) return null;
+
+    const unit = typeof entry.unit === 'string' ? entry.unit.trim() : '';
+    const text = `${String(v).trim()}${unit ? ` ${unit}` : ''}`.trim();
+    return text || null;
   }
 
   /**
@@ -2478,8 +2679,10 @@ export class IntegrationsService implements OnModuleInit {
    * adjustments — the Finances API reports these already ex-tax, Tax being its own charge type)
    * and note whether the referral fee was credited back (a net-positive fee adjustment).
    */
-  private async fetchAmazonRefunds(endpoint: string, token: string, postedAfter: Date): Promise<Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }>> {
-    const out = new Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }>();
+  private async fetchAmazonRefunds(endpoint: string, token: string, postedAfter: Date): Promise<Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }> & { capped?: boolean }> {
+    const out = new Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }>() as
+      Map<string, { refundedExVat: number; currency: string | null; feeReturned: boolean }> & { capped?: boolean };
+    let capped = false;
     const amt = (m: any) => num(m?.CurrencyAmount ?? m?.Amount);
     const REVENUE_CHARGES = new Set(['Principal', 'ShippingCharge']);
     const MAX_PAGES = 50;
@@ -2512,10 +2715,29 @@ export class IntegrationsService implements OnModuleInit {
         }
         nextToken = events?.NextToken ?? json?.payload?.NextToken ?? null;
         if (!nextToken) break;
+        /**
+         * Say so when the cap is reached, rather than returning a partial answer as a whole one.
+         *
+         * Fifty pages of a hundred is five thousand events, and a busy account across
+         * forty-five days can exceed that. The loop simply stopped, and the refunds past the cap
+         * were indistinguishable from refunds that did not exist — an order stayed unmarked and
+         * nothing anywhere said why.
+         *
+         * Still capped: an unbounded walk over a marketplace's financial history is how a nightly
+         * sync becomes an hour long. But a truncated answer now announces itself.
+         */
+        if (page === MAX_PAGES - 1) {
+          this.logger.warn(
+            `Amazon refund fetch hit the ${MAX_PAGES}-page cap with more to read — refunds posted `
+            + `beyond it were not seen this run. Narrow the window with a range sync to reach them.`,
+          );
+          capped = true;
+        }
       }
     } catch (e: any) {
       this.logger.warn(`Amazon refund fetch failed: ${e?.message ?? e}`);
     }
+    out.capped = capped;
     return out;
   }
 
@@ -3501,6 +3723,7 @@ export class IntegrationsService implements OnModuleInit {
     let mcfSkipped = 0;
     let pendingSkipped = 0;
     let pendingWithdrawn = 0;
+    let refundsCapped = false;
 
     try {
       if (row.channelType === 'onbuy') {
@@ -3694,6 +3917,8 @@ export class IntegrationsService implements OnModuleInit {
         // Gated: dormant until channel-resolution handling is switched on for the environment.
         const refundsAfter = isRange ? cutoff : new Date(Date.now() - 45 * 24 * 3600 * 1000);
         const refunds = applyResolutions ? await this.fetchAmazonRefunds(endpoint, token, refundsAfter) : new Map();
+        /** A truncated read is reported where somebody reads sync results, not only in the logs. */
+        if ((refunds as any).capped) refundsCapped = true;
         for (const [orderId, info] of refunds) {
           if (info.refundedExVat <= 0) continue;
           const tx = await this.prisma.salesTransaction.findFirst({ where: { integrationId: row.id, transactionRef: orderId, deletedAt: null }, select: { id: true } });
@@ -3717,11 +3942,12 @@ export class IntegrationsService implements OnModuleInit {
       const pendingNote = pendingSkipped
         ? `, ${pendingSkipped} pending payment (not imported yet${pendingWithdrawn ? `, ${pendingWithdrawn} withdrawn` : ''})`
         : '';
+      const cappedNote = refundsCapped ? ', REFUND SCAN TRUNCATED — some refunds not seen' : '';
       const cancelledDone = counts.cancelledImported + counts.cancelledUpdated;
       const defectNote =
         (cancelledDone ? `, ${cancelledDone} cancelled registered` : '') +
         (counts.refunded ? `, ${counts.refunded} refunds applied` : '');
-      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled, ${counts.errors} errors${defectNote}${feeNote}${relinkNote}${mcfNote}${pendingNote}${rangeNote}${note}`;
+      const message = `${counts.created} created, ${counts.updated} updated, ${counts.cancelled} cancelled, ${counts.errors} errors${defectNote}${feeNote}${relinkNote}${mcfNote}${pendingNote}${cappedNote}${rangeNote}${note}`;
       // The run completed — status is 'ok' even if some individual orders failed (those surface
       // as the "N errors" count in the message / a danger chip). Only a thrown failure (caught
       // below, e.g. auth/API down) is a real 'error'.

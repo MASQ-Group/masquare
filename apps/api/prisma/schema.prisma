@@ -954,6 +954,17 @@ model Product {
   plugTypeRef    ComplianceOption?    @relation("ProductPlugType", fields: [plugTypeId], references: [id], onDelete: SetNull)
   batteryTypeRef ComplianceOption?    @relation("ProductBatteryType", fields: [batteryTypeId], references: [id], onDelete: SetNull)
   hazmatClassRef ComplianceOption?    @relation("ProductHazmatClass", fields: [hazmatClassId], references: [id], onDelete: SetNull)
+  /// Pages a person has nominated as saying the truth about this product.
+  ///
+  /// Per product rather than per brand: a brand website alone does not say which page is THIS
+  /// product, and a machine picking one would eventually pick a neighbouring model and publish its
+  /// specification as fact. A person names the pages; the gather reads them.
+  ///
+  /// A list rather than one, because the answer is often split — a product page for the dimensions,
+  /// a support page for the wattage. Nominated by a person, so treated as correct: that is a
+  /// deliberate business rule, not an oversight. See `gather/manufacturer-source.service`.
+  manufacturerUrls String[] @map("manufacturer_urls")
+
   channelPlans   ProductChannelPlan[]
 
   // Every products list filters out soft-deleted rows and often filters by one of

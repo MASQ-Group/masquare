@@ -18,8 +18,19 @@
     "strictBindCallApply": false,
     "forceConsistentCasingInFileNames": true,
     "esModuleInterop": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": {
+      "@modelcontextprotocol/sdk/*": [
+        "../../node_modules/@modelcontextprotocol/sdk/dist/cjs/*"
+      ]
+    }
   },
-  "include": ["src/**/*", "prisma/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src/**/*",
+    "prisma/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

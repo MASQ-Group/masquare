@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, Loader2, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { ebayListingApi } from '../../lib/api';
-import { EbayCategoryPicker } from './EbayCategoryPicker';
+import { EbayPricingSection } from './EbayPricingSection';
 
 /**
  * Creating the eBay listing for one product.
@@ -13,9 +13,13 @@ import { EbayCategoryPicker } from './EbayCategoryPicker';
  * aspects and one publish. Repeating this per market would be asking the same question fourteen
  * times and sending fourteen listings where eBaymag wants one.
  *
- * The order is the order the work happens in — what is missing, then the category, then what that
- * category demands, then the publish. Publishing is the only step a buyer can see, so it sits last
- * and behind its own confirmation.
+ * The order is the order the work happens in — whether the account can list at all, then whether
+ * this product is ready, then what it sells for and how fast it ships, then the publish. Publishing
+ * is the only step a buyer can see, so it sits last and behind its own confirmation.
+ *
+ * What is NOT here is the category. That belongs to the eBay content tab, with the item specifics it
+ * decides and the description it ends up in; having it in both places made one decision look like
+ * two.
  */
 export function EbayListingPanel({ productId }: { productId: string }) {
   const qc = useQueryClient();
@@ -55,9 +59,11 @@ export function EbayListingPanel({ productId }: { productId: string }) {
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-n-200 bg-n-25 p-3.5">
       <div className="flex items-center gap-2">
-        <span className="text-[13px] font-semibold text-n-800">Create the eBay listing</span>
-        <span className="tag border border-n-200 bg-n-100 text-n-600">eBay UK</span>
-        <span className="text-[11.5px] text-n-500">eBaymag republishes it to the other eBay markets</span>
+        <span className="text-[13px] font-semibold text-n-800">eBay UK</span>
+        <span className="text-[11.5px] text-n-500">
+          One listing. eBaymag republishes it to every other eBay market, so this is the only place it
+          is created.
+        </span>
       </div>
 
       {/* ── the account, once, because it is the same for every product ── */}
@@ -80,17 +86,18 @@ export function EbayListingPanel({ productId }: { productId: string }) {
         <div className="rounded-lg border border-warning-bd bg-warning-bg px-3 py-2 text-[12.5px] text-warning">
           <b>Still needed:</b> {missing.map((m) => m.label).join(', ')}
           <div className="mt-0.5 text-[11.5px] opacity-80">
-            Title, description and images are on the Content tab, beside the category.
+            The category, item specifics and description are on the <b>eBay content</b> tab.
           </div>
         </div>
       )}
 
       {/*
-        * The same picker the Content tab uses. Filling it in there is the intended path — a category
-        * and its item specifics are product copy — but somebody who gets here and finds one missing
-        * should not be sent away to another tab to fix it.
+        * The category picker used to sit here as well. It has gone: choosing a category is the first
+        * step of the eBay content tab, and repeating it here made the same decision look like two,
+        * with two places to get it wrong. What is left in this panel is the listing's own business —
+        * what it sells for, how fast it ships, and the publish.
         */}
-      <EbayCategoryPicker productId={productId} compact />
+      <EbayPricingSection productId={productId} />
 
       {/* ── the only step a buyer can see ── */}
       <div className="flex items-center gap-2 border-t border-n-200 pt-3">

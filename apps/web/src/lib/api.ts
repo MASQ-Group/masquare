@@ -915,6 +915,8 @@ export interface Product {
   upc: string | null;
   vendorSku: string | null;
   manufacturerSku: string | null;
+  /** Pages a person nominated as truthful about this product; a gather reads all of them. */
+  manufacturerUrls: string[];
   countryOfOrigin: string | null;
   hsCode: string | null;
 
@@ -2161,6 +2163,87 @@ export interface EbayCategorySuggestion {
   path: string;
   relevancy: string | null;
 }
+/**
+ * Where a stored answer came from, and whether that is enough to publish it.
+ *
+ * `basis` is derived on the server from the evidence on every read, never stamped — so a value
+ * gathered months ago is judged by today's rule. `heldBack` is the one that matters in the form: it
+ * means the value is stored and visible but will NOT be sent to eBay until somebody confirms it.
+ */
+export interface EbayAspectProvenance {
+  basis: 'user' | 'authoritative' | 'agreement' | 'unconfirmed' | 'conflict';
+  /** For a held-back aspect this is a suggestion, not the value the listing would carry. */
+  value: string;
+  heldBack: boolean;
+  verifiedAt: string | null;
+  origins: { kind: 'user' | 'manufacturer' | 'amazon' | 'ebay'; value: string; url: string | null; label: string | null; at: string | null }[];
+}
+
+/**
+ * What one run of the gather did.
+ *
+ * `sources` is the part worth reading first: which sources were actually consulted, and which were
+ * not. A result produced without the manufacturer, under a rule that says the manufacturer comes
+ * first, means something different from the same numbers with it.
+ */
+export interface EbayGatherResult {
+  ok: true;
+  /** `rejected` means the source answered about a DIFFERENT product, so none of it was used. */
+  sources: { kind: string; status: 'ok' | 'nothing' | 'failed' | 'unavailable' | 'not-built' | 'rejected' | 'warned'; message: string }[];
+  /** Required item specifics that still have no answer of any kind. */
+  stillEmpty: string[];
+  /** Answers that may be published as they stand. */
+  filled: number;
+  /** Answers stored as suggestions, waiting for somebody to confirm them. */
+  heldBack: number;
+  touched: { name: string; value: string; basis: EbayAspectProvenance['basis']; changed: boolean; provenance: EbayAspectProvenance }[];
+  /** Found, but belonging to no item specific this category has. */
+  ignored: { field: string; value: string; why: string }[];
+  /** The nominated pages now recorded against the product. */
+  manufacturerUrls: string[];
+}
+
+/** What an eBay listing should sell for, what others charge, and what a price would earn. */
+export interface EbayPriceOutcome {
+  priceCents: number; vatCents: number; feesCents: number; costCents: number;
+  profitCents: number; marginPct: number;
+}
+export interface EbayCompetitorOffer {
+  title: string | null; priceCents: number | null; currency: string | null;
+  condition: string | null; seller: string | null; url: string | null; freeShipping: boolean | null;
+}
+export interface EbayPricing {
+  sku: string; title: string | null; manufacturerSku: string | null;
+  /** The currency the listing sells in — every figure here is in it. */
+  currency: string;
+  /** What the cost was recorded in; differs when it was converted. */
+  costCurrency: string;
+  costCents: number | null;
+  /**
+   * The rates a figure was worked out from, and where they came from. `measured` means fitted to
+   * this account's own settled orders; `published` means eBay's rate card, with `measuredWhyNot`
+   * saying why the orders could not support a measurement.
+   */
+  assumptions: {
+    vatRate: number; feePct: number; fixedFeeCents: number;
+    feeSource: 'measured' | 'published';
+    measuredFrom: number | null;
+    measuredWhyNot: string | null;
+  };
+  targetMarginPct: number;
+  suggestion: { ok: true; outcome: EbayPriceOutcome; targetMarginPct: number } | { ok: false; reason: string };
+  /** The price being typed, priced. Null until one is asked about. */
+  at: EbayPriceOutcome | null;
+  current: EbayPriceOutcome | null;
+  handlingTimeDays: number | null;
+  competitors: {
+    searchedFor: string; available: boolean; message?: string;
+    matched: EbayCompetitorOffer[];
+    rejected: { offer: EbayCompetitorOffer; why: string }[];
+    summary: { lowestCents: number; highestCents: number; medianCents: number; currency: string | null } | null;
+  };
+}
+
 export interface EbayResolvedAspect {
   name: string;
   value: string | null;
@@ -2173,6 +2256,8 @@ export interface EbayResolvedAspect {
   mode: string | null;
   values: string[];
   valueCount: number;
+  /** Null when nothing has ever been stored for this aspect. */
+  provenance?: EbayAspectProvenance | null;
 }
 export interface EbayPrerequisites {
   integrationId: string;
@@ -2188,7 +2273,11 @@ export interface EbayPreview {
   productSku: string;
   ebaySku: string;
   missing: { key: string; label: string }[];
-  inventoryItem: unknown;
+  /**
+   * Exactly what would be sent to eBay, including the description the platform renders from the
+   * product's content. Typed loosely apart from that one field, which the eBay content tab previews.
+   */
+  inventoryItem: { product?: { description?: string } } | null;
   offer: unknown;
 }
 
@@ -2202,9 +2291,20 @@ export const ebayListingApi = {
     api.post<{ categoryId: string; isSaved: boolean; aspects: EbayResolvedAspect[]; missing: string[] }>(
       `/listing/ebay/products/${productId}/category-aspects`, { productId, categoryId },
     ).then((r) => r.data),
-  savePlan: (productId: string, body: { categoryId: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null }) =>
+  savePlan: (productId: string, body: { categoryId?: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null }) =>
     api.post<{ ok: true; planId: string; categoryId: string | null }>(
       `/listing/ebay/products/${productId}/plan`, { productId, ...body },
+    ).then((r) => r.data),
+  /** What it should sell for, and what a given price earns. Reads only. */
+  pricing: (productId: string, body: { atPriceCents?: number; targetMarginPct?: number } = {}) =>
+    api.post<EbayPricing>(`/listing/ebay/products/${productId}/pricing`, { productId, ...body }).then((r) => r.data),
+  /** Searches the sources and stores what it finds, with where each answer came from. */
+  gather: (productId: string, manufacturerUrls?: string[]) =>
+    api.post<EbayGatherResult>(`/listing/ebay/products/${productId}/gather`, { productId, manufacturerUrls }).then((r) => r.data),
+  /** Records that a person checked the evidence. Changes no value; releases a held-back one. */
+  confirmAspect: (productId: string, name: string) =>
+    api.post<{ ok: true; name: string; provenance: EbayAspectProvenance }>(
+      `/listing/ebay/products/${productId}/confirm-aspect`, { productId, name },
     ).then((r) => r.data),
   preview: (productId: string, body: Record<string, unknown> = {}) =>
     api.post<EbayPreview>(`/listing/ebay/products/${productId}/preview`, { productId, ...body }).then((r) => r.data),
