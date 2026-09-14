@@ -72,6 +72,11 @@ export const INSTRUCTIONS = [
   '  product and every value on them.',
   '- If two pages disagree, report both values. Do not choose between them.',
   '- Use the field names exactly as get_product_for_gather gives them.',
+  '- Where a field lists acceptedValues, eBay accepts nothing else: report one of those exactly.',
+  '- Where a field lists recommendedValues, eBay accepts any text but its buyer filters only match those',
+  '  words. Use one ONLY when a page states the same thing in other words — a page saying "unisex" is',
+  '  "Unisex Adults"; "stainless steel bracelet" is "Bracelet". If none clearly means what the page says,',
+  '  report the wording the page uses. Never choose one because it seems likely for this kind of product.',
   '- Skip Brand, MPN and Model — maSquare takes those from the product itself.',
   '- Skip fields already answered by a person or by the manufacturer (see "current" in the brief).',
   '',
@@ -121,7 +126,8 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
       description:
         'Everything needed before researching one product: its brand, manufacturer part number and barcode; '
         + 'its eBay category; every field that category uses, named exactly as it must be reported, with the '
-        + 'values eBay accepts where it restricts them; and what is already answered. If the product is not '
+        + 'values eBay accepts where it restricts them and the values its buyer filters use where it does not; '
+        + 'and what is already answered. If the product is not '
         + 'ready, "refusal" says why. Read-only.',
       inputSchema: {
         sku: z.string().min(1).max(100).describe('The product SKU, exactly.'),

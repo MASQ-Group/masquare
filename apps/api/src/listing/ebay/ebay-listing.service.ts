@@ -666,6 +666,14 @@ export class EbayListingService {
             answeredByProduct: /^(brand|mpn|model)$/i.test(a.name),
             acceptedValues: a.mode === 'SELECTION_ONLY' ? (a.values ?? []).slice(0, 80) : null,
             acceptedValuesTotal: a.mode === 'SELECTION_ONLY' ? a.valueCount ?? 0 : null,
+            /**
+             * The words eBay's buyer filters use, for a field that accepts any text. Not a restriction —
+             * eBay takes anything here — but a value outside this list matches no filter, so a listing
+             * reading `Department: Wristwatches` is accepted and then never appears in a "Unisex Adults"
+             * search. Handed to the researcher so it can report in eBay's vocabulary where a page states
+             * the same thing in other words.
+             */
+            recommendedValues: a.mode !== 'SELECTION_ONLY' && (a.values ?? []).length ? (a.values ?? []).slice(0, 80) : null,
             current: rec
               ? { value: rec.value, basis: describeProvenance(rec).basis, heldBackForAPerson: !isPayloadEligible(rec) }
               : null,
