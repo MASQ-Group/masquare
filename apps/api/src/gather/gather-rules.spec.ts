@@ -183,6 +183,26 @@ describe('foldFindings', () => {
     expect(out.touched[0].changed).toBe(true);
   });
 
+  /**
+   * The production bug, pinned. Two independent shops stating the same value were merged into one
+   * origin because the merge compared `kind` alone, and every website shares the kind `web` — so
+   * research on a Casio found three shops behind several fields and still reported nothing usable.
+   */
+  it('keeps two different websites stating the same value as two sources, and calls it agreement', () => {
+    const shop = (host: string, value: string): SourceFinding => ({ kind: 'web', field: 'Movement', value, url: `https://www.${host}/p` });
+    const out = foldFindings({}, [shop('timeshop24.com', 'Quartz'), shop('mastersintime.com', 'Quartz')], ['Movement'], AT);
+    expect(out.records.Movement.origins).toHaveLength(2);
+    expect(classifyAspect(out.records.Movement)).toBe('agreement');
+    expect(isPayloadEligible(out.records.Movement)).toBe(true);
+  });
+
+  it('still collapses the SAME website repeating itself, which is one source', () => {
+    const page = (path: string): SourceFinding => ({ kind: 'web', field: 'Movement', value: 'Quartz', url: `https://www.timeshop24.com/${path}` });
+    const out = foldFindings({}, [page('a'), page('b')], ['Movement'], AT);
+    expect(out.records.Movement.origins).toHaveLength(1);
+    expect(classifyAspect(out.records.Movement)).toBe('unconfirmed');
+  });
+
   it('does not stack an identical origin when the gather is run again', () => {
     const once = foldFindings({}, [found('amazon', 'Wattage', '1200 W')], ASPECTS, AT);
     const twice = foldFindings(once.records, [found('amazon', 'wattage', '1200 watts')], ASPECTS, AT);

@@ -19,10 +19,22 @@
 import { comparable } from './value-match';
 
 /**
+ * Every kind of source, written ONCE — the type and the reader's whitelist are both derived from it.
+ *
+ * They used to be written twice, and they drifted. `web` was added to the type for Claude's research
+ * but not to the list `normaliseAspects` accepts, so every web source was silently discarded when an
+ * answer was read back. With its evidence gone, a finding one retailer made — correctly held back
+ * when it was saved — read back as something a person had typed, and became publishable. A list the
+ * reader cannot disagree with is the only fix that stays fixed.
+ *
  * Amazon and eBay are peers; `web` (any other page found by searching) is a peer of both;
  * `manufacturer` outranks all three; `user` outranks everything.
  */
-export type OriginKind = 'user' | 'manufacturer' | 'amazon' | 'ebay' | 'web';
+export const ORIGIN_KINDS = ['user', 'manufacturer', 'amazon', 'ebay', 'web'] as const;
+export type OriginKind = (typeof ORIGIN_KINDS)[number];
+
+const isOriginKind = (k: unknown): k is OriginKind =>
+  typeof k === 'string' && (ORIGIN_KINDS as readonly string[]).includes(k);
 
 export interface AspectOrigin {
   kind: OriginKind;
@@ -79,7 +91,7 @@ const same = (a: string, b: string) => comparable(a) === comparable(b);
  * search turned up would collapse into one voice and nothing found on the open web could ever
  * corroborate anything.
  */
-function sourceIdentity(o: AspectOrigin): string {
+export function sourceIdentity(o: AspectOrigin): string {
   if (o.kind !== 'web') return o.kind;
   try {
     return `web:${new URL(o.url ?? '').hostname.toLowerCase().replace(/^www\./, '')}`;
@@ -112,11 +124,18 @@ export function classifyAspect(rec: AspectRecord): AspectBasis {
 
   const corroborating = new Set(backing.map(sourceIdentity));
   /**
-   * Nothing vouches for the stored value. An empty origin list is a value written before any of this
-   * existed, which could only have been typed; anything else means the evidence argues with what is
-   * stored, and a person has to settle it.
+   * Nothing vouches for the stored value.
+   *
+   * An EMPTY origin list used to mean "typed by a person, before provenance existed" and was trusted.
+   * That was the second half of the bug that published unverified research: once the reader dropped
+   * the evidence, "no evidence" was waved through as a person's answer. It is no longer needed —
+   * a legacy bare string is given an explicit user origin by `normaliseAspects`, so a record reaching
+   * here with no origins at all has LOST its evidence rather than never having had any.
+   *
+   * So it fails closed: held back for a person, never trusted by default. Refusing a true value costs
+   * one click; trusting a wrong one puts it on a listing.
    */
-  if (corroborating.size === 0) return rec.origins.length === 0 ? 'user' : 'conflict';
+  if (corroborating.size === 0) return rec.origins.length === 0 ? 'unconfirmed' : 'conflict';
   if (corroborating.size >= 2) return 'agreement';
   return dissent.length > 0 ? 'conflict' : 'unconfirmed';
 }
@@ -165,7 +184,8 @@ export function normaliseAspects(raw: unknown): Record<string, AspectRecord> {
         if (!o || typeof o !== 'object') return [];
         const src = o as Record<string, unknown>;
         const kind = src.kind;
-        if (kind !== 'user' && kind !== 'manufacturer' && kind !== 'amazon' && kind !== 'ebay') return [];
+        // From the single list above, so a kind added there can never be discarded here again.
+        if (!isOriginKind(kind)) return [];
         const said = typeof src.value === 'string' ? src.value.trim() : '';
         if (!said) return [];
         return [{

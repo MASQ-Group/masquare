@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ImagePlus, Plus, Star, Trash2, X, Store } from 'lucide-react';
 import { toast } from 'sonner';
 import { CostHistory } from './CostHistory';
@@ -64,6 +64,7 @@ const HISTORY_TAB = { key: 'history', label: 'History' };
 const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s));
 
 export function ProductModal({ product, onClose, onSaved }: Props) {
+  const qc = useQueryClient();
   const { activeCompany } = useAuth();
   // An orders-only company's Amazon account exists to pull order history; it has no listable
   // channels, so the tab is not shown rather than shown empty.
@@ -196,11 +197,25 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
           .filter((a) => a.attributeId)
           .flatMap((a) => a.values.map((v) => v.trim()).filter(Boolean).map((value) => ({ attributeId: a.attributeId, value }))),
       };
-      if (product) await productsApi.update(product.id, body); else await productsApi.create(body);
+      /**
+       * `expectedUpdatedAt` makes the save refuse rather than overwrite if the product changed while
+       * this card was open. The card holds a copy from the moment it opened and writes every field
+       * back, so without it, research written by Claude in the meantime was silently erased.
+       */
+      if (product) await productsApi.update(product.id, { ...body, expectedUpdatedAt: product.updatedAt ?? undefined });
+      else await productsApi.create(body);
       toast.success(product ? 'Product saved' : 'Product created');
       onSaved();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Save failed');
+      /**
+       * Changed since it was opened. Forget the cached copy, so that closing and reopening — which the
+       * message tells the user to do — actually loads the newer product instead of the same stale one
+       * and refusing again.
+       */
+      if (e?.response?.status === 409) {
+        qc.invalidateQueries({ predicate: (q) => /product|inventory|sales-transaction/i.test(String(q.queryKey[0])) });
+      }
+      toast.error(e?.response?.data?.message ?? 'Save failed', e?.response?.status === 409 ? { duration: 12000 } : undefined);
     } finally {
       setBusy(false);
     }
@@ -548,6 +563,8 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
           sku={product.mainSku}
           descriptionHtml={content.descriptionHtml}
           onDescriptionChange={(v) => { setContent((s) => ({ ...s, descriptionHtml: v })); touch(); }}
+          features={features}
+          onFeaturesChange={(next) => { setFeatures(next); touch(); }}
         />
       )}
 

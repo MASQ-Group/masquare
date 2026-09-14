@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { htmlToPlainText, renderEbayDescription } from './description-template';
+import { htmlToPlainText, proseToHtml, renderEbayDescription } from './description-template';
 
 const FULL = {
   title: 'Panasonic RP-HJE201E-K Stereo Earphones',
@@ -146,5 +146,26 @@ describe('htmlToPlainText', () => {
   it('is empty for nothing', () => {
     expect(htmlToPlainText(null)).toBe('');
     expect(htmlToPlainText('   ')).toBe('');
+  });
+});
+
+describe('proseToHtml', () => {
+  it('turns blank-line paragraphs into <p> blocks the Description editor shows correctly', () => {
+    expect(proseToHtml('First paragraph.\n\nSecond one.')).toBe('<p>First paragraph.</p><p>Second one.</p>');
+  });
+
+  it('escapes the words, which came from a web search and are never markup', () => {
+    expect(proseToHtml('Fits 10 < 20 cm & <b>more</b>')).toBe('<p>Fits 10 &lt; 20 cm &amp; &lt;b&gt;more&lt;/b&gt;</p>');
+  });
+
+  /** What goes in must come back out as the same paragraphs, or the eBay description loses its shape. */
+  it('round-trips through htmlToPlainText into the same paragraphs', () => {
+    const prose = 'Everyday earphones.\n\nThey stay put while you move.';
+    expect(htmlToPlainText(proseToHtml(prose))).toBe(prose);
+  });
+
+  it('is empty for nothing', () => {
+    expect(proseToHtml('')).toBe('');
+    expect(proseToHtml('  \n\n  ')).toBe('');
   });
 });

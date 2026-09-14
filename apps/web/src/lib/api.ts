@@ -917,6 +917,8 @@ export interface Product {
   manufacturerSku: string | null;
   /** Pages a person nominated as truthful about this product; a gather reads all of them. */
   manufacturerUrls: string[];
+  /** When the product was last saved; sent back with a save so a stale copy cannot overwrite a newer one. */
+  updatedAt: string | null;
   countryOfOrigin: string | null;
   hsCode: string | null;
 
@@ -2272,6 +2274,9 @@ export interface EbayPrerequisites {
 export interface EbayPreview {
   productSku: string;
   ebaySku: string;
+  /** The category already saved for the product, if any — so its fields can be shown straight away. */
+  categoryId: string | null;
+  categoryName: string | null;
   missing: { key: string; label: string }[];
   /**
    * Exactly what would be sent to eBay, including the description the platform renders from the
