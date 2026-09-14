@@ -12,12 +12,15 @@ import { verifyIdentity } from '../../gather/identity';
 import { ManufacturerSourceService } from '../../gather/manufacturer-source.service';
 import { WebResearchService } from '../../gather/web-research.service';
 import { screenResearch, type ResearchedFinding, type ResearchedSource } from '../../gather/screen-research';
-import { htmlToPlainText, renderEbayDescription } from './description-template';
+import { htmlToPlainText, proseToHtml, renderEbayDescription } from './description-template';
 import { checkBuyerText } from '../../gather/buyer-text';
 import { matchCompetitors } from './competitor-match';
 import { profitAt, suggestPrice } from './ebay-pricing';
 import { fitFeeModel, type FeeModel, type SettledOrder } from './ebay-fee-model';
 import { PricingFxService } from '../../pricing/fx.service';
+import { ActivityService } from '../../activity/activity.service';
+import { diffRecords } from '../../activity/diff';
+import { PRODUCT_FIELD_LABELS } from '../../activity/product-fields';
 
 /**
  * Creating an eBay listing through the Inventory API.
@@ -44,6 +47,7 @@ export class EbayListingService {
     private readonly manufacturer: ManufacturerSourceService,
     private readonly web: WebResearchService,
     private readonly fx: PricingFxService,
+    private readonly activity: ActivityService,
   ) {}
 
   /**
@@ -879,7 +883,7 @@ export class EbayListingService {
     const product = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
       select: {
-        id: true, mainSku: true, shortDescription: true, keyFeatures: true,
+        id: true, mainSku: true, descriptionHtml: true, keyFeatures: true,
         aliases: { select: { skuValue: true } },
       },
     });
@@ -899,14 +903,23 @@ export class EbayListingService {
       );
     }
 
-    const hadIntro = !!product.shortDescription?.trim();
+    /**
+     * Judged on the WORDS, not the markup: an editor that was opened and closed can leave `<p></p>`
+     * behind, and treating that as an existing description would refuse to fill an empty one.
+     */
+    const hadIntro = !!htmlToPlainText(product.descriptionHtml);
     const hadFeatures = Array.isArray(product.keyFeatures) && (product.keyFeatures as unknown[]).length > 0;
     const skipped: string[] = [];
 
-    const data: { shortDescription?: string; keyFeatures?: string[]; updatedById?: string } = {};
+    /**
+     * Into the full Description, never `shortDescription`. That field is the two-sentence blurb under
+     * the price on the B2B store — "deliberately short and plain" — and this used to fill it with
+     * several paragraphs of eBay copy.
+     */
+    const data: { descriptionHtml?: string; keyFeatures?: string[]; updatedById?: string } = {};
     if (intro) {
       if (hadIntro && !args.replaceExisting) skipped.push('description (one is already written — ask for it to be replaced)');
-      else data.shortDescription = intro;
+      else data.descriptionHtml = proseToHtml(intro);
     }
     if (features.length) {
       if (hadFeatures && !args.replaceExisting) skipped.push('features (they are already written — ask for them to be replaced)');
@@ -916,6 +929,29 @@ export class EbayListingService {
     if (Object.keys(data).length > 0) {
       if (args.userId) data.updatedById = args.userId;
       await this.prisma.product.update({ where: { id: productId }, data });
+
+      /**
+       * Recorded in the product's History like any other change. It was not, and that made the
+       * lost-description incident look like somebody had deliberately emptied the fields: the only
+       * entry was the person's card save that overwrote it, and nothing showed the research had
+       * written anything first.
+       */
+      await this.activity.record({
+        entityType: 'product',
+        entityId: productId,
+        entityLabel: product.mainSku,
+        action: 'update',
+        source: 'system',
+        actorId: args.userId,
+        changes: diffRecords(
+          { descriptionHtml: product.descriptionHtml, keyFeatures: product.keyFeatures },
+          {
+            ...(data.descriptionHtml !== undefined ? { descriptionHtml: data.descriptionHtml } : {}),
+            ...(data.keyFeatures !== undefined ? { keyFeatures: data.keyFeatures } : {}),
+          },
+          { labels: PRODUCT_FIELD_LABELS },
+        ),
+      });
       this.logger.log(`Content written for ${product.mainSku}: ${Object.keys(data).filter((k) => k !== 'updatedById').join(', ')}`);
     }
 
@@ -1000,7 +1036,7 @@ export class EbayListingService {
 
   /** Assemble the payload from the product, so preview and publish cannot disagree. */
   private async buildInput(productId: string, args: PublishArgs): Promise<{
-    input: EbayOfferInput; productSku: string; integrationId: string;
+    input: EbayOfferInput; productSku: string; integrationId: string; categoryName: string | null;
     planned: Record<string, string>; facts: { brand: string | null; mpn: string | null };
   }> {
     const product = await this.prisma.product.findFirst({
@@ -1022,7 +1058,7 @@ export class EbayListingService {
     const row = await this.ebayIntegration(args.integrationId);
     const plan = await this.prisma.productChannelPlan.findFirst({
       where: { productId, ...this.planKey(row) },
-      select: { categoryRef: true, aspects: true, condition: true, handlingTimeDays: true, offerPriceCents: true },
+      select: { categoryRef: true, categoryName: true, aspects: true, condition: true, handlingTimeDays: true, offerPriceCents: true },
     });
     /**
      * Read through the provenance rules, not straight out of the column. The column now holds
@@ -1034,6 +1070,8 @@ export class EbayListingService {
     return {
       productSku: product.mainSku,
       integrationId: row.id,
+      /** So the eBay content tab can show the saved category's fields without it being chosen again. */
+      categoryName: plan?.categoryName ?? null,
       planned,
       facts: { brand: product.brand?.name ?? null, mpn: product.manufacturerSku ?? null },
       input: {
@@ -1049,7 +1087,13 @@ export class EbayListingService {
         descriptionHtml: renderEbayDescription({
           title: product.ebayTitle ?? product.title ?? '',
           brand: product.brand?.name ?? null,
-          intro: htmlToPlainText(product.shortDescription) || htmlToPlainText(product.descriptionHtml),
+          /**
+           * The full Description first. `shortDescription` is the two-sentence blurb under the price
+           * on the B2B store; preferring it put that blurb on eBay in place of the real description
+           * for every product carrying both. It is kept only as a fallback for a product with no
+           * description at all.
+           */
+          intro: htmlToPlainText(product.descriptionHtml) || htmlToPlainText(product.shortDescription),
           features: Array.isArray(product.keyFeatures) ? (product.keyFeatures as string[]) : [],
           specs: [
             ...(product.brand?.name ? [{ label: 'Brand', value: product.brand.name }] : []),
@@ -1099,7 +1143,7 @@ export class EbayListingService {
    * one thing a preview must never do.
    */
   async preview(productId: string, args: PublishArgs) {
-    const { input, productSku, integrationId, planned, facts } = await this.buildInput(productId, args);
+    const { input, productSku, integrationId, planned, facts, categoryName } = await this.buildInput(productId, args);
     const missing = missingForPublish(input);
 
     if (input.categoryId) {
@@ -1119,6 +1163,7 @@ export class EbayListingService {
       productSku,
       ebaySku: input.sku,
       categoryId: input.categoryId ?? null,
+      categoryName,
       missing,
       inventoryItem: buildInventoryItem(input),
       offer: buildOffer(input),

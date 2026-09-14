@@ -148,6 +148,23 @@ export function renderEbayDescription(content: DescriptionContent): string {
 }
 
 /**
+ * Plain prose, stored as the simple HTML the Description editor expects.
+ *
+ * Researched copy arrives as plain text with blank lines between paragraphs. Stored raw in
+ * `descriptionHtml`, the product card's rich editor would run it into a single paragraph, because
+ * newlines mean nothing in HTML. Each paragraph becomes a `<p>`, escaped — the words are data from
+ * a web search, never markup — and `htmlToPlainText` turns it back into paragraphs for eBay.
+ */
+export function proseToHtml(raw: string | null | undefined): string {
+  return (raw ?? '')
+    .split(/\n\s*\n/)
+    .map((p) => p.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .map((p) => `<p>${esc(p)}</p>`)
+    .join('');
+}
+
+/**
  * The readable words out of stored prose that may contain markup.
  *
  * The Content tab's description is written as prose but has historically been allowed to carry a

@@ -90,6 +90,18 @@ export class CreateProductDto {
 export class UpdateProductDto extends CreateProductDto {
   @IsOptional() @IsString() @MinLength(1) declare mainSku: string;
   @IsOptional() @IsString() @MinLength(1) declare title: string;
+
+  /**
+   * When the product was last saved, as the caller last saw it. Optional, and only the product card
+   * sends it.
+   *
+   * The card holds a copy of the whole product from the moment it opened and saves every field back.
+   * Anything written to the product while it sat open — Claude's research through the connector, or a
+   * colleague's edit — was silently overwritten with the card's older copy. That is exactly how a
+   * researched description and its features vanished 81 seconds after being written. With this set,
+   * a save onto a product that has changed since is refused instead, and nothing is lost.
+   */
+  @IsOptional() @IsString() expectedUpdatedAt?: string;
 }
 
 export class ReorderMediaDto {

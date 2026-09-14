@@ -66,16 +66,29 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
     onError: () => toast.error('Could not ask eBay for categories'),
   });
 
+  /**
+   * The category whose fields are on screen: the one just picked, or else the one already saved.
+   *
+   * It used to be only the one just picked. A product with a saved category therefore showed no fields
+   * at all — just "a category is already saved" — so everything research had filled in, and every
+   * held-back value waiting for somebody to confirm it, was invisible unless the category was searched
+   * for and chosen all over again. Research looked as though it had written nothing.
+   */
+  const savedCategory = saved.data?.categoryId
+    ? { categoryId: saved.data.categoryId, categoryName: saved.data.categoryName, path: '', relevancy: null }
+    : null;
+  const active = chosen ?? savedCategory;
+
   const aspects = useQuery({
-    queryKey: ['ebay', 'aspects', productId, chosen?.categoryId],
-    queryFn: () => ebayListingApi.categoryAspects(productId, chosen!.categoryId),
-    enabled: !!chosen,
+    queryKey: ['ebay', 'aspects', productId, active?.categoryId],
+    queryFn: () => ebayListingApi.categoryAspects(productId, active!.categoryId),
+    enabled: !!active,
   });
 
   const save = useMutation({
     mutationFn: () => ebayListingApi.savePlan(productId, {
-      categoryId: chosen!.categoryId,
-      categoryName: chosen!.categoryName,
+      categoryId: active!.categoryId,
+      categoryName: active!.categoryName,
       /**
        * Only what a person touched. Brand, MPN and Model are re-derived from the product every time
        * rather than frozen here — so correcting a product's brand does not leave its eBay listing
@@ -137,11 +150,13 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
         </button>
       </div>
 
-      {saved.data && !chosen && (
+      {saved.data && !chosen && !savedCategory && (
+        <div className="text-[12px] text-n-500">No category chosen yet.</div>
+      )}
+      {!chosen && savedCategory && (
         <div className="text-[12px] text-n-500">
-          {saved.data.missing.some((m) => m.key === 'categoryId')
-            ? 'No category chosen yet.'
-            : 'A category is already saved for this product.'}
+          Saved: <span className="font-semibold text-n-700">{savedCategory.categoryName ?? savedCategory.categoryId}</span>
+          <span className="text-n-400"> — its fields are below. Search above only to change it.</span>
         </div>
       )}
 
@@ -168,7 +183,7 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
         </button>
       ))}
 
-      {chosen && aspects.isLoading && (
+      {active && aspects.isLoading && (
         <div className="flex items-center gap-2 text-[12.5px] text-n-500">
           <Loader2 size={13} className="animate-spin" /> Asking eBay what this category needs…
         </div>
@@ -177,7 +192,7 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
       {aspects.data && (
         <div className="flex flex-col gap-2 rounded-lg border border-n-200 bg-n-25 p-3">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-n-500">
-            {chosen?.categoryName} — {required.length} required, {optional.length} optional
+            {active?.categoryName} — {required.length} required, {optional.length} optional
             {aspects.data.isSaved && <span className="ml-2 text-teal-700">saved</span>}
           </div>
           {required.length === 0 && (

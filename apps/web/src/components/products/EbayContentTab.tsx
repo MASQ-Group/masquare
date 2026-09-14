@@ -3,6 +3,8 @@ import { ExternalLink } from 'lucide-react';
 import { EbayCategoryPicker } from './EbayCategoryPicker';
 import { EbayResearchStep } from './EbayResearchStep';
 import { EbayDescriptionPreview } from './EbayDescriptionPreview';
+import { RichTextEditor } from '../common/RichTextEditor';
+import { FeatureList } from './FeatureList';
 import { ebayListingApi } from '../../lib/api';
 
 /**
@@ -25,7 +27,7 @@ import { ebayListingApi } from '../../lib/api';
  */
 export function EbayContentTab({
   productId, ebayTitle, onEbayTitleChange, productTitle, manufacturerSku, ean, upc, manufacturerUrls,
-  descriptionHtml, onDescriptionChange, sku,
+  descriptionHtml, onDescriptionChange, features, onFeaturesChange, sku,
 }: {
   productId: string;
   ebayTitle: string;
@@ -51,6 +53,9 @@ export function EbayContentTab({
    */
   descriptionHtml: string;
   onDescriptionChange: (v: string) => void;
+  /** The key features — written by research, shown in the eBay description's feature list. */
+  features: string[];
+  onFeaturesChange: (next: string[]) => void;
 }) {
   const missing = [
     ...(manufacturerSku.trim() ? [] : ['manufacturer SKU']),
@@ -102,12 +107,22 @@ export function EbayContentTab({
           editing it here changes it everywhere, because it is the same prose wherever the product is
           sold. It is shown here so the whole listing can be read in one place.
         </p>
-        <textarea
-          className="input min-h-[180px] font-normal"
+        {/*
+          * The same editor as the Content tab, on the same field. A plain textarea here showed the
+          * stored `<p>` tags raw, and — worse — nothing at all of what research had written, because
+          * it was the only place on this tab the description could be seen.
+          */}
+        <RichTextEditor
+          minHeight={160}
           value={descriptionHtml}
-          onChange={(e) => onDescriptionChange(e.target.value)}
-          placeholder="What the product is, what it does, what is in the box. Simple HTML is allowed."
+          onChange={onDescriptionChange}
+          placeholder="What the product is, what it does, who it suits."
         />
+        <div className="mt-3">
+          <span className="mb-1 block text-[12px] font-semibold text-n-700">Key features</span>
+          {/* Research writes these too, and they go into the eBay description's feature list. */}
+          <FeatureList value={features} onChange={onFeaturesChange} />
+        </div>
         <p className="mt-1 text-[12px] text-n-400">
           Write plain prose. maSquare turns this, the key features and the saved item specifics into
           the finished eBay description — one house design on every listing, so nothing here needs

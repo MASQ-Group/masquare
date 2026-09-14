@@ -20,7 +20,7 @@
  */
 import { comparable, groupByMeaning } from './value-match';
 import type { AspectBasis, AspectOrigin, AspectRecord, OriginKind } from './provenance';
-import { classifyAspect } from './provenance';
+import { classifyAspect, sourceIdentity } from './provenance';
 
 /** What the gather needs to know about a product before it will go looking. */
 export interface GatherFacts {
@@ -291,7 +291,17 @@ function asOrigin(f: SourceFinding, at: string): AspectOrigin {
 function mergeOrigins(prior: readonly AspectOrigin[], incoming: readonly AspectOrigin[]): AspectOrigin[] {
   const out = [...prior];
   for (const o of incoming) {
-    const dup = out.some((e) => e.kind === o.kind && comparable(e.value) === comparable(o.value));
+    /**
+     * "The same source said the same thing" — judged by `sourceIdentity`, the SAME definition the
+     * classifier counts with, never a second one.
+     *
+     * This compared `kind` alone, and for `web` that meant every website was one source. Two
+     * independent shops both stating "Quartz" collapsed into a single origin here, so by the time the
+     * classifier counted them there was only one — and agreement between websites became impossible
+     * in precisely the case it is meant for, when they agree word for word. Research on a Casio found
+     * three shops behind several fields and still reported nothing usable.
+     */
+    const dup = out.some((e) => sourceIdentity(e) === sourceIdentity(o) && comparable(e.value) === comparable(o.value));
     if (!dup) out.push(o);
   }
   return out;

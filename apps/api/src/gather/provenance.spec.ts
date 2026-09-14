@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applyUserEdits, classifyAspect, eligibleValues, isPayloadEligible,
+  ORIGIN_KINDS, applyUserEdits, classifyAspect, eligibleValues, isPayloadEligible,
   normaliseAspects, toJson, verifyAspect,
   type AspectOrigin, type AspectRecord,
 } from './provenance';
@@ -108,9 +108,15 @@ describe('classifyAspect', () => {
       .toBe('agreement');
   });
 
-  /** A value written before any of this existed could only have been typed. */
-  it('reads a value with no evidence at all as typed by a person', () => {
-    expect(classifyAspect(rec('1200 W'))).toBe('user');
+  /**
+   * This test used to assert the OPPOSITE — that a record with no evidence was a person's answer —
+   * and that rule is what turned lost evidence into trusted data in production. A legacy bare string
+   * still reads as typed (see normaliseAspects), because it is given an explicit user origin there.
+   * A record that arrives with no origins has lost them, and must fail closed.
+   */
+  it('holds back a record whose evidence is missing, rather than trusting it', () => {
+    expect(classifyAspect(rec('1200 W'))).toBe('unconfirmed');
+    expect(isPayloadEligible(rec('1200 W'))).toBe(false);
   });
 
   /** But a value the recorded evidence actively argues with is nobody's answer. */
@@ -242,6 +248,48 @@ describe('toJson', () => {
       ),
     };
     expect(normaliseAspects(JSON.parse(JSON.stringify(toJson(records))))).toEqual(records);
+  });
+
+  /**
+   * The production bug, pinned. Claude's research is saved with `web` sources; the reader discarded
+   * that kind, so a single retailer's claim — held back when saved — read back as trusted and
+   * publishable. Saving and reading must never change a verdict.
+   */
+  it('keeps a web source, and its verdict, through a save and a read', () => {
+    const records = {
+      Department: rec('Wristwatches', { kind: 'web' as const, value: 'Wristwatches', url: 'https://shop.example.com/p' }),
+    };
+    const readBack = normaliseAspects(JSON.parse(JSON.stringify(toJson(records))));
+    expect(readBack.Department.origins).toEqual(records.Department.origins);
+    expect(classifyAspect(readBack.Department)).toBe('unconfirmed');
+    expect(isPayloadEligible(readBack.Department)).toBe(false);
+  });
+
+  /**
+   * Guards the whole class of bug, not just this instance: EVERY kind the type allows must survive a
+   * round trip. Adding a kind to ORIGIN_KINDS without the reader keeping it now fails here.
+   */
+  it('keeps every kind of source through a save and a read', () => {
+    for (const kind of ORIGIN_KINDS) {
+      const records = { F: rec('v', { kind, value: 'v', url: 'https://example.com/p' }) };
+      const readBack = normaliseAspects(JSON.parse(JSON.stringify(toJson(records))));
+      expect(readBack.F.origins.map((o) => o.kind), `kind "${kind}" was lost on read`).toEqual([kind]);
+    }
+  });
+
+  it('never changes any verdict by saving and reading back', () => {
+    const cases = {
+      a: rec('x', from('manufacturer', 'x')),
+      b: rec('x', from('amazon', 'x'), from('ebay', 'x')),
+      c: rec('x', { kind: 'web' as const, value: 'x', url: 'https://a.com/p' }, { kind: 'web' as const, value: 'x', url: 'https://b.com/p' }),
+      d: rec('x', { kind: 'web' as const, value: 'x', url: 'https://a.com/p' }),
+      e: rec('x', from('amazon', 'x'), from('ebay', 'y')),
+      f: rec('x', from('user', 'x')),
+    };
+    const readBack = normaliseAspects(JSON.parse(JSON.stringify(toJson(cases))));
+    for (const [k, r] of Object.entries(cases)) {
+      expect(classifyAspect(readBack[k]), `case ${k}`).toBe(classifyAspect(r));
+    }
   });
 
   it('writes no undefined keys, which Prisma would reject', () => {

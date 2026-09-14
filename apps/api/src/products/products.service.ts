@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,6 +13,7 @@ import type { ChannelListingsService } from '../channel-listings/channel-listing
 import { channelKey } from '../channel-listings/channel-key';
 import { deriveListingStatus } from '../channel-listings/listing-status';
 import { pickLiveListingsByKey } from '../channel-listings/pick-live-listing';
+import { isStaleWrite } from './stale-write';
 
 export interface ProductQuery {
   q?: string;
@@ -166,6 +167,14 @@ export class ProductsService {
       shortDescription: p.shortDescription ?? null,
       descriptionHtml: p.descriptionHtml ?? null,
       keyFeatures: p.keyFeatures ?? [],
+      /** Pages a person nominated as describing this product; were stored but never sent. */
+      manufacturerUrls: p.manufacturerUrls ?? [],
+      /**
+       * When the product was last saved. The product card sends it back with a save so that a copy
+       * opened before someone else's change — Claude's research included — is refused rather than
+       * silently written over the newer one.
+       */
+      updatedAt: p.updatedAt ?? null,
       searchKeywords: p.searchKeywords ?? null,
 
       // Technical facts the channel-eligibility rules read. The id is what the form binds to; the
@@ -527,6 +536,20 @@ export class ProductsService {
     await this.get(id);
     // Read the scalars BEFORE the write. Reading after would diff the new row against itself.
     const before = await this.prisma.product.findUnique({ where: { id } });
+
+    /**
+     * Refuse to write an old copy over a newer product.
+     *
+     * Compared to the millisecond, as instants rather than strings, so a timezone rendering cannot
+     * make an unchanged product look changed. Only callers that send the timestamp opt in — bulk edits
+     * and imports send none and behave exactly as before.
+     */
+    if (isStaleWrite(before?.updatedAt, dto.expectedUpdatedAt)) {
+      throw new ConflictException(
+        'This product was changed after you opened it — possibly by research through the maSquare connector. '
+        + 'Nothing was saved, so nothing was lost. Close the product and open it again to see the latest, then redo your change.',
+      );
+    }
     const skuValues = [dto.mainSku, ...(dto.aliases?.map((a) => a.skuValue) ?? [])].filter(Boolean) as string[];
     if (skuValues.length) await this.assertSkuNamespace(skuValues, id);
 
