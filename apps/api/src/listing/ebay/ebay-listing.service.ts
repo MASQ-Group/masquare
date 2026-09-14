@@ -16,6 +16,8 @@ import { htmlToPlainText, renderEbayDescription } from './description-template';
 import { checkBuyerText } from '../../gather/buyer-text';
 import { matchCompetitors } from './competitor-match';
 import { profitAt, suggestPrice } from './ebay-pricing';
+import { fitFeeModel, type FeeModel, type SettledOrder } from './ebay-fee-model';
+import { PricingFxService } from '../../pricing/fx.service';
 
 /**
  * Creating an eBay listing through the Inventory API.
@@ -41,6 +43,7 @@ export class EbayListingService {
     private readonly integrations: IntegrationsService,
     private readonly manufacturer: ManufacturerSourceService,
     private readonly web: WebResearchService,
+    private readonly fx: PricingFxService,
   ) {}
 
   /**
@@ -669,6 +672,66 @@ export class EbayListingService {
   }
 
   /**
+   * What eBay really charges this account, measured from orders it has already settled.
+   *
+   * Published rates are a starting point and rarely the truth — they vary by category, subscription
+   * and whatever has been negotiated — and a wrong rate is wrong on every listing in the same
+   * direction. The fee has the shape `percentage × order + fixed per order`, so a line fitted
+   * through real orders recovers both.
+   *
+   * Aggregated to the ORDER, not the line: eBay's fixed fee is charged once per order, and fitting
+   * per line would find a fixed fee on every line and overstate it several times over.
+   *
+   * Returns `null` when the orders cannot support a measurement, and the caller falls back to the
+   * published rates rather than pricing off a number derived from a handful of sales.
+   */
+  private async measuredFeeModel(integration: { targetSalesChannelId: string | null }): Promise<FeeModel | null> {
+    if (!integration.targetSalesChannelId) return null;
+
+    /** A year: long enough to gather orders, recent enough that a rate change shows through. */
+    const since = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+    const rows = await this.prisma.salesTransaction.findMany({
+      where: {
+        salesChannelId: integration.targetSalesChannelId,
+        deletedAt: null,
+        status: 'submitted',
+        date: { gte: since },
+        // A refunded fee is not what the sale cost us, and would drag the line down.
+        feeRefunded: false,
+      },
+      select: {
+        currency: true,
+        feeCurrency: true,
+        items: {
+          select: {
+            netSalesAmount: true, vatAmount: true, shippingAmount: true, shippingAmountVat: true,
+            salesChannelSalesFeeAmount: true,
+          },
+        },
+      },
+      take: 2000,
+    });
+
+    const orders: SettledOrder[] = rows
+      /**
+       * The fee and the order total must be in the SAME currency, or their ratio is an exchange rate
+       * with a fee rate hidden inside it. eBay bills most accounts in the marketplace's currency, so
+       * this drops the exceptions rather than converting them.
+       */
+      .filter((tx) => !tx.feeCurrency || !tx.currency || tx.feeCurrency === tx.currency)
+      .map((tx) => {
+      const sum = (pick: (i: (typeof tx.items)[number]) => number | null) =>
+        tx.items.reduce((total, item) => total + (pick(item) ?? 0), 0);
+      // What the buyer paid in total — eBay charges its fee on the goods, the postage and the tax.
+      const gross = sum((i) => i.netSalesAmount) + sum((i) => i.vatAmount)
+        + sum((i) => i.shippingAmount) + sum((i) => i.shippingAmountVat);
+      return { grossCents: Math.round(gross * 100), feeCents: Math.round(sum((i) => i.salesChannelSalesFeeAmount) * 100) };
+    });
+
+    return fitFeeModel(orders);
+  }
+
+  /**
    * What this product should sell for on eBay UK, and what it earns.
    *
    * Three things a person needs on one screen before publishing: what others charge for the same
@@ -701,22 +764,59 @@ export class EbayListingService {
     });
 
     /**
-     * eBay's rates, and they are ASSUMPTIONS — returned with the answer so the screen can show what
-     * the figure was worked out from rather than presenting it as fact. Defaults are eBay UK's
-     * published rates; override per server when they change.
+     * The fee rate, measured from settled orders where the evidence allows and falling back to
+     * eBay's published rates where it does not. Returned with the answer, with its provenance, so
+     * the screen shows what a figure was worked out from rather than presenting it as fact.
+     *
+     * An explicit env override wins over both: a server told the rate is not asked to guess it.
      */
+    const measured = await this.measuredFeeModel(row);
+    const overridePct = process.env.EBAY_FEE_PCT?.trim();
+    const overrideFixed = process.env.EBAY_FIXED_FEE_PENCE?.trim();
+    const useMeasured = measured?.ok === true && !overridePct && !overrideFixed;
+
     const assumptions = {
       vatRate: numberFromEnv('EBAY_VAT_RATE', 0.2),
-      feePct: numberFromEnv('EBAY_FEE_PCT', 0.128),
-      fixedFeeCents: Math.round(numberFromEnv('EBAY_FIXED_FEE_PENCE', 30)),
+      feePct: useMeasured && measured.ok ? measured.feePct : numberFromEnv('EBAY_FEE_PCT', 0.128),
+      fixedFeeCents: useMeasured && measured.ok
+        ? measured.fixedFeeCents
+        : Math.round(numberFromEnv('EBAY_FIXED_FEE_PENCE', 30)),
+      /** Where those two numbers came from, so the screen never implies a rate card is a fact. */
+      feeSource: useMeasured ? ('measured' as const) : ('published' as const),
+      /** Orders behind a measured rate, or the reason there is no measurement. */
+      measuredFrom: useMeasured && measured.ok ? measured.sampleSize : null,
+      measuredWhyNot: measured && !measured.ok ? measured.reason : null,
     };
     const targetMarginPct = args.targetMarginPct ?? 20;
 
-    const costCents = product.purchaseCostAmount != null ? Math.round(Number(product.purchaseCostAmount) * 100) : null;
+    /**
+     * The listing sells in the marketplace's currency, and the cost is recorded in whatever we
+     * bought in. Pricing a EUR cost into a GBP listing without converting produces a confident
+     * number in no currency at all — roughly 15% wrong here, in the direction of underpricing.
+     */
+    const listingCurrency = EBAY_CURRENCY[(row.marketplace ?? 'GB').toUpperCase()] ?? 'GBP';
+    const costCurrency = product.purchaseCostCurrency ?? 'EUR';
+    const rawCostCents = product.purchaseCostAmount != null ? Math.round(Number(product.purchaseCostAmount) * 100) : null;
+
+    let costCents = rawCostCents;
+    let costProblem: string | null = null;
+    if (rawCostCents != null && costCurrency.toUpperCase() !== listingCurrency) {
+      const rate = await this.fx.toEur(listingCurrency); // EUR per unit of the listing currency
+      const costToEur = await this.fx.toEur(costCurrency);
+      if (rate && costToEur) costCents = Math.round((rawCostCents * costToEur) / rate);
+      else {
+        costCents = null;
+        costProblem = `The cost is in ${costCurrency} and this listing sells in ${listingCurrency}, and today's exchange rate could not be fetched.`;
+      }
+    }
+
     const inputs = { ...assumptions, costCents: costCents ?? 0 };
 
     const suggestion = costCents == null
-      ? { ok: false as const, reason: 'This product has no purchase cost recorded, so there is nothing to work a margin out from.' }
+      ? {
+        ok: false as const,
+        reason: costProblem ?? 'This product has no purchase cost recorded, so there is nothing to work a margin out from.',
+      }
       : suggestPrice(inputs, targetMarginPct);
 
     /** Only meaningful once a cost is known; otherwise the "profit" would just be the price. */
@@ -744,7 +844,10 @@ export class EbayListingService {
       sku: product.mainSku,
       title: product.ebayTitle ?? product.title,
       manufacturerSku: product.manufacturerSku,
-      currency: product.purchaseCostCurrency ?? 'GBP',
+      /** The currency the LISTING sells in — every figure below is in it. */
+      currency: listingCurrency,
+      /** What the cost was recorded in, so a converted figure does not look like the original. */
+      costCurrency,
       costCents,
       assumptions,
       targetMarginPct,
@@ -1207,6 +1310,15 @@ function safeHost(url: string): string {
  * `Number('')` is 0, which for a VAT rate or a fee would silently produce a confident wrong price —
  * so anything that does not parse as a finite number falls back rather than being believed.
  */
+/**
+ * What each eBay marketplace sells in. Used to price a listing in the currency a buyer will pay,
+ * rather than in whatever currency the product's cost happens to be recorded in.
+ */
+const EBAY_CURRENCY: Record<string, string> = {
+  GB: 'GBP', IE: 'EUR', DE: 'EUR', FR: 'EUR', IT: 'EUR', ES: 'EUR', NL: 'EUR', BE: 'EUR', AT: 'EUR',
+  US: 'USD', CA: 'CAD', AU: 'AUD', CH: 'CHF', PL: 'PLN',
+};
+
 function numberFromEnv(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
   if (!raw) return fallback;

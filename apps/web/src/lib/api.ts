@@ -2213,10 +2213,23 @@ export interface EbayCompetitorOffer {
   condition: string | null; seller: string | null; url: string | null; freeShipping: boolean | null;
 }
 export interface EbayPricing {
-  sku: string; title: string | null; manufacturerSku: string | null; currency: string;
+  sku: string; title: string | null; manufacturerSku: string | null;
+  /** The currency the listing sells in — every figure here is in it. */
+  currency: string;
+  /** What the cost was recorded in; differs when it was converted. */
+  costCurrency: string;
   costCents: number | null;
-  /** eBay's rates as assumed, so the screen can show what a figure was worked out from. */
-  assumptions: { vatRate: number; feePct: number; fixedFeeCents: number };
+  /**
+   * The rates a figure was worked out from, and where they came from. `measured` means fitted to
+   * this account's own settled orders; `published` means eBay's rate card, with `measuredWhyNot`
+   * saying why the orders could not support a measurement.
+   */
+  assumptions: {
+    vatRate: number; feePct: number; fixedFeeCents: number;
+    feeSource: 'measured' | 'published';
+    measuredFrom: number | null;
+    measuredWhyNot: string | null;
+  };
   targetMarginPct: number;
   suggestion: { ok: true; outcome: EbayPriceOutcome; targetMarginPct: number } | { ok: false; reason: string };
   /** The price being typed, priced. Null until one is asked about. */

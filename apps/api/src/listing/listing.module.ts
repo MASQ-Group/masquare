@@ -10,9 +10,11 @@ import { EbayListingService } from './ebay/ebay-listing.service';
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { AmazonRepricingModule } from '../amazon-repricing/amazon-repricing.module';
 import { GatherModule } from '../gather/gather.module';
+import { PricingModule } from '../pricing/pricing.module';
 
 @Module({
-  imports: [IntegrationsModule, AmazonRepricingModule, GatherModule],
+  // PricingModule for its FX rates: an eBay UK listing prices in GBP from a cost recorded in EUR.
+  imports: [IntegrationsModule, AmazonRepricingModule, GatherModule, PricingModule],
   controllers: [ListingController, AmazonListingController, EbayListingController, AvailabilitySweepController],
   providers: [ListingService, AmazonListingService, EbayListingService, AvailabilitySweepService],
   // EbayListingService is exported for the maSquare connector (McpModule), which runs research

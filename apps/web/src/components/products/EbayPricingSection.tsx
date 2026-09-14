@@ -72,11 +72,16 @@ export function EbayPricingSection({ productId }: { productId: string }) {
     <Wrap>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Price and dispatch</span>
-        {d.costCents != null && <span className="text-[11.5px] text-n-400">costs {money(d.costCents)}</span>}
+        {d.costCents != null && (
+          <span className="text-[11.5px] text-n-400">
+            costs {money(d.costCents)}
+            {d.costCurrency !== d.currency && <> (converted from {d.costCurrency} at today&apos;s rate)</>}
+          </span>
+        )}
       </div>
 
       {/* ── what the market is doing ── */}
-      <Competitors pricing={d} money={money} />
+      <Competitors pricing={d} />
 
       {/* ── what we should charge ── */}
       {d.suggestion.ok ? (
@@ -144,9 +149,22 @@ export function EbayPricingSection({ productId }: { productId: string }) {
             {money(shown.priceCents)} − {money(shown.vatCents)} VAT − {money(shown.feesCents)} eBay fees
             − {money(shown.costCents)} cost
           </div>
+          {/*
+            * Where the fee came from, not just what it is. A rate measured from this account's own
+            * settled orders is worth trusting; a published rate card is a guess that happens to be
+            * printed, and the difference changes how much weight to put on the margin above.
+            */}
           <div className="text-[11px] text-n-400">
-            Assumes {Math.round(d.assumptions.vatRate * 100)}% VAT and eBay&apos;s{' '}
-            {(d.assumptions.feePct * 100).toFixed(1)}% fee plus {money(d.assumptions.fixedFeeCents)} an order.
+            {Math.round(d.assumptions.vatRate * 100)}% VAT, and a{' '}
+            {(d.assumptions.feePct * 100).toFixed(1)}% eBay fee plus {money(d.assumptions.fixedFeeCents)} an order
+            {d.assumptions.feeSource === 'measured' ? (
+              <> — <span className="text-success">measured from your last {d.assumptions.measuredFrom} settled eBay orders</span>.</>
+            ) : (
+              <>
+                {' '}— eBay&apos;s published rate.
+                {d.assumptions.measuredWhyNot && <span className="block">Not measured from your own orders: {d.assumptions.measuredWhyNot}.</span>}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -162,9 +180,15 @@ export function EbayPricingSection({ productId }: { productId: string }) {
  * toggle rather than hidden: seeing that an £89 result was a different model is what stops somebody
  * wondering why the suggestion looks low.
  */
-function Competitors({ pricing, money }: { pricing: EbayPricing; money: (c: number) => string }) {
+function Competitors({ pricing }: { pricing: EbayPricing }) {
   const [showRejected, setShowRejected] = useState(false);
   const c = pricing.competitors;
+  /**
+   * An offer's own currency, never the listing's. eBay returns what each seller charges in the
+   * currency they charge it in, and labelling a GBP price "EUR" is worse than showing no price.
+   */
+  const offerMoney = (cents: number | null, currency: string | null) =>
+    cents == null ? '—' : `${(cents / 100).toFixed(2)} ${currency ?? ''}`.trim();
 
   if (!c.available) {
     return (
@@ -180,8 +204,8 @@ function Competitors({ pricing, money }: { pricing: EbayPricing; money: (c: numb
       {c.summary ? (
         <div className="text-[12.5px] text-n-800">
           <b>{c.matched.length}</b> other {c.matched.length === 1 ? 'seller has' : 'sellers have'} this exact model:{' '}
-          {money(c.summary.lowestCents)} – {money(c.summary.highestCents)}
-          <span className="text-n-500"> · middle {money(c.summary.medianCents)}</span>
+          {offerMoney(c.summary.lowestCents, c.summary.currency)} – {offerMoney(c.summary.highestCents, c.summary.currency)}
+          <span className="text-n-500"> · middle {offerMoney(c.summary.medianCents, c.summary.currency)}</span>
         </div>
       ) : (
         <div className="text-[12.5px] text-n-600">
@@ -194,7 +218,7 @@ function Competitors({ pricing, money }: { pricing: EbayPricing; money: (c: numb
 
       {c.matched.slice(0, 5).map((o, i) => (
         <div key={i} className="flex items-baseline gap-2 text-[11.5px] text-n-600">
-          <span className="mono w-16 shrink-0 text-n-800">{o.priceCents != null ? money(o.priceCents) : '—'}</span>
+          <span className="mono w-20 shrink-0 text-n-800">{offerMoney(o.priceCents, o.currency)}</span>
           <span className="truncate">{o.title}</span>
           {o.url && (
             <a href={o.url} target="_blank" rel="noreferrer" className="shrink-0 text-n-400 hover:text-teal-600">
@@ -215,7 +239,7 @@ function Competitors({ pricing, money }: { pricing: EbayPricing; money: (c: numb
           </button>
           {showRejected && c.rejected.slice(0, 10).map((r, i) => (
             <div key={i} className="text-[11px] text-n-400">
-              <span className="mono">{r.offer.priceCents != null ? money(r.offer.priceCents) : '—'}</span>{' '}
+              <span className="mono">{offerMoney(r.offer.priceCents, r.offer.currency)}</span>{' '}
               {r.offer.title} — <span className="italic">{r.why}</span>
             </div>
           ))}
