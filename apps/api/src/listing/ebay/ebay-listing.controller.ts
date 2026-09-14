@@ -5,11 +5,12 @@ import { AdminGuard } from '../../auth/admin.guard';
 import { EbayListingService, type PublishArgs } from './ebay-listing.service';
 import { AccessArea, RequireCapability, Requires } from '../../access/access.decorators';
 import { VisibleCompanies, WriteCompany } from '../../common/active-company.decorator';
+import { CurrentUser, type AuthUser } from '../../common/current-user.decorator';
 
 /**
  * Creating an eBay listing through the Inventory API.
  *
- * Admin-only. Of the five routes here exactly one makes something a buyer can see: `publish`.
+ * Admin-only. Of the routes here exactly one makes something a buyer can see: `publish`.
  * `prerequisites` and `preview` send nothing; `location` writes an address record rather than a
  * listing; `withdraw` is the way back.
  */
@@ -76,9 +77,68 @@ export class EbayListingController {
   @Post('products/:productId/plan')
   savePlan(
     @WriteCompany() companyId: string,
-    @Body() dto: { productId: string; integrationId?: string; categoryId: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null },
+    @Body() dto: { productId: string; integrationId?: string; categoryId?: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null },
   ) {
     return this.svc.savePlan(dto.productId, { ...dto, companyIds: [companyId] });
+  }
+
+  /**
+   * Go and look up this product's item specifics. Writes to our database, never to eBay.
+   *
+   * Refuses without a manufacturer SKU and an EAN/UPC, and refuses before a category is chosen.
+   * Behind `@WriteCompany` for the same reason as `savePlan` — it changes one company's plan.
+   */
+  @Post('products/:productId/gather')
+  gather(
+    @WriteCompany() companyId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: { productId: string; integrationId?: string; manufacturerUrls?: string[] },
+  ) {
+    return this.svc.gatherAspects(dto.productId, {
+      integrationId: dto.integrationId,
+      manufacturerUrls: dto.manufacturerUrls,
+      companyIds: [companyId],
+      userId: user.sub,
+    });
+  }
+
+  /**
+   * Record that a person checked where one value came from, which is what lets a suggestion be
+   * published. Writes to our database, never to eBay.
+   *
+   * `@WriteCompany` for the same reason as `savePlan`: it changes a plan filed against one
+   * integration, so a user who can see two must say which.
+   */
+  @Post('products/:productId/confirm-aspect')
+  confirmAspect(
+    @WriteCompany() companyId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: { productId: string; name: string; integrationId?: string },
+  ) {
+    return this.svc.confirmAspect(dto.productId, {
+      name: dto.name,
+      integrationId: dto.integrationId,
+      companyIds: [companyId],
+      userId: user.sub,
+    });
+  }
+
+  /**
+   * What this should sell for, what others charge, and what any price would earn. Read-only.
+   *
+   * A POST because it carries a price to quote at; nothing is stored by asking.
+   */
+  @Post('products/:productId/pricing')
+  @Requires('view')
+  pricing(
+    @VisibleCompanies() companyIds: string[],
+    @Body() dto: { productId: string; atPriceCents?: number; targetMarginPct?: number },
+  ) {
+    return this.svc.pricing(dto.productId, {
+      companyIds,
+      atPriceCents: dto.atPriceCents,
+      targetMarginPct: dto.targetMarginPct,
+    });
   }
 
   /** Exactly what would be sent, and what is missing. Sends nothing to eBay. */

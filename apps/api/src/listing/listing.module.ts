@@ -9,11 +9,14 @@ import { EbayListingController } from './ebay/ebay-listing.controller';
 import { EbayListingService } from './ebay/ebay-listing.service';
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { AmazonRepricingModule } from '../amazon-repricing/amazon-repricing.module';
+import { GatherModule } from '../gather/gather.module';
 
 @Module({
-  imports: [IntegrationsModule, AmazonRepricingModule],
+  imports: [IntegrationsModule, AmazonRepricingModule, GatherModule],
   controllers: [ListingController, AmazonListingController, EbayListingController, AvailabilitySweepController],
   providers: [ListingService, AmazonListingService, EbayListingService, AvailabilitySweepService],
-  exports: [ListingService, AvailabilitySweepService],
+  // EbayListingService is exported for the maSquare connector (McpModule), which runs research
+  // through the same gather rules rather than keeping a second copy of them.
+  exports: [ListingService, AvailabilitySweepService, EbayListingService],
 })
 export class ListingModule {}

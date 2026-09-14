@@ -1,17 +1,36 @@
-import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Loader2, Search } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, ExternalLink, Loader2, Search, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
-import { ebayListingApi, type EbayCategorySuggestion, type EbayResolvedAspect } from '../../lib/api';
+import { ebayListingApi, type EbayAspectProvenance, type EbayCategorySuggestion, type EbayResolvedAspect } from '../../lib/api';
+import { clearScratch, scratchKey, useScratch } from './ebay-scratch';
+
+/**
+ * What this picker has in front of it but has not saved: the search text, the results eBay
+ * returned, which one is highlighted, and any item specifics typed underneath.
+ *
+ * Held in the shared tab scratchpad so switching tabs does not throw the search away. See
+ * `ebay-scratch` for why it is a scratchpad rather than state.
+ */
+type Scratch = {
+  query: string;
+  suggestions: EbayCategorySuggestion[];
+  /** Set when eBay answered usefully — no matches, or a reason — rather than when it errored. */
+  searchProblem: string | null;
+  chosen: EbayCategorySuggestion | null;
+  edits: Record<string, string>;
+  /** Optional aspects are collapsed by default: a category can demand four and offer forty. */
+  showOptional: boolean;
+};
+const EMPTY: Scratch = { query: '', suggestions: [], searchProblem: null, chosen: null, edits: {}, showOptional: false };
 
 /**
  * Choosing the eBay category, and answering what it demands.
  *
  * Lives in one file and appears in two places on purpose. The eBay content tab is where this gets
- * FILLED IN, as step 2 of a sequence — the category has to come before the item specifics, because
- * eBay decides which specifics exist from it. The Channels tab shows the same picker beside the
- * publish button, because that is where somebody discovers one is missing and should not be sent to
- * another tab to fix it.
+ * FILLED IN, first, before anything else on it — eBay decides which item specifics exist FROM the
+ * category, so nothing downstream is even knowable until one is chosen. The Channels tab shows the
+ * same picker beside the publish button, because that is where somebody discovers one is missing and
+ * should not be sent to another tab to fix it.
  *
  * Two copies of this would drift, and the half that drifted would be the one nobody was looking at.
  *
@@ -20,17 +39,14 @@ import { ebayListingApi, type EbayCategorySuggestion, type EbayResolvedAspect } 
  */
 export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
   productId: string;
-  /** Usually the eBay title being typed on the Content tab; falls back to the product's own. */
+  /** Usually the eBay title if one exists yet; falls back to the product's own title. */
   defaultQuery?: string;
   /** Drops the heading, for somewhere that already has one. */
   compact?: boolean;
 }) {
   const qc = useQueryClient();
-  const [query, setQuery] = useState('');
-  const [chosen, setChosen] = useState<EbayCategorySuggestion | null>(null);
-  const [edits, setEdits] = useState<Record<string, string>>({});
-  /** Optional aspects are collapsed by default: a category can demand four and offer forty. */
-  const [showOptional, setShowOptional] = useState(false);
+  const key = scratchKey(productId, 'category');
+  const [{ query, suggestions, searchProblem, chosen, edits, showOptional }, patch] = useScratch<Scratch>(key, EMPTY);
 
   /** What is already saved, so the section opens showing the answer rather than a blank search. */
   const saved = useQuery({
@@ -40,6 +56,13 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
 
   const suggest = useMutation({
     mutationFn: () => ebayListingApi.categorySuggestions(productId, query || defaultQuery || undefined),
+    /** Into the scratchpad rather than left on the mutation, which dies with the component. */
+    onSuccess: (res) => {
+      if (!res.ok) patch({ suggestions: [], searchProblem: res.message ?? 'eBay returned nothing' });
+      else if (res.suggestions.length === 0) {
+        patch({ suggestions: [], searchProblem: `eBay had no suggestion for “${res.searchedFor}”. Try different words.` });
+      } else patch({ suggestions: res.suggestions, searchProblem: null });
+    },
     onError: () => toast.error('Could not ask eBay for categories'),
   });
 
@@ -54,17 +77,36 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
       categoryId: chosen!.categoryId,
       categoryName: chosen!.categoryName,
       /**
-       * Only what a person typed. Brand, MPN and Model are re-derived from the product every time
+       * Only what a person touched. Brand, MPN and Model are re-derived from the product every time
        * rather than frozen here — so correcting a product's brand does not leave its eBay listing
        * quietly carrying the old one.
+       *
+       * Emptied fields ARE sent, as empty strings. The server merges rather than replaces now, so
+       * an omitted field means "leave it alone" — which would make clearing an answer impossible if
+       * blanks were filtered out here. Untouched fields never enter `edits` at all, so this stays a
+       * list of decisions rather than a snapshot of the form.
        */
-      aspects: Object.fromEntries(Object.entries(edits).filter(([, v]) => v.trim())),
+      aspects: edits,
     }),
     onSuccess: () => {
       toast.success('eBay category saved');
+      clearScratch(key);
       qc.invalidateQueries({ queryKey: ['ebay'] });
     },
     onError: () => toast.error('Could not save the category'),
+  });
+
+  /**
+   * Confirming is a write on its own, separate from saving the form. A person who has just checked
+   * a datasheet should not have to save unrelated edits to record that they did.
+   */
+  const confirm = useMutation({
+    mutationFn: (name: string) => ebayListingApi.confirmAspect(productId, name),
+    onSuccess: (r) => {
+      toast.success(`${r.name} confirmed`);
+      qc.invalidateQueries({ queryKey: ['ebay'] });
+    },
+    onError: () => toast.error('Could not record the confirmation'),
   });
 
   const required = aspects.data?.aspects.filter((a) => a.required) ?? [];
@@ -87,7 +129,7 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
           className="input h-9 flex-1 text-[13px]"
           placeholder={defaultQuery ? `Search eBay — blank searches “${defaultQuery.slice(0, 40)}”` : 'Search eBay categories'}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => patch({ query: e.target.value })}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); suggest.mutate(); } }}
         />
         <button type="button" className="hbtn shrink-0" onClick={() => suggest.mutate()} disabled={suggest.isPending}>
@@ -103,16 +145,13 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
         </div>
       )}
 
-      {suggest.data && !suggest.data.ok && <Bad>{suggest.data.message ?? 'eBay returned nothing'}</Bad>}
-      {suggest.data?.ok && suggest.data.suggestions.length === 0 && (
-        <Bad>eBay had no suggestion for “{suggest.data.searchedFor}”. Try different words.</Bad>
-      )}
+      {searchProblem && <Bad>{searchProblem}</Bad>}
 
-      {suggest.data?.suggestions.map((s) => (
+      {suggestions.map((s) => (
         <button
           type="button"
           key={s.categoryId}
-          onClick={() => { setChosen(s); setEdits({}); }}
+          onClick={() => patch({ chosen: s, edits: {} })}
           className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-left text-[12.5px] ${
             chosen?.categoryId === s.categoryId ? 'border-teal-300 bg-teal-50' : 'border-n-200 bg-n-0 hover:bg-n-50'}`}
         >
@@ -149,7 +188,9 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
               key={a.name}
               aspect={a}
               value={edits[a.name]}
-              onChange={(v) => setEdits({ ...edits, [a.name]: v })}
+              onChange={(v) => patch({ edits: { ...edits, [a.name]: v } })}
+              onConfirm={() => confirm.mutate(a.name)}
+              confirming={confirm.isPending && confirm.variables === a.name}
             />
           ))}
 
@@ -163,7 +204,7 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
             <>
               <button
                 type="button"
-                onClick={() => setShowOptional((v) => !v)}
+                onClick={() => patch({ showOptional: !showOptional })}
                 className="mt-1 flex items-center gap-1.5 self-start text-[12px] font-semibold text-n-600 hover:text-n-800"
               >
                 {showOptional ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -175,7 +216,9 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
                   key={a.name}
                   aspect={a}
                   value={edits[a.name]}
-                  onChange={(v) => setEdits({ ...edits, [a.name]: v })}
+                  onChange={(v) => patch({ edits: { ...edits, [a.name]: v } })}
+                  onConfirm={() => confirm.mutate(a.name)}
+                  confirming={confirm.isPending && confirm.variables === a.name}
                 />
               ))}
             </>
@@ -192,17 +235,21 @@ export function EbayCategoryPicker({ productId, defaultQuery, compact }: {
   );
 }
 
-function AspectField({ aspect, value, onChange }: {
+function AspectField({ aspect, value, onChange, onConfirm, confirming }: {
   aspect: EbayResolvedAspect;
   value: string | undefined;
   onChange: (v: string) => void;
+  onConfirm: () => void;
+  confirming: boolean;
 }) {
   /**
    * An answer taken from the product is shown as the PLACEHOLDER rather than as content, so the
    * field reads as answered without pretending somebody typed it — and typing still overrides.
    */
   const auto = aspect.source && aspect.source !== 'plan' ? aspect.value : null;
+  const prov = aspect.provenance ?? null;
   return (
+    <div className="flex flex-col gap-1">
     <label className="flex items-center gap-2 max-[560px]:flex-col max-[560px]:items-stretch">
       <span className="w-40 shrink-0 text-[12.5px] text-n-700">
         {aspect.name}
@@ -224,14 +271,100 @@ function AspectField({ aspect, value, onChange }: {
       ) : (
         <input
           className="input h-9 flex-1 text-[13px]"
-          placeholder={auto ? `${auto}  (from the product)` : 'required'}
+          /**
+           * A held-back suggestion shows as a placeholder, never as content. As content it would
+           * look answered and get saved by somebody tabbing past it; as a placeholder it is visible,
+           * accepted by typing it, and otherwise left alone.
+           */
+          placeholder={
+            auto ? `${auto}  (from the product)`
+              : prov?.heldBack ? `${prov.value}  (suggested — not in use)`
+                : aspect.required ? 'required' : 'optional'
+          }
           value={value ?? (aspect.source === 'plan' ? aspect.value ?? '' : '')}
           onChange={(e) => onChange(e.target.value)}
         />
       )}
     </label>
+    {prov && <Provenance prov={prov} onConfirm={onConfirm} confirming={confirming} />}
+    </div>
   );
 }
+
+/**
+ * Where this answer came from, under the field it belongs to.
+ *
+ * Shown for every stored answer rather than only the doubtful ones. A form where provenance appears
+ * only when something is wrong teaches people that no badge means "fine", which is exactly the
+ * assumption that lets a wrong value sit unchallenged for a year.
+ */
+function Provenance({ prov, onConfirm, confirming }: {
+  prov: EbayAspectProvenance;
+  onConfirm: () => void;
+  confirming: boolean;
+}) {
+  const tone = prov.heldBack
+    ? (prov.basis === 'conflict' ? 'border-danger-bd bg-danger-bg text-danger' : 'border-warning-bd bg-warning-bg text-warning')
+    : 'border-success-bd bg-success-bg text-success';
+
+  return (
+    <div className="ml-[168px] flex flex-wrap items-center gap-x-2 gap-y-1 max-[560px]:ml-0">
+      <span className={`tag whitespace-nowrap border ${tone}`}>{LABEL[prov.basis]}</span>
+
+      {/*
+        * What each source actually said, not just that it was consulted. When two disagree, the
+        * disagreement IS the information — collapsing it to "conflict" would hide which value came
+        * from where and leave nothing to decide between.
+        */}
+      {prov.origins.map((o, i) => (
+        <span key={`${o.kind}-${i}`} className="inline-flex items-center gap-1 text-[11.5px] text-n-500">
+          <span className="text-n-400">{SOURCE[o.kind]}:</span>
+          <span className="mono">{o.value}</span>
+          {o.url && (
+            <a href={o.url} target="_blank" rel="noreferrer" className="text-n-400 hover:text-teal-600" title={o.label ?? o.url}>
+              <ExternalLink size={11} />
+            </a>
+          )}
+        </span>
+      ))}
+
+      {prov.verifiedAt && <span className="text-[11.5px] text-n-400">confirmed</span>}
+
+      {/*
+        * Only offered where it does something. A value the manufacturer already vouches for gains
+        * nothing from a confirmation, and a button that changes nothing gets clicked out of habit
+        * until the ones that matter are clicked out of habit too.
+        */}
+      {prov.heldBack && (
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={confirming}
+          className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-teal-700 hover:text-teal-800 disabled:opacity-50"
+        >
+          {confirming ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
+          I checked this
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Written as what it means for the listing, not as the internal word for the rule. */
+const LABEL: Record<EbayAspectProvenance['basis'], string> = {
+  user: 'entered here',
+  authoritative: 'manufacturer',
+  agreement: 'two sources agree',
+  unconfirmed: 'one source — held back',
+  conflict: 'sources disagree — held back',
+};
+
+const SOURCE: Record<EbayAspectProvenance['origins'][number]['kind'], string> = {
+  user: 'typed',
+  manufacturer: 'manufacturer',
+  amazon: 'Amazon',
+  ebay: 'eBay',
+};
 
 function Bad({ children }: { children: React.ReactNode }) {
   return (

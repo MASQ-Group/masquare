@@ -37,8 +37,10 @@ const TABS = [
   { key: 'pricing', label: 'Cost & pricing' },
   { key: 'logistics', label: 'Package & logistics' },
   { key: 'content', label: 'Content' },
-  { key: 'compliance', label: 'Compliance' },
 ];
+// Pulled out of the list above so eBay content can sit directly after Content, which is the order
+// the work happens in: the shared copy, then the one channel that demands more than shared copy.
+const COMPLIANCE_TAB = { key: 'compliance', label: 'Compliance' };
 // Stock levels and channel plans only mean anything for a saved product, so both appear in edit
 // mode only — there is no product id to hang them on until then.
 const STOCK_TAB = { key: 'stock', label: 'Stock levels' };
@@ -232,10 +234,10 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
     <ModalShell
       open title={product ? 'Edit product' : 'New product'} subtitle={product?.mainSku}
       tabs={product
-        /* eBay content sits next to Content, not out by History: they are read together. */
-        ? [...TABS, ...(canListOnChannels ? [EBAY_TAB] : []), STOCK_TAB,
+        /* eBay content directly after Content: the two are filled in one after the other. */
+        ? [...TABS, ...(canListOnChannels ? [EBAY_TAB] : []), COMPLIANCE_TAB, STOCK_TAB,
            ...(canListOnChannels ? [CHANNELS_TAB] : []), HISTORY_TAB]
-        : TABS} activeTab={tab} onTabChange={setTab} dirty={dirty}
+        : [...TABS, COMPLIANCE_TAB]} activeTab={tab} onTabChange={setTab} dirty={dirty}
       primaryLabel={product ? 'Save changes' : 'Create product'} onPrimary={save} primaryDisabled={!canSave} busy={busy} onClose={onClose}
     >
       {tab === 'general' && (
@@ -539,6 +541,13 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
           ebayTitle={content.ebayTitle}
           onEbayTitleChange={(v) => { setContent((s) => ({ ...s, ebayTitle: v })); touch(); }}
           productTitle={title}
+          manufacturerSku={ident.manufacturerSku}
+          ean={ident.ean}
+          upc={ident.upc}
+          manufacturerUrls={product.manufacturerUrls ?? []}
+          sku={product.mainSku}
+          descriptionHtml={content.descriptionHtml}
+          onDescriptionChange={(v) => { setContent((s) => ({ ...s, descriptionHtml: v })); touch(); }}
         />
       )}
 

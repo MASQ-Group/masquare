@@ -1,5 +1,9 @@
+import { useQuery } from '@tanstack/react-query';
 import { ExternalLink } from 'lucide-react';
 import { EbayCategoryPicker } from './EbayCategoryPicker';
+import { EbayResearchStep } from './EbayResearchStep';
+import { EbayDescriptionPreview } from './EbayDescriptionPreview';
+import { ebayListingApi } from '../../lib/api';
 
 /**
  * Everything eBay needs that the other channels do not.
@@ -9,22 +13,59 @@ import { EbayCategoryPicker } from './EbayCategoryPicker';
  * a title in its 80-character shape, a category from its own tree, and the item specifics that
  * category makes compulsory.
  *
- * The order is the order the work happens in, and it cannot be reordered: eBay decides which item
- * specifics exist FROM the category, so nothing below step 2 can be filled in — or even listed —
- * until a category is chosen. That is why this is a sequence rather than a form.
+ * The order is the order the work happens in, and it cannot be reordered. The category is first
+ * because eBay decides which item specifics exist FROM it — nothing below is even knowable until one
+ * is chosen. The research is second because it fills that list. The title is last because it is an
+ * OUTPUT: it is built from the brand, model and the handful of attributes buyers search on, and a
+ * title written before any of that is known is a guess that then has to be rewritten. That is why
+ * this is a sequence rather than a form.
  *
  * One listing, not fourteen. eBaymag republishes an eBay UK listing to every other eBay market, so
  * a product needs one category and one set of specifics, never one per marketplace.
  */
 export function EbayContentTab({
-  productId, ebayTitle, onEbayTitleChange, productTitle,
+  productId, ebayTitle, onEbayTitleChange, productTitle, manufacturerSku, ean, upc, manufacturerUrls,
+  descriptionHtml, onDescriptionChange, sku,
 }: {
   productId: string;
   ebayTitle: string;
   onEbayTitleChange: (v: string) => void;
   /** Falls back as the category search text when no eBay title has been written yet. */
   productTitle: string;
+  /**
+   * Read here only to say, before anybody presses the button, that the gather will refuse. The
+   * server applies the same rule regardless — this is the courtesy, not the enforcement.
+   */
+  manufacturerSku: string;
+  ean: string;
+  upc: string;
+  /** Already recorded against the product; the gather step shows and reuses them. */
+  manufacturerUrls: string[];
+  /** Shown in the prompt Claude is given, so the SKU it researches is exact. */
+  sku: string;
+  /**
+   * The listing description. Shared with the Content tab rather than duplicated — it is the same
+   * prose a buyer reads wherever the product is sold, and two copies would drift apart with nobody
+   * able to say which one eBay actually got. Shown here so the whole eBay listing can be read in
+   * one place instead of sending somebody back a tab to check what it says.
+   */
+  descriptionHtml: string;
+  onDescriptionChange: (v: string) => void;
 }) {
+  const missing = [
+    ...(manufacturerSku.trim() ? [] : ['manufacturer SKU']),
+    ...(ean.trim() || upc.trim() ? [] : ['EAN or UPC']),
+  ];
+  /**
+   * Only to tick step 1. Same query key the picker uses, so this shares its single request rather
+   * than asking again.
+   */
+  const saved = useQuery({
+    queryKey: ['ebay', 'saved-plan', productId],
+    queryFn: () => ebayListingApi.preview(productId).then((p) => p).catch(() => null),
+  });
+  const hasCategory = !!saved.data && !saved.data.missing.some((m) => m.key === 'categoryId');
+
   return (
     <div className="flex flex-col gap-5">
       <p className="text-[12.5px] text-n-500">
@@ -32,7 +73,55 @@ export function EbayContentTab({
         listing happens from the Channels tab, once this is complete.
       </p>
 
-      <Step n={1} title="eBay title" done={!!ebayTitle.trim()}>
+      <Step n={1} title="eBay category" done={hasCategory}>
+        <p className="mb-2 text-[12px] text-n-400">
+          First, because eBay decides which item specifics are compulsory from the category — the
+          fields below do not exist until one is chosen. Searching asks eBay; choosing stores nothing
+          until you save.
+        </p>
+        <EbayCategoryPicker
+          productId={productId}
+          defaultQuery={ebayTitle || productTitle || undefined}
+          compact
+        />
+      </Step>
+
+      <Step n={2} title="Research with Claude" done={false}>
+        <EbayResearchStep
+          productId={productId}
+          sku={sku}
+          ready={missing.length === 0}
+          refusal={missing.length === 0 ? null
+            : `This product has no ${missing.join(' and no ')}. Claude will refuse to research it: without one, a search finds products that look like this one rather than this one. Fill it in on Identifiers first.`}
+        />
+      </Step>
+
+      <Step n={3} title="Description" done={!!descriptionHtml.trim()}>
+        <p className="mb-2 text-[12px] text-n-400">
+          What eBay shows in the listing body. This is the same description as the Content tab —
+          editing it here changes it everywhere, because it is the same prose wherever the product is
+          sold. It is shown here so the whole listing can be read in one place.
+        </p>
+        <textarea
+          className="input min-h-[180px] font-normal"
+          value={descriptionHtml}
+          onChange={(e) => onDescriptionChange(e.target.value)}
+          placeholder="What the product is, what it does, what is in the box. Simple HTML is allowed."
+        />
+        <p className="mt-1 text-[12px] text-n-400">
+          Write plain prose. maSquare turns this, the key features and the saved item specifics into
+          the finished eBay description — one house design on every listing, so nothing here needs
+          formatting by hand.
+        </p>
+        <EbayDescriptionPreview productId={productId} />
+      </Step>
+
+      <Step n={4} title="eBay title" done={!!ebayTitle.trim()}>
+        <p className="mb-2 text-[12px] text-n-400">
+          Last, because the title is built out of what the gather found — the brand, the model and
+          the two or three attributes buyers actually search on. Written before that, it is a guess
+          that has to be rewritten once the facts arrive. Editable either way.
+        </p>
         <input
           className="input"
           maxLength={80}
@@ -44,32 +133,6 @@ export function EbayContentTab({
         <p className="mt-1 text-[12px] text-n-400">
           {ebayTitle.length}/80 characters — eBay refuses more. Put the words a buyer would search
           first; the brand and model earn their place, filler words do not.
-        </p>
-      </Step>
-
-      <Step n={2} title="eBay category" done={false}>
-        <p className="mb-2 text-[12px] text-n-400">
-          eBay decides which item specifics are compulsory from the category, so this comes before
-          them — the fields below do not exist until one is chosen. Searching asks eBay; choosing
-          stores nothing until you save.
-        </p>
-        <EbayCategoryPicker
-          productId={productId}
-          defaultQuery={ebayTitle || productTitle || undefined}
-          compact
-        />
-      </Step>
-
-      <Step n={3} title="Gather the item specifics" done={false} muted>
-        <p className="text-[12.5px] text-n-500">
-          Not built yet. This will search the manufacturer's own datasheet first, then Amazon and
-          eBay, and fill only what it can identify as valid — leaving anything it cannot find empty
-          rather than guessing at it.
-        </p>
-        <p className="mt-1.5 text-[12px] text-n-400">
-          It will refuse to run without a manufacturer SKU or an EAN/UPC: without one there is
-          nothing to search on precisely enough, and a near-match is how a specification from a
-          different variant ends up on your listing.
         </p>
       </Step>
 

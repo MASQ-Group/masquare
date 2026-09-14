@@ -76,8 +76,8 @@ describe('access declarations', () => {
     // missing entirely — a floor cannot notice an omission above it. If this number moves, a
     // controller was added or removed and somebody should say which.
     const classes = FILES.reduce((n, f) => n + declarations(readFileSync(f, 'utf8')).length, 0);
-    // 59 since CarriersController (8 Sep 2026) — FedEx and whatever carriers follow it.
-    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(59);
+    // 60 since McpController (14 Sep 2026) — the maSquare connector Claude researches through.
+    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(60);
   });
 
   it('declares an area or an explicit exemption on every controller', () => {
@@ -154,6 +154,11 @@ describe('access declarations', () => {
       // stored answers are, which is the same question this reports, asked from a screen that
       // nobody needs Global settings to open. Changing the schedule still requires it.
       '/listing/availability/availability-sweep.controller.ts',
+      // The maSquare connector. It arrives with no browser session, so the platform's own guards
+      // have nothing to check; the gate is its bearer token, verified on every request in the
+      // controller itself. It then acts as one named user, and that user's ordinary company grants
+      // still decide what it can reach — so the exemption is from the login guard, not from scoping.
+      '/mcp/mcp.controller.ts',
     ]);
   });
 });
