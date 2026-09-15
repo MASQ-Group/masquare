@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildInventoryItem, buildOffer, ebaySafeSku, itemDescription, missingForPublish, type EbayOfferInput } from './offer-payload';
+import { buildInventoryItem, buildOffer, ebaySafeSku, itemDescription, missingForPublish, offerUpdateBody, type EbayOfferInput } from './offer-payload';
 
 const base: EbayOfferInput = {
   sku: '3G08437824100',
@@ -172,5 +172,22 @@ describe('itemDescription', () => {
   it('is empty when there is nothing to say', () => {
     expect(itemDescription(null)).toBe('');
     expect(itemDescription('<p></p>')).toBe('');
+  });
+});
+
+describe('offerUpdateBody', () => {
+  /** The refusal that would not go away: a reused offer kept its first description. */
+  it('carries the current description and price to an offer eBay already holds', () => {
+    const body = offerUpdateBody(buildOffer({ ...base, descriptionHtml: '<p>New words</p>', priceValue: 99.5 }));
+    expect(body.listingDescription).toBe('<p>New words</p>');
+    expect(body.pricingSummary.price.value).toBe('99.5');
+    expect(body.listingPolicies.fulfillmentPolicyId).toBe(base.fulfillmentPolicyId);
+  });
+
+  it('leaves out what identifies the offer, which the update call does not accept', () => {
+    const body = offerUpdateBody(buildOffer(base)) as Record<string, unknown>;
+    expect(body).not.toHaveProperty('sku');
+    expect(body).not.toHaveProperty('marketplaceId');
+    expect(body).not.toHaveProperty('format');
   });
 });

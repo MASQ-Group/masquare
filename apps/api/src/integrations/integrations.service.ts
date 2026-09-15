@@ -862,6 +862,20 @@ export class IntegrationsService implements OnModuleInit {
     return { ok: false as const, status: res.status, message: IntegrationsService.ebayErr(json) || ('HTTP ' + res.status) };
   }
 
+  /**
+   * Replace an offer eBay already holds. Still private: an unpublished offer is not a listing, and a
+   * published one is revised only when it is published again.
+   */
+  async ebayUpdateOffer(integrationId: string, offerId: string, body: unknown) {
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const res = await fetch(base + '/sell/inventory/v1/offer/' + encodeURIComponent(offerId), {
+      method: 'PUT', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(30000),
+    });
+    if (res.ok || res.status === 204) return { ok: true as const };
+    const json: any = await res.json().catch(() => null);
+    return { ok: false as const, status: res.status, message: IntegrationsService.ebayErr(json) || ('HTTP ' + res.status) };
+  }
+
   /** Step 3: PUBLISH. This is the one that creates a live, publicly buyable listing. */
   async ebayPublishOffer(integrationId: string, offerId: string) {
     const { base, headers } = await this.ebayCtx(integrationId);

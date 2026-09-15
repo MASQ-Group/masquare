@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
-import { buildInventoryItem, buildOffer, ebaySafeSku, missingForPublish, type EbayOfferInput } from './offer-payload';
+import { buildInventoryItem, buildOffer, ebaySafeSku, missingForPublish, offerUpdateBody, type EbayOfferInput } from './offer-payload';
 import { aspectsForPayload, missingAspects, resolveAspects } from './category-plan';
 import {
   applyUserEdits, classifyAspect, eligibleValues, isPayloadEligible, normaliseAspects, toJson,
@@ -1457,8 +1457,18 @@ export class EbayListingService {
     const item = await this.integrations.ebayPutInventoryItem(row.id, input.sku, buildInventoryItem(input));
     if (!item.ok) throw new BadRequestException(`eBay refused the inventory item: ${item.message}`);
 
-    const offer = await this.integrations.ebayCreateOffer(row.id, buildOffer(input));
+    const offerBody = buildOffer(input);
+    const offer = await this.integrations.ebayCreateOffer(row.id, offerBody);
     if (!offer.ok) throw new BadRequestException(`eBay refused the offer: ${offer.message}`);
+    /**
+     * An offer eBay already held is brought up to date before it is published. Otherwise the publish
+     * sends what the first attempt stored — the old description, price and policies — however much
+     * the product has been corrected since.
+     */
+    if (offer.reused) {
+      const updated = await this.integrations.ebayUpdateOffer(row.id, offer.offerId, offerUpdateBody(offerBody));
+      if (!updated.ok) throw new BadRequestException(`eBay refused to update its existing offer ${offer.offerId}: ${updated.message}`);
+    }
 
     // Everything above this line is private and deletable. Everything below is public.
     const published = await this.integrations.ebayPublishOffer(row.id, offer.offerId);
