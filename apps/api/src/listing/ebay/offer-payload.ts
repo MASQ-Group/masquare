@@ -130,6 +130,22 @@ export function buildInventoryItem(input: EbayOfferInput) {
   };
 }
 
+/**
+ * The same offer, as the body of an UPDATE to one eBay already holds.
+ *
+ * eBay keeps one offer per SKU and marketplace. A second publish of the same product finds that offer
+ * and reuses it — and publishing a reused offer as eBay stored it sends whatever the FIRST attempt
+ * carried. LAG-611474 kept being refused for "top-rated seller" after that phrase had been removed,
+ * because the stored offer still had the old description. The update replaces the offer whole, and
+ * eBay's update call takes neither the SKU nor the marketplace nor the format, which identify it.
+ *
+ * PURE.
+ */
+export function offerUpdateBody(offer: ReturnType<typeof buildOffer>) {
+  const { sku: _sku, marketplaceId: _marketplaceId, format: _format, ...rest } = offer;
+  return rest;
+}
+
 /** Step 2 — the offer: this marketplace, this price, these policies. Still private until published. */
 export function buildOffer(input: EbayOfferInput) {
   return {
