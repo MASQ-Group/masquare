@@ -77,4 +77,22 @@ describe('settlePushQueue', () => {
     ]);
     expect(retry[0].why).toBe('first');
   });
+
+  /** No figure in Availability, or a raise only a person may send: nothing to retry. */
+  it('settles a product whose listings were deliberately skipped', () => {
+    const due = [{ id: 'q1', productId: 'p1' }];
+    const results = [
+      { productId: 'p1', ok: false, skipped: true, message: 'Would raise 0 → 3. Increases are only sent from Push to channels.' },
+    ];
+    expect(settlePushQueue(due, results)).toEqual({ settled: due, retry: [] });
+  });
+
+  it('still retries a real refusal alongside a skip', () => {
+    const due = [{ id: 'q1', productId: 'p1' }];
+    const results = [
+      { productId: 'p1', ok: false, skipped: true, message: 'skipped' },
+      { productId: 'p1', ok: false, message: 'eBay: invalid item' },
+    ];
+    expect(settlePushQueue(due, results).retry[0].why).toBe('eBay: invalid item');
+  });
 });

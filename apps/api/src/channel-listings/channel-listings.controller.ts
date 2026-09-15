@@ -18,28 +18,6 @@ export class ChannelListingsController {
     private readonly jobs: JobsService,
   ) {}
 
-  /**
-   * Put back quantities lost to the zeroing, from the last good record we hold.
-   *
-   * Dry run unless confirm is passed. Targets the ORIGIN marketplace by default, because eBaymag
-   * propagates from there and syncs one way — it cannot restore anything itself.
-   */
-  @Post('restore-quantities')
-  restoreQuantities(
-    @Body() dto: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number; onlyMissing?: boolean; onlyDamaged?: boolean; excludeSkus?: string[]; integrationId?: string; mirrorMarketplace?: string },
-    @VisibleCompanies() companyIds: string[],
-    @CurrentUser() user: AuthUser,
-  ) {
-    // A dry run answers immediately; a real one is hundreds of sequential marketplace calls and
-    // outlives the gateway, so it runs as a job you can follow.
-    if (!dto?.confirm) return this.svc.restoreQuantities(dto ?? {}, companyIds, user.sub);
-    return this.jobs.start(
-      'channel-listings.restore-quantities',
-      'Restoring quantities on ' + (dto.marketplace ?? 'GB'),
-      (ctx) => this.svc.restoreQuantities(dto, companyIds, user.sub, ctx),
-    );
-  }
-
   /** What we have actually sent to the channels, newest first. Read-only. */
   @Get('pushes')
   pushes(

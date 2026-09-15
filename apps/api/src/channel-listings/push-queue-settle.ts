@@ -12,6 +12,8 @@
 export interface PushResult {
   productId?: string | null;
   ok: boolean;
+  /** Deliberately not sent (no figure, or an automatic raise). A decision, not a refusal. */
+  skipped?: boolean;
   message?: string | null;
 }
 
@@ -27,7 +29,12 @@ export function settlePushQueue<T extends { id: string; productId: string }>(
    */
   const refusedBy = new Map<string, string>();
   for (const r of results) {
-    if (r.ok || !r.productId) continue;
+    /**
+     * A skip is the push deciding not to send, and deciding again would decide the same. Counting it
+     * as a refusal retried the product five times — re-sending its other listings each time — and
+     * then left it stuck for good.
+     */
+    if (r.ok || r.skipped || !r.productId) continue;
     if (!refusedBy.has(r.productId)) refusedBy.set(r.productId, (r.message ?? 'refused').trim() || 'refused');
   }
 

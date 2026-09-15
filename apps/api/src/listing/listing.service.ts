@@ -141,25 +141,17 @@ export class ListingService {
     /**
      * How many units an offer here would carry, and where the number came from.
      *
-     * Availability owns sellable stock for the whole platform. Where a product has none recorded,
-     * what we already publish on a sibling marketplace of the same channel is the last figure we
-     * told that channel we held — better than refusing to quote, as long as the source is named.
-     * A quantity that appears from nowhere is worse than one somebody had to type.
+     * Availability owns sellable stock for the whole platform, and nothing else is quoted: a product
+     * with no figure in Availability has no quantity to offer until a person sets one.
      */
     const resolveQuantity = (
       integration: { id: string; channelType: string },
       live: { listedQuantity: number | null } | undefined,
     ): { value: number | null; source: 'availability' | 'this-listing' | 'sibling-listing' | 'none'; from: string | null } => {
+      // Availability only: a quantity is a person's figure or it is nothing. Quoting a listing's own or
+      // a sibling marketplace's figure suggested numbers that no rule would ever send.
+      void integration; void live;
       if (availability) return { value: availability.quantity, source: 'availability', from: null };
-      if (live?.listedQuantity != null) return { value: live.listedQuantity, source: 'this-listing', from: null };
-      const sibling = liveListings
-        .filter((l) => l.integrationId !== integration.id && l.listedQuantity != null)
-        .map((l) => ({ l, i: integrations.find((x) => x.id === l.integrationId) }))
-        .filter((x) => x.i?.channelType === integration.channelType)
-        .sort((a, b) => (b.l.lastPulledAt?.getTime() ?? 0) - (a.l.lastPulledAt?.getTime() ?? 0))[0];
-      if (sibling?.l.listedQuantity != null) {
-        return { value: sibling.l.listedQuantity, source: 'sibling-listing', from: sibling.i?.marketplace ?? sibling.i?.name ?? null };
-      }
       return { value: null, source: 'none', from: null };
     };
 

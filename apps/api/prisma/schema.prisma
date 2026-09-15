@@ -1000,6 +1000,27 @@ model ProductAvailability {
 }
 
 /// Every change to a product's availability, for traceability.
+/// What an order did to availability, decided ONCE per order and product and never revisited.
+/// See apps/api/src/availability/order-availability-rules.ts. The unique key is what makes a re-sync,
+/// a deletion, a re-import or a purge unable to deduct the same order twice.
+model OrderAvailabilityDecision {
+  id            String   @id @default(uuid()) @db.Uuid
+  /// orderKey(): the account that imported it plus the marketplace's order number.
+  orderKey      String   @map("order_key")
+  productId     String   @map("product_id") @db.Uuid
+  /// deducted | not_in_availability | sync_off | cancelled_on_arrival | pre_existing
+  outcome       String
+  /// Units taken from availability. Zero for every outcome but `deducted`.
+  quantity      Int      @default(0)
+  /// The row the order was on when decided; kept for tracing, not for identity.
+  transactionId String?  @map("transaction_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([orderKey, productId])
+  @@index([productId])
+  @@map("order_availability_decision")
+}
+
 model AvailabilityLedger {
   id          String   @id @default(uuid()) @db.Uuid
   productId   String   @map("product_id") @db.Uuid

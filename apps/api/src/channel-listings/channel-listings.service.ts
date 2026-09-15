@@ -799,249 +799,14 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     };
   }
 
-  /**
-   * Put back the quantities that were lost, from the last good record we hold.
-   *
-   * eBay listings went to zero. eBaymag cannot fix it — its sync runs one way, FROM the origin eBay
-   * listing INTO eBaymag, so its own figures are a stale mirror rather than a source it can push
-   * back. Left alone it will eventually re-read the zeros and carry them to every other site. The
-   * restore therefore has to come from us, and it has to reach the ORIGIN listing, because that is
-   * what eBaymag propagates from.
-   *
-   * The source is `channelListing.listedQuantity` as at the last sync (24 Aug, two days before the
-   * incident) — untouched for every listing we never pushed to. Where our own push overwrote it, the
-   * audit still holds what it replaced, so `ChannelPush.previousValue` fills those in.
-   *
-   * Deliberately NOT driven by ProductAvailability: that table is empty, and reading quantities from
-   * it is what started this.
-   *
-   * Dry run by default. Nothing is sent without `confirm`.
+  /*
+   * There was a restore tool here. It wrote quantities to live listings from the last pulled figure,
+   * the push audit or another marketplace — none of them a person's figure in Availability — and it
+   * did so past the kill switch, the zeroing ceiling and the rule against raising quantities
+   * automatically. A quantity reaches a channel only when a person presses Push to channels, or when
+   * an order lowers availability (availability/order-availability-rules.ts). To put a listing back,
+   * set its figure in Availability and push it.
    */
-  async restoreQuantities(
-    opts: { marketplace?: string; channelType?: string; confirm?: boolean; limit?: number; since?: string; fallbackQuantity?: number; onlyMissing?: boolean; onlyDamaged?: boolean; excludeSkus?: string[]; integrationId?: string; mirrorMarketplace?: string } = {},
-    companyIds?: string[],
-    actorId?: string,
-    ctx?: ProgressSink,
-  ) {
-    const channelType = opts.channelType ?? 'ebay';
-    const dryRun = !opts.confirm;
-
-    // eBay puts the marketplace on the LISTING (one token, many markets, per-market rows). Amazon
-    // puts it on the INTEGRATION and leaves the listing's own column empty. Filtering the listing
-    // column with a 'GB' default therefore matches nothing on Amazon — so an Amazon restore is
-    // addressed by integration id, which is unambiguous for either shape.
-    const marketplace = opts.integrationId ? undefined : (opts.marketplace ?? 'GB');
-
-    const listings = await this.prisma.channelListing.findMany({
-      where: {
-        ...(marketplace !== undefined ? { marketplace } : {}),
-        ...(opts.integrationId ? { integrationId: opts.integrationId } : {}),
-        integration: { channelType, deletedAt: null },
-        // Amazon owns FBA quantity: it holds the stock, it counts it, and a quantity we send is
-        // accepted and discarded. pushAvailability has always excluded these; the restore did not,
-        // so it reported success on writes that could never take effect.
-        //
-        // Both forms are spelt out because NOT and { not: 'FBA' } each drop NULLs in SQL, and an
-        // eBay or OnBuy listing has no fulfilment channel at all.
-        OR: [{ fulfilmentChannel: null }, { fulfilmentChannel: { not: 'FBA' } }],
-        ...(companyIds ? { companyId: { in: companyIds } } : {}),
-      },
-      select: {
-        id: true, integrationId: true, channelSku: true, marketplace: true, productId: true,
-        listedQuantity: true, externalListingId: true, companyId: true,
-        integration: { select: { name: true, channelType: true } },
-      },
-      take: Math.min(opts.limit ?? 2000, 5000),
-    });
-
-    // Where our push flattened our own copy, the audit remembers what it replaced.
-    // Only pushes from the incident window. Reaching further back resurrects figures that were
-    // true weeks ago, and a quantity restored too high oversells — a worse failure than the one
-    // being repaired, and one eBay penalises.
-    const since = opts.since ? new Date(opts.since) : new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const audit = await this.prisma.channelPush.findMany({
-      where: {
-        field: 'quantity',
-        previousValue: { gt: 0 },
-        createdAt: { gte: since },
-        ...(marketplace !== undefined ? { marketplace } : {}),
-        ...(opts.integrationId ? { integrationId: opts.integrationId } : {}),
-      },
-      orderBy: { createdAt: 'asc' },
-      select: { channelSku: true, integrationId: true, previousValue: true },
-    });
-    const auditEmpty = audit.length === 0;
-    const fromAudit = new Map<string, number>();
-    for (const a of audit) {
-      const key = a.integrationId + '|' + a.channelSku;
-      // Earliest wins: the first push is the one that saw the real figure.
-      if (!fromAudit.has(key)) fromAudit.set(key, a.previousValue as number);
-    }
-
-    // SKUs to leave entirely alone. They are already at zero on the channel, so "set these to 0"
-    // means touching nothing — the quietest correct action, and it keeps a listing someone has
-    // deliberately emptied from being refilled by an assumption.
-    const excluded = new Set((opts.excludeSkus ?? []).map((x) => x.trim().toLowerCase()).filter(Boolean));
-    const excludedMatched = new Set<string>();
-
-    // `mirrorMarketplace` restores each listing to what the SAME SKU currently holds on another
-    // marketplace, instead of to whatever the audit remembers.
-    //
-    // It exists for eBaymag, which fans a UK listing out to seven other markets and syncs on change.
-    // Our pushes zeroed the fanned-out copies and never touched UK, and eBaymag has not re-pushed in
-    // the nine days since — so the origin still holds the right figure while its children sit at
-    // zero. That figure is better than the audit's on both counts: it is today's rather than the
-    // 20th's, and it is the number eBaymag itself would publish.
-    //
-    // Only positive figures are mirrored. Where the origin is itself at zero we have learnt nothing
-    // and the listing is left alone.
-    const mirror = new Map<string, number>();
-    if (opts.mirrorMarketplace) {
-      const rows = await this.prisma.channelListing.findMany({
-        where: {
-          marketplace: opts.mirrorMarketplace,
-          listedQuantity: { gt: 0 },
-          ...(companyIds ? { companyId: { in: companyIds } } : {}),
-        },
-        select: { channelSku: true, listedQuantity: true },
-      });
-      for (const r of rows) mirror.set(r.channelSku.trim().toLowerCase(), r.listedQuantity as number);
-    }
-
-    const plan = listings
-      .map((l) => {
-        const stored = l.listedQuantity ?? 0;
-        const recovered = fromAudit.get(l.integrationId + '|' + l.channelSku) ?? 0;
-        // The last sync is the truth unless WE flattened it. Only then does the audit stand in, and
-        // only from the incident window. Never the higher of the two: that would let a stale figure
-        // beat a current one and put stock on sale that is not there.
-        // A flat figure for the listings no record can speak for. Opt-in and conservative by
-        // construction: too LOW only costs a sale, too high oversells, and only one of those is
-        // recoverable. Never applied on top of a figure we actually hold.
-        const key = l.channelSku.trim().toLowerCase();
-        if (excluded.has(key)) { excludedMatched.add(key); return { l, target: 0, source: 'excluded' as const, damaged: false }; }
-        // onlyMissing restricts the run to listings no record can speak for, so anything already
-        // put back keeps the figure it was given rather than being pushed again.
-        if (opts.onlyMissing && (stored > 0 || recovered > 0)) return { l, target: 0, source: 'already restored' as const, damaged: false };
-        // Whether WE emptied this listing. It decides eligibility under onlyDamaged and is kept
-        // separate from where the replacement figure comes from — mirroring must not widen the run
-        // to listings that were already at zero for their own reasons.
-        const damaged = recovered > 0;
-        // The origin marketplace outranks the rest as a VALUE: it is today's figure, and the one
-        // the fan-out tool would publish itself.
-        const mirrored = opts.mirrorMarketplace ? mirror.get(key) ?? 0 : 0;
-        if (mirrored > 0) return { l, target: mirrored, source: 'origin marketplace' as const, damaged };
-        const target = stored > 0 ? stored : recovered > 0 ? recovered : (opts.fallbackQuantity ?? 0);
-        const source = target === 0 ? 'none' : stored > 0 ? 'last sync' : recovered > 0 ? 'push audit' : 'fallback';
-        return { l, target, source, damaged };
-      })
-      // Nothing to restore for a listing we have no positive figure for. Pushing 0 is what caused
-      // this; the restore will not repeat it under another name.
-      // onlyDamaged keeps just the listings we actually zeroed — the ones whose figure comes from
-      // the push audit because our own copy was flattened. Everything else already holds the right
-      // quantity, and re-sending it is thousands of pointless marketplace calls: ~10,000 to repair
-      // 2,345 listings. Fewer writes is not only quicker, it is less to go wrong.
-      .filter((p) => (opts.onlyDamaged ? p.damaged && p.target > 0 : p.target > 0))
-      // Never send a quantity the listing already holds.
-      //
-      // A run that is interrupted — a deploy took one at 80 of 116 — has to be repeatable, and
-      // repeating it rewrote all 116 because nothing checked. Every one of those is a marketplace
-      // call that changes nothing, and across seven markets a second pass would have been ~900 of
-      // them. Skipping what already agrees makes a re-run resumable rather than merely harmless.
-      .filter((p) => (p.l.listedQuantity ?? 0) !== p.target);
-
-    // Listings that already agree with what we would have sent. Counted so a re-run can say "these
-    // are done" rather than appearing to have found less work than last time.
-    const alreadyAtTarget = listings.filter((l) => {
-      const key = l.channelSku.trim().toLowerCase();
-      const mirrored = opts.mirrorMarketplace ? mirror.get(key) ?? 0 : 0;
-      const recovered = fromAudit.get(l.integrationId + '|' + l.channelSku) ?? 0;
-      const stored = l.listedQuantity ?? 0;
-      const target = mirrored > 0 ? mirrored : stored > 0 ? stored : recovered;
-      return target > 0 && stored === target;
-    }).length;
-
-    // The ones we can do nothing for. Reported rather than silently dropped: after a restore they
-    // are the listings still sitting at zero, and "they were not restored" reads as a failure when
-    // it is actually the rule working — we hold no positive figure for them anywhere, and inventing
-    // one is what the whole incident was about.
-    const noFigure = listings
-      .filter((l) => (l.listedQuantity ?? 0) === 0 && !fromAudit.has(l.integrationId + '|' + l.channelSku))
-      .map((l) => ({ sku: l.channelSku, itemId: l.externalListingId }));
-
-    if (dryRun) {
-      return {
-        dryRun: true,
-        marketplace: marketplace ?? opts.integrationId,
-        candidates: plan.length,
-        /** Already holding the figure we would send — nothing to do, and not an error. */
-        alreadyAtTarget: alreadyAtTarget,
-        // The window the audit was read over, and a plain reason when it explains an empty result.
-        //
-        // `since` defaults to 24 hours, which is right for repairing a push that has just gone
-        // wrong and useless for one from three weeks ago. Asked to restore the August zeroing
-        // without it, this returned zero candidates and said nothing about why — indistinguishable
-        // from "there is nothing to fix", which is the worst thing a repair tool can imply.
-        auditSince: since.toISOString(),
-        ...(plan.length === 0 && auditEmpty
-          ? { reason: `No quantity pushes recorded since ${since.toISOString().slice(0, 10)}. Pass "since" to reach further back.` }
-          : {}),
-        noFigure: noFigure.length,
-        noFigureSample: noFigure.slice(0, 40),
-        totalUnits: plan.reduce((s, p) => s + p.target, 0),
-        // Every source is counted. A dry run that reports 116 candidates and accounts for 2 of them
-        // invites the reader to work the rest out by subtraction, which is how a wrong figure gets
-        // approved — the number that matters most here is how many came from the origin.
-        fromOriginMarketplace: plan.filter((p) => p.source === 'origin marketplace').length,
-        fromLastSync: plan.filter((p) => p.source === 'last sync').length,
-        fromPushAudit: plan.filter((p) => p.source === 'push audit').length,
-        fromFallback: plan.filter((p) => p.source === 'fallback').length,
-        excludedByRequest: excludedMatched.size,
-        // A pasted SKU matching no listing here is silence otherwise, and silence reads as "applied".
-        excludeSkusUnmatched: [...excluded].filter((k) => !excludedMatched.has(k)),
-        sample: plan.slice(0, 20).map((p) => ({ sku: p.l.channelSku, itemId: p.l.externalListingId, currentlyStored: p.l.listedQuantity, restoreTo: p.target, source: p.source })),
-      };
-    }
-
-    // Hundreds of sequential Trading API calls outlive any HTTP request — the first attempt died on
-    // a 502 from the gateway while the server carried on working, which is the worst of both: no
-    // result to read and no way to know how far it got. Runs as a job so progress is followable.
-    ctx?.setTotal(plan.length);
-    const results: any[] = [];
-    for (const p of plan) {
-      ctx?.note(p.l.channelSku);
-      // Route by the LISTING's own channel, not by the argument that selected it.
-      //
-      // This called pushEbayQuantity unconditionally while accepting a channelType parameter, so
-      // asking it to restore Amazon would have picked Amazon listings and then pushed them through
-      // eBay's Trading API. Nobody hit it because only GB was ever run, but it sat there loaded the
-      // moment an Amazon restore was discussed.
-      const type = p.l.integration.channelType;
-      const r =
-        type === 'ebay' ? await this.integrations.pushEbayQuantity(p.l.integrationId, p.l.channelSku, p.l.marketplace, p.target, false, p.l.externalListingId)
-        : type === 'amazon' ? await this.integrations.pushAmazonQuantity(p.l.integrationId, p.l.channelSku, p.target, false)
-        : type === 'onbuy' ? await this.integrations.pushOnBuyQuantity(p.l.integrationId, p.l.channelSku, p.target, false)
-        // Refusing beats guessing: a wrong channel writes a real quantity to the wrong marketplace.
-        : { ok: false, message: 'No quantity push for ' + type };
-      if (r.ok) {
-        await this.prisma.channelListing.update({ where: { id: p.l.id }, data: { listedQuantity: p.target, lastPushedAt: new Date() } });
-      }
-      await this.prisma.channelPush.create({
-        data: {
-          companyId: p.l.companyId, integrationId: p.l.integrationId, productId: p.l.productId,
-          channelSku: p.l.channelSku, marketplace: p.l.marketplace, field: 'quantity',
-          requestedValue: p.target, previousValue: p.l.listedQuantity, ok: r.ok,
-          message: ('restore: ' + r.message).slice(0, 300), dryRun: false, createdById: actorId ?? null,
-        },
-      });
-      results.push({ sku: p.l.channelSku, restoreTo: p.target, ok: r.ok, message: r.message });
-      ctx?.tick(r.ok);
-    }
-
-    const ok = results.filter((r) => r.ok).length;
-    this.logger.log('Quantity restore on ' + marketplace + ': ' + ok + '/' + results.length + ' listings put back.');
-    return { dryRun: false, marketplace: marketplace ?? opts.integrationId, count: results.length, ok, failed: results.length - ok, results };
-  }
 
   private readonly logger = new Logger(ChannelListingsService.name);
   private pushTimer: NodeJS.Timeout | null = null;
@@ -1128,6 +893,21 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     let failed = 0;
     try {
       const r = await this.pushAvailability(due.map((d) => d.productId), { dryRun: false });
+
+      /**
+       * A blocked run sent nothing, so nothing was paid. It used to fall through with no results,
+       * which read as "every product settled" and deleted what each order still owed its channels.
+       * The rows stay, untouched but for the reason, so the pushes go out once the block is lifted.
+       */
+      if ((r as { blocked?: string }).blocked) {
+        const why = String((r as { blocked?: string }).blocked).slice(0, 300);
+        await this.prisma.channelPushQueue.updateMany({
+          where: { id: { in: due.map((d) => d.id) } },
+          data: { lastAttemptAt: new Date(), lastError: why },
+        });
+        this.logger.warn(`Push queue: ${due.length} product(s) still owed — ${why}`);
+        return { products: due.length, ok: 0, failed: due.length, stuck };
+      }
 
       // Settled per PRODUCT rather than all-or-nothing; the rule and its reasoning live in
       // push-queue-settle.ts, with tests.

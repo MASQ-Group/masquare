@@ -1203,7 +1203,9 @@ export class EbayListingService {
         mpn: product.manufacturerSku ?? null,
         ean: product.ean ?? null,
         condition: args.condition ?? ebayCondition(plan?.condition) ?? 'NEW',
-        quantity: args.quantity ?? availability?.quantity ?? null,
+        // Availability only. A quantity passed in the request would be a figure no person set in
+        // Availability, reaching a live listing — which only Push to channels and orders may do.
+        quantity: availability?.quantity ?? null,
         priceValue: args.priceValue ?? (plan?.offerPriceCents != null ? plan.offerPriceCents / 100 : null),
         currency: args.currency ?? 'GBP',
         marketplaceId: args.marketplaceId ?? 'EBAY_GB',
@@ -1351,17 +1353,16 @@ export class EbayListingService {
    * Everything here is private. An inventory item is not a listing, nothing is visible to buyers,
    * and the throwaway SKU is deleted afterwards whatever happens.
    */
-  async diagnoseInventoryItem(productId: string, args: PublishArgs & { useRealSku?: boolean }) {
+  async diagnoseInventoryItem(productId: string, args: PublishArgs) {
     if (!(await this.liveWritesEnabled())) {
       throw new BadRequestException('Listing writes are switched off, so nothing can be tried against eBay.');
     }
     const row = await this.ebayIntegration(args.integrationId);
     const { input } = await this.buildInput(productId, args);
     const full = buildInventoryItem(input) as any;
-    // Normally a throwaway SKU, so a failure says something about the PAYLOAD. With useRealSku it
-    // uses the actual one, which is how you tell a bad payload apart from a SKU eBay will not take —
-    // still only an inventory item, still private, still deleted afterwards.
-    const DIAG_SKU = args.useRealSku ? input.sku : 'MASQDIAG' + input.sku;
+    // Always a throwaway SKU, so a failure says something about the PAYLOAD. It could once use the
+    // real SKU — which wrote that live SKU's quantity and then DELETED its inventory item.
+    const DIAG_SKU = 'MASQDIAG' + input.sku;
 
     const strip = (obj: any, keys: string[]) => {
       const next = JSON.parse(JSON.stringify(obj));
@@ -1505,7 +1506,6 @@ export interface PublishArgs {
   fulfillmentPolicyId?: string | null;
   paymentPolicyId?: string | null;
   returnPolicyId?: string | null;
-  quantity?: number | null;
   priceValue?: number | null;
   currency?: string;
   condition?: 'NEW' | 'USED_EXCELLENT' | 'USED_GOOD';
