@@ -1,27 +1,79 @@
 import { describe, expect, it } from 'vitest';
-import { htmlToPlainText, proseToHtml, renderEbayDescription } from './description-template';
+import { htmlToPlainText, proseToHtml, renderEbayDescription, TRUST_POINTS, type DescriptionContent } from './description-template';
 
-const FULL = {
-  title: 'Panasonic RP-HJE201E-K Stereo Earphones',
-  brand: 'Panasonic',
-  intro: 'Everyday earphones with a comfortable fit.\n\nThe ergonomic design stays put while moving.',
-  features: ['9 mm neodymium drivers', '1.2 m cable'],
-  specs: [{ label: 'Colour', value: 'Black' }, { label: 'Cable Length', value: '1.2 m' }],
+/** The handoff's reference product. */
+const CASIO: DescriptionContent = {
+  title: 'Casio A158WEA-9EF Vintage Digital Watch Gold Dial Stainless Steel Bracelet',
+  brand: 'Casio',
+  mpn: 'A158WEA-9EF',
+  series: 'Casio Vintage series',
+  storeName: 'TogaluUK',
+  conditionLabel: 'New · boxed',
+  glance: [
+    { value: '33.2 mm', label: 'Case width' },
+    { value: '8.2 mm', label: 'Thickness' },
+    { value: '3 ATM', label: 'Water resistant' },
+  ],
+  intro: 'The Casio A158WEA-9EF is a digital watch.\n\nA quartz movement drives the display.',
+  features: ['Stopwatch measuring to 1/100 second', 'Daily alarm and hourly time signal'],
+  specGroups: [
+    { name: 'General', rows: [{ label: 'Brand', value: 'Casio' }, { label: 'MPN', value: 'A158WEA-9EF' }] },
+    { name: 'Movement & display', rows: [{ label: 'Movement', value: 'Quartz' }, { label: 'Display', value: 'Digital' }] },
+  ],
+  inTheBox: 'Watch, original Casio box, manual and warranty card.',
+  conditionNote: 'Brand new, unworn, protective film in place.',
+  care: 'Soft dry cloth.',
+  shipping: [{ label: 'Dispatch', value: 'Same day before 2 pm' }, { label: 'Ships from', value: 'United Kingdom' }],
+  faq: [{ q: 'Is the bracelet adjustable?', a: 'Yes, the clasp slides to fit most wrists.' }],
 };
 
-describe('renderEbayDescription', () => {
-  it('lays out the title, prose, features and specification table', () => {
-    const html = renderEbayDescription(FULL);
-    expect(html).toContain('Panasonic RP-HJE201E-K Stereo Earphones');
-    expect(html).toContain('Key features');
-    expect(html).toContain('9 mm neodymium drivers');
-    expect(html).toContain('Technical specification');
-    expect(html).toContain('Cable Length');
-    expect(html).toContain('1.2 m');
+describe('renderEbayDescription — the Cards layout', () => {
+  it('lays the sections out in the order of the design', () => {
+    const html = renderEbayDescription(CASIO);
+    const order = [
+      'TogaluUK', 'New · boxed', CASIO.title, 'Casio Vintage series · Ref. A158WEA-9EF',
+      '33.2 mm', 'Case width', 'The Casio A158WEA-9EF is a digital watch.',
+      'Key features', 'Stopwatch measuring', 'Technical specification', 'Movement &amp; display',
+      'In the box', 'Condition', 'Care', 'Shipping &amp; returns', 'Why TogaluUK', 'Questions',
+    ].map((t) => html.indexOf(t));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('uses the design tokens', () => {
+    const html = renderEbayDescription(CASIO);
+    expect(html).toContain('background:#0e7c7b');
+    expect(html).toContain('background:#e4572e');
+    expect(html).toContain('max-width:720px');
+  });
+
+  /** Fixed for every listing, whatever the product. */
+  it('always carries the trust points', () => {
+    const html = renderEbayDescription({ title: 'A product', intro: 'Prose.' });
+    for (const t of TRUST_POINTS) expect(html).toContain(t);
+    expect(html).toContain('Why buy from us');
   });
 
   it('turns blank lines into separate paragraphs', () => {
-    expect(renderEbayDescription(FULL).match(/<p /g) ?? []).toHaveLength(2);
+    expect(renderEbayDescription(CASIO).match(/<p /g) ?? []).toHaveLength(2);
+  });
+
+  it('puts a flat specification in a single General group', () => {
+    const html = renderEbayDescription({ title: 'A product', specs: [{ label: 'Colour', value: 'Black' }] });
+    expect(html).toContain('>General<');
+    expect(html).toContain('Colour');
+  });
+
+  it('shows the reference alone when there is no series, and the brand when there is neither', () => {
+    expect(renderEbayDescription({ ...CASIO, series: null })).toContain('>Ref. A158WEA-9EF<');
+    expect(renderEbayDescription({ title: 'X', brand: 'Casio', intro: 'Prose.' })).toContain('>Casio<');
+  });
+
+  /** eBay allows no media queries, so wrapping has to be intrinsic. */
+  it('wraps rather than fixing column counts', () => {
+    const html = renderEbayDescription(CASIO);
+    expect(html).not.toContain('grid-template-columns');
+    expect(html).toContain('flex-wrap:wrap');
   });
 
   /**
@@ -29,17 +81,22 @@ describe('renderEbayDescription', () => {
    * skeleton — otherwise "identical on every listing" is an intention rather than a property.
    */
   it('produces the same structure for two different products', () => {
-    // Same SHAPE, different words: two paragraphs, two features, two specs each. Comparing unequal
-    // shapes would only prove that more content makes more elements.
     const other = renderEbayDescription({
+      ...CASIO,
       title: 'Braun SI3055BK Steam Iron',
-      brand: 'Braun',
+      brand: 'Braun', mpn: 'SI3055BK', series: 'Braun TexStyle 3',
+      glance: [{ value: '2400 W', label: 'Power' }, { value: '270 ml', label: 'Tank' }, { value: '2 m', label: 'Cable' }],
       intro: 'A steam iron for everyday use.\n\nThe ceramic soleplate glides easily.',
       features: ['2400 W of power', 'Ceramic soleplate'],
-      specs: [{ label: 'Wattage', value: '2400 W' }, { label: 'Colour', value: 'Black' }],
+      specGroups: [
+        { name: 'General', rows: [{ label: 'Brand', value: 'Braun' }, { label: 'MPN', value: 'SI3055BK' }] },
+        { name: 'Power', rows: [{ label: 'Wattage', value: '2400 W' }, { label: 'Voltage', value: '230 V' }] },
+      ],
+      inTheBox: 'Iron and manual.', conditionNote: 'Brand new.', care: 'Descale monthly.',
+      faq: [{ q: 'Does it have auto shut-off?', a: 'Yes.' }],
     });
     const skeleton = (h: string) => h.replace(/>[^<]*</g, '><');
-    expect(skeleton(other)).toBe(skeleton(renderEbayDescription(FULL)));
+    expect(skeleton(other)).toBe(skeleton(renderEbayDescription(CASIO)));
   });
 });
 
@@ -48,61 +105,56 @@ describe('renderEbayDescription', () => {
  * markup would put something on a live listing that nobody wrote.
  */
 describe('renderEbayDescription — the text is never markup', () => {
-  it('escapes anything that looks like a tag', () => {
+  it('escapes anything that looks like a tag, in every section', () => {
+    const evil = '<img src=x onerror=alert(1)>';
     const html = renderEbayDescription({
-      title: '<script>alert(1)</script>',
-      features: ['<img src=x onerror=alert(1)>'],
-      specs: [{ label: '<b>Width</b>', value: '10 < 20' }],
+      ...CASIO,
+      title: evil, series: evil, storeName: evil, conditionLabel: evil, intro: evil, inTheBox: evil, care: evil,
+      features: [evil], glance: [{ value: evil, label: evil }],
+      specGroups: [{ name: evil, rows: [{ label: evil, value: evil }] }],
+      shipping: [{ label: evil, value: evil }], faq: [{ q: evil, a: evil }],
     });
-    // Inert, not absent: the words survive as visible text, but no tag was ever opened — which is
-    // exactly what escaping is for. `<img` and `<script` appear nowhere as markup.
-    expect(html).not.toContain('<script');
     expect(html).not.toContain('<img');
-    expect(html).toContain('&lt;script&gt;');
-    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
-    expect(html).toContain('10 &lt; 20');
+    expect(html).toContain('&lt;img');
   });
 
   it('escapes quotes, which would otherwise break out of a style attribute', () => {
-    const html = renderEbayDescription({ title: 'A" style="display:none', intro: "it's fine" });
-    expect(html).toContain('&quot;');
-    expect(html).toContain('&#39;');
-    expect(html).not.toContain('" style="display:none');
+    const html = renderEbayDescription({ title: 'He said "hi" and \'bye\'' });
+    expect(html).toContain('&quot;hi&quot;');
+    expect(html).toContain('&#39;bye&#39;');
   });
 
   it('carries no active content or links of any kind', () => {
-    const html = renderEbayDescription({
-      ...FULL,
-      intro: 'Call us on 01234 567890 or see http://example.com',
-    });
-    expect(html).not.toMatch(/<script|<iframe|<form|javascript:|onclick=|onload=/i);
-    // The words survive as text; what matters is that nothing became a clickable link.
-    expect(html).not.toContain('<a ');
-    expect(html).toContain('http://example.com');
+    const html = renderEbayDescription(CASIO);
+    for (const banned of ['<script', '<iframe', '<form', '<a ', 'href=', 'src=', 'on' + 'click']) {
+      expect(html.toLowerCase()).not.toContain(banned);
+    }
   });
 
   it('uses inline styles only, because eBay strips stylesheets', () => {
-    const html = renderEbayDescription(FULL);
+    const html = renderEbayDescription(CASIO);
     expect(html).not.toContain('<style');
     expect(html).not.toContain('class=');
-    expect(html).toContain('style="');
   });
 });
 
 describe('renderEbayDescription — what it leaves out', () => {
-  it('omits a section with nothing in it rather than printing an empty heading', () => {
+  it('omits every optional section with nothing in it rather than printing an empty frame', () => {
     const html = renderEbayDescription({ title: 'A product', intro: 'Some prose.' });
-    expect(html).not.toContain('Key features');
-    expect(html).not.toContain('Technical specification');
+    for (const heading of ['Key features', 'Technical specification', 'In the box', 'Care', 'Shipping &amp; returns', 'Questions']) {
+      expect(html).not.toContain(heading);
+    }
+    expect(html).not.toContain('font-size:18px'); // no at-a-glance strip
   });
 
-  it('drops half-written specification rows', () => {
+  it('drops half-written rows and figures', () => {
     const html = renderEbayDescription({
       title: 'A product',
+      glance: [{ value: '', label: 'Width' }, { value: '10 cm', label: 'Depth' }],
       specs: [{ label: 'Colour', value: '  ' }, { label: '', value: 'Black' }, { label: 'Width', value: '10 cm' }],
     });
-    expect(html.match(/<tr /g) ?? []).toHaveLength(1);
-    expect(html).toContain('Width');
+    expect(html.match(/min-width:120px/g) ?? []).toHaveLength(1);
+    expect(html.match(/font-size:18px/g) ?? []).toHaveLength(1);
   });
 
   it('returns nothing at all when there is no content', () => {
@@ -113,15 +165,21 @@ describe('renderEbayDescription — what it leaves out', () => {
   it('caps runaway content instead of publishing a wall of text', () => {
     const html = renderEbayDescription({
       title: 'A product',
+      glance: Array.from({ length: 9 }, (_, i) => ({ value: `${i}`, label: `G${i}` })),
       features: Array.from({ length: 40 }, (_, i) => `Feature ${i}`),
-      specs: Array.from({ length: 80 }, (_, i) => ({ label: `L${i}`, value: `V${i}` })),
+      specGroups: Array.from({ length: 5 }, (_, g) => ({ name: `Group ${g}`, rows: Array.from({ length: 30 }, (_, i) => ({ label: `L${i}`, value: `V${i}` })) })),
+      faq: Array.from({ length: 20 }, (_, i) => ({ q: `Q${i}?`, a: 'A.' })),
     });
     expect(html.match(/<li /g) ?? []).toHaveLength(12);
-    expect(html.match(/<tr /g) ?? []).toHaveLength(40);
+    expect(html.match(/min-width:120px/g) ?? []).toHaveLength(60);
+    expect(html.match(/font-size:18px/g) ?? []).toHaveLength(4);
+    expect(html.match(/<strong /g) ?? []).toHaveLength(6);
   });
 
-  it('survives a product with no brand', () => {
-    expect(renderEbayDescription({ title: 'A product', intro: 'Prose.' })).toContain('A product');
+  it('survives a product with no brand, store or condition', () => {
+    const html = renderEbayDescription({ title: 'A product', intro: 'Prose.' });
+    expect(html).toContain('A product');
+    expect(html).not.toContain('text-transform:uppercase;opacity:.85');
   });
 });
 

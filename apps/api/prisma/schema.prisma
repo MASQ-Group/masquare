@@ -1191,6 +1191,10 @@ model ProductChannelPlan {
   /// eBay's account-wide choices, when THIS product must differ from the channel's defaults.
   /// Null is the normal case and means "whatever the channel is set to" — so changing a policy on
   /// the channel changes it for every product that never needed its own, which is the point.
+  /// The eBay description's per-product parts: series, at-a-glance picks, In the box, Care, FAQ and
+  /// the group for each item specific. See listing/ebay/description-extras.ts.
+  descriptionExtras Json? @map("description_extras")
+
   merchantLocationKey String? @map("merchant_location_key")
   fulfillmentPolicyId String? @map("fulfillment_policy_id")
   paymentPolicyId     String? @map("payment_policy_id")

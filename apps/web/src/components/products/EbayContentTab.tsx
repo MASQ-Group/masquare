@@ -4,6 +4,7 @@ import { ExternalLink } from 'lucide-react';
 import { EbayCategoryPicker } from './EbayCategoryPicker';
 import { EbayResearchStep } from './EbayResearchStep';
 import { EbayDescriptionPreview } from './EbayDescriptionPreview';
+import { EbayDescriptionExtrasEditor } from './EbayDescriptionExtrasEditor';
 import { RichTextEditor } from '../common/RichTextEditor';
 import { FeatureList } from './FeatureList';
 import { ebayListingApi } from '../../lib/api';
@@ -207,6 +208,7 @@ function DescriptionStep({ productId, descriptionHtml, hasText, onDescriptionCha
             <FeatureList value={features} onChange={onFeaturesChange} />
           </div>
           <p className="text-[12px] text-n-400">Plain prose — no formatting needed. maSquare lays it out.</p>
+          <EbayDescriptionExtrasEditor productId={productId} />
         </>
       ) : (
         <EbayDescriptionPreview productId={productId} />
