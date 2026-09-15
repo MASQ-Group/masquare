@@ -642,6 +642,10 @@ model AttributeValue {
 
 // Singleton row holding platform-wide format defaults (§9).
 model PlatformSettings {
+  /// The browser tab icon, as the object key in storage (not a URL, so a storage endpoint change
+  /// cannot freeze a broken address). Null shows the browser's default.
+  faviconKey String? @map("favicon_key")
+
   /// Whether creating real marketplace listings is permitted. Off by default; LISTING_LIVE_WRITES
   /// can force it off regardless, and every submission is separately confirmed by a human.
   listingLiveWrites Boolean @default(false) @map("listing_live_writes")

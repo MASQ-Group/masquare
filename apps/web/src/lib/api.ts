@@ -451,6 +451,8 @@ export interface PlatformSettings {
   autoCorrectChannelQuantity: boolean;
   /** Whether a hand-typed availability quantity pushes to the channels immediately. */
   autoPushAvailabilityOnEdit: boolean;
+  /** The browser tab icon's public address; null shows the browser's default. */
+  faviconUrl: string | null;
   /** What a new marketplace listing launches at, as a percentage margin. */
   launchMarginPct: number;
   /** Whether creating real marketplace listings is permitted. Off by default. */
@@ -849,6 +851,12 @@ export const attributesApi = {
 export const settingsApi = {
   get: () => api.get<PlatformSettings>('/settings').then((r) => r.data),
   update: (body: Partial<PlatformSettings>) => api.put<PlatformSettings>('/settings', body).then((r) => r.data),
+  uploadFavicon: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post<{ faviconUrl: string }>('/settings/favicon', fd).then((r) => r.data);
+  },
+  removeFavicon: () => api.delete<{ faviconUrl: null }>('/settings/favicon').then((r) => r.data),
 };
 
 // ---- Module 3: Products ----

@@ -7,6 +7,7 @@ import { useAuth } from '../../lib/auth';
 import { applyFonts, BODY_FONTS, DEFAULT_BODY_FONT, DEFAULT_MONO_FONT, MONO_FONTS } from '../../lib/fonts';
 import { SectionHeader } from './shared';
 import { ActivityRetentionCard } from './ActivityRetentionCard';
+import { FaviconCard } from './FaviconCard';
 import { AvailabilityScheduleSection } from './AvailabilityScheduleSection';
 
 const DATE_FORMATS: { value: PlatformSettings['dateFormat']; label: string }[] = [
@@ -103,6 +104,8 @@ export function GeneralTab() {
           </div>
         </div>
       </div>
+
+      <FaviconCard readOnly={readOnly} />
 
       <div className="mt-6">
         <SectionHeader title="Inventory" description="How selling affects stock on hand." />

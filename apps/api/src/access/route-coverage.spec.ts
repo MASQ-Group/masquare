@@ -143,6 +143,10 @@ describe('access declarations', () => {
       // Recording a restriction is still a Global settings action.
       '/global-settings/brand-restrictions.controller.ts',
       '/global-settings/compliance-options.ts',
+      // The browser tab icon. Its READ is exempt — and public — because the browser asks for it on
+      // the sign-in page, before anyone is signed in, and it is only an image. Uploading or removing
+      // it is still an admin action, as are the platform settings beside it.
+      '/global-settings/settings.controller.ts',
       '/global-settings/simple-refs.ts',
       // Liveness probe, called by the platform rather than a person.
       '/health.controller.ts',
