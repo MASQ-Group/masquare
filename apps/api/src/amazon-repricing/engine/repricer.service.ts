@@ -10,6 +10,7 @@ import { PriceWriterService } from '../writer/price-writer.service';
 import { medianCents } from '../common/median';
 import { detectUndercutLoop, UndercutEvent } from './undercut-loop';
 import { REPRICING_DEFAULTS } from '../config/repricing.config';
+import { resolvePriceRange } from '../floor/price-range';
 
 /** Trailing window for the Buy-Box reference median behind the §6.1 anomalous-competitor guard. */
 const MEDIAN_WINDOW_DAYS = 7;
@@ -169,7 +170,14 @@ export class RepricerService {
     prevCompetitorCount: number | null,
     fairCeilingReferenceMedianCents: number | null,
   ): Promise<void> {
-    const cfg = this.toConfig(row);
+    /**
+     * Units in availability, only for a clearance that ends at a stock level. Read per row because
+     * rows on one ASIN are few, and a stale figure here could leave a loss-making floor running.
+     */
+    const availableUnits = row.productId && row.clearanceUntilStock != null
+      ? (await this.prisma.productAvailability.findUnique({ where: { productId: row.productId }, select: { quantity: true } }))?.quantity ?? null
+      : null;
+    const cfg = this.toConfig(row, availableUnits, nowMs);
 
     // Refresh our stored price from the notification.
     //
@@ -259,7 +267,9 @@ export class RepricerService {
           currency: row.currency,
           automationState: row.automationState as AutomationState,
           intendedPriceCents: decision.finalPriceCents,
-          breakevenCents: row.breakevenCents,
+          // The lowest ALLOWED price: breakeven, or the clearance floor while clearance runs. The safety
+          // layer refuses anything under it, so this is the one place a loss can be let through.
+          breakevenCents: cfg.breakevenCents ?? row.breakevenCents,
           currentPriceCents: row.currentPriceCents,
           amazonMinAllowedCents: row.amazonMinAllowedCents,
           amazonMaxAllowedCents: row.amazonMaxAllowedCents,
@@ -304,11 +314,31 @@ export class RepricerService {
   }
 
   /** Prisma row → engine config, converting Decimal percents (1.00 = 1%) to fractions (0.01). */
-  private toConfig(row: Prisma.RepricingSkuPricingGetPayload<object>): RepricerConfig {
+  private toConfig(row: Prisma.RepricingSkuPricingGetPayload<object>, availableUnits: number | null = null, nowMs = Date.now()): RepricerConfig {
     const frac = (d: Prisma.Decimal | null): number | null => (d != null ? Number(d) / 100 : null);
     // Per-SKU override, then the named preset, then the global default — resolved here so the
     // engine sees one set of numbers and cannot disagree with the floor about which applied.
     const p = resolveParams(row, (row as any).preset);
+    /**
+     * The range a person set, laid over the solved floors: clearance, then a minimum price, then the
+     * margin floor. `breakevenCents` handed to the engine becomes the lowest ALLOWED price, which is
+     * breakeven except during clearance — every check that guards breakeven (FOEP sanity, restore,
+     * the safety layer) follows it without knowing clearance exists. Unsolved floors stay null, so a
+     * SKU with no breakeven still skips as FLOOR_UNKNOWN rather than pricing on a person's number.
+     */
+    const range = row.breakevenCents != null && row.strategyFloorCents != null
+      ? resolvePriceRange({
+        breakevenCents: row.breakevenCents,
+        marginFloorCents: row.strategyFloorCents,
+        minPriceCents: row.minPriceCents,
+        maxPriceCents: row.maxPriceCents,
+        clearance: row.clearanceFloorCents != null
+          ? { floorCents: row.clearanceFloorCents, reason: row.clearanceReason, endsAt: row.clearanceEndsAt, untilStock: row.clearanceUntilStock }
+          : null,
+        availableUnits,
+        now: new Date(nowMs),
+      })
+      : null;
     return {
       sku: row.sku,
       asin: row.asin,
@@ -317,8 +347,8 @@ export class RepricerService {
       fulfillment: row.fulfillment,
       strategy: p.strategy as RepricerConfig['strategy'],
       automationState: row.automationState as RepricerConfig['automationState'],
-      breakevenCents: row.breakevenCents,
-      strategyFloorCents: row.strategyFloorCents,
+      breakevenCents: range ? range.lowestAllowedCents : row.breakevenCents,
+      strategyFloorCents: range ? range.floorCents : row.strategyFloorCents,
       maxPriceCents: row.maxPriceCents,
       fairPricingCeilingCents: row.fairPricingCeilingCents,
       amazonMinAllowedCents: row.amazonMinAllowedCents,

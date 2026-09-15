@@ -1468,6 +1468,48 @@ export interface RepricingSkuRow {
   floorsComputedAt: string | null;
   suppressed: boolean;
   updatedAt: string;
+  productId: string | null;
+  maxPriceCents: number | null;
+  /** A person's fixed minimum; replaces the margin floor, never below breakeven. */
+  minPriceCents: number | null;
+  /** Per-SKU minimum margin in percent; null follows the strategy or the default. */
+  minMarginPct: string | number | null;
+  clearanceFloorCents: number | null;
+  clearanceReason: string | null;
+  clearanceEndsAt: string | null;
+  clearanceUntilStock: number | null;
+  /** The floor the engine actually prices against, and where it came from. */
+  range: RepricingRange;
+}
+export interface RepricingRange {
+  floorCents: number | null;
+  floorSource: 'clearance' | 'min_price' | 'margin';
+  lowestAllowedCents: number | null;
+  maxPriceCents: number | null;
+  clearanceActive: boolean;
+  clearanceInactiveBecause: 'ended' | 'stock_reached' | 'no_end' | null;
+  notes: string[];
+}
+export type RepricingPriceSetting =
+  | { mode: 'fixed'; value: number }
+  | { mode: 'above_breakeven_pct'; value: number }
+  | { mode: 'clear' };
+export interface RepricingRangeChange {
+  minPrice?: RepricingPriceSetting;
+  maxPrice?: RepricingPriceSetting;
+  minMarginPct?: number | null;
+  clearance?:
+    | { mode: 'set'; floor: RepricingPriceSetting; reason: string; endsAt: string | null; untilStock: number | null }
+    | { mode: 'clear' };
+}
+export interface RepricingRangeFilters {
+  marketplace?: string; brandId?: string; vendorId?: string; productTypeId?: string; q?: string; state?: string; skuPricingIds?: string[];
+}
+export interface RepricingRangeView {
+  id: string; sku: string; marketplace: string; currency: string; breakevenCents: number | null;
+  problems: string[]; changed: boolean; marginChanged: boolean;
+  before: { floorCents: number | null; floorSource: string; maxPriceCents: number | null };
+  after: { floorCents: number | null; floorSource: string; maxPriceCents: number | null; notes: string[] };
 }
 export interface RepricingDecisionRow {
   id: string;
@@ -2405,7 +2447,24 @@ export const repricingApi = {
   recomputeFloors: (marketplace?: string, limit?: number) =>
     api.post<JobView>('/amazon-repricing/floors/recompute', { marketplace, limit }).then((r) => r.data),
   /** Paged + filterable: onboarding seeds thousands of rows, so reaching one SKU needs both. */
-  skuPricing: (params: { take?: number; skip?: number; q?: string; marketplace?: string; brandId?: string; vendorId?: string; state?: string } = {}) =>
+  /** One SKU's range: min, max, margin, clearance. A margin change recomputes the floor as a job. */
+  updateRange: (id: string, change: RepricingRangeChange) =>
+    api.patch<RepricingRangeView & { applied: boolean; floorJobId: string | null }>(`/amazon-repricing/sku-pricing/${id}/range`, change).then((r) => r.data),
+  /** The same change for every SKU a filter selects. Preview unless apply. */
+  bulkRange: (filters: RepricingRangeFilters, change: RepricingRangeChange, apply: boolean) =>
+    api.post<{ matched: number; willChange: number; refused: RepricingRangeView[]; refusedTotal: number; sample: RepricingRangeView[]; applied: number; floorJobId: string | null }>(
+      '/amazon-repricing/sku-pricing/range/bulk', { filters, change, apply },
+    ).then((r) => r.data),
+  exportRange: (filters: RepricingRangeFilters) =>
+    api.post<{ rows: Record<string, string>[] }>('/amazon-repricing/sku-pricing/range/export', { filters }).then((r) => r.data),
+  validateRangeImport: (rows: Record<string, string>[]) =>
+    api.post<{
+      rows: { line: number; sku: string; marketplace: string; status: 'change' | 'no_change' | 'error'; problems: string[]; view?: RepricingRangeView }[];
+      counts: { change: number; noChange: number; error: number };
+    }>('/amazon-repricing/sku-pricing/range/import/validate', { rows }).then((r) => r.data),
+  commitRangeImport: (rows: Record<string, string>[]) =>
+    api.post<{ applied: number; skippedWithProblems: number; floorJobId: string | null }>('/amazon-repricing/sku-pricing/range/import/commit', { rows }).then((r) => r.data),
+  skuPricing: (params: { take?: number; skip?: number; q?: string; marketplace?: string; brandId?: string; vendorId?: string; productTypeId?: string; state?: string } = {}) =>
     api
       .get<RepricingSkuPricingPage>('/amazon-repricing/sku-pricing', {
         params: {
@@ -2415,6 +2474,7 @@ export const repricingApi = {
           marketplace: params.marketplace || undefined,
           brandId: params.brandId || undefined,
           vendorId: params.vendorId || undefined,
+          productTypeId: params.productTypeId || undefined,
           state: params.state || undefined,
         },
       })
