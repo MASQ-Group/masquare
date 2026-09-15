@@ -1,10 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { createHash } from 'crypto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { VatService } from './vat.service';
 import { FeeService } from './fee.service';
-import { FloorInputs, grossToNet, netRevenueCents, solveFloors } from './floor-solver';
+import { FloorInputs, grossToNet, netRevenueCents, profitBreakdown, solveFloors } from './floor-solver';
 import { describeCompleteness, resolveReturnsRate, type ReturnsObservation } from './returns-rate';
 import { resolveParams } from '../config/resolve-preset';
 import { eurToCents } from '../common/money';
@@ -395,25 +396,78 @@ export class FloorService {
     // never change their automationState here.
     const humanControlled = ['KILLED', 'QUARANTINED'].includes(row.automationState) || row.strategy === 'MANUAL_ONLY';
 
+    const gathered = await this.floorInputsFor(row, row.currentPriceCents);
+    if (!gathered.ok) return this.exclude(row.id, gathered.reason, humanControlled);
+    const { inputs, returns, completeness, ccy } = gathered;
+
+    // Per-SKU override, then the named preset the SKU follows, then the global default.
+    const minMarginPct = resolveParams(row, (row as any).preset).minMarginPct;
+    const solvedFloors = solveFloors(inputs, minMarginPct);
+    if (solvedFloors.breakevenCents == null || solvedFloors.strategyFloorCents == null) {
+      return this.exclude(row.id, 'FLOOR_INFEASIBLE', humanControlled);
+    }
+    // Stored at the currency's own precision, rounded UP. These are the floors the repricer prices
+    // against, so a yen floor carrying two decimals is both unsendable and — once rounded down at
+    // the write — no longer a floor. Up by at most 99 minor units, well under a yen.
+    const breakevenCents = roundPriceCents(solvedFloors.breakevenCents, ccy, 'up');
+    const strategyFloorCents = roundPriceCents(solvedFloors.strategyFloorCents, ccy, 'up');
+
+    const now = new Date();
+    const staleAfter = new Date(now.getTime() + REPRICING_DEFAULTS.floorStalenessDays * 24 * 60 * 60 * 1000);
+
+    await this.prisma.repricingSkuPricing.update({
+      where: { id: row.id },
+      data: {
+        breakevenCents,
+        strategyFloorCents,
+        floorsComputedAt: now,
+        floorStaleAfter: staleAfter,
+        floorInputsHash: this.hashInputs(inputs, minMarginPct),
+        returnsRatePct: returns.rate * 100,
+        returnsRateSource: returns.source,
+        floorOmits: completeness.omits,
+        exclusionReason: null,
+        // Promote a previously input-blocked SKU into shadow; leave LIVE/human states untouched.
+        automationState: !humanControlled && row.automationState === 'EXCLUDED' ? 'SHADOW' : row.automationState,
+      },
+    });
+  }
+
+  /**
+   * Everything the floor solver needs for one SKU, in the marketplace's currency — or the reason it
+   * cannot be had. Shared by the floors and by profit-at-a-price, so the profit shown beside a
+   * minimum price is built from exactly the costs the floor is built from.
+   *
+   * `taxAtPriceCents` is the price the VAT rule is resolved at: a threshold marketplace (the UK's
+   * £135) charges a different rate either side of it, so the floors use the SKU's current price
+   * and a profit check uses the price being checked.
+   */
+  private async floorInputsFor(
+    row: Prisma.RepricingSkuPricingGetPayload<{ include: { preset: true } }>,
+    taxAtPriceCents: number | null,
+  ): Promise<
+    | { ok: true; inputs: FloorInputs; returns: { rate: number; source: string }; completeness: ReturnType<typeof describeCompleteness>; ccy: string }
+    | { ok: false; reason: ExclusionReason }
+  > {
     // --- Destination tax, resolved the SAME way as the rest of the platform ---------------
     // NOT simply Country.vatRate: JP/AU have their own regimes and threshold marketplaces (UK's
     // £135) switch rate either side of it. The country row for GB carries 0%, because the real
     // rule lives on the sales channel — reading the country rate alone silently produced a 0% VAT
     // floor, roughly halving every UK breakeven. Resolve at the SKU's current price, which is the
     // side of the threshold it actually trades on.
-    const tax = await this.channelTax(row.marketplaceId, row.currentPriceCents);
-    if (tax == null) return this.exclude(row.id, 'VAT_UNKNOWN', humanControlled);
+    const tax = await this.channelTax(row.marketplaceId, taxAtPriceCents);
+    if (tax == null) return { ok: false as const, reason: 'VAT_UNKNOWN' as ExclusionReason };
     const vatRate = tax.vatPct / 100;
 
     // --- Landed COGS from the matched product (moving-average, else purchase cost) ---
-    if (!row.productId) return this.exclude(row.id, 'COGS_MISSING', humanControlled);
+    if (!row.productId) return { ok: false as const, reason: 'COGS_MISSING' as ExclusionReason };
     // Cost + outbound shipping come from PricingService so the floor is built on exactly the same
     // basis as Individual Pricing, the listing grid and a booked sale (it also honours
     // purchaseCostCurrency, which reading purchaseCostAmount raw would not).
     const destCountryId = await this.destinationCountryId(row.marketplaceId);
     const unit = await this.pricing.unitCostInputsEur(row.productId, destCountryId);
     const cogsEur = unit.costEur;
-    if (cogsEur == null || Number(cogsEur) <= 0) return this.exclude(row.id, 'COGS_MISSING', humanControlled);
+    if (cogsEur == null || Number(cogsEur) <= 0) return { ok: false as const, reason: 'COGS_MISSING' as ExclusionReason };
 
     // EVERYTHING in this solver must be in the MARKETPLACE's currency, because that is what the
     // engine compares against: competitor offers arrive in it and prices are submitted in it. The
@@ -422,7 +476,7 @@ export class FloorService {
     // GBP prices it is clamped against. No rate ⇒ exclude; never guess a floor (§4.3).
     const ccy = (row.currency ?? 'EUR').toUpperCase();
     const eurPerUnit = ccy === 'EUR' ? 1 : await this.fx.toEur(ccy);
-    if (eurPerUnit == null || !(eurPerUnit > 0)) return this.exclude(row.id, 'FX_UNKNOWN', humanControlled);
+    if (eurPerUnit == null || !(eurPerUnit > 0)) return { ok: false as const, reason: 'FX_UNKNOWN' as ExclusionReason };
     // toEur gives native→EUR; we need EUR→native, hence the reciprocal.
     const cogsLandedCents = eurToCents(Number(cogsEur) / eurPerUnit);
 
@@ -434,7 +488,7 @@ export class FloorService {
       orderBy: { fetchedAt: 'desc' },
     });
     const isFba = row.fulfillment === 'FBA' || row.fulfillment === 'SFP';
-    if (isFba && !fee) return this.exclude(row.id, 'FEES_UNKNOWN', humanControlled);
+    if (isFba && !fee) return { ok: false as const, reason: 'FEES_UNKNOWN' as ExclusionReason };
 
     const schedule = await this.referralScheduleForMarketplace(row.marketplaceId);
     assertValidSchedule(schedule);
@@ -444,7 +498,7 @@ export class FloorService {
     // FBM SKU with no resolvable shipping is excluded rather than given a too-low floor.
     let fixedPerUnitCents = 0;
     if (!isFba) {
-      if (unit.shippingEur == null) return this.exclude(row.id, 'SHIP_UNKNOWN', humanControlled);
+      if (unit.shippingEur == null) return { ok: false as const, reason: 'SHIP_UNKNOWN' as ExclusionReason };
       fixedPerUnitCents = eurToCents(unit.shippingEur / eurPerUnit);
     }
 
@@ -484,37 +538,30 @@ export class FloorService {
       adsApply,
     });
 
-    // Per-SKU override, then the named preset the SKU follows, then the global default.
-    const minMarginPct = resolveParams(row, (row as any).preset).minMarginPct;
-    const solvedFloors = solveFloors(inputs, minMarginPct);
-    if (solvedFloors.breakevenCents == null || solvedFloors.strategyFloorCents == null) {
-      return this.exclude(row.id, 'FLOOR_INFEASIBLE', humanControlled);
+    return { ok: true as const, inputs, returns, completeness, ccy };
+  }
+
+  /**
+   * The profit per unit at each price a person is considering — typically the minimum and maximum
+   * they are about to set. Nothing is stored. A SKU whose costs or fees are unknown says which,
+   * because a profit worked out without them would be a number nobody should act on.
+   */
+  async profitAt(skuPricingId: string, pricesCents: number[]) {
+    const row = await this.prisma.repricingSkuPricing.findUnique({ where: { id: skuPricingId }, include: { preset: true } });
+    if (!row) return { ok: false as const, reason: 'SKU pricing row not found' };
+    const prices = [...new Set(pricesCents.filter((p) => Number.isInteger(p) && p > 0))].slice(0, 10);
+    const results: ReturnType<typeof profitBreakdown>[] = [];
+    for (const priceCents of prices) {
+      const gathered = await this.floorInputsFor(row, priceCents);
+      if (!gathered.ok) return { ok: false as const, reason: gathered.reason, currency: row.currency };
+      try {
+        results.push(profitBreakdown(priceCents, gathered.inputs));
+      } catch (e) {
+        // A price outside the referral schedule has no fee to apply, and no honest profit.
+        return { ok: false as const, reason: `No referral fee is defined at ${(priceCents / 100).toFixed(2)}: ${(e as Error).message}`, currency: row.currency };
+      }
     }
-    // Stored at the currency's own precision, rounded UP. These are the floors the repricer prices
-    // against, so a yen floor carrying two decimals is both unsendable and — once rounded down at
-    // the write — no longer a floor. Up by at most 99 minor units, well under a yen.
-    const breakevenCents = roundPriceCents(solvedFloors.breakevenCents, ccy, 'up');
-    const strategyFloorCents = roundPriceCents(solvedFloors.strategyFloorCents, ccy, 'up');
-
-    const now = new Date();
-    const staleAfter = new Date(now.getTime() + REPRICING_DEFAULTS.floorStalenessDays * 24 * 60 * 60 * 1000);
-
-    await this.prisma.repricingSkuPricing.update({
-      where: { id: row.id },
-      data: {
-        breakevenCents,
-        strategyFloorCents,
-        floorsComputedAt: now,
-        floorStaleAfter: staleAfter,
-        floorInputsHash: this.hashInputs(inputs, minMarginPct),
-        returnsRatePct: returns.rate * 100,
-        returnsRateSource: returns.source,
-        floorOmits: completeness.omits,
-        exclusionReason: null,
-        // Promote a previously input-blocked SKU into shadow; leave LIVE/human states untouched.
-        automationState: !humanControlled && row.automationState === 'EXCLUDED' ? 'SHADOW' : row.automationState,
-      },
-    });
+    return { ok: true as const, currency: row.currency, results };
   }
 
   /** Exclude a SKU from automation with a reason; never touches human-controlled states. */

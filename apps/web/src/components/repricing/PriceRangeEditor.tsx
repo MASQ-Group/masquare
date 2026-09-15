@@ -3,8 +3,14 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
 import { repricingApi, type RepricingRangeChange, type RepricingSkuRow } from '../../lib/api';
+import { RangeProfitCheck } from './RangeProfitCheck';
 
 const toMoney = (c: number | null) => (c == null ? '' : (c / 100).toFixed(2));
+/** A typed price as cents, or null when it is not a price yet. */
+const toCents = (v: string) => {
+  const n = Number(v.trim().replace(',', '.'));
+  return v.trim() !== '' && Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+};
 const money = (c: number | null, ccy: string) => (c == null ? '—' : `${(c / 100).toFixed(2)} ${ccy}`);
 const SOURCE: Record<string, string> = { clearance: 'Clearance', min_price: 'Minimum price', margin: 'Margin floor' };
 
@@ -91,6 +97,16 @@ export function PriceRangeEditor({ row, onClose }: { row: RepricingSkuRow; onClo
             <p className="mt-1 text-[11px] text-n-500">0–90. Empty follows the strategy. The floor is recalculated after saving.</p>
           </div>
         </div>
+
+        <RangeProfitCheck
+          skuPricingId={row.id}
+          currency={ccy}
+          prices={[
+            { label: 'Minimum', cents: toCents(min) },
+            { label: 'Maximum', cents: toCents(max) },
+            ...(clearOn ? [{ label: 'Clearance floor', cents: toCents(cFloor) }] : []),
+          ]}
+        />
 
         <div className="rounded-md border border-n-200 p-3">
           <label className="flex cursor-pointer items-center gap-2.5">
