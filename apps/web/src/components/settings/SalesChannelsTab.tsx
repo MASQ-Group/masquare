@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ArrowRight, Ban, Download, Trash2, Upload } from 'lucide-react';
 import { ModalShell, downloadSheet, downloadTemplate } from '@masquare/ui';
-import { countriesApi, salesChannelsApi, type SalesChannel } from '../../lib/api';
+import { countriesApi, ebayListingApi, salesChannelsApi, type SalesChannel } from '../../lib/api';
 
 const SALES_CHANNEL_HEADERS = ['Name', 'Description', 'Native Country', 'Native Currency', 'Email', 'Website', 'Contact Name'];
 import { CountrySelect } from '../common/CountrySelect';
@@ -116,14 +116,6 @@ export function SalesChannelsTab() {
         onEdit={setEditing}
         onDelete={(r) => confirm(`Remove ${r.name}?`) && del.mutate(r.id)}
       />
-
-      {/*
-        * Filed here, under the channel it belongs to, because that is where people look for "how do
-        * we list on eBay". It is the eBay account's own settings — the location and policies every
-        * listing carries — not reference data about the channel, so it is a section of its own
-        * rather than columns in the table above.
-        */}
-      <EbayListingDefaultsSection />
       {editing !== undefined && (
         <SalesChannelModal channel={editing} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); invalidate(); }} />
       )}
@@ -194,6 +186,24 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
     touch();
   };
   const canSave = form.name.trim().length > 0;
+
+  /**
+   * Is this the channel the eBay account actually sells as? Asked of the integration rather than
+   * matched on the name, so renaming the channel cannot silently move eBay's settings elsewhere.
+   * An integration with no channel set yet falls back to the name, so the settings are reachable
+   * instead of being hidden until somebody links the two.
+   */
+  const pre = useQuery({
+    queryKey: ['ebay', 'prerequisites'],
+    queryFn: () => ebayListingApi.prerequisites(),
+    retry: false,
+  });
+  const name = channel?.name ?? '';
+  const isEbayAccountChannel = !!channel && (
+    pre.data?.salesChannelId
+      ? pre.data.salesChannelId === channel.id
+      : /ebay/i.test(name) && /uk|united kingdom/i.test(name)
+  );
 
   const save = async () => {
     if (!canSave) { toast.error('Name is required'); return; }
@@ -343,6 +353,12 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
           )}
           <p className="text-[11px] text-n-400">When on, a transaction's destination VAT % is set automatically: order value (net + VAT + shipping + shipping VAT) ≤ threshold uses the first rate; above it uses the second.</p>
         </div>
+        {/*
+          * eBay's own listing settings, on eBay's own card. They belong to the seller ACCOUNT rather
+          * than to this reference row, which is why they save on their own rather than with the
+          * button below — and why they appear on one channel only.
+          */}
+        {isEbayAccountChannel && <EbayListingDefaultsSection />}
         <div><label className="label">Email</label><input className="input" value={form.email} onChange={(e) => set({ email: e.target.value })} /></div>
         <div><label className="label">Website</label><input className="input" value={form.website} onChange={(e) => set({ website: e.target.value })} /></div>
         <div className="col-span-2"><label className="label">Contact name</label><input className="input" value={form.contactName} onChange={(e) => set({ contactName: e.target.value })} /></div>
