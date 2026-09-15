@@ -8,7 +8,18 @@
  *
  * Only the third is public. The first two are private records and can be deleted without trace,
  * which is what makes a staged approach worth the extra round trips.
+ *
+ * The description goes in BOTH, and they are not the same field. The inventory item's is capped at
+ * 4000 characters and is the catalogue's own summary; the offer's `listingDescription` is what a
+ * buyer reads on the listing and allows 500,000. Our house template runs past 4000 on any product
+ * with a real specification table, so sending it as the item description had eBay refuse the whole
+ * publish: "Invalid value for description. The length should be between 1 and 4000 characters."
  */
+import { htmlToPlainText } from './description-template';
+
+/** eBay's own limits. Exceeding either is a refusal, not a truncation. */
+const ITEM_DESCRIPTION_MAX = 4000;
+const LISTING_DESCRIPTION_MAX = 500_000;
 
 export interface EbayOfferInput {
   /** eBay allows alphanumerics only, max 50 — our SKUs carry hyphens and slashes. */
@@ -72,6 +83,23 @@ export function missingForPublish(input: EbayOfferInput): MissingField[] {
   return missing;
 }
 
+/**
+ * The inventory item's description: the same words as plain text, cut to eBay's 4000.
+ *
+ * Plain text rather than trimmed markup, because cutting HTML at 4000 characters lands inside a tag
+ * as often as not. Cut at a word boundary with an ellipsis so it reads as shortened rather than as
+ * broken — and the full designed description is on the offer, which is what buyers actually see.
+ *
+ * PURE.
+ */
+export function itemDescription(html: string | null | undefined): string {
+  const text = htmlToPlainText(html);
+  if (text.length <= ITEM_DESCRIPTION_MAX) return text;
+  const cut = text.slice(0, ITEM_DESCRIPTION_MAX - 1);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > ITEM_DESCRIPTION_MAX - 200 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
 /** Step 1 — the product record. Marketplace-independent: one item can carry many offers. */
 export function buildInventoryItem(input: EbayOfferInput) {
   const aspects: Record<string, string[]> = {};
@@ -92,7 +120,7 @@ export function buildInventoryItem(input: EbayOfferInput) {
     condition: input.condition,
     product: {
       title: (input.title ?? '').slice(0, 80), // eBay truncates at 80 and rejects longer
-      description: input.descriptionHtml ?? '',
+      description: itemDescription(input.descriptionHtml),
       ...(input.keyFeatures?.length ? { aspects: { ...aspects }, bulletPoints: input.keyFeatures.slice(0, 5).map((b) => b.slice(0, 500)) } : { aspects }),
       ...(input.imageUrls?.length ? { imageUrls: input.imageUrls.slice(0, 24) } : {}),
       ...(input.ean ? { ean: [input.ean] } : {}),
@@ -117,8 +145,14 @@ export function buildOffer(input: EbayOfferInput) {
       paymentPolicyId: input.paymentPolicyId,
       returnPolicyId: input.returnPolicyId,
     },
-    ...(input.handlingTimeDays != null
-      ? { listingDuration: 'GTC', listingDescription: input.descriptionHtml ?? undefined }
-      : { listingDuration: 'GTC' }),
+    listingDuration: 'GTC',
+    /**
+     * What the buyer reads: the full house design. It used to be sent only when a handling time
+     * happened to be set — an accident of an earlier edit — so a listing without one showed eBay's
+     * fallback, the 4000-character item summary, instead of the description we render.
+     */
+    ...(input.descriptionHtml?.trim()
+      ? { listingDescription: input.descriptionHtml.slice(0, LISTING_DESCRIPTION_MAX) }
+      : {}),
   };
 }
