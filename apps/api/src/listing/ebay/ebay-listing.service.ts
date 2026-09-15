@@ -16,6 +16,10 @@ import { htmlToPlainText, proseToHtml, renderEbayDescription } from './descripti
 import { checkBuyerText } from '../../gather/buyer-text';
 import { matchCompetitors } from './competitor-match';
 import { ebayListingDefaults, withEbayListingDefaults, type EbayListingDefaults } from './ebay-listing-defaults';
+import {
+  descriptionStore, groupSpecs, normaliseExtras, resolveGlance, withDescriptionStore,
+  type DescriptionExtras, type EbayDescriptionStore,
+} from './description-extras';
 import { profitAt, suggestPrice } from './ebay-pricing';
 import { fitFeeModel, type FeeModel, type SettledOrder } from './ebay-fee-model';
 import { PricingFxService } from '../../pricing/fx.service';
@@ -104,6 +108,8 @@ export class EbayListingService {
       ...pre,
       /** What every listing uses unless a product says otherwise. */
       defaults: ebayListingDefaults(row.config),
+      /** The store's own words for the description: name, condition wording, shipping lines. */
+      descriptionStore: descriptionStore(row.config),
       /**
        * Which sales channel this eBay account is, so its settings can live on that channel's own
        * card rather than in a section of their own that belongs to nothing.
@@ -147,6 +153,27 @@ export class EbayListingService {
     });
     this.logger.log(`eBay listing defaults saved for integration ${row.id}`);
     return { ok: true as const, defaults: ebayListingDefaults(saved.config) };
+  }
+
+  /**
+   * The store's words in every eBay description: its name, its condition wording and its shipping
+   * and returns lines. Account-wide, like the policies beside it on the channel card.
+   */
+  async saveDescriptionStore(
+    args: { integrationId?: string; companyIds?: string[] } & Partial<EbayDescriptionStore>,
+  ): Promise<{ ok: true; descriptionStore: EbayDescriptionStore }> {
+    const row = await this.ebayIntegration(args.integrationId, args.companyIds);
+    const next: Partial<EbayDescriptionStore> = {};
+    if (args.storeName !== undefined) next.storeName = args.storeName;
+    if (args.conditionLabel !== undefined) next.conditionLabel = args.conditionLabel;
+    if (args.conditionNote !== undefined) next.conditionNote = args.conditionNote;
+    if (args.shipping !== undefined) next.shipping = args.shipping;
+    const saved = await this.prisma.channelIntegration.update({
+      where: { id: row.id },
+      data: { config: withDescriptionStore(row.config, next) as never },
+      select: { config: true },
+    });
+    return { ok: true as const, descriptionStore: descriptionStore(saved.config) };
   }
 
   /**
@@ -263,6 +290,8 @@ export class EbayListingService {
       integrationId?: string; categoryId?: string; categoryName?: string | null; aspects?: Record<string, string>;
       condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null; companyIds?: string[];
       merchantLocationKey?: string | null; fulfillmentPolicyId?: string | null; paymentPolicyId?: string | null; returnPolicyId?: string | null;
+      /** The description's per-product parts, as edited in section 3. Replaces what is stored. */
+      descriptionExtras?: unknown;
     },
   ) {
     const row = await this.ebayIntegration(args.integrationId, args.companyIds);
@@ -298,6 +327,7 @@ export class EbayListingService {
       ...(args.fulfillmentPolicyId !== undefined ? { fulfillmentPolicyId: args.fulfillmentPolicyId } : {}),
       ...(args.paymentPolicyId !== undefined ? { paymentPolicyId: args.paymentPolicyId } : {}),
       ...(args.returnPolicyId !== undefined ? { returnPolicyId: args.returnPolicyId } : {}),
+      ...(args.descriptionExtras !== undefined ? { descriptionExtras: normaliseExtras(args.descriptionExtras) as never } : {}),
     };
     const saved = existing
       ? await this.prisma.productChannelPlan.update({ where: { id: existing.id }, data })
@@ -937,6 +967,13 @@ export class EbayListingService {
     productId: string,
     args: {
       companyIds: string[]; userId?: string; title?: string | null; intro?: string | null; features?: string[]; replaceExisting?: boolean;
+      /** The description's other per-product parts. Stored on the eBay plan, not the product. */
+      extras?: {
+        series?: string | null; inTheBox?: string | null; care?: string | null;
+        faq?: { q: string; a: string }[];
+        glance?: { aspect: string; label: string; value: string }[];
+        specGroups?: Record<string, string>;
+      };
     },
   ) {
     const product = await this.prisma.product.findFirst({
@@ -952,14 +989,29 @@ export class EbayListingService {
     const title = args.title?.replace(/\s+/g, ' ').trim() ?? '';
     const intro = args.intro?.trim() ?? '';
     const features = (args.features ?? []).map((f) => f.trim()).filter(Boolean);
-    if (!title && !intro && features.length === 0) {
-      throw new BadRequestException('Nothing to write: send a title, a description, feature lines, or any of them.');
+    const x = args.extras ?? {};
+    const hasExtras = !!(x.series?.trim() || x.inTheBox?.trim() || x.care?.trim() || x.faq?.length || x.glance?.length
+      || (x.specGroups && Object.keys(x.specGroups).length));
+    if (!title && !intro && features.length === 0 && !hasExtras) {
+      throw new BadRequestException('Nothing to write: send a title, a description, feature lines, or the other description parts.');
     }
 
-    const problems = checkBuyerText(
-      { title, intro, features },
-      [product.mainSku, ...product.aliases.map((a) => a.skuValue)],
-    );
+    const forbidden = [product.mainSku, ...product.aliases.map((a) => a.skuValue)];
+    const problems = checkBuyerText({ title, intro, features }, forbidden);
+    /**
+     * Every other part a buyer reads is held to the same rules — no internal SKU, contact details,
+     * links or markup. Checked one piece at a time so the reply names the piece to rewrite.
+     */
+    const pieces: [string, string | null | undefined][] = [
+      ['series', x.series], ['in the box', x.inTheBox], ['care', x.care],
+      ...(x.faq ?? []).flatMap((f, i): [string, string][] => [[`question ${i + 1}`, f.q], [`answer ${i + 1}`, f.a]]),
+      ...(x.glance ?? []).flatMap((g, i): [string, string][] => [[`at-a-glance ${i + 1} label`, g.label], [`at-a-glance ${i + 1} value`, g.value]]),
+      ...Object.values(x.specGroups ?? {}).map((g, i): [string, string] => [`group name ${i + 1}`, g]),
+    ];
+    for (const [where, text] of pieces) {
+      if (!text?.trim()) continue;
+      for (const p of checkBuyerText({ intro: text }, forbidden)) problems.push({ where, problem: p.problem });
+    }
     if (problems.length > 0) {
       throw new BadRequestException(
         `That text cannot go on a listing — ${problems.map((p) => `${p.where} ${p.problem}`).join('; ')}`,
@@ -1024,11 +1076,63 @@ export class EbayListingService {
       this.logger.log(`Content written for ${product.mainSku}: ${Object.keys(data).filter((k) => k !== 'updatedById').join(', ')}`);
     }
 
+    const wroteExtras: string[] = [];
+    const notShown: string[] = [];
+    if (hasExtras) {
+      const row = await this.ebayIntegration(undefined, args.companyIds);
+      const plan = await this.prisma.productChannelPlan.findFirst({
+        where: { productId, ...this.planKey(row) },
+        select: { id: true, aspects: true, descriptionExtras: true },
+      });
+      if (!plan) {
+        skipped.push('the other description parts (this product has no eBay category yet, so there is nowhere to keep them)');
+      } else {
+        const current = normaliseExtras(plan.descriptionExtras);
+        const incoming = normaliseExtras({
+          series: x.series, inTheBox: x.inTheBox, care: x.care, faq: x.faq, glance: x.glance, groups: x.specGroups,
+        });
+        const next: DescriptionExtras = { ...current, groups: { ...current.groups } };
+        // Same courtesy as the words above: something already there stays unless replacing was asked for.
+        const take = <K extends 'series' | 'inTheBox' | 'care' | 'faq' | 'glance'>(key: K, label: string) => {
+          const value = incoming[key];
+          const present = Array.isArray(value) ? value.length > 0 : !!value;
+          if (!present) return;
+          const had = Array.isArray(current[key]) ? (current[key] as unknown[]).length > 0 : !!current[key];
+          if (had && !args.replaceExisting) { skipped.push(`${label} (already written — ask for it to be replaced)`); return; }
+          (next as any)[key] = value;
+          wroteExtras.push(label);
+        };
+        take('series', 'series');
+        take('inTheBox', 'in the box');
+        take('care', 'care');
+        take('faq', 'questions');
+        take('glance', 'at-a-glance');
+        if (Object.keys(incoming.groups).length) {
+          // Groups merge: a group a person set stays, unless replacing was asked for.
+          next.groups = args.replaceExisting ? incoming.groups : { ...incoming.groups, ...current.groups };
+          wroteExtras.push('spec groups');
+        }
+        if (wroteExtras.length) {
+          await this.prisma.productChannelPlan.update({ where: { id: plan.id }, data: { descriptionExtras: next as never } });
+          this.logger.log(`Description parts written for ${product.mainSku}: ${wroteExtras.join(', ')}`);
+        }
+        // Stored as sent, shown only while backed by a verified value — said now, so it can be fixed.
+        const verified = eligibleValues(normaliseAspects(plan.aspects));
+        const shown = new Set(resolveGlance(next.glance, verified).map((g) => `${g.label}|${g.value}`));
+        for (const g of next.glance) {
+          if (!shown.has(`${g.label}|${g.value}`)) {
+            notShown.push(`"${g.label}: ${g.value}" is not shown — "${g.aspect}" has no verified value containing it`);
+          }
+        }
+      }
+    }
+
     return {
       ok: true as const,
       sku: product.mainSku,
-      wrote: Object.keys(data).filter((k) => k !== 'updatedById'),
+      wrote: [...Object.keys(data).filter((k) => k !== 'updatedById'), ...wroteExtras],
       skipped,
+      ...(notShown.length ? { notShown } : {}),
     };
   }
 
@@ -1109,6 +1213,8 @@ export class EbayListingService {
     planned: Record<string, string>; facts: { brand: string | null; mpn: string | null };
     /** What THIS product overrides, so a form can show which answers are its own. */
     overrides: EbayListingDefaults;
+    /** The description's per-product parts as stored, for section 3 to edit. */
+    extras: DescriptionExtras;
   }> {
     const product = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
@@ -1132,8 +1238,11 @@ export class EbayListingService {
       select: {
         categoryRef: true, categoryName: true, aspects: true, condition: true, handlingTimeDays: true, offerPriceCents: true,
         merchantLocationKey: true, fulfillmentPolicyId: true, paymentPolicyId: true, returnPolicyId: true,
+        descriptionExtras: true,
       },
     });
+    const extras = normaliseExtras(plan?.descriptionExtras);
+    const store = descriptionStore(row.config);
     /**
      * Where an offer's location and policies come from: this product, else the channel's defaults.
      * They are the same for almost every listing, so they are answered once on the channel and only
@@ -1164,6 +1273,7 @@ export class EbayListingService {
       categoryName: plan?.categoryName ?? null,
       planned,
       facts: { brand: product.brand?.name ?? null, mpn: product.manufacturerSku ?? null },
+      extras,
       overrides: {
         merchantLocationKey: plan?.merchantLocationKey ?? null,
         fulfillmentPolicyId: plan?.fulfillmentPolicyId ?? null,
@@ -1183,6 +1293,15 @@ export class EbayListingService {
         descriptionHtml: renderEbayDescription({
           title: product.ebayTitle ?? product.title ?? '',
           brand: product.brand?.name ?? null,
+          mpn: product.manufacturerSku ?? null,
+          series: extras.series,
+          storeName: store.storeName,
+          conditionLabel: store.conditionLabel,
+          /**
+           * Only figures still backed by a verified item specific: a value held back for a person,
+           * or changed since research, drops out of the strip on its own.
+           */
+          glance: resolveGlance(extras.glance, planned),
           /**
            * The full Description first. `shortDescription` is the two-sentence blurb under the price
            * on the B2B store; preferring it put that blurb on eBay in place of the real description
@@ -1191,11 +1310,17 @@ export class EbayListingService {
            */
           intro: htmlToPlainText(product.descriptionHtml) || htmlToPlainText(product.shortDescription),
           features: Array.isArray(product.keyFeatures) ? (product.keyFeatures as string[]) : [],
-          specs: [
-            ...(product.brand?.name ? [{ label: 'Brand', value: product.brand.name }] : []),
-            ...(product.manufacturerSku ? [{ label: 'MPN', value: product.manufacturerSku }] : []),
-            ...Object.entries(planned).map(([label, value]) => ({ label, value })),
-          ],
+          /**
+           * Built from `planned` — the answers that already passed identity checks and the
+           * two-source rule — so nothing unverified can appear in a table that reads as
+           * authoritative. The groups only arrange it.
+           */
+          specGroups: groupSpecs({ brand: product.brand?.name ?? null, mpn: product.manufacturerSku ?? null }, planned, extras.groups),
+          inTheBox: extras.inTheBox,
+          conditionNote: store.conditionNote,
+          care: extras.care,
+          shipping: store.shipping,
+          faq: extras.faq,
         }) || null,
         keyFeatures: Array.isArray(product.keyFeatures) ? (product.keyFeatures as string[]) : [],
         imageUrls: product.media.map((m) => m.url).filter(Boolean),
@@ -1241,7 +1366,7 @@ export class EbayListingService {
    * one thing a preview must never do.
    */
   async preview(productId: string, args: PublishArgs) {
-    const { input, productSku, integrationId, planned, facts, categoryName, overrides } = await this.buildInput(productId, args);
+    const { input, productSku, integrationId, planned, facts, categoryName, overrides, extras } = await this.buildInput(productId, args);
     const missing = missingForPublish(input);
 
     if (input.categoryId) {
@@ -1276,6 +1401,9 @@ export class EbayListingService {
         quantity: input.quantity ?? null,
       },
       overrides,
+      /** The description's per-product parts, and the verified item specifics they may draw on. */
+      descriptionExtras: extras,
+      verifiedSpecifics: planned,
       inventoryItem: buildInventoryItem(input),
       offer: buildOffer(input),
     };

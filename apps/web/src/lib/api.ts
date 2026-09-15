@@ -2274,6 +2274,25 @@ export interface EbayPrerequisites {
   defaults: EbayListingDefaults;
   /** The sales channel this eBay account sells as; null when the integration has none set. */
   salesChannelId: string | null;
+  /** The store's words in every eBay description. */
+  descriptionStore: EbayDescriptionStore;
+}
+export interface EbayDescriptionStore {
+  storeName: string | null;
+  conditionLabel: string | null;
+  conditionNote: string | null;
+  shipping: { label: string; value: string }[];
+}
+/** The eBay description's per-product parts, kept on the product's eBay plan. */
+export interface EbayDescriptionExtras {
+  series: string | null;
+  inTheBox: string | null;
+  care: string | null;
+  faq: { q: string; a: string }[];
+  /** At-a-glance figures, each tied to the item specific it was taken from. */
+  glance: { aspect: string; label: string; value: string }[];
+  /** Item specific name → group heading; anything unnamed goes under General. */
+  groups: Record<string, string>;
 }
 export interface EbayListingDefaults {
   merchantLocationKey: string | null;
@@ -2298,11 +2317,17 @@ export interface EbayPreview {
   listing: EbayListingDefaults & { quantity: number | null };
   /** Only what THIS product overrides; null in a field means "whatever the channel says". */
   overrides: EbayListingDefaults;
+  descriptionExtras: EbayDescriptionExtras;
+  /** Item specifics that passed maSquare's checks — the only values at-a-glance figures may use. */
+  verifiedSpecifics: Record<string, string>;
 }
 
 export const ebayListingApi = {
   prerequisites: () => api.get<EbayPrerequisites>('/listing/ebay/prerequisites').then((r) => r.data),
   /** Choose the location and policies every eBay listing uses. Writes here, not to eBay. */
+  /** The store's words in every eBay description. Writes here, not to eBay. */
+  saveDescriptionStore: (body: Partial<EbayDescriptionStore>) =>
+    api.post<{ ok: true; descriptionStore: EbayDescriptionStore }>('/listing/ebay/description-store', body).then((r) => r.data),
   saveDefaults: (body: Partial<EbayListingDefaults>) =>
     api.post<{ ok: true; defaults: EbayListingDefaults }>('/listing/ebay/defaults', body).then((r) => r.data),
   categorySuggestions: (productId: string, query?: string) =>
@@ -2316,6 +2341,7 @@ export const ebayListingApi = {
   savePlan: (productId: string, body: {
     categoryId?: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string;
     handlingTimeDays?: number | null; offerPriceCents?: number | null;
+    descriptionExtras?: EbayDescriptionExtras;
   } & Partial<EbayListingDefaults>) =>
     api.post<{ ok: true; planId: string; categoryId: string | null }>(
       `/listing/ebay/products/${productId}/plan`, { productId, ...body },

@@ -67,6 +67,18 @@ export const INSTRUCTIONS = [
   '   decoration, never our internal SKU. Shape: Brand Model What-it-is Colour Material.',
   '   The words are written by you, but every fact in them must come from the pages — the same rule as',
   '   the specifics. If a page did not say it, it does not go in the title or the paragraphs.',
+  '   THE OTHER DESCRIPTION PARTS, in the same call, each only where a page supports it (leave out the rest):',
+  '   - series: the product line as the manufacturer names it, e.g. "Casio Vintage series".',
+  '   - inTheBox: what the box contains, as a page lists it.',
+  '   - care: short care or use instructions a page gives.',
+  '   - faq: up to 6 questions a buyer would ask, each answered ONLY from what a page states.',
+  '   - specGroups: a short heading for each item specific you reported, e.g. {"Movement": "Movement &',
+  '     display", "Case Size": "Case & bracelet"}. Brand and MPN always go under General; use General for',
+  '     anything that fits nowhere else. At most 6 headings.',
+  '   - glance: 3 or 4 figures a buyer takes in at a glance, e.g. {aspect: "Case Size", label: "Case width",',
+  '     value: "33.2 mm"}. Call get_product_for_gather again AFTER submit_gather_findings and take them only',
+  '     from fields whose current value is not heldBackForAPerson. The value must be that current value or a',
+  '     piece of it. maSquare hides any figure a verified value does not contain, and says so in the reply.',
   '5. Tell the user briefly what was usable, what was held back for them to check, and what is still',
   '   missing. Held-back values are confirmed by a person inside maSquare, not by you.',
   '',
@@ -198,7 +210,8 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
       title: 'Write the eBay title and description',
       description:
         'Write the buyer-facing words for a product: the eBay title, an introduction and short feature lines, as '
-        + 'PLAIN PROSE. Send all three. '
+        + 'PLAIN PROSE. Send all three, plus the other description parts a page supports: series, what is in the '
+        + 'box, care, buyer questions, a group heading per item specific, and 3-4 at-a-glance figures. '
         + 'Never send HTML — maSquare renders the eBay description itself from one house template, and adds the '
         + 'specification table from values that already passed its checks, so every listing looks the same. '
         + 'The text must not contain our internal SKU, an email address, a phone number or a web address; eBay '
@@ -212,6 +225,20 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
           .describe('Two or three short paragraphs about what the product is and who it suits. Blank lines separate paragraphs.'),
         features: z.array(z.string().max(240)).max(12).optional()
           .describe('Short selling points, one per line. No sentences longer than a line.'),
+        series: z.string().max(120).nullish()
+          .describe('The product line as the manufacturer names it, e.g. "Casio Vintage series". Only from a page.'),
+        inTheBox: z.string().max(400).nullish().describe('What the box contains, as a page lists it.'),
+        care: z.string().max(400).nullish().describe('Short care or use instructions a page gives.'),
+        faq: z.array(z.object({ q: z.string().max(200), a: z.string().max(600) })).max(6).optional()
+          .describe('Questions a buyer would ask, each answered only from what a page states.'),
+        glance: z.array(z.object({
+          aspect: z.string().max(80).describe('The item specific the figure comes from, named exactly as in get_product_for_gather.'),
+          label: z.string().max(40).describe('Short caption, e.g. "Case width".'),
+          value: z.string().max(24).describe('The figure: the verified value or a piece of it, e.g. "33.2 mm".'),
+        })).max(4).optional()
+          .describe('3 or 4 at-a-glance figures, taken only from item specifics whose current value is not held back.'),
+        specGroups: z.record(z.string().max(80), z.string().max(40)).optional()
+          .describe('Item specific name to a short group heading. Brand and MPN go under General.'),
         replaceExisting: z.boolean().optional()
           .describe('Only true when the user has asked for existing words to be rewritten.'),
         company: z.string().max(200).optional()
@@ -219,7 +246,7 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ sku, title, intro, features, replaceExisting, company }) => run(async () => {
+    async ({ sku, title, intro, features, series, inTheBox, care, faq, glance, specGroups, replaceExisting, company }) => run(async () => {
       const companyId = await resolveCompany(deps, actor, company);
       const productId = await requireProduct(deps, sku);
       // Resolved for its side effect: it refuses a product this user's companies cannot reach.
@@ -230,6 +257,7 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
         title: title ?? null,
         intro: intro ?? null,
         features,
+        extras: { series, inTheBox, care, faq, glance, specGroups },
         replaceExisting,
       });
     }),
@@ -258,8 +286,10 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
             '',
             'For each product: call get_product_for_gather. If it is not ready, note why and move on.',
             'Otherwise search the web following the maSquare connector rules, then call',
-            'submit_gather_findings once with every page and value. Then call submit_product_content with the',
-            'eBay title, the description paragraphs and the feature lines — all three, from the same pages.',
+            'submit_gather_findings once with every page and value. Then call get_product_for_gather again and',
+            'submit_product_content with the eBay title, the description paragraphs and the feature lines — all',
+            'three, from the same pages — plus the series, in the box, care, questions, spec groups and at-a-glance',
+            'figures the connector rules describe.',
             '',
             'When all are done, give me a short table: SKU, usable, held back, pages rejected, still missing,',
             'and whether the title, description and features were written or skipped (and why).',
@@ -327,6 +357,12 @@ interface ContentArgs extends CompanyArg {
   title?: string | null;
   intro?: string | null;
   features?: string[];
+  series?: string | null;
+  inTheBox?: string | null;
+  care?: string | null;
+  faq?: { q: string; a: string }[];
+  glance?: { aspect: string; label: string; value: string }[];
+  specGroups?: Record<string, string>;
   replaceExisting?: boolean;
 }
 interface SubmitArgs extends CompanyArg {

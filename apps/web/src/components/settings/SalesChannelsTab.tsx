@@ -13,6 +13,7 @@ import { ChannelChip, chipForCountry, NEUTRAL_CHIP } from '../common/ChannelChip
 import { AddButton, RefTable, SectionHeader } from './shared';
 import { SalesChannelImportModal } from './SalesChannelImportModal';
 import { EbayListingDefaultsSection } from './EbayListingDefaultsSection';
+import { EbayDescriptionStoreSection } from './EbayDescriptionStoreSection';
 import { Link } from 'react-router-dom';
 import { salesChannelAsChannel, sortByChannelCanonical } from '../../lib/channelGroups';
 
@@ -359,6 +360,7 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
           * button below — and why they appear on one channel only.
           */}
         {isEbayAccountChannel && <EbayListingDefaultsSection />}
+        {isEbayAccountChannel && <EbayDescriptionStoreSection />}
         <div><label className="label">Email</label><input className="input" value={form.email} onChange={(e) => set({ email: e.target.value })} /></div>
         <div><label className="label">Website</label><input className="input" value={form.website} onChange={(e) => set({ website: e.target.value })} /></div>
         <div className="col-span-2"><label className="label">Contact name</label><input className="input" value={form.contactName} onChange={(e) => set({ contactName: e.target.value })} /></div>

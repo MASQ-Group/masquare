@@ -35,6 +35,21 @@ export class EbayListingController {
    * `@WriteCompany` because it changes one company's channel, and a user who can see two must say
    * which one they mean.
    */
+  /**
+   * The store's words in every eBay description: its name, condition wording, shipping and returns
+   * lines. Writes to our database only; `@WriteCompany` for the same reason as the defaults.
+   */
+  @Post('description-store')
+  saveDescriptionStore(
+    @WriteCompany() companyId: string,
+    @Body() dto: {
+      integrationId?: string; storeName?: string | null; conditionLabel?: string | null; conditionNote?: string | null;
+      shipping?: { label: string; value: string }[];
+    },
+  ) {
+    return this.svc.saveDescriptionStore({ ...dto, companyIds: [companyId] });
+  }
+
   @Post('defaults')
   saveListingDefaults(
     @WriteCompany() companyId: string,
@@ -99,6 +114,7 @@ export class EbayListingController {
       productId: string; integrationId?: string; categoryId?: string; categoryName?: string | null;
       aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null;
       merchantLocationKey?: string | null; fulfillmentPolicyId?: string | null; paymentPolicyId?: string | null; returnPolicyId?: string | null;
+      descriptionExtras?: unknown;
     },
   ) {
     return this.svc.savePlan(dto.productId, { ...dto, companyIds: [companyId] });

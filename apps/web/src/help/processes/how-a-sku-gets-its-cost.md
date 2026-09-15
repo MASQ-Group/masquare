@@ -7,7 +7,7 @@ covers:
   - apps/api/src/purchase-orders/costing.service.ts
   - apps/api/src/sales-transactions/sales-transactions.service.ts
   - apps/api/src/fba-shipments/fba-shipments.service.ts
-reviewed: 2026-09-12
+reviewed: 2026-09-15
 ---
 
 # How a SKU gets its cost
