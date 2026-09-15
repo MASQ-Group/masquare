@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildInventoryItem, buildOffer, ebaySafeSku, missingForPublish, type EbayOfferInput } from './offer-payload';
+import { buildInventoryItem, buildOffer, ebaySafeSku, itemDescription, missingForPublish, type EbayOfferInput } from './offer-payload';
 
 const base: EbayOfferInput = {
   sku: '3G08437824100',
@@ -131,5 +131,46 @@ describe('required item specifics', () => {
     const aspects = buildInventoryItem({ ...base, mpn: null }).product.aspects as Record<string, string[]>;
     expect(aspects.Model).toBeUndefined();
     expect(aspects.MPN).toBeUndefined();
+  });
+});
+
+describe('the description in both payloads', () => {
+  /** The refusal: "Invalid value for description. The length should be between 1 and 4000 characters." */
+  it('keeps the inventory item inside the 4000 characters eBay allows', () => {
+    const long = `<p>${'A well made watch. '.repeat(400)}</p>`;
+    const item = buildInventoryItem({ ...base, descriptionHtml: long });
+    expect(item.product.description.length).toBeLessThanOrEqual(4000);
+    expect(item.product.description.endsWith('…')).toBe(true);
+    // Cut between words, not through one.
+    expect(item.product.description).not.toMatch(/A well made watc…$/);
+  });
+
+  it('leaves a short description exactly as it reads, without markup', () => {
+    expect(buildInventoryItem(base).product.description).toBe('A car stereo.');
+  });
+
+  /** Buyers read the offer's description, so the house design must survive in full. */
+  it('sends the designed html on the offer, whether or not a handling time is set', () => {
+    const html = `<div style="font:14px Inter">${'<p>Words.</p>'.repeat(500)}</div>`;
+    expect(buildOffer({ ...base, descriptionHtml: html }).listingDescription).toBe(html);
+    expect(buildOffer({ ...base, descriptionHtml: html, handlingTimeDays: 2 }).listingDescription).toBe(html);
+    expect(buildInventoryItem({ ...base, descriptionHtml: html }).product.description.length).toBeLessThanOrEqual(4000);
+  });
+
+  it('sends no listing description rather than an empty one', () => {
+    expect(buildOffer({ ...base, descriptionHtml: null })).not.toHaveProperty('listingDescription');
+    expect(buildOffer({ ...base, descriptionHtml: '   ' })).not.toHaveProperty('listingDescription');
+  });
+});
+
+describe('itemDescription', () => {
+  it('reads as text, not markup', () => {
+    expect(itemDescription('<p>Water resistant to 50&nbsp;m</p><ul><li>Alarm</li></ul>'))
+      .toBe('Water resistant to 50 m\n\nAlarm');
+  });
+
+  it('is empty when there is nothing to say', () => {
+    expect(itemDescription(null)).toBe('');
+    expect(itemDescription('<p></p>')).toBe('');
   });
 });
