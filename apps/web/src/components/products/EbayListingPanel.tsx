@@ -4,6 +4,7 @@ import { AlertTriangle, Check, Loader2, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { ebayListingApi } from '../../lib/api';
 import { EbayPricingSection } from './EbayPricingSection';
+import { EbayListingChoices } from './EbayListingChoices';
 
 /**
  * Creating the eBay listing for one product.
@@ -98,6 +99,13 @@ export function EbayListingPanel({ productId }: { productId: string }) {
         * what it sells for, how fast it ships, and the publish.
         */}
       <EbayPricingSection productId={productId} />
+
+      {/*
+        * Where it ships from and which policies it carries. Shown even though they are the channel's
+        * answers rather than this product's: a listing published from the wrong address or on the
+        * wrong returns terms is a real cost, and nobody checks what a screen never shows.
+        */}
+      <EbayListingChoices productId={productId} preview={preview.data} pre={pre.data} />
 
       {/* ── the only step a buyer can see ── */}
       <div className="flex items-center gap-2 border-t border-n-200 pt-3">

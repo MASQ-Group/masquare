@@ -1167,6 +1167,14 @@ model ProductChannelPlan {
   /// revenue, so it is never inherited from them and never set by automation.
   boostPct         Decimal @default(0) @map("boost_pct") @db.Decimal(5, 2)
 
+  /// eBay's account-wide choices, when THIS product must differ from the channel's defaults.
+  /// Null is the normal case and means "whatever the channel is set to" — so changing a policy on
+  /// the channel changes it for every product that never needed its own, which is the point.
+  merchantLocationKey String? @map("merchant_location_key")
+  fulfillmentPolicyId String? @map("fulfillment_policy_id")
+  paymentPolicyId     String? @map("payment_policy_id")
+  returnPolicyId      String? @map("return_policy_id")
+
   /// The seller SKU this listing will be created under, when it must differ from the product's own.
   /// Amazon treats a seller SKU as the listing's identity across the whole account and refuses to
   /// mint one that already exists elsewhere (error 100398), so a product already sold under its
