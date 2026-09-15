@@ -2270,6 +2270,14 @@ export interface EbayPrerequisites {
   returnPolicies: { id: string; name: string | null }[];
   locations: { key: string; status: string | null; city: string | null; country: string | null }[];
   blockers: string[];
+  /** The channel's standing answers, used by every listing that does not override them. */
+  defaults: EbayListingDefaults;
+}
+export interface EbayListingDefaults {
+  merchantLocationKey: string | null;
+  fulfillmentPolicyId: string | null;
+  paymentPolicyId: string | null;
+  returnPolicyId: string | null;
 }
 export interface EbayPreview {
   productSku: string;
@@ -2284,10 +2292,17 @@ export interface EbayPreview {
    */
   inventoryItem: { product?: { description?: string } } | null;
   offer: unknown;
+  /** What this listing would carry: the channel's defaults, or this product's own answers. */
+  listing: EbayListingDefaults & { quantity: number | null };
+  /** Only what THIS product overrides; null in a field means "whatever the channel says". */
+  overrides: EbayListingDefaults;
 }
 
 export const ebayListingApi = {
   prerequisites: () => api.get<EbayPrerequisites>('/listing/ebay/prerequisites').then((r) => r.data),
+  /** Choose the location and policies every eBay listing uses. Writes here, not to eBay. */
+  saveDefaults: (body: Partial<EbayListingDefaults>) =>
+    api.post<{ ok: true; defaults: EbayListingDefaults }>('/listing/ebay/defaults', body).then((r) => r.data),
   categorySuggestions: (productId: string, query?: string) =>
     api.post<{ searchedFor: string; ok: boolean; message?: string; suggestions: EbayCategorySuggestion[] }>(
       `/listing/ebay/products/${productId}/category-suggestions`, { productId, query },
@@ -2296,7 +2311,10 @@ export const ebayListingApi = {
     api.post<{ categoryId: string; isSaved: boolean; aspects: EbayResolvedAspect[]; missing: string[] }>(
       `/listing/ebay/products/${productId}/category-aspects`, { productId, categoryId },
     ).then((r) => r.data),
-  savePlan: (productId: string, body: { categoryId?: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null }) =>
+  savePlan: (productId: string, body: {
+    categoryId?: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string;
+    handlingTimeDays?: number | null; offerPriceCents?: number | null;
+  } & Partial<EbayListingDefaults>) =>
     api.post<{ ok: true; planId: string; categoryId: string | null }>(
       `/listing/ebay/products/${productId}/plan`, { productId, ...body },
     ).then((r) => r.data),

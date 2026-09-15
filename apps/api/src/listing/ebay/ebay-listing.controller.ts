@@ -29,6 +29,24 @@ export class EbayListingController {
   }
 
   /**
+   * Choose the location and policies every listing on this channel uses.
+   *
+   * Writes to our database, not to eBay: it records WHICH of eBay's records were chosen. Behind
+   * `@WriteCompany` because it changes one company's channel, and a user who can see two must say
+   * which one they mean.
+   */
+  @Post('defaults')
+  saveListingDefaults(
+    @WriteCompany() companyId: string,
+    @Body() dto: {
+      integrationId?: string;
+      merchantLocationKey?: string | null; fulfillmentPolicyId?: string | null; paymentPolicyId?: string | null; returnPolicyId?: string | null;
+    },
+  ) {
+    return this.svc.saveListingDefaults({ ...dto, companyIds: [companyId] });
+  }
+
+  /**
    * Create the merchant location every offer needs.
    *
    * Also the safest check that the token carries the write scope: it creates an address record, so
@@ -77,7 +95,11 @@ export class EbayListingController {
   @Post('products/:productId/plan')
   savePlan(
     @WriteCompany() companyId: string,
-    @Body() dto: { productId: string; integrationId?: string; categoryId?: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null },
+    @Body() dto: {
+      productId: string; integrationId?: string; categoryId?: string; categoryName?: string | null;
+      aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null;
+      merchantLocationKey?: string | null; fulfillmentPolicyId?: string | null; paymentPolicyId?: string | null; returnPolicyId?: string | null;
+    },
   ) {
     return this.svc.savePlan(dto.productId, { ...dto, companyIds: [companyId] });
   }

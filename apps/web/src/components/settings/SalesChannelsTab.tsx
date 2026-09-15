@@ -12,6 +12,7 @@ import { CountryTag } from '../common/Flag';
 import { ChannelChip, chipForCountry, NEUTRAL_CHIP } from '../common/ChannelChip';
 import { AddButton, RefTable, SectionHeader } from './shared';
 import { SalesChannelImportModal } from './SalesChannelImportModal';
+import { EbayListingDefaultsSection } from './EbayListingDefaultsSection';
 import { Link } from 'react-router-dom';
 import { salesChannelAsChannel, sortByChannelCanonical } from '../../lib/channelGroups';
 
@@ -115,6 +116,14 @@ export function SalesChannelsTab() {
         onEdit={setEditing}
         onDelete={(r) => confirm(`Remove ${r.name}?`) && del.mutate(r.id)}
       />
+
+      {/*
+        * Filed here, under the channel it belongs to, because that is where people look for "how do
+        * we list on eBay". It is the eBay account's own settings — the location and policies every
+        * listing carries — not reference data about the channel, so it is a section of its own
+        * rather than columns in the table above.
+        */}
+      <EbayListingDefaultsSection />
       {editing !== undefined && (
         <SalesChannelModal channel={editing} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); invalidate(); }} />
       )}

@@ -15,6 +15,7 @@ import { screenResearch, type ResearchedFinding, type ResearchedSource } from '.
 import { htmlToPlainText, proseToHtml, renderEbayDescription } from './description-template';
 import { checkBuyerText } from '../../gather/buyer-text';
 import { matchCompetitors } from './competitor-match';
+import { ebayListingDefaults, withEbayListingDefaults, type EbayListingDefaults } from './ebay-listing-defaults';
 import { profitAt, suggestPrice } from './ebay-pricing';
 import { fitFeeModel, type FeeModel, type SettledOrder } from './ebay-fee-model';
 import { PricingFxService } from '../../pricing/fx.service';
@@ -101,6 +102,8 @@ export class EbayListingService {
       integrationId: row.id,
       liveWritesEnabled: await this.liveWritesEnabled(),
       ...pre,
+      /** What every listing uses unless a product says otherwise. */
+      defaults: ebayListingDefaults(row.config),
       // Stated rather than left for the caller to work out from four empty arrays.
       blockers: [
         ...(pre.locations.length === 0 ? ['No merchant location — every offer needs one'] : []),
@@ -110,6 +113,35 @@ export class EbayListingService {
         ...pre.errors,
       ],
     };
+  }
+
+  /**
+   * Choose the location and policies every listing on this channel uses.
+   *
+   * Account-wide on purpose: they are the same for almost every listing, and the product form only
+   * has to differ where a product genuinely does. Stores which of eBay's records were picked, not
+   * copies of them — eBay remains the owner of what a policy actually says.
+   */
+  async saveListingDefaults(
+    args: {
+      integrationId?: string; companyIds?: string[];
+      merchantLocationKey?: string | null; fulfillmentPolicyId?: string | null; paymentPolicyId?: string | null; returnPolicyId?: string | null;
+    },
+  ): Promise<{ ok: true; defaults: EbayListingDefaults }> {
+    const row = await this.ebayIntegration(args.integrationId, args.companyIds);
+    const config = withEbayListingDefaults(row.config, {
+      ...(args.merchantLocationKey !== undefined ? { merchantLocationKey: args.merchantLocationKey } : {}),
+      ...(args.fulfillmentPolicyId !== undefined ? { fulfillmentPolicyId: args.fulfillmentPolicyId } : {}),
+      ...(args.paymentPolicyId !== undefined ? { paymentPolicyId: args.paymentPolicyId } : {}),
+      ...(args.returnPolicyId !== undefined ? { returnPolicyId: args.returnPolicyId } : {}),
+    });
+    const saved = await this.prisma.channelIntegration.update({
+      where: { id: row.id },
+      data: { config: config as never },
+      select: { config: true },
+    });
+    this.logger.log(`eBay listing defaults saved for integration ${row.id}`);
+    return { ok: true as const, defaults: ebayListingDefaults(saved.config) };
   }
 
   /**
@@ -222,7 +254,11 @@ export class EbayListingService {
    */
   async savePlan(
     productId: string,
-    args: { integrationId?: string; categoryId?: string; categoryName?: string | null; aspects?: Record<string, string>; condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null; companyIds?: string[] },
+    args: {
+      integrationId?: string; categoryId?: string; categoryName?: string | null; aspects?: Record<string, string>;
+      condition?: string; handlingTimeDays?: number | null; offerPriceCents?: number | null; companyIds?: string[];
+      merchantLocationKey?: string | null; fulfillmentPolicyId?: string | null; paymentPolicyId?: string | null; returnPolicyId?: string | null;
+    },
   ) {
     const row = await this.ebayIntegration(args.integrationId, args.companyIds);
     const key = this.planKey(row);
@@ -249,6 +285,14 @@ export class EbayListingService {
       ...(args.condition ? { condition: args.condition } : {}),
       ...(args.handlingTimeDays !== undefined ? { handlingTimeDays: args.handlingTimeDays } : {}),
       ...(args.offerPriceCents !== undefined ? { offerPriceCents: args.offerPriceCents } : {}),
+      /**
+       * Written only when sent, and null is a real answer meaning "go back to the channel's
+       * default" — which is why these use `!== undefined` rather than truthiness.
+       */
+      ...(args.merchantLocationKey !== undefined ? { merchantLocationKey: args.merchantLocationKey } : {}),
+      ...(args.fulfillmentPolicyId !== undefined ? { fulfillmentPolicyId: args.fulfillmentPolicyId } : {}),
+      ...(args.paymentPolicyId !== undefined ? { paymentPolicyId: args.paymentPolicyId } : {}),
+      ...(args.returnPolicyId !== undefined ? { returnPolicyId: args.returnPolicyId } : {}),
     };
     const saved = existing
       ? await this.prisma.productChannelPlan.update({ where: { id: existing.id }, data })
@@ -1058,6 +1102,8 @@ export class EbayListingService {
   private async buildInput(productId: string, args: PublishArgs): Promise<{
     input: EbayOfferInput; productSku: string; integrationId: string; categoryName: string | null;
     planned: Record<string, string>; facts: { brand: string | null; mpn: string | null };
+    /** What THIS product overrides, so a form can show which answers are its own. */
+    overrides: EbayListingDefaults;
   }> {
     const product = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
@@ -1078,7 +1124,26 @@ export class EbayListingService {
     const row = await this.ebayIntegration(args.integrationId);
     const plan = await this.prisma.productChannelPlan.findFirst({
       where: { productId, ...this.planKey(row) },
-      select: { categoryRef: true, categoryName: true, aspects: true, condition: true, handlingTimeDays: true, offerPriceCents: true },
+      select: {
+        categoryRef: true, categoryName: true, aspects: true, condition: true, handlingTimeDays: true, offerPriceCents: true,
+        merchantLocationKey: true, fulfillmentPolicyId: true, paymentPolicyId: true, returnPolicyId: true,
+      },
+    });
+    /**
+     * Where an offer's location and policies come from: this product, else the channel's defaults.
+     * They are the same for almost every listing, so they are answered once on the channel and only
+     * overridden where a product genuinely differs — otherwise every product would ask four
+     * questions whose answer never changes.
+     */
+    const defaults = ebayListingDefaults(row.config);
+    /**
+     * What we will actually offer for sale: the availability maSquare already broadcasts to every
+     * channel. Not typed in per listing, so the number eBay is given and the number the quantity
+     * push maintains are the same number and cannot drift apart.
+     */
+    const availability = await this.prisma.productAvailability.findUnique({
+      where: { productId },
+      select: { quantity: true },
     });
     /**
      * Read through the provenance rules, not straight out of the column. The column now holds
@@ -1094,6 +1159,12 @@ export class EbayListingService {
       categoryName: plan?.categoryName ?? null,
       planned,
       facts: { brand: product.brand?.name ?? null, mpn: product.manufacturerSku ?? null },
+      overrides: {
+        merchantLocationKey: plan?.merchantLocationKey ?? null,
+        fulfillmentPolicyId: plan?.fulfillmentPolicyId ?? null,
+        paymentPolicyId: plan?.paymentPolicyId ?? null,
+        returnPolicyId: plan?.returnPolicyId ?? null,
+      },
       input: {
         sku: ebaySafeSku(product.mainSku),
         // eBay's own title field, falling back to the catalogue title.
@@ -1127,15 +1198,15 @@ export class EbayListingService {
         mpn: product.manufacturerSku ?? null,
         ean: product.ean ?? null,
         condition: args.condition ?? ebayCondition(plan?.condition) ?? 'NEW',
-        quantity: args.quantity ?? null,
+        quantity: args.quantity ?? availability?.quantity ?? null,
         priceValue: args.priceValue ?? (plan?.offerPriceCents != null ? plan.offerPriceCents / 100 : null),
         currency: args.currency ?? 'GBP',
         marketplaceId: args.marketplaceId ?? 'EBAY_GB',
         categoryId: args.categoryId ?? plan?.categoryRef ?? null,
-        merchantLocationKey: args.merchantLocationKey ?? null,
-        fulfillmentPolicyId: args.fulfillmentPolicyId ?? null,
-        paymentPolicyId: args.paymentPolicyId ?? null,
-        returnPolicyId: args.returnPolicyId ?? null,
+        merchantLocationKey: args.merchantLocationKey ?? plan?.merchantLocationKey ?? defaults.merchantLocationKey,
+        fulfillmentPolicyId: args.fulfillmentPolicyId ?? plan?.fulfillmentPolicyId ?? defaults.fulfillmentPolicyId,
+        paymentPolicyId: args.paymentPolicyId ?? plan?.paymentPolicyId ?? defaults.paymentPolicyId,
+        returnPolicyId: args.returnPolicyId ?? plan?.returnPolicyId ?? defaults.returnPolicyId,
         handlingTimeDays: args.handlingTimeDays ?? plan?.handlingTimeDays ?? null,
         /**
          * The plan stores one value per aspect; the payload wants a list. Converted here rather than
@@ -1163,7 +1234,7 @@ export class EbayListingService {
    * one thing a preview must never do.
    */
   async preview(productId: string, args: PublishArgs) {
-    const { input, productSku, integrationId, planned, facts, categoryName } = await this.buildInput(productId, args);
+    const { input, productSku, integrationId, planned, facts, categoryName, overrides } = await this.buildInput(productId, args);
     const missing = missingForPublish(input);
 
     if (input.categoryId) {
@@ -1185,6 +1256,19 @@ export class EbayListingService {
       categoryId: input.categoryId ?? null,
       categoryName,
       missing,
+      /**
+       * What this listing would actually carry, and which of it this product decided for itself.
+       * Shown rather than left implicit: four identifiers that "come from somewhere" are exactly
+       * the sort of thing nobody checks until a listing ships from the wrong address.
+       */
+      listing: {
+        merchantLocationKey: input.merchantLocationKey ?? null,
+        fulfillmentPolicyId: input.fulfillmentPolicyId ?? null,
+        paymentPolicyId: input.paymentPolicyId ?? null,
+        returnPolicyId: input.returnPolicyId ?? null,
+        quantity: input.quantity ?? null,
+      },
+      overrides,
       inventoryItem: buildInventoryItem(input),
       offer: buildOffer(input),
     };
