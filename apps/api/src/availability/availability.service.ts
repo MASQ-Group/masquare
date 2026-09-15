@@ -597,27 +597,10 @@ export class AvailabilityService {
      * honest about what it returns: what is actually stored.
      */
     /**
-     * Whether a hand-typed figure reaches the channels is a setting, and it is off by default.
-     *
-     * A number typed while working through a catalogue is half-finished, and broadcasting every
-     * intermediate value puts wrong quantities on live listings. Off, the edit is saved and a person
-     * pushes when their work is ready. On, the convenience is available to a team that would rather
-     * not remember. Either way SALES push immediately — an order is a fact about stock already gone.
-     *
-     * Read fresh rather than cached: the toggle is meant to be flipped mid-session, and a stale read
-     * would push after somebody had just turned it off.
+     * Saved, not pushed. Raising stock is a person setting the figure AND pressing Push to channels;
+     * the edit alone never reaches a marketplace. There used to be a setting that pushed every edit,
+     * which is a push nobody pressed.
      */
-    const settings = await this.prisma.platformSettings.findFirst({
-      select: { autoPushAvailabilityOnEdit: true },
-    });
-    if (settings?.autoPushAvailabilityOnEdit) {
-      try {
-        this.channelListings()?.schedulePush([productId], 'manual_set');
-      } catch (e: any) {
-        this.logger.error(`Could not queue a channel push for ${productId}: ${e?.message ?? e}`);
-      }
-    }
-
     return this.get(productId);
   }
 

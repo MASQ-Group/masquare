@@ -11,7 +11,6 @@ import { MissingFromAvailability } from '../components/availability/MissingFromA
 import { AddToAvailabilityModal } from '../components/availability/AddToAvailabilityModal';
 import { AvailabilityLedgerModal } from '../components/availability/AvailabilityLedgerModal';
 import { OutOfStepWithChannels } from '../components/availability/OutOfStepWithChannels';
-import { AutoPushToggle } from '../components/availability/AutoPushToggle';
 import { useAuth } from '../lib/auth';
 
 // The three ways a quantity can move: a person, a vendor file, or a sale. There is no Return —
@@ -110,8 +109,6 @@ export function AvailabilityPage() {
         onTabChange={(k) => setTab(k as 'in' | 'missing' | 'drift')}
         actions={
           <>
-            {/* Admin-only: it governs whether everyone else's edits reach live listings. */}
-            {tab === 'in' && user?.isAdmin && <AutoPushToggle />}
             {tab === 'in' && selected.size > 0 && (
               <button onClick={() => setSelected(new Set())} className="hbtn">Clear ({selected.size})</button>
             )}

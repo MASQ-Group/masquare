@@ -1,111 +1,38 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
 import { Cron } from '@nestjs/schedule';
-import { PrismaService } from '../prisma/prisma.service';
 import { AvailabilityService } from './availability.service';
-import type { ChannelListingsService } from '../channel-listings/channel-listings.service';
 
 /**
- * The safety net under the push queue.
+ * An hourly look at what the channels advertise against what we hold. It reports; it never pushes.
  *
- * The queue fixes the fault it can see: a scheduled push that a restart would have dropped. It
- * cannot fix the ones it never hears about — a push made before any of this existed, a listing
- * changed on the marketplace's own side, a rejection that exhausted its attempts, a sale whose
- * sell-through never ran because the setting was off at the time. All of those end the same way,
- * with a channel advertising a quantity we do not hold, and none of them leaves anything in a queue.
- *
- * So this compares the two numbers instead of trusting any record of intent, and re-queues what
- * disagrees. It goes through the SAME queue rather than pushing directly: one path to the
- * marketplaces, one place where attempts, ceilings and failures are recorded.
- *
- * ── Off until somebody turns it on ──────────────────────────────────────────────
- * `autoCorrectChannelQuantity` defaults false and the sweep only reports while it is. That is not
- * timidity: correcting means writing quantities to live listings on the platform's own judgement,
- * and a push that was confidently wrong is how roughly five thousand listings were emptied on 4
- * August. The worklist accumulates real findings first; enabling it afterwards is a decision made
- * with evidence rather than in advance of any.
+ * It used to re-queue whatever disagreed when a setting allowed it. That is the platform writing
+ * quantities to live listings on its own judgement, and under the business's rules a quantity
+ * reaches a channel only when a person presses Push to channels or an order lowers availability
+ * (order-availability-rules.ts). What it finds is on Availability → Out of step with channels.
  */
 @Injectable()
 export class ReconcileSweepService {
   private readonly logger = new Logger(ReconcileSweepService.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly availability: AvailabilityService,
-    private readonly moduleRef: ModuleRef,
-  ) {}
+  constructor(private readonly availability: AvailabilityService) {}
 
-  /**
-   * Resolved lazily by string token, with only a TYPE import of the class.
-   *
-   * Importing ChannelListingsModule here closes the cycle integrations -> sales-transactions ->
-   * channel-listings -> integrations. Nest does not fail the build for it; it fails at boot, with
-   * ChannelListingsModule's first import resolving to undefined. The sell-through reaches the same
-   * service the same way and for the same reason.
-   */
-  private listings(): ChannelListingsService {
-    return this.moduleRef.get<ChannelListingsService>('CHANNEL_LISTINGS_SERVICE', { strict: false });
-  }
-
-  /**
-   * Hourly, off the hour.
-   *
-   * Frequent enough that a dropped push is corrected within the hour rather than the day, and far
-   * enough from the daily channel sync (05:00) and the listing sweep (every five minutes) that they
-   * are not all reading the same tables at once.
-   */
+  /** Hourly, off the hour, away from the daily channel sync and the five-minute listing sweep. */
   @Cron('40 * * * *')
   async run() {
-    const settings = await this.prisma.platformSettings.findFirst({
-      select: { autoCorrectChannelQuantity: true, autoAdjustAvailabilityOnSale: true },
-    });
-
     /**
-     * If sales are not allowed to move availability, correcting toward it would be arguing from a
-     * figure the platform itself does not maintain. The comparison is still worth reporting; acting
-     * on it is not.
+     * Reports only. It used to be able to re-send quantities it judged wrong, and that is a push
+     * nobody asked for: a quantity reaches a channel only when a person presses Push, or when an
+     * order lowers availability (order-availability-rules.ts). What it finds is the Out of step
+     * worklist, where a person decides.
      */
-    const mayCorrect = !!settings?.autoCorrectChannelQuantity && !!settings?.autoAdjustAvailabilityOnSale;
-
-    // Company-wide by design: this is the platform reconciling itself, not a user reading a page.
     const drift = await this.availability.drift({ pageSize: 200 });
     if (drift.total === 0) {
       this.logger.log('Reconcile sweep: every channel agrees with what we hold.');
-      return { drifted: 0, queued: 0, withheld: 0, corrected: false };
+      return { drifted: 0 };
     }
-
-    if (!mayCorrect) {
-      const why = settings?.autoCorrectChannelQuantity
-        ? 'sales do not adjust availability, so there is no figure to correct toward'
-        : 'auto-correct is off';
-      this.logger.warn(
-        `Reconcile sweep: ${drift.total} product(s) and ${drift.channelCount} listing(s) are out of step — reporting only (${why}).`,
-      );
-      return { drifted: drift.total, queued: 0, withheld: 0, corrected: false };
-    }
-
-    /**
-     * Queued, not pushed. Everything that reaches a marketplace goes through one path, so the
-     * attempt ceiling and the failure record apply to a sweep correction exactly as they do to a
-     * sale's — otherwise a permanently rejected SKU would be retried hourly, for ever, invisibly.
-     */
-    /**
-     * A zero nobody established is never pushed automatically.
-     *
-     * A product ADDED to availability holds zero meaning "not yet counted". Correcting toward it
-     * would tell every marketplace the product is out of stock on the strength of something nobody
-     * ever said — and emptying live listings on an unestablished zero is exactly the 4 August
-     * incident. Those rows stay on the worklist, where a person can push them deliberately.
-     */
-    const safe = drift.items.filter((d) => !d.unestablishedZero);
-    const withheld = drift.items.length - safe.length;
-    const ids = safe.map((d) => d.productId);
-
-    if (ids.length) this.listings().schedulePush(ids, 'reconcile_sweep');
-    this.logger.log(
-      `Reconcile sweep: queued ${ids.length} product(s) of ${drift.total} out of step`
-      + `${withheld ? `, withheld ${withheld} whose zero was never counted` : ''}.`,
+    this.logger.warn(
+      `Reconcile sweep: ${drift.total} product(s) and ${drift.channelCount} listing(s) are out of step — see Availability → Out of step with channels.`,
     );
-    return { drifted: drift.total, queued: ids.length, withheld, corrected: true };
+    return { drifted: drift.total };
   }
 }

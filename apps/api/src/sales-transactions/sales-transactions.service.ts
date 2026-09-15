@@ -18,7 +18,7 @@ import type { ProgressSink } from '../jobs/jobs.service';
 import type { ChannelListingsService } from '../channel-listings/channel-listings.service';
 import type { AuthUser } from '../common/current-user.decorator';
 import { CreateSalesTransactionDto, SalesTransactionItemDto, UpdateSalesTransactionDto } from './dto/sales-transaction.dto';
-import { availabilityMoveReason } from './availability-move-reason';
+import { availabilityAfterSale, decideOrderLine, orderKey } from '../availability/order-availability-rules';
 import {
   ADDRESS_RETENTION_DAYS, PURGEABLE_FIELDS, channelMayWrite, isEmptyAddress, isPurgeDue,
   missingForLabel, normaliseAddress, retentionBasis, type AddressInput, type StoredAddress,
@@ -2373,13 +2373,19 @@ export class SalesTransactionsService {
   }
 
   /**
-   * Sell-through: move channel Availability to match the sale, then schedule one push per
-   * affected product so every channel is told the new figure. Runs after the sale is saved and
-   * never throws back into it — Availability is a convenience mirror, not part of the sale.
+   * Sell-through, by the business's three rules (availability/order-availability-rules.ts).
+   *
+   * The first time an order is seen carrying a product, decide ONCE what it does to availability:
+   * take the units if the SKU is in availability, otherwise nothing. Then push the new figure for
+   * every product it lowered. Called when an order is created or saved; re-saving an order already
+   * decided moves nothing. Never throws back into the sale.
+   *
+   * Deliberately NOT called on cancellation, deletion, withdrawal or a status change. Those used to
+   * give units back, which raised stock with nobody typing a number — stock goes up only by hand.
    */
-  private async applyAvailabilitySellThrough(txId: string, actorId?: string, opts: { forceRelease?: boolean } = {}) {
+  private async applyAvailabilitySellThrough(txId: string, actorId?: string) {
     try {
-      const affected = await this.reconcileSaleAvailability(txId, actorId, opts);
+      const affected = await this.decideOrderAvailability(txId, actorId);
       if (affected.length) this.channelListings().schedulePush(affected);
     } catch (e: any) {
       this.logger.error(`Availability sell-through failed for ${txId}: ${e?.message ?? e}`);
@@ -2387,74 +2393,93 @@ export class SalesTransactionsService {
   }
 
   /**
-   * Bring channel Availability into line with what a sale has consumed, when the
-   * "auto-adjust availability on sale" setting is on. Availability is the sellable number
-   * broadcast to every channel, so this is deliberately channel- and fulfilment-agnostic: an
-   * FBA sale and a serial-tracked sale both lower the shared pool (unlike physical stock, which
-   * skip those). Idempotent like reconcileSaleStock — each line records availabilityDeductedQty,
-   * so a re-submit moves only the delta and an un-submit/cancel adds it back. Returns the affected
-   * product ids so the caller can push each once.
+   * Record, once per order and product, what the order did to availability; return the products
+   * whose figure it lowered.
    *
-   * `forceRelease` treats the desired quantity as zero regardless of status (used on delete), so
-   * Availability a previous feature-on submit took is returned even when the setting is now off.
+   * The unique (order, product) decision is the guard, not a counter on the order line. Lines are
+   * deleted and recreated on every save, orders are withdrawn and re-imported as new rows, and
+   * availability can be cleared — every one of those reset the old counter, and every reset let the
+   * same order deduct again. A stored decision survives all of them.
    *
-   * Edge: a sale that ships more than was available floors Availability at 0 but still records the
-   * full quantity as deducted, so a later cancellation can over-restore by the shortfall. Accepted
-   * for v1 — Availability is operator-maintained and a manual correction fixes it.
+   * Each product is decided in its own transaction with the availability row locked, so two syncs
+   * of the same order at once cannot both deduct: the second finds the decision the first wrote.
    */
-  private async reconcileSaleAvailability(txId: string, actorId?: string, opts: { forceRelease?: boolean } = {}): Promise<string[]> {
-    const settings = await this.prisma.platformSettings.findFirst({ select: { autoAdjustAvailabilityOnSale: true } });
-    if (!settings?.autoAdjustAvailabilityOnSale && !opts.forceRelease) return [];
-
-    const tx = await this.prisma.salesTransaction.findFirst({
-      where: { id: txId },
-      select: {
-        id: true, status: true, transactionRef: true, resolution: true, channelShipmentStatus: true,
-        items: { where: { deletedAt: null }, select: { id: true, sku: true, productId: true, quantity: true, availabilityDeductedQty: true } },
-      },
-    });
+  private async decideOrderAvailability(txId: string, actorId?: string): Promise<string[]> {
+    const [settings, tx] = await Promise.all([
+      this.prisma.platformSettings.findFirst({ select: { autoAdjustAvailabilityOnSale: true } }),
+      this.prisma.salesTransaction.findFirst({
+        where: { id: txId },
+        select: {
+          id: true, integrationId: true, salesChannelId: true, transactionRef: true,
+          resolution: true, channelShipmentStatus: true,
+          items: { where: { deletedAt: null }, select: { sku: true, productId: true, quantity: true } },
+        },
+      }),
+    ]);
     if (!tx) return [];
-    // Only a cancellation BEFORE shipment gives the units back — the goods never left. Cancelled
-    // after shipment, they did leave, so the deduction stands. A return is not a cancellation and
-    // never moves availability at all: the resolution stays 'returned' and nothing here fires.
-    const shipped = tx.channelShipmentStatus === 'shipped';
-    const cancelled = tx.resolution === 'cancelled' && !shipped;
-    const affected = new Set<string>();
 
-    await this.prisma.$transaction(async (db) => {
-      for (const it of tx.items) {
-        if (!it.productId) continue;
-        // Same rule as physical stock above: a draft is an incomplete RECORD, not an unplaced order.
-        const desired = opts.forceRelease || cancelled
-          ? 0
-          : this.wholeUnitsForStock(it.quantity, it.sku, 'channel availability');
-        const move = desired - it.availabilityDeductedQty; // >0 = sell more, <0 = give back
-        if (move === 0) continue;
-        /**
-         * The cause, decided rather than read off the arithmetic.
-         *
-         * This used to be `move > 0 ? 'sale' : 'cancellation'`, which wrote "cancellation" against
-         * every shipped-but-unsubmitted order — the ordinary state of a channel order — and made
-         * the history claim customers were cancelling when they were not.
-         */
-        const reason = availabilityMoveReason({
-          move,
-          forceRelease: !!opts.forceRelease,
-          cancelledBeforeShipment: cancelled,
-        });
-        const applied = await this.availability.adjust(
-          it.productId, -move, reason,
-          { refType: 'sales_tx', refId: it.id, note: tx.transactionRef ?? undefined }, actorId, db,
-        );
-        // Null means the product is not in availability, so nothing was moved. Recording a
-        // deduction anyway would leave a debt against a row that does not exist, and the day
-        // someone added the product it would silently start short.
-        if (applied === null) continue;
-        await db.salesTransactionItem.update({ where: { id: it.id }, data: { availabilityDeductedQty: desired } });
-        affected.add(it.productId);
+    // Units per product: one order can carry the same SKU on several lines.
+    const units = new Map<string, number>();
+    for (const it of tx.items) {
+      if (!it.productId) continue;
+      let n: number;
+      try {
+        n = this.wholeUnitsForStock(it.quantity, it.sku, 'channel availability');
+      } catch (e: any) {
+        // A fractional line cannot be taken from a whole-unit figure. Skipped and said so, rather
+        // than letting one line stop the decision for every other product on the order.
+        this.logger.warn(`Availability not moved for ${tx.transactionRef ?? tx.id} ${it.sku}: ${e?.message ?? e}`);
+        continue;
       }
-    });
-    return [...affected];
+      units.set(it.productId, (units.get(it.productId) ?? 0) + n);
+    }
+    if (units.size === 0) return [];
+
+    const key = orderKey(tx);
+    const already = new Set(
+      (await this.prisma.orderAvailabilityDecision.findMany({
+        where: { orderKey: key, productId: { in: [...units.keys()] } },
+        select: { productId: true },
+      })).map((d) => d.productId),
+    );
+    // Cancelled before it shipped, the units never left. After shipment they did, so it is a sale.
+    const cancelled = tx.resolution === 'cancelled' && tx.channelShipmentStatus !== 'shipped';
+    const syncOn = !!settings?.autoAdjustAvailabilityOnSale;
+
+    const lowered: string[] = [];
+    for (const [productId, n] of units) {
+      if (already.has(productId)) continue;
+      const moved = await this.prisma.$transaction(async (db) => {
+        const rows = await db.$queryRaw<{ quantity: number }[]>`
+          SELECT quantity FROM product_availability WHERE product_id = ${productId}::uuid FOR UPDATE`;
+        const held = rows.length ? Number(rows[0].quantity) : null;
+        const decision = decideOrderLine({ syncOn, cancelled, inAvailability: held != null, units: n });
+
+        const created = await db.orderAvailabilityDecision.createMany({
+          data: [{ orderKey: key, productId, outcome: decision.outcome, quantity: decision.deduct, transactionId: tx.id }],
+          skipDuplicates: true,
+        });
+        // Another sync of this order decided it first; its decision stands.
+        if (created.count === 0) return false;
+        if (decision.outcome !== 'deducted' || held == null) return false;
+
+        const next = availabilityAfterSale(held, decision.deduct);
+        await db.productAvailability.update({
+          where: { productId },
+          data: { quantity: next, lastSource: 'sale', updatedById: actorId ?? null },
+        });
+        await db.availabilityLedger.create({
+          data: {
+            productId, delta: next - held, newQuantity: next, reason: 'sale',
+            refType: 'sales_tx', refId: tx.id, note: tx.transactionRef ?? null, createdById: actorId ?? null,
+          },
+        });
+        // Pushed even when it was already zero: rule 2 sends the new figure to every channel.
+        return true;
+      });
+      if (moved) lowered.push(productId);
+    }
+    return lowered;
   }
 
   /** One line's reconciliation. See reconcileSaleStock for the model. */
@@ -2620,7 +2645,6 @@ export class SalesTransactionsService {
     // (No-op when the feature is off or nothing was deducted.)
     if (items) {
       await this.reconcileSaleStock(id, user.sub, { forceRelease: true });
-      await this.reconcileSaleAvailability(id, user.sub, { forceRelease: true }); // return old lines' Availability before they're replaced
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -2717,7 +2741,7 @@ export class SalesTransactionsService {
       });
       // Move stock to match the new status: submitting deducts, reverting to draft returns it.
       await this.reconcileSaleStock(r.id, user.sub);
-      await this.applyAvailabilitySellThrough(r.id, user.sub);
+      // No availability here: a status change is not an order arriving (order-availability-rules.ts).
       updated++;
     }
     return { updated, skipped };
@@ -2980,7 +3004,7 @@ export class SalesTransactionsService {
     // reconcileSaleStock reads the resolution we just wrote.
     if (dto.resolution === 'cancelled' || (clearing && existing.resolution === 'cancelled')) {
       await this.reconcileSaleStock(id, user.sub);
-      await this.applyAvailabilitySellThrough(id, user.sub); // cancelling gives Availability back; clearing re-takes it
+      // Availability is not touched: a cancellation never gives units back — stock rises only by hand.
     }
     return this.get(id);
   }
@@ -3074,7 +3098,7 @@ export class SalesTransactionsService {
     // resolution we just wrote).
     if (isCancel) {
       await this.reconcileSaleStock(txId, actorId);
-      await this.applyAvailabilitySellThrough(txId, actorId); // give Availability back and push the new figure
+      // Availability is not touched: a cancellation never gives units back — stock rises only by hand.
     }
     // Source 'sync': this path is only ever reached from the channel importer, never from a person
     // — an operator's own decision goes through update() and is marked resolutionSource 'manual'.
@@ -3091,7 +3115,8 @@ export class SalesTransactionsService {
     this.assertCanEdit(existing, user);
     // Return any stock this sale had taken (and cancel its owed rows) before it disappears.
     await this.reconcileSaleStock(id, user.sub, { forceRelease: true });
-    await this.applyAvailabilitySellThrough(id, user.sub, { forceRelease: true }); // and any Availability it consumed
+    // Availability is not touched: deleting an order never gives units back, and the order's decision
+    // is kept, so the same order imported again does not deduct a second time.
     await this.prisma.salesTransaction.update({ where: { id }, data: { deletedAt: new Date() } });
     await this.activity.record({
       entityType: 'salesTransaction', entityId: id, entityLabel: existing.transactionRef,

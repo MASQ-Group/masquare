@@ -1287,30 +1287,12 @@ export class AmazonListingService {
       select: { quantity: true },
     });
 
-    // Availability owns sellable stock. Where a product has none recorded, fall back to what we are
-    // already publishing on another Amazon marketplace — it is the last figure we told Amazon we
-    // held, and it beats refusing to quote. The source travels with it so the underlying gap stays
-    // visible rather than being papered over by a number that appeared from nowhere.
-    let quantity = availability?.quantity ?? null;
-    let quantitySource: 'availability' | 'sibling-listing' | 'none' = availability ? 'availability' : 'none';
-    if (quantity == null) {
-      const sibling = await this.prisma.channelListing.findFirst({
-        where: {
-          productId,
-          listedQuantity: { not: null },
-          // Never borrow from another company's account: their FBA quantity is Amazon-controlled
-          // stock we do not hold, and publishing it as ours would oversell.
-          integration: { channelType: 'amazon', deletedAt: null, ...(await fullScopeIntegrationWhere(this.prisma)) },
-          integrationId: { not: integrationId },
-        },
-        orderBy: { lastPulledAt: 'desc' },
-        select: { listedQuantity: true, integration: { select: { marketplace: true } } },
-      });
-      if (sibling?.listedQuantity != null) {
-        quantity = sibling.listedQuantity;
-        quantitySource = 'sibling-listing';
-      }
-    }
+    // Availability only. This used to borrow another Amazon marketplace's listed quantity for a
+    // product not in availability, which put a figure no person set on a live listing — against the
+    // rule that an order for a SKU outside availability is ignored and stock rises only by hand.
+    // No figure means no quantity, and the submit says so.
+    const quantity = availability?.quantity ?? null;
+    const quantitySource: 'availability' | 'none' = availability ? 'availability' : 'none';
 
     const input: OfferInput = {
       asin: (plan.aspects as Record<string, string> | null)?.asin ?? listing?.asin ?? '',
@@ -1512,29 +1494,14 @@ export class AmazonListingService {
     };
 
     /**
-     * Sellable units, by the same rule the single-channel flow uses.
-     *
-     * Availability owns the number. Where a product has none recorded, fall back to what we are
-     * already publishing on another Amazon marketplace — the last figure we told Amazon we held.
-     * Resolved once for the product: every channel here is one we do NOT already sell on, so the
-     * "not this integration" part of the rule is satisfied for all of them.
+     * Sellable units: Availability only, the same rule as the single-channel flow. A product not in
+     * availability gets no quantity here, rather than one borrowed from another marketplace.
      */
     const availabilityRow = await this.prisma.productAvailability.findUnique({
       where: { productId },
       select: { quantity: true },
     });
-    const siblingListing = availabilityRow
-      ? null
-      : await this.prisma.channelListing.findFirst({
-          where: {
-            productId,
-            listedQuantity: { not: null },
-            integration: { channelType: 'amazon', deletedAt: null, ...(await fullScopeIntegrationWhere(this.prisma)) },
-          },
-          orderBy: { lastPulledAt: 'desc' },
-          select: { listedQuantity: true },
-        });
-    const sellableQuantity = availabilityRow?.quantity ?? siblingListing?.listedQuantity ?? null;
+    const sellableQuantity = availabilityRow?.quantity ?? null;
 
     /**
      * A handling time borrowed from any Amazon plan for this product.

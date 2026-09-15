@@ -183,7 +183,7 @@ export class EbayListingController {
    */
   @Post('diagnose')
   @Requires('view')
-  diagnose(@Body() dto: PublishArgs & { productId: string; useRealSku?: boolean }) {
+  diagnose(@Body() dto: PublishArgs & { productId: string }) {
     return this.svc.diagnoseInventoryItem(dto.productId, dto);
   }
 
