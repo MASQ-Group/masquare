@@ -437,7 +437,8 @@ export class VendorImportService {
             if (existing) {
               await tx.productAvailability.update({
                 where: { productId: c.productId },
-                data: { quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null },
+                // The supplier saying what exists settles any doubt an oversell raised.
+                data: { quantity: qty, lastSource: 'vendor_import', updatedById: actorId ?? null, inDoubtSince: null, inDoubtNote: null },
               });
               await tx.availabilityLedger.create({
                 data: {

@@ -990,6 +990,10 @@ model ProductAvailability {
   quantity    Int      @default(0)
   // What last set the quantity: manual | vendor_import | sale | return.
   lastSource  String?  @map("last_source")
+  /// Set when an order sold more than this figure held, which proves the figure wrong. While set,
+  /// no push sends it to any channel; a person's figure or a supplier file clears it.
+  inDoubtSince DateTime? @map("in_doubt_since")
+  inDoubtNote  String?   @map("in_doubt_note")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
   updatedById String?  @map("updated_by") @db.Uuid

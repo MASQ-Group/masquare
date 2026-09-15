@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { ProgressSink } from '../jobs/jobs.service';
 import { channelDrifted } from './channel-drift';
+import { doubtNote, saleExceedsHeld, settlesDoubt } from './availability-doubt';
 import { ModuleRef } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 
@@ -331,7 +332,7 @@ export class AvailabilityService {
      * to do here and an expensive rule to duplicate.
      */
     const [held, listings] = await Promise.all([
-      this.prisma.productAvailability.findMany({ select: { productId: true, quantity: true } }),
+      this.prisma.productAvailability.findMany({ select: { productId: true, quantity: true, inDoubtSince: true, inDoubtNote: true } }),
       this.prisma.channelListing.findMany({
         where: { productId: { not: null }, ...(opts.companyIds ? { companyId: { in: opts.companyIds } } : {}) },
         select: {
@@ -342,6 +343,7 @@ export class AvailabilityService {
     ]);
 
     const heldBy = new Map(held.map((h) => [h.productId, h.quantity]));
+    const doubtBy = new Map(held.filter((h) => h.inDoubtSince).map((h) => [h.productId, { since: h.inDoubtSince, note: h.inDoubtNote }]));
     const offBy = new Map<string, { channels: any[] }>();
     for (const l of listings) {
       const pid = l.productId!;
@@ -399,13 +401,18 @@ export class AvailabilityService {
        * finding, and nothing may push it automatically.
        */
       unestablishedZero: (heldBy.get(pr.id) ?? 0) === 0 && !counted.has(pr.id),
+      /**
+       * An order sold more than we held. Nothing is pushed for this product until a person sets the
+       * real figure, so it heads the worklist: its listings are frozen at whatever they last showed.
+       */
+      inDoubt: doubtBy.get(pr.id) ?? null,
       channels: offBy.get(pr.id)!.channels,
     }))
       // Worst first: the products advertising the most stock they do not have are the ones that
       // oversell, and a worklist nobody can triage is a worklist nobody reads.
       .sort((a, b) => {
         const over = (r: typeof a) => Math.max(...r.channels.map((c: any) => (c.listedQuantity ?? 0) - (r.held ?? 0)));
-        return over(b) - over(a) || a.mainSku.localeCompare(b.mainSku);
+        return Number(!!b.inDoubt) - Number(!!a.inDoubt) || over(b) - over(a) || a.mainSku.localeCompare(b.mainSku);
       });
 
     return {
@@ -413,6 +420,13 @@ export class AvailabilityService {
       total: rows.length,
       /** Listings, not products — one product can be out of step on eight marketplaces. */
       channelCount: rows.reduce((n, r) => n + r.channels.length, 0),
+      /** Products whose figure an oversell put in doubt; nothing is pushed for them until settled. */
+      inDoubtCount: rows.filter((r) => r.inDoubt).length,
+      /**
+       * Listings showing LESS than we hold: sales being turned away. Counted apart from the oversell
+       * side because it is the recovery list, and every one is a push a person can make now.
+       */
+      belowHeldCount: rows.reduce((n, r) => n + (r.inDoubt ? 0 : r.channels.filter((c: any) => (c.listedQuantity ?? 0) < (r.held ?? 0)).length), 0),
       page,
       pageSize,
     };
@@ -576,7 +590,8 @@ export class AvailabilityService {
       await tx.productAvailability.upsert({
         where: { productId },
         create: { productId, quantity: qty, lastSource: 'manual', updatedById: actorId ?? null },
-        update: { quantity: qty, lastSource: 'manual', updatedById: actorId ?? null },
+        // A person typing the figure is the one thing that settles a doubt: they are saying what is there.
+        update: { quantity: qty, lastSource: 'manual', updatedById: actorId ?? null, inDoubtSince: null, inDoubtNote: null },
       });
       await tx.availabilityLedger.create({
         data: { productId, delta: qty - prev, newQuantity: qty, reason: 'manual_set', note: note?.trim() || null, createdById: actorId ?? null },
@@ -650,16 +665,28 @@ export class AvailabilityService {
     actorId?: string,
     db: Prisma.TransactionClient | PrismaService = this.prisma,
   ): Promise<number | null> {
-    const current = await db.productAvailability.findUnique({ where: { productId }, select: { quantity: true } });
+    const current = await db.productAvailability.findUnique({ where: { productId }, select: { quantity: true, inDoubtSince: true } });
     if (!current) return null;
     const prev = current.quantity;
     const next = Math.max(0, prev + Math.trunc(delta));
+    /**
+     * A sale of more than we hold proves this figure wrong, so it is marked in doubt rather than
+     * trusted at its clamped zero — see availability-doubt.ts. The first doubt's time is kept: a
+     * second oversell does not make the problem newer.
+     */
+    const doubt = saleExceedsHeld(reason, prev, delta)
+      ? { inDoubtSince: current.inDoubtSince ?? new Date(), inDoubtNote: doubtNote(prev, delta, ref.note ?? ref.refId ?? null) }
+      : settlesDoubt(reason) ? { inDoubtSince: null, inDoubtNote: null }
+      : {};
+    if ('inDoubtNote' in doubt && doubt.inDoubtNote && !current.inDoubtSince) {
+      this.logger.warn(`Availability in doubt for product ${productId}: ${doubt.inDoubtNote}`);
+    }
     // A cancellation is the sale reversing itself, so it reads as the sale did. There is no
     // 'return' source: a return never moves availability.
     const source = reason === 'vendor_import' ? 'vendor_import' : reason === 'manual_adjust' ? 'manual' : 'sale';
     await db.productAvailability.update({
       where: { productId },
-      data: { quantity: next, lastSource: source, updatedById: actorId ?? null },
+      data: { quantity: next, lastSource: source, updatedById: actorId ?? null, ...doubt },
     });
     await db.availabilityLedger.create({
       data: { productId, delta: next - prev, newQuantity: next, reason, refType: ref.refType ?? null, refId: ref.refId ?? null, note: ref.note ?? null, createdById: actorId ?? null },

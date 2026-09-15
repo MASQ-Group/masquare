@@ -595,8 +595,15 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     // for a per-marketplace (eBay) column, or the bare integrationId otherwise. Empty/undefined = all.
     const channelKeys = opts.channelKeys && opts.channelKeys.length ? new Set(opts.channelKeys) : null;
     if (!productIds.length) return { dryRun, count: 0, ok: 0, failed: 0, results: [] as any[] };
-    const avails = await this.prisma.productAvailability.findMany({ where: { productId: { in: productIds } }, select: { productId: true, quantity: true } });
-    const qtyByProduct = new Map(avails.map((a) => [a.productId, a.quantity]));
+    const avails = await this.prisma.productAvailability.findMany({ where: { productId: { in: productIds } }, select: { productId: true, quantity: true, inDoubtSince: true, inDoubtNote: true } });
+    /**
+     * A figure in doubt is left out exactly like a missing one. An order sold more than it held, so
+     * it is wrong, and its clamped zero is not "none left". Sending it is how 163 eBay listings with
+     * real stock were taken down in three weeks (see availability-doubt.ts). This applies to a
+     * person's push as well as to sell-through: the way to resume is to set the real figure.
+     */
+    const doubtBy = new Map(avails.filter((a) => a.inDoubtSince).map((a) => [a.productId, a.inDoubtNote]));
+    const qtyByProduct = new Map(avails.filter((a) => !a.inDoubtSince).map((a) => [a.productId, a.quantity]));
     const listings = await this.prisma.channelListing.findMany({
       where: {
         productId: { in: productIds },
@@ -679,7 +686,9 @@ export class ChannelListingsService implements OnApplicationBootstrap {
           productId: l.productId, channelKey, channel: l.integration.name, channelType: l.integration.channelType,
           marketplace: l.marketplace, countryIso: isoOf(l), channelSku: l.channelSku,
           currentQty: l.listedQuantity, targetQty: null, ok: false, skipped: true,
-          message: 'No availability record for this product — nothing pushed',
+          message: l.productId != null && doubtBy.has(l.productId)
+            ? `Availability in doubt, nothing pushed. ${doubtBy.get(l.productId) ?? ''}`.trim()
+            : 'No availability record for this product — nothing pushed',
         });
         continue;
       }

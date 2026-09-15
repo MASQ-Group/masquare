@@ -796,6 +796,11 @@ export interface AvailabilityDriftRow {
    * The sweep never corrects these; a person can still push one deliberately.
    */
   unestablishedZero: boolean;
+  /**
+   * An order sold more than we held, so the figure is wrong. Nothing is pushed for this product,
+   * automatically or by hand, until somebody sets the real figure.
+   */
+  inDoubt: { since: string; note: string | null } | null;
   channels: {
     marketplace: string | null;
     channelSku: string;
@@ -811,6 +816,10 @@ export interface AvailabilityDriftResponse {
   total: number;
   /** Listings, not products — one product can be out of step on eight marketplaces. */
   channelCount: number;
+  /** Products an oversell put in doubt. */
+  inDoubtCount: number;
+  /** Listings showing less than we hold — sales being turned away, and pushable now. */
+  belowHeldCount: number;
   page: number;
   pageSize: number;
 }

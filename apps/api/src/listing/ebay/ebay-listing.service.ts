@@ -1148,7 +1148,7 @@ export class EbayListingService {
      */
     const availability = await this.prisma.productAvailability.findUnique({
       where: { productId },
-      select: { quantity: true },
+      select: { quantity: true, inDoubtSince: true },
     });
     /**
      * Read through the provenance rules, not straight out of the column. The column now holds
@@ -1203,7 +1203,8 @@ export class EbayListingService {
         mpn: product.manufacturerSku ?? null,
         ean: product.ean ?? null,
         condition: args.condition ?? ebayCondition(plan?.condition) ?? 'NEW',
-        quantity: args.quantity ?? availability?.quantity ?? null,
+        // A figure in doubt is no figure: an order sold more than it held, so nothing is listed on it.
+        quantity: args.quantity ?? (availability && !availability.inDoubtSince ? availability.quantity : null),
         priceValue: args.priceValue ?? (plan?.offerPriceCents != null ? plan.offerPriceCents / 100 : null),
         currency: args.currency ?? 'GBP',
         marketplaceId: args.marketplaceId ?? 'EBAY_GB',

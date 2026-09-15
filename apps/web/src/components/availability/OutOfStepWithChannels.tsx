@@ -47,6 +47,21 @@ export function OutOfStepWithChannels() {
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not push to the channels'),
   });
 
+  /**
+   * Settling a doubt: the person types what is really there. That, and only that, lets pushes
+   * resume for the product — the figure is saved first and pushing stays a separate, visible step.
+   */
+  const settle = useMutation({
+    mutationFn: ({ productId, quantity }: { productId: string; quantity: number }) =>
+      availabilityApi.setQuantity(productId, quantity, 'Real figure set after an oversell put availability in doubt'),
+    onSuccess: () => {
+      toast.success('Figure set — pushes for this product resume. Press Push to update the channels.');
+      qc.invalidateQueries({ queryKey: ['availability-drift'] });
+      qc.invalidateQueries({ queryKey: ['availability'] });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not set the figure'),
+  });
+
   if (isLoading) {
     return (
       <div className="card flex items-center gap-2 px-4 py-6 text-[13px] text-n-500">
@@ -83,6 +98,14 @@ export function OutOfStepWithChannels() {
           <span>{data?.channelCount} listing{data?.channelCount === 1 ? '' : 's'} advertising a different quantity</span>
           {uncounted > 0 && <span className="text-n-400">·</span>}
           {uncounted > 0 && <span>{uncounted} awaiting a count, not oversold</span>}
+          {(data?.inDoubtCount ?? 0) > 0 && <span className="text-n-400">·</span>}
+          {(data?.inDoubtCount ?? 0) > 0 && (
+            <span className="font-medium text-danger">{data?.inDoubtCount} in doubt — nothing is pushed until the real figure is set</span>
+          )}
+          {(data?.belowHeldCount ?? 0) > 0 && <span className="text-n-400">·</span>}
+          {(data?.belowHeldCount ?? 0) > 0 && (
+            <span>{data?.belowHeldCount} listing{data?.belowHeldCount === 1 ? '' : 's'} showing less than we hold</span>
+          )}
           <span className="text-n-400">·</span>
           <span>worst first</span>
         </div>
@@ -96,7 +119,16 @@ export function OutOfStepWithChannels() {
             </tr>
           </thead>
           <tbody>
-            {items.map((row) => <DriftRow key={row.productId} row={row} onPush={() => push.mutate([row.productId])} pushing={push.isPending} />)}
+            {items.map((row) => (
+              <DriftRow
+                key={row.productId}
+                row={row}
+                onPush={() => push.mutate([row.productId])}
+                pushing={push.isPending}
+                onSettle={(quantity) => settle.mutate({ productId: row.productId, quantity })}
+                settling={settle.isPending}
+              />
+            ))}
           </tbody>
         </table>
       </div>
@@ -110,8 +142,16 @@ export function OutOfStepWithChannels() {
   );
 }
 
-function DriftRow({ row, onPush, pushing }: { row: AvailabilityDriftRow; onPush: () => void; pushing: boolean }) {
+function DriftRow({ row, onPush, pushing, onSettle, settling }: {
+  row: AvailabilityDriftRow;
+  onPush: () => void;
+  pushing: boolean;
+  onSettle: (quantity: number) => void;
+  settling: boolean;
+}) {
   const held = row.held ?? 0;
+  const [figure, setFigure] = useState('');
+  const figureOk = figure.trim() !== '' && Number.isInteger(Number(figure)) && Number(figure) >= 0;
   /**
    * How much a channel is advertising beyond what exists — the number that turns into an oversell.
    * Shown per channel rather than summed: eight marketplaces each showing one spare unit is eight
@@ -141,7 +181,38 @@ function DriftRow({ row, onPush, pushing }: { row: AvailabilityDriftRow; onPush:
             </span>
           ))}
         </div>
-        {worst > 0 && !row.unestablishedZero && (
+        {/*
+          * In doubt first, because it changes what the rest of the row means. The zero here is a sale
+          * clamped at the floor, not a count, and the listings are deliberately left as they were.
+          */}
+        {row.inDoubt && (
+          <div className="mt-1.5 rounded-md border border-danger-bd bg-danger-bg px-2.5 py-1.5 text-[11.5px] text-n-700">
+            <p>
+              <strong className="text-danger">In doubt since {formatDate(row.inDoubt.since)}.</strong>{' '}
+              {row.inDoubt.note ?? 'An order sold more than maSquare held.'} Its listings are left as they
+              were until you set the real figure.
+            </p>
+            <div className="mt-1.5 flex items-center gap-2">
+              <input
+                id={`settle-${row.productId}`}
+                className="input mono !h-7 w-20 text-right"
+                inputMode="numeric"
+                placeholder="Qty"
+                aria-label={`Real available quantity for ${row.mainSku}`}
+                value={figure}
+                onChange={(e) => setFigure(e.target.value)}
+              />
+              <button
+                className="hbtn !h-7"
+                disabled={!figureOk || settling}
+                onClick={() => onSettle(Number(figure))}
+              >
+                {settling ? <Loader2 size={13} className="animate-spin" /> : null} Set real figure
+              </button>
+            </div>
+          </div>
+        )}
+        {worst > 0 && !row.unestablishedZero && !row.inDoubt && (
           <p className="mt-1 text-[11.5px] text-orange-700">
             Up to {worst} unit{worst === 1 ? '' : 's'} more than we have, on one channel.
           </p>
@@ -161,11 +232,13 @@ function DriftRow({ row, onPush, pushing }: { row: AvailabilityDriftRow; onPush:
       <td className="border-b border-n-100 px-4 py-2.5 text-right">
         <button
           onClick={onPush}
-          disabled={pushing || row.unestablishedZero}
+          disabled={pushing || row.unestablishedZero || !!row.inDoubt}
           className="hbtn"
-          title={row.unestablishedZero
-            ? 'Count this product first — pushing an uncounted zero would empty its listings'
-            : 'Send what we hold to every channel this product is listed on'}
+          title={row.inDoubt
+            ? 'Set the real figure first — an order sold more than maSquare held, so the figure is wrong'
+            : row.unestablishedZero
+              ? 'Count this product first — pushing an uncounted zero would empty its listings'
+              : 'Send what we hold to every channel this product is listed on'}
         >
           {pushing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Push
         </button>
