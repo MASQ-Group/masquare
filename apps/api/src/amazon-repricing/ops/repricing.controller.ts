@@ -370,6 +370,15 @@ export class RepricingController {
     return this.ranges.updateOne(id, change, user.sub);
   }
 
+  /**
+   * The profit per unit at prices a person is considering — the minimum and maximum they are about to
+   * set. Built from the same costs and fees as the floor. Reads only; nothing is stored.
+   */
+  @Post('sku-pricing/:id/profit')
+  profitAt(@Param('id') id: string, @Body() body: { pricesCents: number[] }) {
+    return this.floors.profitAt(id, Array.isArray(body?.pricesCents) ? body.pricesCents : []);
+  }
+
   /** The same change for every SKU a filter selects. Preview unless `apply` is true. */
   @Post('sku-pricing/range/bulk')
   bulkRange(@Body() body: { filters: RangeFilters; change: RangeChange; apply?: boolean }, @CurrentUser() user: AuthUser) {
