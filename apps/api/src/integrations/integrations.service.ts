@@ -1,3 +1,4 @@
+import { ebayErrorText } from './ebay-error';
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
@@ -658,10 +659,9 @@ export class IntegrationsService implements OnModuleInit {
     return { ok: true, available: true, offers };
   }
 
+  /** Everything eBay said, not just its first line — see ebay-error.ts. */
   private static ebayErr(json: any): string {
-    const e = json?.errors?.[0];
-    if (!e) return '';
-    return [e.message, e.longMessage].filter(Boolean).join(' - ').slice(0, 300);
+    return ebayErrorText(json);
   }
 
   /** Everything a publish needs, and whether it is there. Read-only. */
@@ -870,6 +870,9 @@ export class IntegrationsService implements OnModuleInit {
     });
     const json: any = await res.json().catch(() => null);
     if (res.ok) return { ok: true as const, listingId: json?.listingId as string };
+    // The whole answer, once, where it can be read later: a refused publish is the one failure a
+    // person has to act on, and the reason is not always in the part shown on screen.
+    this.logger.warn(`eBay refused to publish offer ${offerId} (HTTP ${res.status}): ${JSON.stringify(json)?.slice(0, 4000)}`);
     return { ok: false as const, status: res.status, message: IntegrationsService.ebayErr(json) || ('HTTP ' + res.status) };
   }
 
