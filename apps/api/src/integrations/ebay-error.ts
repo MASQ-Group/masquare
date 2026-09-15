@@ -1,4 +1,22 @@
 /**
+ * eBay sometimes sends its explanation as a page of HTML inside a parameter — the top-rated refusal
+ * arrived as nested divs, a table and a link. Shown raw it buried the one sentence that mattered.
+ */
+function plain(raw: string): string {
+  return raw
+    .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * eBay's refusal, in full.
  *
  * eBay answers a failed call with a LIST of errors, and the first is often a generic wrapper while
@@ -15,7 +33,7 @@ export function ebayErrorText(json: unknown, max = 1200): string {
   const lines: string[] = [];
   for (const e of errors) {
     const params = (Array.isArray(e?.parameters) ? e.parameters : [])
-      .map((p: any) => (typeof p?.value === 'string' ? p.value.trim() : ''))
+      .map((p: any) => (typeof p?.value === 'string' ? plain(p.value) : ''))
       // Parameters often repeat the SKU or offer id; only text that says something is kept.
       .filter((v: string) => v && !/^[A-Za-z0-9_-]{1,40}$/.test(v));
     const text = [e?.message, e?.longMessage, ...params]

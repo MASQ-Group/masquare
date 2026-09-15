@@ -49,10 +49,13 @@ const FONT = "'Public Sans',system-ui,-apple-system,'Segoe UI',sans-serif";
 /**
  * The trust points, the same on every listing. Fixed by the business rather than written per
  * product or per account.
+ *
+ * The design had a third, "Top-rated seller, thousands of 5-star reviews". eBay refuses any listing
+ * that calls the seller top rated — it shows its own badge to sellers who earn it — and it refused
+ * LAG-611474 for exactly that. `checkBuyerText` now refuses the phrase too, so it cannot come back.
  */
 export const TRUST_POINTS: readonly string[] = [
   '100% genuine, sourced from authorised distributors',
-  'Top-rated seller, thousands of 5-star reviews',
   'Messages answered within 24 hours',
 ];
 

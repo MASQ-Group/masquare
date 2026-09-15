@@ -25,6 +25,18 @@ describe('ebayErrorText', () => {
     expect(text).not.toContain('266554920011');
   });
 
+  /** The top-rated refusal came as a page of HTML inside a parameter. */
+  it('reads an HTML explanation as its words', () => {
+    const text = ebayErrorText({
+      errors: [{
+        errorId: 25019,
+        message: 'Cannot revise listing.',
+        parameters: [{ name: '0', value: '<div class=alert-cnt><b>Dear Seller!</b></div><p> It looks like you may be using an expression similar to &#39;top-rated seller&#39; in your listing.</p>' }],
+      }],
+    });
+    expect(text).toBe("[25019] Cannot revise listing. — Dear Seller! It looks like you may be using an expression similar to 'top-rated seller' in your listing.");
+  });
+
   it('says a repeated message once', () => {
     expect(ebayErrorText({ errors: [{ message: 'Invalid SKU', longMessage: 'Invalid SKU' }] })).toBe('Invalid SKU');
   });

@@ -65,6 +65,14 @@ describe('checkBuyerText', () => {
     expect(checkBuyerText({ title: 'Panasonic RP-HJE201E-K Stereo Earphones Black' }, SKUS)).toEqual([]);
   });
 
+  /** eBay refused LAG-611474 for this phrase in the description. */
+  it('refuses calling the seller top rated, in any spelling', () => {
+    for (const t of ['Top-rated seller', 'a TOP RATED SELLER on eBay', 'Power Seller since 2010']) {
+      expect(checkBuyerText({ intro: t }, SKUS)[0].problem).toContain('top rated');
+    }
+    expect(checkBuyerText({ intro: 'Top-rated by reviewers for comfort' }, SKUS)).toEqual([]);
+  });
+
   it('is happy with nothing at all', () => {
     expect(checkBuyerText({}, SKUS)).toEqual([]);
     expect(checkBuyerText({ intro: '   ', features: ['', '  '] }, SKUS)).toEqual([]);
