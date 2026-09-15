@@ -2312,7 +2312,8 @@ export interface EbayPreview {
    * product's content. Typed loosely apart from that one field, which the eBay content tab previews.
    */
   inventoryItem: { product?: { description?: string } } | null;
-  offer: unknown;
+  /** `listingDescription` is the designed page a buyer sees; the item's description is a plain summary. */
+  offer: { listingDescription?: string } | null;
   /** What this listing would carry: the channel's defaults, or this product's own answers. */
   listing: EbayListingDefaults & { quantity: number | null };
   /** Only what THIS product overrides; null in a field means "whatever the channel says". */

@@ -22,7 +22,12 @@ export function EbayDescriptionPreview({ productId }: { productId: string }) {
     refetchOnMount: 'always',
   });
 
-  const html = preview.data?.inventoryItem?.product?.description ?? '';
+  /**
+   * The OFFER's description, which is what a buyer reads. The inventory item's is a plain-text summary
+   * capped at eBay's 4000 characters; reading that one here showed the listing as a run of unstyled
+   * text, although eBay itself was sent the designed page.
+   */
+  const html = preview.data?.offer?.listingDescription ?? '';
 
   return (
     <div className="flex flex-col gap-1.5">
