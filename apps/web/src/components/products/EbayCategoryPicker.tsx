@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, ExternalLink, Loader2, Search, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
@@ -263,6 +264,24 @@ function AspectField({ aspect, value, onChange, onConfirm, confirming }: {
    */
   const auto = aspect.source && aspect.source !== 'plan' ? aspect.value : null;
   const prov = aspect.provenance ?? null;
+  const listId = useId();
+
+  /**
+   * eBay's recommended values for a FREE-TEXT field.
+   *
+   * A free-text field accepts anything, so the form used to offer nothing — an empty box beside a red
+   * asterisk. People had to guess, and a guess like `Department: Wristwatches` is accepted by eBay and
+   * then matches none of its search filters, so the listing quietly vanishes from every "Unisex
+   * Adults" or "Women" search. eBay publishes the words its filters use; this puts them in front of
+   * the person typing.
+   */
+  const isFreeText = aspect.mode !== 'SELECTION_ONLY';
+  const suggestions = isFreeText ? aspect.values : [];
+  const shown = value ?? (aspect.source === 'plan' ? aspect.value ?? '' : '');
+  const judged = (shown || prov?.value || '').trim();
+  const offList = suggestions.length > 0 && judged !== ''
+    && !suggestions.some((s) => s.toLowerCase() === judged.toLowerCase());
+
   return (
     <div className="flex flex-col gap-1">
     <label className="flex items-center gap-2 max-[560px]:flex-col max-[560px]:items-stretch">
@@ -294,14 +313,90 @@ function AspectField({ aspect, value, onChange, onConfirm, confirming }: {
           placeholder={
             auto ? `${auto}  (from the product)`
               : prov?.heldBack ? `${prov.value}  (suggested — not in use)`
-                : aspect.required ? 'required' : 'optional'
+                : suggestions.length ? `${aspect.required ? 'required' : 'optional'} — pick below or type`
+                  : aspect.required ? 'required' : 'optional'
           }
-          value={value ?? (aspect.source === 'plan' ? aspect.value ?? '' : '')}
+          value={shown}
           onChange={(e) => onChange(e.target.value)}
+          // The browser's own autocomplete over eBay's list, for when there are too many to show as chips.
+          list={suggestions.length ? listId : undefined}
         />
       )}
+      {suggestions.length > 0 && (
+        <datalist id={listId}>
+          {suggestions.map((s) => <option key={s} value={s} />)}
+        </datalist>
+      )}
     </label>
+
+    {suggestions.length > 0 && (
+      <FreeTextSuggestions
+        suggestions={suggestions}
+        total={aspect.valueCount}
+        current={judged}
+        offList={offList}
+        onPick={onChange}
+      />
+    )}
     {prov && <Provenance prov={prov} onConfirm={onConfirm} confirming={confirming} />}
+    </div>
+  );
+}
+
+/** Shown as chips up to here; beyond it they are a wall, and the typed autocomplete does the job. */
+const MAX_CHIPS = 12;
+
+/**
+ * eBay's recommended values as one-click chips, and a plain warning when the value in the box is not
+ * one of them.
+ *
+ * The warning is the part that earns its place. eBay accepts any text here, so nothing else would ever
+ * say that `Wristwatches` or `Link strap` will not match a buyer's filter — the listing is accepted and
+ * then simply fails to appear.
+ */
+function FreeTextSuggestions({ suggestions, total, current, offList, onPick }: {
+  suggestions: string[];
+  total: number;
+  current: string;
+  offList: boolean;
+  onPick: (v: string) => void;
+}) {
+  const shown = suggestions.slice(0, MAX_CHIPS);
+  const hidden = Math.max(total, suggestions.length) - shown.length;
+
+  return (
+    <div className="ml-[168px] flex flex-col gap-1 max-[560px]:ml-0">
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="text-[11px] text-n-400">eBay suggests:</span>
+        {shown.map((s) => {
+          const active = s.toLowerCase() === current.toLowerCase();
+          return (
+            <button
+              key={s}
+              type="button"
+              onClick={() => onPick(s)}
+              className={`rounded-full border px-2 py-0.5 text-[11.5px] ${
+                active
+                  ? 'border-teal-300 bg-teal-50 font-semibold text-teal-700'
+                  : 'border-n-200 bg-n-0 text-n-600 hover:border-n-300 hover:bg-n-50'}`}
+            >
+              {s}
+            </button>
+          );
+        })}
+        {hidden > 0 && (
+          <span className="text-[11px] text-n-400">+{hidden} more — start typing to see them</span>
+        )}
+      </div>
+      {offList && (
+        <div className="flex items-start gap-1.5 text-[11.5px] text-warning">
+          <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+          <span>
+            <span className="font-semibold">&ldquo;{current}&rdquo;</span> isn&apos;t one of eBay&apos;s
+            suggested values. eBay accepts it, but buyers who filter by this field won&apos;t find the listing.
+          </span>
+        </div>
+      )}
     </div>
   );
 }

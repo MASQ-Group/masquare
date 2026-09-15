@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink } from 'lucide-react';
 import { EbayCategoryPicker } from './EbayCategoryPicker';
@@ -70,6 +71,8 @@ export function EbayContentTab({
     queryFn: () => ebayListingApi.preview(productId).then((p) => p).catch(() => null),
   });
   const hasCategory = !!saved.data && !saved.data.missing.some((m) => m.key === 'categoryId');
+  /** Judged on words, not markup: an editor opened and closed leaves `<p></p>`, which is not a description. */
+  const descriptionText = descriptionHtml.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim();
 
   return (
     <div className="flex flex-col gap-5">
@@ -101,34 +104,15 @@ export function EbayContentTab({
         />
       </Step>
 
-      <Step n={3} title="Description" done={!!descriptionHtml.trim()}>
-        <p className="mb-2 text-[12px] text-n-400">
-          What eBay shows in the listing body. This is the same description as the Content tab —
-          editing it here changes it everywhere, because it is the same prose wherever the product is
-          sold. It is shown here so the whole listing can be read in one place.
-        </p>
-        {/*
-          * The same editor as the Content tab, on the same field. A plain textarea here showed the
-          * stored `<p>` tags raw, and — worse — nothing at all of what research had written, because
-          * it was the only place on this tab the description could be seen.
-          */}
-        <RichTextEditor
-          minHeight={160}
-          value={descriptionHtml}
-          onChange={onDescriptionChange}
-          placeholder="What the product is, what it does, who it suits."
+      <Step n={3} title="Description" done={!!descriptionText}>
+        <DescriptionStep
+          productId={productId}
+          descriptionHtml={descriptionHtml}
+          hasText={!!descriptionText}
+          onDescriptionChange={onDescriptionChange}
+          features={features}
+          onFeaturesChange={onFeaturesChange}
         />
-        <div className="mt-3">
-          <span className="mb-1 block text-[12px] font-semibold text-n-700">Key features</span>
-          {/* Research writes these too, and they go into the eBay description's feature list. */}
-          <FeatureList value={features} onChange={onFeaturesChange} />
-        </div>
-        <p className="mt-1 text-[12px] text-n-400">
-          Write plain prose. maSquare turns this, the key features and the saved item specifics into
-          the finished eBay description — one house design on every listing, so nothing here needs
-          formatting by hand.
-        </p>
-        <EbayDescriptionPreview productId={productId} />
       </Step>
 
       <Step n={4} title="eBay title" done={!!ebayTitle.trim()}>
@@ -158,6 +142,75 @@ export function EbayContentTab({
           everything else it publishes comes from here.
         </span>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The description, written and previewed in ONE place.
+ *
+ * The finished eBay description used to sit in a separate block below the editor, and when the text
+ * was empty it showed the specification table alone — which read as "the description was published
+ * somewhere else, and it is only a table". Now the step has one body with two views of the same
+ * thing: the words you edit, and the page a buyer will see built from them.
+ */
+function DescriptionStep({ productId, descriptionHtml, hasText, onDescriptionChange, features, onFeaturesChange }: {
+  productId: string;
+  descriptionHtml: string;
+  hasText: boolean;
+  onDescriptionChange: (v: string) => void;
+  features: string[];
+  onFeaturesChange: (next: string[]) => void;
+}) {
+  const [view, setView] = useState<'write' | 'preview'>('write');
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-[12px] text-n-400">
+        What eBay shows in the listing body: these paragraphs and key features, then the specification
+        table from the saved item specifics, in one house design. Claude writes them during research;
+        edit them freely. It is the same description as the Content tab.
+      </p>
+
+      <div role="tablist" aria-label="Description view" className="flex self-start rounded-lg border border-n-200 bg-n-25 p-0.5 text-[12px] font-semibold">
+        {([['write', 'Text'], ['preview', 'As buyers see it on eBay']] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={view === key}
+            onClick={() => setView(key)}
+            className={`rounded-md px-3 py-1 ${view === key ? 'bg-n-0 text-n-800 shadow-sm' : 'text-n-500 hover:text-n-700'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {!hasText && (
+        <p className="rounded-lg border border-n-200 bg-n-25 px-3 py-2 text-[12px] text-warning">
+          No description text yet, so the eBay description would be the specification table alone. Have
+          Claude write it (research step), or write two or three short paragraphs here.
+        </p>
+      )}
+
+      {view === 'write' ? (
+        <>
+          <RichTextEditor
+            minHeight={160}
+            value={descriptionHtml}
+            onChange={onDescriptionChange}
+            placeholder="What the product is, what it does, who it suits."
+          />
+          <div className="mt-1">
+            <span className="mb-1 block text-[12px] font-semibold text-n-700">Key features</span>
+            <FeatureList value={features} onChange={onFeaturesChange} />
+          </div>
+          <p className="text-[12px] text-n-400">Plain prose — no formatting needed. maSquare lays it out.</p>
+        </>
+      ) : (
+        <EbayDescriptionPreview productId={productId} />
+      )}
     </div>
   );
 }

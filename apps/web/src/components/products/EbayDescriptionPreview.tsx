@@ -1,6 +1,5 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { ebayListingApi } from '../../lib/api';
 
 /**
@@ -16,47 +15,38 @@ import { ebayListingApi } from '../../lib/api';
  * the way eBay will: isolated, with nothing allowed to run.
  */
 export function EbayDescriptionPreview({ productId }: { productId: string }) {
-  const [open, setOpen] = useState(false);
-
   const preview = useQuery({
     queryKey: ['ebay', 'preview', productId],
     queryFn: () => ebayListingApi.preview(productId),
-    enabled: open,
+    // Rebuilt every time it is shown: the point is what is saved NOW, not when the card opened.
+    refetchOnMount: 'always',
   });
 
   const html = preview.data?.inventoryItem?.product?.description ?? '';
 
   return (
-    <div className="mt-2 flex flex-col gap-1.5">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 self-start text-[12px] font-semibold text-n-600 hover:text-n-800"
-      >
-        {open ? <EyeOff size={12} /> : <Eye size={12} />}
-        {open ? 'Hide' : 'Preview'} the eBay description
-      </button>
-
-      {open && (
-        preview.isLoading ? (
-          <span className="flex items-center gap-1.5 text-[12px] text-n-500">
-            <Loader2 size={12} className="animate-spin" /> Building it…
-          </span>
-        ) : html ? (
-          <div className="overflow-hidden rounded-lg border border-n-200 bg-n-0">
-            <iframe
-              title="eBay description preview"
-              // No scripts, no forms, no navigation: it is a picture of the listing, not a page.
-              sandbox=""
-              srcDoc={html}
-              className="h-[420px] w-full border-0"
-            />
-          </div>
-        ) : (
-          <p className="text-[12px] text-n-500">
-            Nothing to show yet — write the description above, or have Claude write it.
-          </p>
-        )
+    <div className="flex flex-col gap-1.5">
+      <p className="text-[12px] text-n-400">
+        Built from what is saved. Save the product to see edits made in this card.
+      </p>
+      {preview.isLoading ? (
+        <span className="flex items-center gap-1.5 text-[12px] text-n-500">
+          <Loader2 size={12} className="animate-spin" /> Building it…
+        </span>
+      ) : html ? (
+        <div className="overflow-hidden rounded-lg border border-n-200 bg-n-0">
+          <iframe
+            title="eBay description preview"
+            // No scripts, no forms, no navigation: it is a picture of the listing, not a page.
+            sandbox=""
+            srcDoc={html}
+            className="h-[480px] w-full border-0"
+          />
+        </div>
+      ) : (
+        <p className="text-[12px] text-n-500">
+          Nothing to show yet — write the description, or have Claude write it.
+        </p>
       )}
     </div>
   );

@@ -666,6 +666,14 @@ export class EbayListingService {
             answeredByProduct: /^(brand|mpn|model)$/i.test(a.name),
             acceptedValues: a.mode === 'SELECTION_ONLY' ? (a.values ?? []).slice(0, 80) : null,
             acceptedValuesTotal: a.mode === 'SELECTION_ONLY' ? a.valueCount ?? 0 : null,
+            /**
+             * The words eBay's buyer filters use, for a field that accepts any text. Not a restriction —
+             * eBay takes anything here — but a value outside this list matches no filter, so a listing
+             * reading `Department: Wristwatches` is accepted and then never appears in a "Unisex Adults"
+             * search. Handed to the researcher so it can report in eBay's vocabulary where a page states
+             * the same thing in other words.
+             */
+            recommendedValues: a.mode !== 'SELECTION_ONLY' && (a.values ?? []).length ? (a.values ?? []).slice(0, 80) : null,
             current: rec
               ? { value: rec.value, basis: describeProvenance(rec).basis, heldBackForAPerson: !isPayloadEligible(rec) }
               : null,
@@ -864,7 +872,7 @@ export class EbayListingService {
   }
 
   /**
-   * The buyer-facing words: an introduction and the feature lines.
+   * The buyer-facing words: the eBay title, an introduction and the feature lines.
    *
    * Stored as PROSE, not markup. The eBay description is rendered from this at publish through one
    * house template, so a writer supplies what the product is and the platform supplies how it looks
@@ -878,23 +886,29 @@ export class EbayListingService {
    */
   async submitProductContent(
     productId: string,
-    args: { companyIds: string[]; userId?: string; intro?: string | null; features?: string[]; replaceExisting?: boolean },
+    args: {
+      companyIds: string[]; userId?: string; title?: string | null; intro?: string | null; features?: string[]; replaceExisting?: boolean;
+    },
   ) {
     const product = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
       select: {
-        id: true, mainSku: true, descriptionHtml: true, keyFeatures: true,
+        id: true, mainSku: true, ebayTitle: true, descriptionHtml: true, keyFeatures: true,
         aliases: { select: { skuValue: true } },
       },
     });
     if (!product) throw new NotFoundException('Product not found');
 
+    /** Whitespace collapsed: a title is one line, and eBay counts every stray space against the 80. */
+    const title = args.title?.replace(/\s+/g, ' ').trim() ?? '';
     const intro = args.intro?.trim() ?? '';
     const features = (args.features ?? []).map((f) => f.trim()).filter(Boolean);
-    if (!intro && features.length === 0) throw new BadRequestException('Nothing to write: send a description, feature lines, or both.');
+    if (!title && !intro && features.length === 0) {
+      throw new BadRequestException('Nothing to write: send a title, a description, feature lines, or any of them.');
+    }
 
     const problems = checkBuyerText(
-      { intro, features },
+      { title, intro, features },
       [product.mainSku, ...product.aliases.map((a) => a.skuValue)],
     );
     if (problems.length > 0) {
@@ -907,6 +921,7 @@ export class EbayListingService {
      * Judged on the WORDS, not the markup: an editor that was opened and closed can leave `<p></p>`
      * behind, and treating that as an existing description would refuse to fill an empty one.
      */
+    const hadTitle = !!product.ebayTitle?.trim();
     const hadIntro = !!htmlToPlainText(product.descriptionHtml);
     const hadFeatures = Array.isArray(product.keyFeatures) && (product.keyFeatures as unknown[]).length > 0;
     const skipped: string[] = [];
@@ -916,7 +931,11 @@ export class EbayListingService {
      * the price on the B2B store — "deliberately short and plain" — and this used to fill it with
      * several paragraphs of eBay copy.
      */
-    const data: { descriptionHtml?: string; keyFeatures?: string[]; updatedById?: string } = {};
+    const data: { ebayTitle?: string; descriptionHtml?: string; keyFeatures?: string[]; updatedById?: string } = {};
+    if (title) {
+      if (hadTitle && !args.replaceExisting) skipped.push('title (one is already written — ask for it to be replaced)');
+      else data.ebayTitle = title;
+    }
     if (intro) {
       if (hadIntro && !args.replaceExisting) skipped.push('description (one is already written — ask for it to be replaced)');
       else data.descriptionHtml = proseToHtml(intro);
@@ -944,8 +963,9 @@ export class EbayListingService {
         source: 'system',
         actorId: args.userId,
         changes: diffRecords(
-          { descriptionHtml: product.descriptionHtml, keyFeatures: product.keyFeatures },
+          { ebayTitle: product.ebayTitle, descriptionHtml: product.descriptionHtml, keyFeatures: product.keyFeatures },
           {
+            ...(data.ebayTitle !== undefined ? { ebayTitle: data.ebayTitle } : {}),
             ...(data.descriptionHtml !== undefined ? { descriptionHtml: data.descriptionHtml } : {}),
             ...(data.keyFeatures !== undefined ? { keyFeatures: data.keyFeatures } : {}),
           },

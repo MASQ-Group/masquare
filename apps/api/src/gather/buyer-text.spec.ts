@@ -54,6 +54,17 @@ describe('checkBuyerText', () => {
     expect(checkBuyerText({ intro: 'Comes in a set of ABC' }, ['ABC'])).toEqual([]);
   });
 
+  /** eBay refuses a title over 80 characters at publish; better refused here, where it can be rewritten. */
+  it('refuses a title longer than eBay allows, and passes one that fits exactly', () => {
+    expect(checkBuyerText({ title: 'z'.repeat(TEXT_LIMITS.title + 1) }, SKUS)[0]).toMatchObject({ where: 'title' });
+    expect(checkBuyerText({ title: 'z'.repeat(TEXT_LIMITS.title) }, SKUS)).toEqual([]);
+  });
+
+  it('holds the title to the same rules as the description', () => {
+    expect(checkBuyerText({ title: 'Panasonic Earphones 3G-RP-HJE201E-K-FOC' }, SKUS)[0].problem).toContain('internal SKU');
+    expect(checkBuyerText({ title: 'Panasonic RP-HJE201E-K Stereo Earphones Black' }, SKUS)).toEqual([]);
+  });
+
   it('is happy with nothing at all', () => {
     expect(checkBuyerText({}, SKUS)).toEqual([]);
     expect(checkBuyerText({ intro: '   ', features: ['', '  '] }, SKUS)).toEqual([]);

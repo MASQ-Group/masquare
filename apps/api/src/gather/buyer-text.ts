@@ -27,14 +27,15 @@ const URL_LIKE = /\b(?:https?:\/\/|www\.)\S+/i;
 const PHONE = /(?:\+?\d[\d\s()-]{6,}\d)/;
 const TAG = /<[a-z/!][^>]*>/i;
 
-export const TEXT_LIMITS = { intro: 3000, feature: 240, features: 12 } as const;
+/** `title` is eBay's own limit: it refuses a longer one outright. */
+export const TEXT_LIMITS = { intro: 3000, feature: 240, features: 12, title: 80 } as const;
 
 /**
  * @param forbiddenCodes internal identifiers that must not appear — the product's own SKU and its
  *   aliases. The manufacturer part number is deliberately NOT one: buyers search for it.
  */
 export function checkBuyerText(
-  content: { intro?: string | null; features?: readonly string[] },
+  content: { title?: string | null; intro?: string | null; features?: readonly string[] },
   forbiddenCodes: readonly string[],
 ): BuyerTextProblem[] {
   const problems: BuyerTextProblem[] = [];
@@ -54,6 +55,12 @@ export function checkBuyerText(
       }
     }
   };
+
+  const title = content.title?.trim() ?? '';
+  if (title) {
+    if (title.length > TEXT_LIMITS.title) problems.push({ where: 'title', problem: `is ${title.length} characters; eBay refuses more than ${TEXT_LIMITS.title}` });
+    check('title', title);
+  }
 
   const intro = content.intro?.trim() ?? '';
   if (intro) {
