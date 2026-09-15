@@ -2272,6 +2272,8 @@ export interface EbayPrerequisites {
   blockers: string[];
   /** The channel's standing answers, used by every listing that does not override them. */
   defaults: EbayListingDefaults;
+  /** The sales channel this eBay account sells as; null when the integration has none set. */
+  salesChannelId: string | null;
 }
 export interface EbayListingDefaults {
   merchantLocationKey: string | null;

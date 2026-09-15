@@ -3,7 +3,6 @@ import { toast } from 'sonner';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { Select } from '@masquare/ui';
 import { ebayListingApi, type EbayListingDefaults } from '../../lib/api';
-import { SectionHeader } from './shared';
 
 /**
  * The four answers every eBay listing needs and almost never varies: where goods ship from, and
@@ -16,6 +15,9 @@ import { SectionHeader } from './shared';
  *
  * Read from eBay live: a saved id that no longer exists would otherwise sit here looking correct
  * until a publish failed.
+ *
+ * Lives on the eBay UK channel's own card. It was a section under the whole sales-channel table,
+ * which put eBay's settings where they looked like everyone's.
  */
 export function EbayListingDefaultsSection() {
   const qc = useQueryClient();
@@ -69,11 +71,14 @@ export function EbayListingDefaultsSection() {
   const unanswered = rows.filter((r) => !d?.[r.key]).map((r) => r.label);
 
   return (
-    <div className="mt-8">
-      <SectionHeader
-        title="eBay UK listing defaults"
-        description="What every eBay listing uses unless a product says otherwise. eBay keeps the policies themselves; this records which of them we list with."
-      />
+    <div className="col-span-2 flex flex-col gap-3 rounded-md border border-n-200 bg-n-25 p-3">
+      <div>
+        <span className="text-[13.5px] font-semibold text-n-800">Listing defaults</span>
+        <p className="text-[11.5px] text-n-500">
+          What every eBay listing uses unless a product says otherwise. eBay keeps the policies
+          themselves; this records which of them we list with.
+        </p>
+      </div>
 
       {pre.isLoading && (
         <div className="flex items-center gap-2 text-[12.5px] text-n-500">

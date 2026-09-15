@@ -104,6 +104,11 @@ export class EbayListingService {
       ...pre,
       /** What every listing uses unless a product says otherwise. */
       defaults: ebayListingDefaults(row.config),
+      /**
+       * Which sales channel this eBay account is, so its settings can live on that channel's own
+       * card rather than in a section of their own that belongs to nothing.
+       */
+      salesChannelId: row.targetSalesChannelId ?? null,
       // Stated rather than left for the caller to work out from four empty arrays.
       blockers: [
         ...(pre.locations.length === 0 ? ['No merchant location — every offer needs one'] : []),

@@ -11,8 +11,9 @@
  */
 const { PrismaClient } = require('@prisma/client');
 
-const WANT = '20260911090000_channel_sync_error';
-const TABLE = 'channel_sync_error';
+// Point this at whatever landed last; it is a check, not a record.
+const WANT = '20260915090000_plan_ebay_policy_overrides';
+const TABLE = 'product_channel_plan';
 
 (async () => {
   const prisma = new PrismaClient();

@@ -113,7 +113,7 @@ export function EbayListingChoices({ productId, preview, pre }: {
       </dl>
 
       <p className="text-[11.5px] text-n-500">
-        Set for every listing in{' '}
+        Set for every listing on the eBay UK channel in{' '}
         <Link className="font-semibold text-teal-700 hover:underline" to="/settings?tab=sales-channels">
           Settings → Sales channels
         </Link>
