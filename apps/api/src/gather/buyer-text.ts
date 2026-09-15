@@ -26,6 +26,12 @@ const URL_LIKE = /\b(?:https?:\/\/|www\.)\S+/i;
 /** Seven or more digits, allowing the spaces and brackets people write numbers with. */
 const PHONE = /(?:\+?\d[\d\s()-]{6,}\d)/;
 const TAG = /<[a-z/!][^>]*>/i;
+/**
+ * eBay refuses a listing that calls the seller "top rated" (or a power seller) — it shows its own
+ * badge to sellers who earn the status, and a claim in the text is treated as misleading buyers.
+ * Found by a refused publish, not guessed: LAG-611474, 15 September.
+ */
+const TOP_RATED = /\b(top[\s-]*rated|power)[\s-]*sellers?\b/i;
 
 /** `title` is eBay's own limit: it refuses a longer one outright. */
 export const TEXT_LIMITS = { intro: 3000, feature: 240, features: 12, title: 80 } as const;
@@ -42,6 +48,7 @@ export function checkBuyerText(
 
   const check = (where: string, text: string) => {
     if (TAG.test(text)) problems.push({ where, problem: 'contains HTML — write plain prose, the platform does the formatting' });
+    if (TOP_RATED.test(text)) problems.push({ where, problem: 'calls the seller "top rated", which eBay refuses — it shows its own badge' });
     if (EMAIL.test(text)) problems.push({ where, problem: 'contains an email address, which eBay does not allow in a description' });
     if (URL_LIKE.test(text)) problems.push({ where, problem: 'contains a web address, which eBay does not allow in a description' });
     if (PHONE.test(text)) problems.push({ where, problem: 'contains what looks like a phone number, which eBay does not allow in a description' });

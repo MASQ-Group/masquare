@@ -163,6 +163,16 @@ export class EbayListingService {
     args: { integrationId?: string; companyIds?: string[] } & Partial<EbayDescriptionStore>,
   ): Promise<{ ok: true; descriptionStore: EbayDescriptionStore }> {
     const row = await this.ebayIntegration(args.integrationId, args.companyIds);
+    /**
+     * These words appear on EVERY listing, so one eBay refuses — a "top rated" claim, a link, a phone
+     * number — would get every publish refused. Held to the same rules as a product's own text.
+     */
+    const pieces: [string, string | null | undefined][] = [
+      ['store name', args.storeName], ['condition in the header', args.conditionLabel], ['condition card', args.conditionNote],
+      ...(args.shipping ?? []).flatMap((r, i): [string, string][] => [[`shipping line ${i + 1}`, `${r.label} ${r.value}`]]),
+    ];
+    const problems = pieces.flatMap(([where, text]) => (text?.trim() ? checkBuyerText({ intro: text }, []).map((p) => `${where} ${p.problem}`) : []));
+    if (problems.length) throw new BadRequestException(`That text cannot go on a listing — ${problems.join('; ')}`);
     const next: Partial<EbayDescriptionStore> = {};
     if (args.storeName !== undefined) next.storeName = args.storeName;
     if (args.conditionLabel !== undefined) next.conditionLabel = args.conditionLabel;
