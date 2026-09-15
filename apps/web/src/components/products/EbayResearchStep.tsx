@@ -32,7 +32,9 @@ export function EbayResearchStep({ productId, sku, ready, refusal }: {
     queryFn: () => ebayListingApi.preview(productId).then((p) => p).catch(() => null),
   });
 
-  const prompt = `Research eBay item specifics and write the description for maSquare product ${sku}.`;
+  // Names all four outputs. "Write the description" alone got the Casio a description and no title,
+  // because the connector's content tool writes only what it is asked for.
+  const prompt = `Research eBay item specifics and write the eBay title, description and key features for maSquare product ${sku}.`;
 
   const copy = async () => {
     try {
@@ -50,8 +52,9 @@ export function EbayResearchStep({ productId, sku, ready, refusal }: {
   return (
     <div className="flex flex-col gap-2.5">
       <p className="text-[12.5px] text-n-500">
-        Claude searches the web and fills these fields in through the maSquare connector, using your
-        own Claude plan. It reports what each page said; maSquare decides what may be used.
+        Claude searches the web and fills in the item specifics, eBay title, description and key
+        features through the maSquare connector, using your own Claude plan. It reports what each page
+        said; maSquare decides what may be used.
       </p>
 
       {!ready && refusal && (
