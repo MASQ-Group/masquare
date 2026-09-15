@@ -49,8 +49,8 @@ export function StrategiesCard() {
     onSuccess: (r) => {
       setResult(r);
       if (r.applied != null) {
-        qc.invalidateQueries({ queryKey: ['repricing-sku-pricing'] });
-        qc.invalidateQueries({ queryKey: ['repricing-quarantine'] });
+        qc.invalidateQueries({ queryKey: ['repricing', 'sku-pricing'] });
+        qc.invalidateQueries({ queryKey: ['repricing', 'quarantine'] });
       }
     },
   });

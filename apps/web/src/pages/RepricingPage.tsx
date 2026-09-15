@@ -2,12 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { FloorExplainCard } from '../components/repricing/FloorExplainCard';
 import { StrategiesCard } from '../components/repricing/StrategiesCard';
+import { PriceRangeEditor } from '../components/repricing/PriceRangeEditor';
+import { PriceRangeBulkModal } from '../components/repricing/PriceRangeBulkModal';
+import { PriceRangeImportModal } from '../components/repricing/PriceRangeImportModal';
 import { RetentionCard } from '../components/repricing/RetentionCard';
 import { MarketplaceCostsCard } from '../components/repricing/MarketplaceCostsCard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle, Gauge, ListChecks, ScrollText, SlidersHorizontal, Plug } from 'lucide-react';
 import { Pagination, ProgressButton, Select, TabBar, TabPanel, TableScroll, type TabItem } from '@masquare/ui';
-import { brandsApi, integrationsApi, repricingApi, vendorsApi, type OnboardResult, type RecomputeResult, type RoleProbe } from '../lib/api';
+import { brandsApi, integrationsApi, productTypesApi, repricingApi, vendorsApi, type OnboardResult, type RecomputeResult, type RepricingSkuRow, type RoleProbe } from '../lib/api';
 import { useJobProgress } from '../lib/useJobProgress';
 import { PageHeader } from '../components/common/PageHeader';
 
@@ -360,7 +363,11 @@ function SkuTable() {
   const [marketplace, setMarketplace] = useState('');
   const [brandId, setBrandId] = useState('');
   const [vendorId, setVendorId] = useState('');
+  const [productTypeId, setProductTypeId] = useState('');
   const [state, setState] = useState('');
+  const [editing, setEditing] = useState<RepricingSkuRow | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
 
@@ -368,13 +375,14 @@ function SkuTable() {
   const markets = [...new Set(integrations.filter((i) => i.channelType === 'amazon' && i.marketplace).map((i) => i.marketplace as string))].sort();
   const { data: brands = [] } = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
   const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
+  const { data: productTypes = [] } = useQuery({ queryKey: ['product-types'], queryFn: () => productTypesApi.list() });
 
   // Any filter change returns to page 1 — otherwise a narrowed result set lands on an empty page.
   const reset = <T,>(set: (v: T) => void) => (v: T) => { set(v); setPage(1); };
 
   const query = useQuery({
-    queryKey: ['repricing', 'sku-pricing', { q, marketplace, brandId, vendorId, state, page, pageSize }],
-    queryFn: () => repricingApi.skuPricing({ q, marketplace, brandId, vendorId, state, take: pageSize, skip: (page - 1) * pageSize }),
+    queryKey: ['repricing', 'sku-pricing', { q, marketplace, brandId, vendorId, productTypeId, state, page, pageSize }],
+    queryFn: () => repricingApi.skuPricing({ q, marketplace, brandId, vendorId, productTypeId, state, take: pageSize, skip: (page - 1) * pageSize }),
     placeholderData: (prev) => prev,
   });
   const rows = query.data?.items ?? [];
@@ -382,8 +390,26 @@ function SkuTable() {
   const loading = query.isLoading;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
+  /**
+   * The bulk edit and the spreadsheet work on exactly what the table shows: the same filters, so
+   * choosing a vendor, brand or product type here IS choosing what they change.
+   */
+  const filters = { q, marketplace, brandId, vendorId, productTypeId, state };
+  const nameOf = (list: { id: string; name: string }[], id: string) => list.find((x) => x.id === id)?.name;
+  const filterSummary = [
+    marketplace && `Marketplace ${marketplace}`,
+    brandId && `Brand ${nameOf(brands, brandId) ?? ''}`,
+    vendorId && `Vendor ${nameOf(vendors, vendorId) ?? ''}`,
+    productTypeId && `Type ${nameOf(productTypes, productTypeId) ?? ''}`,
+    state && `State ${state}`,
+    q && `“${q}”`,
+  ].filter(Boolean).join(' · ') || 'All SKUs';
+
   return (
     <div className="card overflow-hidden">
+      {editing && <PriceRangeEditor row={editing} onClose={() => setEditing(null)} />}
+      {bulkOpen && <PriceRangeBulkModal filters={filters} filterSummary={`${filterSummary} — ${total.toLocaleString()} SKU${total === 1 ? '' : 's'}`} onClose={() => setBulkOpen(false)} />}
+      {sheetOpen && <PriceRangeImportModal filters={filters} filterSummary={filterSummary} onClose={() => setSheetOpen(false)} />}
       <div className="flex flex-wrap items-center gap-2 border-b border-n-100 px-4 py-2.5">
         <span className="text-[13px] font-semibold text-n-800">SKU pricing &amp; floors</span>
         <input value={q} onChange={(e) => reset(setQ)(e.target.value)} placeholder="Search SKU or ASIN…" className="h-8 w-48 rounded-md border border-n-200 px-2.5 font-mono text-[12.5px] outline-none focus:border-teal-400" />
@@ -399,12 +425,18 @@ function SkuTable() {
           <Select dense searchable value={vendorId} onChange={reset(setVendorId)}
             options={[{ value: '', label: 'All vendors' }, ...vendors.map((v) => ({ value: v.id, label: v.name }))]} />
         </div>
+        <div className="w-[160px]">
+          <Select dense searchable value={productTypeId} onChange={reset(setProductTypeId)}
+            options={[{ value: '', label: 'All product types' }, ...productTypes.map((t) => ({ value: t.id, label: t.name }))]} />
+        </div>
         <div className="w-[140px]">
           <Select dense value={state} onChange={reset(setState)}
             options={[{ value: '', label: 'All states' }, ...STATES.map((st) => ({ value: st, label: st }))]} />
         </div>
         <div className="flex-1" />
         <span className="text-[12px] text-n-500">{total.toLocaleString()} row{total === 1 ? '' : 's'}</span>
+        <button type="button" className="hbtn" disabled={total === 0} onClick={() => setBulkOpen(true)}>Bulk edit range</button>
+        <button type="button" className="hbtn" onClick={() => setSheetOpen(true)}>Spreadsheet</button>
       </div>
       <TableScroll>
         <table className="w-full text-[12.5px]">
@@ -417,17 +449,19 @@ function SkuTable() {
               <th className="px-3 py-2 font-semibold">State</th>
               <th className="px-3 py-2 font-semibold">Strategy</th>
               <th className="px-3 py-2 text-right font-semibold">Breakeven</th>
-              <th className="px-3 py-2 text-right font-semibold">Floor</th>
+              <th className="px-3 py-2 text-right font-semibold">Floor in use</th>
+              <th className="px-3 py-2 text-right font-semibold">Max</th>
               <th className="px-3 py-2 text-right font-semibold">Current</th>
               <th className="px-3 py-2 font-semibold">Floors computed</th>
               <th className="px-3 py-2 font-semibold">Reason</th>
+              <th className="px-3 py-2 font-semibold"><span className="sr-only">Edit</span></th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={10} className="px-4 py-6 text-center text-n-500">Loading…</td></tr>
+              <tr><td colSpan={13} className="px-4 py-6 text-center text-n-500">Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={10} className="px-4 py-6 text-center text-n-500">No SKUs yet — run <strong>Onboard SKUs</strong> to seed from matched Amazon listings.</td></tr>
+              <tr><td colSpan={13} className="px-4 py-6 text-center text-n-500">No SKUs yet — run <strong>Onboard SKUs</strong> to seed from matched Amazon listings.</td></tr>
             ) : (
               rows.map((r) => (
                 <tr key={r.id} className="border-t border-n-100 hover:bg-n-25">
@@ -438,7 +472,17 @@ function SkuTable() {
                   <td className="px-3 py-1.5"><Badge value={r.automationState} styles={STATE_STYLES} />{r.suppressed && <span className="ml-1 text-[11px] text-orange-600">supp</span>}</td>
                   <td className="px-3 py-1.5 text-[11.5px] text-n-600">{r.preset?.name ?? <span className="text-n-400">Balanced (default)</span>}</td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.breakevenCents, r.currency)}</td>
-                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.strategyFloorCents, r.currency)}</td>
+                  {/* The floor the engine prices against: clearance, else a minimum price, else the
+                      margin floor. The tag says which, so a floor under the margin is never a mystery. */}
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums" title={r.range.notes.join(' ') || undefined}>
+                    {money(r.range.floorCents, r.currency)}
+                    {r.range.floorSource !== 'margin' && (
+                      <span className={`ml-1 rounded px-1 font-sans text-[10px] ${r.range.floorSource === 'clearance' ? 'bg-warning-bg text-warning' : 'bg-n-50 text-n-600'}`}>
+                        {r.range.floorSource === 'clearance' ? 'clearance' : 'min'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.maxPriceCents, r.currency)}</td>
                   {/* The listing's price now. Set when the SKU is onboarded and refreshed on each
                       onboarding run, so it lags a price changed on Amazon since. */}
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">{money(r.currentPriceCents, r.currency)}</td>
@@ -446,6 +490,7 @@ function SkuTable() {
                       stale until Recompute runs — without this it looks like the maths is wrong. */}
                   <td className="px-3 py-1.5 text-[11px] text-n-500">{r.floorsComputedAt ? when(r.floorsComputedAt) : <span className="text-n-400">never</span>}</td>
                   <td className="px-3 py-1.5 font-mono text-[11px] text-n-500">{r.exclusionReason ?? ''}</td>
+                  <td className="px-3 py-1.5 text-right"><button type="button" className="text-[11.5px] font-semibold text-teal-700 hover:underline" onClick={() => setEditing(r)}>Range</button></td>
                 </tr>
               ))
             )}

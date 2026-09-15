@@ -15,6 +15,9 @@ import { SqsPollerService } from '../ingest/sqs-poller.service';
 import { queueForMarketplace } from '../config/notification-queues';
 import { JobsService } from '../../jobs/jobs.service';
 import { AccessArea } from '../../access/access.decorators';
+import { PriceRangeService, type RangeFilters } from './price-range.service';
+import type { RangeChange } from './price-range-edit';
+import { resolvePriceRange } from '../floor/price-range';
 
 // Ops console API for the Amazon repricing module (admin-only). Phase-appropriate subset: onboard
 // SKUs, refresh fees + recompute floors, and inspect the SKU-pricing table + recent decisions.
@@ -34,6 +37,7 @@ export class RepricingController {
     private readonly integrations: IntegrationsService,
     private readonly sqs: SqsPollerService,
     private readonly jobs: JobsService,
+    private readonly ranges: PriceRangeService,
   ) {}
 
   /** Seller blocklist (§5.2): unauthorized / MAP-violating / hijacker sellers excluded from pricing. */
@@ -284,6 +288,7 @@ export class RepricingController {
     @Query('brandId') brandId?: string,
     @Query('vendorId') vendorId?: string,
     @Query('state') state?: string,
+    @Query('productTypeId') productTypeId?: string,
   ) {
     const pageSize = Math.min(Math.max(Number(take) || 100, 1), 500);
     const offset = Math.max(Number(skip) || 0, 0);
@@ -293,9 +298,9 @@ export class RepricingController {
     if (iso && !marketplaceId) return { items: [], total: 0, page: 1, pageSize };
 
     let productIds: string[] | undefined;
-    if (brandId || vendorId) {
+    if (brandId || vendorId || productTypeId) {
       const products = await this.prisma.product.findMany({
-        where: { ...(brandId ? { brandId } : {}), ...(vendorId ? { vendorId } : {}) },
+        where: { ...(brandId ? { brandId } : {}), ...(vendorId ? { vendorId } : {}), ...(productTypeId ? { productTypeId } : {}) },
         select: { id: true },
       });
       productIds = products.map((p) => p.id);
@@ -329,7 +334,64 @@ export class RepricingController {
       }),
       this.prisma.repricingSkuPricing.count({ where }),
     ]);
-    return { items, total, page: Math.floor(offset / pageSize) + 1, pageSize };
+    /**
+     * The floor actually in use, beside the solved one: a minimum price or a clearance replaces the
+     * margin floor, and the table must show the number the engine prices against, not the one it
+     * would have used. Stock is read only for clearances that end at a stock level.
+     */
+    const stockIds = items.filter((r) => r.productId && r.clearanceUntilStock != null).map((r) => r.productId as string);
+    const stock = stockIds.length
+      ? new Map((await this.prisma.productAvailability.findMany({ where: { productId: { in: stockIds } }, select: { productId: true, quantity: true } })).map((a) => [a.productId, a.quantity]))
+      : new Map<string, number>();
+    const now = new Date();
+    const withRange = items.map((r) => {
+      const range = resolvePriceRange({
+        breakevenCents: r.breakevenCents,
+        marginFloorCents: r.strategyFloorCents,
+        minPriceCents: r.minPriceCents,
+        maxPriceCents: r.maxPriceCents,
+        clearance: r.clearanceFloorCents != null
+          ? { floorCents: r.clearanceFloorCents, reason: r.clearanceReason, endsAt: r.clearanceEndsAt, untilStock: r.clearanceUntilStock }
+          : null,
+        availableUnits: r.productId ? stock.get(r.productId) ?? null : null,
+        now,
+      });
+      return { ...r, range };
+    });
+    return { items: withRange, total, page: Math.floor(offset / pageSize) + 1, pageSize };
+  }
+
+  /**
+   * One SKU's price range: minimum and maximum price, margin, clearance. Writes our database only;
+   * the engine prices within it on the next evaluation. A margin change recomputes the floor as a job.
+   */
+  @Patch('sku-pricing/:id/range')
+  updateRange(@Param('id') id: string, @Body() change: RangeChange, @CurrentUser() user: AuthUser) {
+    return this.ranges.updateOne(id, change, user.sub);
+  }
+
+  /** The same change for every SKU a filter selects. Preview unless `apply` is true. */
+  @Post('sku-pricing/range/bulk')
+  bulkRange(@Body() body: { filters: RangeFilters; change: RangeChange; apply?: boolean }, @CurrentUser() user: AuthUser) {
+    return this.ranges.bulk(body?.filters ?? {}, body?.change ?? {}, body?.apply === true, user.sub);
+  }
+
+  /** The SKUs a filter selects, as spreadsheet rows with their breakeven, floors and range. Read-only. */
+  @Post('sku-pricing/range/export')
+  exportRange(@Body() body: { filters?: RangeFilters }) {
+    return this.ranges.exportRows(body?.filters ?? {});
+  }
+
+  /** Check an uploaded range spreadsheet row by row. Writes nothing. */
+  @Post('sku-pricing/range/import/validate')
+  validateRangeImport(@Body() body: { rows: Record<string, unknown>[] }) {
+    return this.ranges.importValidate(Array.isArray(body?.rows) ? body.rows : []);
+  }
+
+  /** Apply an uploaded range spreadsheet: every row that changes cleanly; rows with problems are left alone. */
+  @Post('sku-pricing/range/import/commit')
+  commitRangeImport(@Body() body: { rows: Record<string, unknown>[] }, @CurrentUser() user: AuthUser) {
+    return this.ranges.importCommit(Array.isArray(body?.rows) ? body.rows : [], user.sub);
   }
 
   /**

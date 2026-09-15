@@ -3379,6 +3379,16 @@ model RepricingSkuPricing {
 
   // Ceilings (§6.2) — cents.
   maxPriceCents           Int? @map("max_price_cents")
+  /// A person's fixed minimum price. Replaces the margin floor when set; never below breakeven.
+  minPriceCents           Int? @map("min_price_cents")
+  /// Clearance: the only floor that may sit below breakeven, for a reason, until a date or a stock
+  /// level. See amazon-repricing/floor/price-range.ts.
+  clearanceFloorCents     Int?      @map("clearance_floor_cents")
+  clearanceReason         String?   @map("clearance_reason")
+  clearanceEndsAt         DateTime? @map("clearance_ends_at")
+  clearanceUntilStock     Int?      @map("clearance_until_stock")
+  clearanceSetAt          DateTime? @map("clearance_set_at")
+  clearanceSetById        String?   @map("clearance_set_by") @db.Uuid
   fairPricingCeilingCents Int? @map("fair_pricing_ceiling_cents")
   amazonMinAllowedCents   Int? @map("amazon_min_allowed_cents")
   amazonMaxAllowedCents   Int? @map("amazon_max_allowed_cents")
