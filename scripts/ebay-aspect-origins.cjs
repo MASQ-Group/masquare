@@ -41,20 +41,18 @@ const SKU = 'LAG-A158WEA-9EF';
     ? await p.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, email: true } })
     : [];
   const who = (id) => (id ? users.find((u) => u.id === id)?.email ?? id.slice(0, 8) : 'system');
-  const touchesCopy = (c) => {
-    const keys = c && typeof c === 'object' ? Object.keys(c) : [];
-    return keys.filter((k) => /shortDescription|descriptionHtml|keyFeatures|description|features/i.test(k));
-  };
-  console.log('PRODUCT ACTIVITY (copy-related changes flagged)');
+  /**
+   * Changes are stored as a LIST of { field, label, from, to } — reading them as an object keyed by
+   * field found nothing, so every copy write looked like an unrelated update. Every changed field is
+   * named; copy fields also show lengths before and after, never the words.
+   */
+  const COPY = /shortDescription|descriptionHtml|keyFeatures|ebayTitle/i;
+  const len = (v) => (v == null || v === '' ? 'empty' : `${String(v).replace(/<[^>]*>/g, '').trim().length} chars`);
+  console.log('PRODUCT ACTIVITY (copy fields show length before -> after)');
   for (const a of acts) {
-    const copy = touchesCopy(a.changes);
-    const lens = copy.map((k) => {
-      const v = a.changes[k];
-      const after = v && typeof v === 'object' && 'to' in v ? v.to : v && typeof v === 'object' && 'after' in v ? v.after : undefined;
-      const len = after == null ? 'empty' : Array.isArray(after) ? `${after.length} items` : `${String(after).replace(/<[^>]*>/g, '').trim().length} chars`;
-      return `${k}→${len}`;
-    });
-    console.log(`  ${a.createdAt.toISOString()}  ${a.action.padEnd(7)} ${String(a.source).padEnd(6)} ${who(a.actorId).padEnd(26)} ${copy.length ? '<- COPY: ' + lens.join(', ') : ''}`);
+    const list = Array.isArray(a.changes) ? a.changes : [];
+    const fields = list.map((c) => (COPY.test(c.field) ? `${c.field}[${len(c.from)} -> ${len(c.to)}]` : c.field));
+    console.log(`  ${a.createdAt.toISOString()}  ${a.action.padEnd(7)} ${String(a.source).padEnd(6)} ${who(a.actorId).padEnd(26)} ${fields.join(', ')}`);
   }
   console.log('');
 

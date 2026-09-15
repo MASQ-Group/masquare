@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ImagePlus, Plus, Star, Trash2, X, Store } from 'lucide-react';
 import { toast } from 'sonner';
@@ -21,6 +21,7 @@ import { categoryOptions } from '../../lib/categoryPaths';
 import { RefField } from './RefField';
 import { CountrySelect } from '../common/CountrySelect';
 import { useAuth } from '../../lib/auth';
+import { changedFields } from '../../lib/changedFields';
 
 interface Props {
   product: Product | null; // null = create
@@ -158,52 +159,75 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
 
   const canSave = mainSku.trim().length > 0 && title.trim().length > 0;
 
+  const buildBody = () => ({
+    mainSku, title,
+    brandId: brand?.id ?? null, vendorId: vendor?.id ?? null, productTypeId: productType?.id ?? null,
+    fulfilmentTypeId: fulfilmentType?.id ?? null, categoryId: category?.id ?? null,
+    vatClassId: vatClass?.id ?? null,
+    serialTracked,
+    productClassId: productClass?.id ?? null,
+    ean: ident.ean, upc: ident.upc, vendorSku: ident.vendorSku, manufacturerSku: ident.manufacturerSku,
+    countryOfOrigin: ident.countryOfOrigin, hsCode: ident.hsCode,
+    purchaseCost: { amount: numOrNull(cost.purchase), currency: 'EUR' },
+    map: { amount: numOrNull(cost.map), currency: 'EUR' },
+    msrp: { amount: numOrNull(cost.msrp), currency: 'EUR' },
+    productWeightKg: numOrNull(dims.productWeightKg),
+    packageWeightKg: numOrNull(dims.packageWeightKg),
+    packageLengthCm: numOrNull(dims.packageLengthCm),
+    packageWidthCm: numOrNull(dims.packageWidthCm),
+    packageHeightCm: numOrNull(dims.packageHeightCm),
+    ebayTitle: content.ebayTitle.trim() || null,
+    shortDescription: content.shortDescription.trim() || null,
+    descriptionHtml: content.descriptionHtml.trim() || null,
+    keyFeatures: features.map((f) => f.trim()).filter(Boolean),
+    searchKeywords: content.searchKeywords.trim() || null,
+    voltageRatingId: tech.voltageRatingId || null,
+    frequencyId: tech.frequencyId || null,
+    plugTypeId: tech.plugTypeId || null,
+    batteryRequired: tech.batteryRequired,
+    batteryTypeId: tech.batteryTypeId || null,
+    hazmatClassId: tech.hazmatClassId || null,
+    warrantyText: tech.warrantyText.trim() || null,
+    dangerousGoodsNote: tech.dangerousGoodsNote.trim() || null,
+    aliases: aliases.filter((a) => a.skuValue.trim()).map((a) => ({ skuValue: a.skuValue.trim(), label: a.label || undefined, fulfilmentTypeId: a.fulfilmentTypeId || undefined })),
+    attributes: attrs
+      .filter((a) => a.attributeId)
+      .flatMap((a) => a.values.map((v) => v.trim()).filter(Boolean).map((value) => ({ attributeId: a.attributeId, value }))),
+  });
+
+  /**
+   * The product as the card opened it, in the same shape a save sends. Taken on the first render,
+   * when every field still holds what was loaded.
+   */
+  const opened = useRef<ReturnType<typeof buildBody> | null>(null);
+  if (opened.current === null) opened.current = buildBody();
+
   const save = async () => {
     if (!canSave) { setTab('general'); toast.error('Main SKU and title are required'); return; }
     setBusy(true);
     try {
-      const body = {
-        mainSku, title,
-        brandId: brand?.id ?? null, vendorId: vendor?.id ?? null, productTypeId: productType?.id ?? null,
-        fulfilmentTypeId: fulfilmentType?.id ?? null, categoryId: category?.id ?? null,
-        vatClassId: vatClass?.id ?? null,
-        serialTracked,
-        productClassId: productClass?.id ?? null,
-        ean: ident.ean, upc: ident.upc, vendorSku: ident.vendorSku, manufacturerSku: ident.manufacturerSku,
-        countryOfOrigin: ident.countryOfOrigin, hsCode: ident.hsCode,
-        purchaseCost: { amount: numOrNull(cost.purchase), currency: 'EUR' },
-        map: { amount: numOrNull(cost.map), currency: 'EUR' },
-        msrp: { amount: numOrNull(cost.msrp), currency: 'EUR' },
-        productWeightKg: numOrNull(dims.productWeightKg),
-        packageWeightKg: numOrNull(dims.packageWeightKg),
-        packageLengthCm: numOrNull(dims.packageLengthCm),
-        packageWidthCm: numOrNull(dims.packageWidthCm),
-        packageHeightCm: numOrNull(dims.packageHeightCm),
-        ebayTitle: content.ebayTitle.trim() || null,
-        shortDescription: content.shortDescription.trim() || null,
-        descriptionHtml: content.descriptionHtml.trim() || null,
-        keyFeatures: features.map((f) => f.trim()).filter(Boolean),
-        searchKeywords: content.searchKeywords.trim() || null,
-        voltageRatingId: tech.voltageRatingId || null,
-        frequencyId: tech.frequencyId || null,
-        plugTypeId: tech.plugTypeId || null,
-        batteryRequired: tech.batteryRequired,
-        batteryTypeId: tech.batteryTypeId || null,
-        hazmatClassId: tech.hazmatClassId || null,
-        warrantyText: tech.warrantyText.trim() || null,
-        dangerousGoodsNote: tech.dangerousGoodsNote.trim() || null,
-        aliases: aliases.filter((a) => a.skuValue.trim()).map((a) => ({ skuValue: a.skuValue.trim(), label: a.label || undefined, fulfilmentTypeId: a.fulfilmentTypeId || undefined })),
-        attributes: attrs
-          .filter((a) => a.attributeId)
-          .flatMap((a) => a.values.map((v) => v.trim()).filter(Boolean).map((value) => ({ attributeId: a.attributeId, value }))),
-      };
-      /**
-       * `expectedUpdatedAt` makes the save refuse rather than overwrite if the product changed while
-       * this card was open. The card holds a copy from the moment it opened and writes every field
-       * back, so without it, research written by Claude in the meantime was silently erased.
-       */
-      if (product) await productsApi.update(product.id, { ...body, expectedUpdatedAt: product.updatedAt ?? undefined });
-      else await productsApi.create(body);
+      const body = buildBody();
+      if (product) {
+        /**
+         * Only what was edited in this card. It used to send every field back, and on 14 Sep a save
+         * made 42 seconds after Claude wrote the Casio's description put the card's empty copy back
+         * over it — the page had been open since before the stale-save guard shipped, so the guard
+         * was never sent. A field this card did not touch is now simply not in the save.
+         *
+         * `expectedUpdatedAt` stays as the second line: it refuses even an edited field if the
+         * product changed underneath, so two people editing the same text cannot silently clobber
+         * each other either.
+         */
+        const changes = changedFields(opened.current!, body);
+        if (Object.keys(changes).length === 0) {
+          toast.success('Nothing to save — no field was changed');
+          onSaved();
+          return;
+        }
+        await productsApi.update(product.id, { ...changes, expectedUpdatedAt: product.updatedAt ?? undefined });
+      } else {
+        await productsApi.create(body);
+      }
       toast.success(product ? 'Product saved' : 'Product created');
       onSaved();
     } catch (e: any) {

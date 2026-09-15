@@ -55,10 +55,18 @@ export const INSTRUCTIONS = [
   '2. Search the web. Prefer the manufacturer\'s own site. Make sure each page is THIS model — the part',
   '   number must match, not just the product family.',
   '3. submit_gather_findings — once per product, with every page you used and every value found.',
-  '4. submit_product_content — the buyer-facing words, as PLAIN PROSE: two or three short paragraphs',
-  '   and a few feature lines. Never HTML. maSquare renders the eBay description itself from one house',
-  '   template and builds the specification table from values that passed its checks, so the design is',
-  '   identical on every listing and is not yours to choose.',
+  '4. submit_product_content — the eBay title, and the buyer-facing words as PLAIN PROSE: two or three',
+  '   short paragraphs and a few feature lines. ALL THREE, every time — a listing with no title cannot be',
+  '   published, and one with no paragraphs shows buyers nothing but a table. Never HTML. maSquare',
+  '   renders the eBay description itself from one house template and builds the specification table',
+  '   from values that passed its checks, so the design is identical on every listing and is not yours',
+  '   to choose.',
+  '   THE TITLE: at most 80 characters, English, one line. Brand, then the model or part number, then',
+  '   what the product is, then the two or three facts a buyer filters on (colour, size, material) —',
+  '   only facts a page stated. No filler ("new", "wow", "L@@K"), no all-capitals, no punctuation for',
+  '   decoration, never our internal SKU. Shape: Brand Model What-it-is Colour Material.',
+  '   The words are written by you, but every fact in them must come from the pages — the same rule as',
+  '   the specifics. If a page did not say it, it does not go in the title or the paragraphs.',
   '5. Tell the user briefly what was usable, what was held back for them to check, and what is still',
   '   missing. Held-back values are confirmed by a person inside maSquare, not by you.',
   '',
@@ -187,9 +195,10 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
   addTool<ContentArgs>(server,
     'submit_product_content',
     {
-      title: 'Write the product description',
+      title: 'Write the eBay title and description',
       description:
-        'Write the buyer-facing words for a product: an introduction and short feature lines, as PLAIN PROSE. '
+        'Write the buyer-facing words for a product: the eBay title, an introduction and short feature lines, as '
+        + 'PLAIN PROSE. Send all three. '
         + 'Never send HTML — maSquare renders the eBay description itself from one house template, and adds the '
         + 'specification table from values that already passed its checks, so every listing looks the same. '
         + 'The text must not contain our internal SKU, an email address, a phone number or a web address; eBay '
@@ -197,6 +206,8 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
         + 'unless replaceExisting is true.',
       inputSchema: {
         sku: z.string().min(1).max(100).describe('The product SKU, exactly.'),
+        title: z.string().max(80).nullish()
+          .describe('The eBay title: at most 80 characters, brand and model first, then what it is and the facts buyers filter on.'),
         intro: z.string().max(3000).nullish()
           .describe('Two or three short paragraphs about what the product is and who it suits. Blank lines separate paragraphs.'),
         features: z.array(z.string().max(240)).max(12).optional()
@@ -208,7 +219,7 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ sku, intro, features, replaceExisting, company }) => run(async () => {
+    async ({ sku, title, intro, features, replaceExisting, company }) => run(async () => {
       const companyId = await resolveCompany(deps, actor, company);
       const productId = await requireProduct(deps, sku);
       // Resolved for its side effect: it refuses a product this user's companies cannot reach.
@@ -216,6 +227,7 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
       return deps.listing.submitProductContent(productId, {
         companyIds: [companyId],
         userId: actor.sub,
+        title: title ?? null,
         intro: intro ?? null,
         features,
         replaceExisting,
@@ -246,9 +258,11 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
             '',
             'For each product: call get_product_for_gather. If it is not ready, note why and move on.',
             'Otherwise search the web following the maSquare connector rules, then call',
-            'submit_gather_findings once with every page and value.',
+            'submit_gather_findings once with every page and value. Then call submit_product_content with the',
+            'eBay title, the description paragraphs and the feature lines — all three, from the same pages.',
             '',
-            'When all are done, give me a short table: SKU, usable, held back, pages rejected, still missing.',
+            'When all are done, give me a short table: SKU, usable, held back, pages rejected, still missing,',
+            'and whether the title, description and features were written or skipped (and why).',
           ].join('\n'),
         },
       }],
@@ -310,6 +324,7 @@ interface ListArgs extends CompanyArg { skus?: string[]; search?: string; onlyRe
 interface BriefArgs extends CompanyArg { sku: string }
 interface ContentArgs extends CompanyArg {
   sku: string;
+  title?: string | null;
   intro?: string | null;
   features?: string[];
   replaceExisting?: boolean;
