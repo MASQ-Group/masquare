@@ -12,8 +12,8 @@
 const { PrismaClient } = require('@prisma/client');
 
 // Point this at whatever landed last; it is a check, not a record.
-const WANT = '20260915090000_plan_ebay_policy_overrides';
-const TABLE = 'product_channel_plan';
+const WANT = '20260915140000_order_availability_decision';
+const TABLE = 'order_availability_decision';
 
 (async () => {
   const prisma = new PrismaClient();
@@ -39,7 +39,11 @@ const TABLE = 'product_channel_plan';
   if (cols.length === 0) console.log('    DOES NOT EXIST');
   else for (const c of cols) console.log(`    ${c.column_name.padEnd(18)} ${c.data_type}`);
 
-  const rows = await prisma.channelSyncError.count();
+  // Counts TABLE itself. It was hard-coded to channel_sync_error, so every other migration checked
+  // reported that table's row count — a backfilled table read as empty.
+  const rows = cols.length
+    ? (await prisma.$queryRawUnsafe(`SELECT count(*)::int AS n FROM "${TABLE.replace(/"/g, '')}"`))[0].n
+    : 0;
   console.log(`\n  rows currently stored          ${rows}`);
 
   await prisma.$disconnect();

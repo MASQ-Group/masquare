@@ -242,8 +242,8 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
   addPrompt<{ skus: string }>(server,
     'gather_ebay_specifics',
     {
-      title: 'Research eBay item specifics',
-      description: 'Research eBay item specifics on the web for one or more maSquare products.',
+      title: 'Research eBay item specifics and write the listing',
+      description: 'Research eBay item specifics on the web and write the eBay title, description and key features for one or more maSquare products.',
       argsSchema: {
         skus: z.string().describe('One or more SKUs, separated by commas or spaces.'),
       },
@@ -254,7 +254,7 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
         content: {
           type: 'text' as const,
           text: [
-            `Research eBay item specifics for these maSquare products: ${skus}`,
+            `Research eBay item specifics and write the eBay title, description and key features for these maSquare products: ${skus}`,
             '',
             'For each product: call get_product_for_gather. If it is not ready, note why and move on.',
             'Otherwise search the web following the maSquare connector rules, then call',
