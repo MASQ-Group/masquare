@@ -17,6 +17,7 @@ import { JobsService } from '../../jobs/jobs.service';
 import { AccessArea } from '../../access/access.decorators';
 import { PriceRangeService, type RangeFilters } from './price-range.service';
 import type { RangeChange } from './price-range-edit';
+import { planStateChange, type AutomationTarget } from './automation-state';
 import { resolvePriceRange } from '../floor/price-range';
 
 // Ops console API for the Amazon repricing module (admin-only). Phase-appropriate subset: onboard
@@ -368,6 +369,31 @@ export class RepricingController {
   @Patch('sku-pricing/:id/range')
   updateRange(@Param('id') id: string, @Body() change: RangeChange, @CurrentUser() user: AuthUser) {
     return this.ranges.updateOne(id, change, user.sub);
+  }
+
+  /**
+   * Put one SKU live, back into shadow, or stop it.
+   *
+   * How a pilot is run: two or three SKUs live, the rest in shadow. Only a SKU already evaluating
+   * cleanly in shadow, on known and fresh floors, may go live — the rules and their wording live in
+   * automation-state.ts. Stopping is always allowed.
+   */
+  @Patch('sku-pricing/:id/state')
+  async setAutomationState(@Param('id') id: string, @Body() body: { automationState: AutomationTarget }) {
+    const row = await this.prisma.repricingSkuPricing.findFirst({ where: { id, deletedAt: null } });
+    if (!row) throw new BadRequestException('SKU pricing row not found');
+    const target = body?.automationState;
+    if (!['LIVE', 'SHADOW', 'KILLED'].includes(target)) {
+      throw new BadRequestException('State must be LIVE, SHADOW or KILLED');
+    }
+    const control = await this.control.get();
+    const plan = planStateChange(row, target, { now: new Date(), liveWritesEnabled: control.liveWritesEnabled });
+    if (!plan.ok) throw new BadRequestException(plan.problems.join(' '));
+    await this.prisma.repricingSkuPricing.update({
+      where: { id },
+      data: { automationState: target, ...(target === 'LIVE' ? { exclusionReason: null } : {}) },
+    });
+    return { id, automationState: target, notes: plan.notes, liveWritesEnabled: control.liveWritesEnabled };
   }
 
   /**

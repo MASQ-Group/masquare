@@ -5,6 +5,7 @@ import { StrategiesCard } from '../components/repricing/StrategiesCard';
 import { PriceRangeEditor } from '../components/repricing/PriceRangeEditor';
 import { PriceRangeBulkModal } from '../components/repricing/PriceRangeBulkModal';
 import { PriceRangeImportModal } from '../components/repricing/PriceRangeImportModal';
+import { SkuStateControl } from '../components/repricing/SkuStateControl';
 import { RetentionCard } from '../components/repricing/RetentionCard';
 import { MarketplaceCostsCard } from '../components/repricing/MarketplaceCostsCard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -376,6 +377,9 @@ function SkuTable() {
   const { data: brands = [] } = useQuery({ queryKey: ['brands'], queryFn: () => brandsApi.list() });
   const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: () => vendorsApi.list() });
   const { data: productTypes = [] } = useQuery({ queryKey: ['product-types'], queryFn: () => productTypesApi.list() });
+  // Live SKUs only reach Amazon while the platform switch is on; the row control says which it is.
+  const control = useQuery({ queryKey: ['repricing', 'control'], queryFn: repricingApi.getControl });
+  const liveWrites = control.data?.liveWritesEnabled ?? false;
 
   // Any filter change returns to page 1 — otherwise a narrowed result set lands on an empty page.
   const reset = <T,>(set: (v: T) => void) => (v: T) => { set(v); setPage(1); };
@@ -437,6 +441,9 @@ function SkuTable() {
         <span className="text-[12px] text-n-500">{total.toLocaleString()} row{total === 1 ? '' : 's'}</span>
         <button type="button" className="hbtn" disabled={total === 0} onClick={() => setBulkOpen(true)}>Bulk edit range</button>
         <button type="button" className="hbtn" onClick={() => setSheetOpen(true)}>Spreadsheet</button>
+        <span className={`text-[11.5px] ${liveWrites ? 'text-teal-700' : 'text-n-500'}`} title="Set on the Overview tab">
+          {liveWrites ? 'Live writes ON' : 'Live writes off — live SKUs send nothing'}
+        </span>
       </div>
       <TableScroll>
         <table className="w-full text-[12.5px]">
@@ -454,14 +461,15 @@ function SkuTable() {
               <th className="px-3 py-2 text-right font-semibold">Current</th>
               <th className="px-3 py-2 font-semibold">Floors computed</th>
               <th className="px-3 py-2 font-semibold">Reason</th>
+              <th className="px-3 py-2 text-right font-semibold">Automation</th>
               <th className="px-3 py-2 font-semibold"><span className="sr-only">Edit</span></th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={13} className="px-4 py-6 text-center text-n-500">Loading…</td></tr>
+              <tr><td colSpan={14} className="px-4 py-6 text-center text-n-500">Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={13} className="px-4 py-6 text-center text-n-500">No SKUs yet — run <strong>Onboard SKUs</strong> to seed from matched Amazon listings.</td></tr>
+              <tr><td colSpan={14} className="px-4 py-6 text-center text-n-500">No SKUs yet — run <strong>Onboard SKUs</strong> to seed from matched Amazon listings.</td></tr>
             ) : (
               rows.map((r) => (
                 <tr key={r.id} className="border-t border-n-100 hover:bg-n-25">
@@ -490,6 +498,7 @@ function SkuTable() {
                       stale until Recompute runs — without this it looks like the maths is wrong. */}
                   <td className="px-3 py-1.5 text-[11px] text-n-500">{r.floorsComputedAt ? when(r.floorsComputedAt) : <span className="text-n-400">never</span>}</td>
                   <td className="px-3 py-1.5 font-mono text-[11px] text-n-500">{r.exclusionReason ?? ''}</td>
+                  <td className="px-3 py-1.5 text-right"><SkuStateControl row={r} liveWritesEnabled={liveWrites} /></td>
                   <td className="px-3 py-1.5 text-right"><button type="button" className="text-[11.5px] font-semibold text-teal-700 hover:underline" onClick={() => setEditing(r)}>Range</button></td>
                 </tr>
               ))
