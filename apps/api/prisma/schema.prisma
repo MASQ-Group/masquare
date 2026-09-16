@@ -3561,6 +3561,121 @@ model RepricingDecision {
 }
 
 // Blocklist + observed seller metadata (spec §4.1 sellers, §5.2). marketplaceId null ⇒ all markets.
+/**
+ * Every price a channel listing has carried, and what put it there.
+ *
+ * Amazon serves no price history, and our own listing rows are overwritten on each sync — so a
+ * question as ordinary as "what was this priced at last Tuesday" had no answer. Append-only, one row
+ * per change, never updated: a price that was live for an hour is part of the record.
+ *
+ * Channel-agnostic on purpose. The repricer fills it today; eBay and OnBuy fill the same table when
+ * they start writing prices, so a report does not need a second shape per channel.
+ */
+model ChannelPriceHistory {
+  id                 String   @id @default(uuid()) @db.Uuid
+  companyId          String?  @map("company_id") @db.Uuid
+  /// Null where the price was set by a path that knows the marketplace but not the integration row.
+  integrationId      String?  @map("integration_id") @db.Uuid
+  /// Amazon marketplace id; empty for channels that span none.
+  marketplaceId      String   @default("") @map("marketplace_id")
+  channelSku         String   @map("channel_sku")
+  productId          String?  @map("product_id") @db.Uuid
+  priceCents         Int      @map("price_cents")
+  /// What it was before, as far as we knew. Null when this is the first price we ever saw.
+  previousPriceCents Int?     @map("previous_price_cents")
+  currency           String
+  /// repricer | manual_push | listing_sync | listing_created
+  source             String
+  /// The repricing decision that set it, when ours set it.
+  decisionId         String?  @map("decision_id") @db.Uuid
+  at                 DateTime @default(now())
+
+  @@index([channelSku, marketplaceId, at])
+  @@index([productId, at])
+  @@index([at])
+  @@map("channel_price_history")
+}
+
+/**
+ * What the market looked like each time the repricer evaluated a listing.
+ *
+ * The full offer payload is kept only as the latest snapshot per ASIN, so Buy Box history had
+ * nowhere to live. This is the slim, keepable part: our price, the Buy Box price, whether it was
+ * ours, and how many sellers qualified. Enough for win-rate and price-position over time, small
+ * enough to keep for a year.
+ */
+model RepricingMarketSample {
+  id                    String   @id @default(uuid()) @db.Uuid
+  sku                   String
+  marketplaceId         String   @map("marketplace_id")
+  asin                  String?
+  at                    DateTime @default(now())
+  ourPriceCents         Int?     @map("our_price_cents")
+  buyBoxLandedCents     Int?     @map("buy_box_landed_cents")
+  weHoldBuyBox          Boolean  @default(false) @map("we_hold_buy_box")
+  competitorCount       Int      @default(0) @map("competitor_count")
+  lowestCompetitorCents Int?     @map("lowest_competitor_cents")
+  /// The floor in force at that moment, so "time spent at the floor" is measurable later.
+  floorCents            Int?     @map("floor_cents")
+  decisionId            String?  @map("decision_id") @db.Uuid
+
+  @@index([sku, marketplaceId, at])
+  @@index([at])
+  @@map("repricing_market_sample")
+}
+
+/**
+ * One row per SKU, per marketplace, per day: the shape of the reports.
+ *
+ * Raw decisions, price changes and samples answer "what happened at 14:05" and are purged after a
+ * year. These summaries are small enough to keep for ever, and are what a chart of the last twelve
+ * months reads — a year of raw rows per SKU would make every page load a scan.
+ *
+ * Recomputed idempotently for a day, so a backfill or a late-settling fee simply rewrites the row.
+ */
+model RepricingDailyStat {
+  id            String   @id @default(uuid()) @db.Uuid
+  day           DateTime @db.Date
+  sku           String
+  marketplaceId String   @map("marketplace_id")
+  productId     String?  @map("product_id") @db.Uuid
+
+  evaluations   Int @default(0)
+  priced        Int @default(0)
+  held          Int @default(0)
+  skipped       Int @default(0)
+  quarantined   Int @default(0)
+  /// Priced, then refused by the safety layer — the ones worth reading.
+  vetoed        Int @default(0)
+
+  priceChanges    Int  @default(0) @map("price_changes")
+  priceOpenCents  Int? @map("price_open_cents")
+  priceCloseCents Int? @map("price_close_cents")
+  priceMinCents   Int? @map("price_min_cents")
+  priceMaxCents   Int? @map("price_max_cents")
+
+  buyBoxSamples Int @default(0) @map("buy_box_samples")
+  buyBoxWon     Int @default(0) @map("buy_box_won")
+  /// Samples where our price sat at the floor: the SKU had nowhere lower to go.
+  atFloorSamples Int @default(0) @map("at_floor_samples")
+
+  unitsSold    Int  @default(0) @map("units_sold")
+  revenueCents Int  @default(0) @map("revenue_cents")
+  profitCents  Int? @map("profit_cents")
+  /// actual | estimated | mixed | none — which fees the profit was worked out from.
+  feeBasis     String? @map("fee_basis")
+  /// Units sold within the attribution window after a price change that day.
+  unitsAfterChange Int @default(0) @map("units_after_change")
+
+  currency  String?
+  computedAt DateTime @default(now()) @map("computed_at")
+
+  @@unique([day, sku, marketplaceId])
+  @@index([sku, marketplaceId, day])
+  @@index([day])
+  @@map("repricing_daily_stat")
+}
+
 model RepricingBlockedSeller {
   id               String  @id @default(uuid()) @db.Uuid
   marketplaceId    String? @map("marketplace_id")

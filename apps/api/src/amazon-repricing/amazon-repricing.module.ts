@@ -10,6 +10,7 @@ import { SqsPollerService } from './ingest/sqs-poller.service';
 import { RepricerService } from './engine/repricer.service';
 import { PriceWriterService } from './writer/price-writer.service';
 import { PriceRangeService } from './ops/price-range.service';
+import { RepricingAnalyticsModule } from './analytics/repricing-analytics.module';
 import { RepricingControlService } from './writer/control.service';
 import { OnboardingService } from './onboarding/onboarding.service';
 import { BlocklistService } from './ops/blocklist.service';
@@ -24,9 +25,9 @@ import { RepricingController } from './ops/repricing.controller';
 //     audit; SHADOW mode logs the intended price, submits nothing).
 // Later phases add: price-writer + safety-layer wiring, enrichment, and the ops console.
 @Module({
-  imports: [IntegrationsModule, PricingModule],
+  imports: [IntegrationsModule, PricingModule, RepricingAnalyticsModule],
   controllers: [RepricingController],
   providers: [FloorService, VatService, FeeService, SnapshotService, RepriceSchedulerService, SqsPollerService, RepricerService, PriceWriterService, RepricingControlService, OnboardingService, BlocklistService, PriceRangeService],
-  exports: [FloorService, VatService, SnapshotService, RepricerService, PriceWriterService, OnboardingService],
+  exports: [FloorService, VatService, SnapshotService, RepricerService, PriceWriterService, OnboardingService, RepricingAnalyticsModule],
 })
 export class AmazonRepricingModule {}
