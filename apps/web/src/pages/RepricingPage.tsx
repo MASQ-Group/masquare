@@ -122,6 +122,13 @@ export function RepricingPage() {
   // re-attaches to the run rather than appearing to have lost it.
   const onboardJob = useJobProgress('repricing.onboard', refreshAll);
   const recomputeJob = useJobProgress('repricing.recompute', refreshAll);
+  /**
+   * Rebuilding the statistics touches no marketplace — it re-reads our own decisions, prices and
+   * sales. Needed when fees settle after the nightly week has passed, when the folding rules change,
+   * and once at the start to cover the history that existed before any of this was recorded.
+   */
+  const statsJob = useJobProgress('repricing.analytics-rollup', refreshAll);
+  const [statsDays, setStatsDays] = useState('90');
 
   const control = useQuery({ queryKey: ['repricing', 'control'], queryFn: repricingApi.getControl });
   const setControl = useMutation({
@@ -202,6 +209,29 @@ export function RepricingPage() {
               title={'Refresh fees and re-solve floors on ' + scopeLabel + ' — one live SP-API call per SKU'}
             >
               <RefreshCcw size={15} /> Recompute floors
+            </ProgressButton>
+            <div className="w-[130px]">
+              <Select
+                dense
+                value={statsDays}
+                onChange={setStatsDays}
+                options={[
+                  { value: '7', label: 'last 7 days' },
+                  { value: '30', label: 'last 30 days' },
+                  { value: '90', label: 'last 90 days' },
+                  { value: '365', label: 'last year' },
+                ]}
+              />
+            </div>
+            <ProgressButton
+              onClick={() => statsJob.start(() => repricingApi.rebuildStats(Number(statsDays)))}
+              running={statsJob.running}
+              value={statsJob.value}
+              detail={statsJob.detail}
+              runningLabel={<><RefreshCcw size={15} className="animate-spin motion-reduce:animate-none" /> Rebuilding</>}
+              title="Rebuild the daily statistics from decisions, prices and sales already stored. Touches no marketplace."
+            >
+              <RefreshCcw size={15} /> Rebuild statistics
             </ProgressButton>
           </>
         }

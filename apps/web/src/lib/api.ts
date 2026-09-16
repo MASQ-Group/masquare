@@ -2469,6 +2469,9 @@ export const repricingApi = {
   /** Makes ONE live SP-API call per SKU — scope by marketplace and cap with `limit` while piloting. */
   recomputeFloors: (marketplace?: string, limit?: number) =>
     api.post<JobView>('/amazon-repricing/floors/recompute', { marketplace, limit }).then((r) => r.data),
+  /** Rebuild the daily statistics from the raw events. Reads and writes our own database only. */
+  rebuildStats: (days: number) =>
+    api.post<JobView>('/amazon-repricing/analytics/rollup', { days }).then((r) => r.data),
   /** Paged + filterable: onboarding seeds thousands of rows, so reaching one SKU needs both. */
   /** Put one SKU live, back to shadow, or stop it. Refuses a live switch the SKU is not ready for. */
   setAutomationState: (id: string, automationState: 'LIVE' | 'SHADOW' | 'KILLED') =>

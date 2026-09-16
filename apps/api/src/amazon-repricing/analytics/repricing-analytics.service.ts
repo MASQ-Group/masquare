@@ -15,6 +15,12 @@ import { MARKETPLACE_TO_ISO } from '../config/repricing.config';
  * Nothing here may break the thing it observes: every recording call is caught and logged. A
  * missing statistic is a nuisance; a failed price write because of a statistic is not acceptable.
  */
+/**
+ * How far back the nightly rebuild reaches. Long enough for Amazon's fees to settle into the days
+ * they belong to, short enough that the job stays a few seconds of work.
+ */
+const ROLLING_REBUILD_DAYS = 7;
+
 @Injectable()
 export class RepricingAnalyticsService {
   private readonly logger = new Logger(RepricingAnalyticsService.name);
@@ -105,19 +111,20 @@ export class RepricingAnalyticsService {
   // ── rolling up ─────────────────────────────────────────────────────────────────────────────────
 
   /**
-   * Yesterday, and today so far, every night.
+   * The last week, rebuilt every night.
    *
-   * Today is included because a day is only complete at midnight and a report opened at noon should
-   * still show the morning; the row is simply rewritten by the next run.
+   * Not just yesterday: Amazon settles its fees days after the order, so a day costed from the
+   * referral estimate becomes a day costed from the real fee — but only if something recomputes it.
+   * A rolling week picks that up without anybody asking, and today is included because a day is
+   * only complete at midnight and a report opened at noon should still show the morning.
+   *
+   * Anything older than the week, or a change to the folding rules, is a deliberate rebuild.
    */
   @Cron('25 1 * * *')
   async nightly(): Promise<{ days: number; rows: number }> {
-    const today = dayOf(new Date());
-    const yesterday = new Date(today.getTime() - 86_400_000);
-    const a = await this.rollupDay(yesterday);
-    const b = await this.rollupDay(today);
-    this.logger.log(`Repricing rollup: ${a + b} row(s) across 2 day(s)`);
-    return { days: 2, rows: a + b };
+    const result = await this.backfill(ROLLING_REBUILD_DAYS);
+    this.logger.log(`Repricing rollup: ${result.rows} row(s) across ${result.days} day(s)`);
+    return result;
   }
 
   /** Rebuild the summaries for the last `days` days, newest first. For a backfill after a change. */
