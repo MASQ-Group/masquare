@@ -1,0 +1,9 @@
+{
+  "name": "masquare-railway-config",
+  "private": true,
+  "description": "Railway IaC SDK for .railway/railway.ts. Kept out of the root workspace so the production image's npm ci never installs it.",
+  "type": "module",
+  "dependencies": {
+    "railway": "3.11.0"
+  }
+}

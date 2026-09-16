@@ -23,3 +23,5 @@ npm-debug.log*
 coverage
 Dockerfile
 .dockerignore
+# Railway IaC is applied by the CLI, never inside the image.
+.railway
