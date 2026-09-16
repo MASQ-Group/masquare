@@ -1,4 +1,5 @@
 import { ebayErrorText } from './ebay-error';
+import { EBAY_SCOPE_LABELS, EbayScopeMemory } from './ebay-scope-memory';
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
@@ -520,6 +521,9 @@ export class IntegrationsService implements OnModuleInit {
     return { ok: true, integrationId: row.id, name: row.name, refreshTokenExpiresInDays: json.refresh_token_expires_in ? Math.round(Number(json.refresh_token_expires_in) / 86400) : null };
   }
 
+  /** What each stored eBay token was found to accept, so the fallback is walked once, not per call. */
+  private readonly ebayScopeChoice = new EbayScopeMemory();
+
   /** eBay OAuth: refresh-token grant → short-lived user access token for Sell API calls. */
   private async ebayAccessToken(config: Record<string, string>, secrets: Record<string, string>): Promise<string> {
     const appId = config.appId;
@@ -550,13 +554,25 @@ export class IntegrationsService implements OnModuleInit {
     // never break reads. Omitting scope entirely is the ultimate fallback — eBay then returns a
     // token bearing exactly the scopes the refresh token holds (write included, if it has it), so a
     // push fails with a clear auth error only when the token genuinely lacks write.
+    // Which of them this token accepts is a property of the token, not of the call, so it is
+    // remembered and the walk starts there — one round-trip per refresh once it is known, instead of
+    // three, and one warning per token instead of two on every eBay request.
     const candidates: (string[] | null)[] = [this.ebayScopesFor(config), this.ebayReadScopes, null];
-    let r = await refresh(candidates[0]);
-    for (let i = 1; i < candidates.length && isInvalidScope(r); i++) {
-      this.logger.warn(`eBay refresh rejected the requested scopes (invalid_scope) — retrying (attempt ${i + 1}/${candidates.length}).`);
-      r = await refresh(candidates[i]);
+    const key = EbayScopeMemory.keyOf(appId, refreshToken, candidates[0] as string[]);
+    let i = this.ebayScopeChoice.firstToTry(key);
+    let r = await refresh(candidates[i]);
+    while (isInvalidScope(r) && i + 1 < candidates.length) {
+      r = await refresh(candidates[++i]);
     }
     if (!r.ok) throw new BadRequestException(`eBay token refresh failed (${r.status}${r.json?.error ? `: ${r.json.error}` : ''}).`);
+    // Only the narrowing is worth a warning; a token that has widened back to the configured set is
+    // good news, and simply stops the warning coming back.
+    if (this.ebayScopeChoice.remember(key, i) && i > 0) {
+      this.logger.warn(
+        `eBay rejected ${EBAY_SCOPE_LABELS[0]} scopes for this token — refreshing with ${EBAY_SCOPE_LABELS[i]} scopes instead. ` +
+          'Reconnect the eBay integration to grant the full set. Logged once per token.',
+      );
+    }
     return r.json.access_token as string;
   }
 
