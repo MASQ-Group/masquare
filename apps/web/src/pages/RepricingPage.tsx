@@ -7,9 +7,10 @@ import { PriceRangeBulkModal } from '../components/repricing/PriceRangeBulkModal
 import { PriceRangeImportModal } from '../components/repricing/PriceRangeImportModal';
 import { SkuStateControl } from '../components/repricing/SkuStateControl';
 import { RetentionCard } from '../components/repricing/RetentionCard';
+import { ReportsTab } from '../components/repricing/ReportsTab';
 import { MarketplaceCostsCard } from '../components/repricing/MarketplaceCostsCard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle, Gauge, ListChecks, ScrollText, SlidersHorizontal, Plug } from 'lucide-react';
+import { RefreshCcw, DownloadCloud, ShieldAlert, Ban, Plus, X, AlertTriangle, Gauge, ListChecks, ScrollText, SlidersHorizontal, Plug, BarChart3 } from 'lucide-react';
 import { Pagination, ProgressButton, Select, TabBar, TabPanel, TableScroll, type TabItem } from '@masquare/ui';
 import { brandsApi, integrationsApi, productTypesApi, repricingApi, vendorsApi, type OnboardResult, type RecomputeResult, type RepricingSkuRow, type RoleProbe } from '../lib/api';
 import { useJobProgress } from '../lib/useJobProgress';
@@ -73,9 +74,9 @@ function Badge({ value, styles }: { value: string; styles: Record<string, string
   );
 }
 
-type RepricingTab = 'overview' | 'skus' | 'decisions' | 'rules' | 'connection';
+type RepricingTab = 'overview' | 'skus' | 'reports' | 'decisions' | 'rules' | 'connection';
 
-const TAB_ORDER: RepricingTab[] = ['overview', 'skus', 'decisions', 'rules', 'connection'];
+const TAB_ORDER: RepricingTab[] = ['overview', 'skus', 'reports', 'decisions', 'rules', 'connection'];
 
 /**
  * Amazon Buy Box repricing — ops console.
@@ -146,6 +147,7 @@ export function RepricingPage() {
   const tabs: TabItem<RepricingTab>[] = [
     { key: 'overview', label: 'Overview', icon: <Gauge size={14} />, count: quarantined || null, tone: 'warning' },
     { key: 'skus', label: 'SKUs & floors', icon: <ListChecks size={14} />, count: total || null },
+    { key: 'reports', label: 'Reports', icon: <BarChart3 size={14} /> },
     { key: 'decisions', label: 'Decisions', icon: <ScrollText size={14} /> },
     { key: 'rules', label: 'Pricing rules', icon: <SlidersHorizontal size={14} /> },
     { key: 'connection', label: 'Connection', icon: <Plug size={14} /> },
@@ -305,6 +307,10 @@ export function RepricingPage() {
           <SkuTable />
           <FloorExplainCard />
         </div>
+      </TabPanel>
+
+      <TabPanel tabKey="reports" active={tab === 'reports'}>
+        <ReportsTab />
       </TabPanel>
 
       <TabPanel tabKey="decisions" active={tab === 'decisions'}>

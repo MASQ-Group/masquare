@@ -17,6 +17,7 @@ import { JobsService } from '../../jobs/jobs.service';
 import { AccessArea } from '../../access/access.decorators';
 import { PriceRangeService, type RangeFilters } from './price-range.service';
 import { RepricingAnalyticsService } from '../analytics/repricing-analytics.service';
+import { RepricingReportService, type ReportQuery } from '../analytics/repricing-report.service';
 import type { RangeChange } from './price-range-edit';
 import { planStateChange, type AutomationTarget } from './automation-state';
 import { resolvePriceRange } from '../floor/price-range';
@@ -41,6 +42,7 @@ export class RepricingController {
     private readonly jobs: JobsService,
     private readonly ranges: PriceRangeService,
     private readonly analytics: RepricingAnalyticsService,
+    private readonly reports: RepricingReportService,
   ) {}
 
   /** Seller blocklist (§5.2): unauthorized / MAP-violating / hijacker sellers excluded from pricing. */
@@ -622,6 +624,30 @@ export class RepricingController {
   }
 
   /**
+   * The report: every SKU the filter matches, folded over the span, with the totals underneath.
+   *
+   * Read-only. The totals cover everything matched, not just the page — a header that changed as you
+   * paged would be describing the page rather than the estate.
+   */
+  @Get('analytics/report')
+  report(@Query() q: Record<string, string>) {
+    return this.reports.report(reportQuery(q));
+  }
+
+  /** One SKU on one marketplace: its days, its exact price changes, and the market around them. */
+  @Get('analytics/sku')
+  skuReport(@Query('sku') sku: string, @Query('marketplace') marketplace?: string, @Query('from') from?: string, @Query('to') to?: string) {
+    if (!sku?.trim()) throw new BadRequestException('A SKU is required.');
+    return this.reports.skuDetail({ sku, marketplace, from, to });
+  }
+
+  /** The same report as flat spreadsheet rows, for every SKU matched rather than a page. Read-only. */
+  @Post('analytics/export')
+  exportReport(@Body() body: Record<string, string> = {}) {
+    return this.reports.exportRows(reportQuery(body));
+  }
+
+  /**
    * Rebuild the daily summaries for the last `days` days from the raw events.
    *
    * Idempotent, so it is also how a day is corrected after fees settle late. Runs as a job: a long
@@ -739,4 +765,30 @@ export class RepricingController {
     });
     return { resolved: true };
   }
+}
+
+/**
+ * A report's filters, from whatever the query string carried.
+ *
+ * Blank is the same as absent — an untouched dropdown sends `brandId=` and must not be read as
+ * "the brand whose id is the empty string", which matches nothing and empties the report.
+ */
+function reportQuery(q: Record<string, unknown>): ReportQuery {
+  const text = (v: unknown) => {
+    const s = typeof v === 'string' ? v.trim() : '';
+    return s || undefined;
+  };
+  const num = (v: unknown) => (Number.isFinite(Number(v)) && String(v ?? '').trim() !== '' ? Number(v) : undefined);
+  return {
+    from: text(q.from),
+    to: text(q.to),
+    marketplace: text(q.marketplace),
+    brandId: text(q.brandId),
+    vendorId: text(q.vendorId),
+    productTypeId: text(q.productTypeId),
+    q: text(q.q),
+    state: text(q.state),
+    limit: num(q.limit),
+    offset: num(q.offset),
+  };
 }

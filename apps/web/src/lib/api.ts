@@ -2437,6 +2437,109 @@ export interface RepricingRetention {
   decisionsDue: number; snapshotsDue: number; feesDue: number;
 }
 
+
+// ---- Repricing statistics (reports) ----
+
+/** What a span of days says about one SKU on one marketplace. Rates are null when nothing was sampled. */
+export interface RepricingReportRow {
+  sku: string;
+  marketplaceId: string;
+  marketplace: string;
+  skuPricingId: string | null;
+  asin: string | null;
+  state: string | null;
+  productName: string | null;
+  brand: string | null;
+  currency: string | null;
+  days: number;
+  evaluations: number; priced: number; held: number; skipped: number; quarantined: number; vetoed: number;
+  priceChanges: number;
+  priceOpenCents: number | null; priceCloseCents: number | null;
+  priceMinCents: number | null; priceMaxCents: number | null; priceMovePct: number | null;
+  currentPriceCents: number | null; floorCents: number | null;
+  buyBoxSamples: number; buyBoxWon: number; buyBoxWinPct: number | null; atFloorPct: number | null;
+  unitsSold: number; revenueCents: number; profitCents: number | null; marginPct: number | null;
+  unitsAfterChange: number; afterChangePct: number | null;
+  feeBasis: 'actual' | 'estimated' | 'mixed' | 'none' | null;
+}
+
+export interface RepricingReportTotals {
+  skus: number;
+  evaluations: number; priced: number; held: number; skipped: number; quarantined: number; vetoed: number;
+  priceChanges: number;
+  buyBoxSamples: number; buyBoxWon: number; buyBoxWinPct: number | null; atFloorPct: number | null;
+  unitsSold: number; revenueCents: number; profitCents: number | null; marginPct: number | null;
+  unitsAfterChange: number; afterChangePct: number | null;
+  feeBasis: 'actual' | 'estimated' | 'mixed' | 'none' | null;
+}
+
+export interface RepricingReport {
+  from: string;
+  to: string;
+  skus: number;
+  items: RepricingReportRow[];
+  totals: RepricingReportTotals;
+}
+
+export interface RepricingPricePoint {
+  at: string;
+  priceCents: number;
+  previousPriceCents: number | null;
+  currency: string;
+  /** repricer | manual_push | listing_sync | listing_created — only the first is a reprice. */
+  source: string;
+  decisionId: string | null;
+}
+
+export interface RepricingSamplePoint {
+  at: string;
+  ourPriceCents: number | null;
+  buyBoxLandedCents: number | null;
+  weHoldBuyBox: boolean;
+  competitorCount: number;
+  lowestCompetitorCents: number | null;
+  floorCents: number | null;
+}
+
+export interface RepricingDailyStat {
+  day: string;
+  sku: string;
+  marketplaceId: string;
+  evaluations: number; priced: number; held: number; skipped: number; quarantined: number; vetoed: number;
+  priceChanges: number;
+  priceOpenCents: number | null; priceCloseCents: number | null;
+  priceMinCents: number | null; priceMaxCents: number | null;
+  buyBoxSamples: number; buyBoxWon: number; atFloorSamples: number;
+  unitsSold: number; revenueCents: number; profitCents: number | null;
+  feeBasis: string | null; unitsAfterChange: number; currency: string | null;
+}
+
+export interface RepricingSkuReport {
+  from: string;
+  to: string;
+  sku: string;
+  marketplaceId: string | null;
+  marketplace?: string;
+  listing: {
+    id: string; asin: string | null; currency: string; automationState: string;
+    currentPriceCents: number | null; strategyFloorCents: number | null;
+    minPriceCents: number | null; maxPriceCents: number | null; breakevenCents: number | null;
+    product: { id: string; title: string; mainSku: string; brand: { name: string } | null } | null;
+  } | null;
+  summary: RepricingReportRow | null;
+  daily: RepricingDailyStat[];
+  prices: RepricingPricePoint[];
+  samples: RepricingSamplePoint[];
+}
+
+/** Which SKUs and which days a report covers. Empty strings are dropped by the caller. */
+export interface RepricingReportFilters {
+  from?: string; to?: string;
+  marketplace?: string; brandId?: string; vendorId?: string; productTypeId?: string;
+  q?: string; state?: string;
+  limit?: number; offset?: number;
+}
+
 export const repricingApi = {
   retention: () => api.get<RepricingRetention>('/amazon-repricing/retention').then((r) => r.data),
   setRetention: (body: { decisionDays?: number; feeDays?: number }) =>
@@ -2469,6 +2572,15 @@ export const repricingApi = {
   /** Makes ONE live SP-API call per SKU — scope by marketplace and cap with `limit` while piloting. */
   recomputeFloors: (marketplace?: string, limit?: number) =>
     api.post<JobView>('/amazon-repricing/floors/recompute', { marketplace, limit }).then((r) => r.data),
+  /** The cross-SKU report over a span of days. Read-only. */
+  report: (filters: RepricingReportFilters) =>
+    api.get<RepricingReport>('/amazon-repricing/analytics/report', { params: filters }).then((r) => r.data),
+  /** One SKU's days, price changes and market samples, for the chart. Read-only. */
+  skuReport: (params: { sku: string; marketplace?: string; from?: string; to?: string }) =>
+    api.get<RepricingSkuReport>('/amazon-repricing/analytics/sku', { params }).then((r) => r.data),
+  /** The report as flat rows for every SKU matched — the web writes the spreadsheet. */
+  exportReport: (filters: RepricingReportFilters) =>
+    api.post<{ rows: Record<string, string | number>[] }>('/amazon-repricing/analytics/export', filters).then((r) => r.data),
   /** Rebuild the daily statistics from the raw events. Reads and writes our own database only. */
   rebuildStats: (days: number) =>
     api.post<JobView>('/amazon-repricing/analytics/rollup', { days }).then((r) => r.data),
