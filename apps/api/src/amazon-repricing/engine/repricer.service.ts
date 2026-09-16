@@ -11,6 +11,7 @@ import { medianCents } from '../common/median';
 import { detectUndercutLoop, UndercutEvent } from './undercut-loop';
 import { REPRICING_DEFAULTS } from '../config/repricing.config';
 import { resolvePriceRange } from '../floor/price-range';
+import { RepricingAnalyticsService } from '../analytics/repricing-analytics.service';
 
 /** Trailing window for the Buy-Box reference median behind the §6.1 anomalous-competitor guard. */
 const MEDIAN_WINDOW_DAYS = 7;
@@ -41,6 +42,7 @@ export class RepricerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly writer: PriceWriterService,
+    private readonly analytics: RepricingAnalyticsService,
   ) {}
 
   /** Evaluate every one of our SKUs on this ASIN × marketplace against a fresh snapshot. */
@@ -236,6 +238,24 @@ export class RepricerService {
 
     const decision = decide(built);
     const decisionId = await this.persistDecision(row, snapshot, trigger, decision, cfg);
+
+    /**
+     * The keepable part of this evaluation: where our price sat against the Buy Box and the field.
+     * Recorded for every outcome, including HELD and SKIPPED — a day of holding is exactly what a
+     * report about Buy Box share needs to see.
+     */
+    await this.analytics.recordSample({
+      sku: row.sku,
+      marketplaceId: row.marketplaceId,
+      asin: row.asin,
+      ourPriceCents: cfg.currentPriceCents,
+      buyBoxLandedCents: snapshot.buyBoxLandedCents ?? decision.competitorSet?.buyBoxLandedCents ?? null,
+      weHoldBuyBox: snapshot.offers.some((o) => o.sellerId === snapshot.ourSellerId && o.isBuyBoxWinner),
+      competitorCount: decision.competitorSet?.effective.length ?? 0,
+      lowestCompetitorCents: decision.competitorSet?.runnerUpLandedCents ?? null,
+      floorCents: cfg.strategyFloorCents,
+      decisionId,
+    });
 
     // §5.5: an unresolvable conflict quarantines the SKU — take it off automation until a human
     // clears it (decide() then SKIPs it), and alert ops. The reason is on the logged decision.

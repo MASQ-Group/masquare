@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { PricingService } from '../pricing/pricing.service';
+import { RepricingAnalyticsService } from '../amazon-repricing/analytics/repricing-analytics.service';
 import type { ProgressSink } from '../jobs/jobs.service';
 import { syncDecision } from './sync-decision';
 import { deriveListingStatus } from './listing-status';
@@ -35,7 +36,33 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     private readonly prisma: PrismaService,
     private readonly integrations: IntegrationsService,
     private readonly pricing: PricingService,
+    private readonly analytics: RepricingAnalyticsService,
   ) {}
+
+  /**
+   * A price a sync found on the channel, recorded when it differs from the last one we knew.
+   *
+   * This is how a price changed in Seller Central, or by another tool, reaches the history at all —
+   * without it the record would show only our own changes and read as though nothing else moved.
+   */
+  private async notePulledPrice(
+    intg: { id: string; targetCompanyId?: string | null },
+    l: { sku?: string | null; price?: number | null; currency?: string | null; marketplace?: string | null },
+    productId: string | null,
+    marketplaceId: string,
+  ): Promise<void> {
+    if (!l.sku || l.price == null || !Number.isFinite(l.price)) return;
+    await this.analytics.recordPrice({
+      channelSku: l.sku,
+      marketplaceId,
+      priceCents: Math.round(l.price * 100),
+      currency: l.currency ?? 'EUR',
+      source: 'listing_sync',
+      integrationId: intg.id,
+      companyId: intg.targetCompanyId ?? null,
+      productId,
+    });
+  }
 
   /** Derive a listing status the UI colours by: live | low | oos | paused | error. */
   private deriveStatus(l: { listedQuantity: number | null; listingStatus: string | null; fulfilmentChannel: string | null }): string {
@@ -333,6 +360,7 @@ export class ChannelListingsService implements OnApplicationBootstrap {
             fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now,
           },
         });
+        await this.notePulledPrice(intg, l, product.id, intg.marketplace ?? '');
       }
 
       // Records for SKUs Amazon did not return are stale: the listing was deleted or moved. Scoped

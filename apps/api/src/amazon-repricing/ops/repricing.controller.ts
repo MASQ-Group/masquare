@@ -16,6 +16,7 @@ import { queueForMarketplace } from '../config/notification-queues';
 import { JobsService } from '../../jobs/jobs.service';
 import { AccessArea } from '../../access/access.decorators';
 import { PriceRangeService, type RangeFilters } from './price-range.service';
+import { RepricingAnalyticsService } from '../analytics/repricing-analytics.service';
 import type { RangeChange } from './price-range-edit';
 import { planStateChange, type AutomationTarget } from './automation-state';
 import { resolvePriceRange } from '../floor/price-range';
@@ -39,6 +40,7 @@ export class RepricingController {
     private readonly sqs: SqsPollerService,
     private readonly jobs: JobsService,
     private readonly ranges: PriceRangeService,
+    private readonly analytics: RepricingAnalyticsService,
   ) {}
 
   /** Seller blocklist (§5.2): unauthorized / MAP-violating / hijacker sellers excluded from pricing. */
@@ -588,6 +590,47 @@ export class RepricingController {
     // The floor depends on the margin, so a strategy change makes every stored floor on those SKUs
     // stale until it is recomputed. Saying so beats leaving the old number on screen looking current.
     return { applied: eligible.length, refused, recomputeNeeded: eligible.length > 0 };
+  }
+
+  /**
+   * The daily summaries a report reads: one row per SKU, per marketplace, per day.
+   *
+   * Read-only. `from`/`to` are dates; leaving them out reads the last 30 days.
+   */
+  @Get('analytics/daily')
+  async dailyStats(
+    @Query('sku') sku?: string,
+    @Query('marketplace') marketplace?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const end = to ? new Date(`${to}T00:00:00Z`) : new Date();
+    const start = from ? new Date(`${from}T00:00:00Z`) : new Date(end.getTime() - 30 * 86_400_000);
+    const iso = marketplace?.trim().toUpperCase();
+    const marketplaceId = iso ? ISO_TO_MARKETPLACE[iso] : undefined;
+    if (iso && !marketplaceId) return { items: [] };
+    const items = await this.prisma.repricingDailyStat.findMany({
+      where: {
+        day: { gte: new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate())), lte: end },
+        ...(sku?.trim() ? { sku: sku.trim() } : {}),
+        ...(marketplaceId ? { marketplaceId } : {}),
+      },
+      orderBy: [{ day: 'asc' }, { sku: 'asc' }],
+      take: 5000,
+    });
+    return { items };
+  }
+
+  /**
+   * Rebuild the daily summaries for the last `days` days from the raw events.
+   *
+   * Idempotent, so it is also how a day is corrected after fees settle late. Runs as a job: a long
+   * backfill outlives a request.
+   */
+  @Post('analytics/rollup')
+  rollup(@Body() body: { days?: number } = {}) {
+    const days = Math.max(1, Math.min(400, Number(body?.days) || 30));
+    return this.jobs.start('repricing.analytics-rollup', `Rebuilding ${days} day(s) of repricing statistics`, () => this.analytics.backfill(days));
   }
 
   /** What the repricer is holding, and what a purge would remove. */

@@ -2,10 +2,11 @@ import { Module } from '@nestjs/common';
 import { ChannelListingsController } from './channel-listings.controller';
 import { ChannelListingsService } from './channel-listings.service';
 import { IntegrationsModule } from '../integrations/integrations.module';
+import { RepricingAnalyticsModule } from '../amazon-repricing/analytics/repricing-analytics.module';
 import { PricingModule } from '../pricing/pricing.module';
 
 @Module({
-  imports: [IntegrationsModule, PricingModule],
+  imports: [IntegrationsModule, PricingModule, RepricingAnalyticsModule],
   controllers: [ChannelListingsController],
   // Also exposed under a string token so consumers in a potential import cycle (sales-transactions
   // sell-through) can resolve it via ModuleRef without a runtime `import` of the class.

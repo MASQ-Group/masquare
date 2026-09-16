@@ -7,6 +7,7 @@ import { checkSafety } from '../engine/safety-layer';
 import { REPRICING_DEFAULTS, ISO_TO_MARKETPLACE, MARKETPLACE_TO_ISO } from '../config/repricing.config';
 import { resolveWriteMode } from './write-mode';
 import { RepricingControlService } from './control.service';
+import { RepricingAnalyticsService } from '../analytics/repricing-analytics.service';
 import { fullScopeIntegrationWhere } from '../../common/amazon-scope';
 
 // The price-writer (spec §6): the ONLY component that submits a price to Amazon. It runs the
@@ -47,6 +48,7 @@ export class PriceWriterService {
     private readonly prisma: PrismaService,
     private readonly integrations: IntegrationsService,
     private readonly control: RepricingControlService,
+    private readonly analytics: RepricingAnalyticsService,
   ) {}
 
   async submit(input: SubmitInput): Promise<SubmitResult> {
@@ -107,6 +109,17 @@ export class PriceWriterService {
       await this.prisma.repricingSkuPricing.update({
         where: { id: input.skuPricingId },
         data: { lastSubmittedPriceCents: input.intendedPriceCents, lastSubmissionAt: new Date(), lastSubmissionStatus: 'ACCEPTED', currentPriceCents: input.intendedPriceCents },
+      });
+      // The price history's main source: what we changed, when, and which decision changed it. A
+      // dry run changed nothing and is deliberately not history.
+      await this.analytics.recordPrice({
+        channelSku: input.sku,
+        marketplaceId: input.marketplaceId,
+        priceCents: input.intendedPriceCents,
+        currency: input.currency,
+        source: 'repricer',
+        integrationId,
+        decisionId: input.decisionId,
       });
     }
 
