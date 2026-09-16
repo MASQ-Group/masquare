@@ -511,6 +511,12 @@ export class FloorService {
     const costs = await this.prisma.repricingMarketplaceCosts.findUnique({ where: { marketplaceId: row.marketplaceId } });
     const storageApplies = (costs?.storageApplies ?? false) && isFba;
     const adsApply = costs?.adsApply ?? false;
+    /**
+     * Returns count unless a marketplace says otherwise. The switch defaults ON because returns were
+     * always counted before it existed — turning it off lowers every floor there, which is a
+     * decision, not a default.
+     */
+    const returnsApply = costs?.returnsApply ?? true;
     const storagePerUnitCents = storageApplies ? row.storagePerUnitCents ?? costs?.defaultStoragePerUnitCents ?? 0 : 0;
     const adCostPerUnitCents = adsApply ? row.adCostPerUnitCents ?? costs?.defaultAdCostPerUnitCents ?? 0 : 0;
 
@@ -521,7 +527,7 @@ export class FloorService {
       closingFeeCents: fee?.closingFeeCents ?? 0,
       cogsLandedCents,
       fixedPerUnitCents,
-      returnsRate: returns.rate,
+      returnsRate: returnsApply ? returns.rate : 0,
       refundAdminFeeCents: REPRICING_DEFAULTS.refundAdminFeeCents,
       storagePerUnitCents,
       adCostPerUnitCents,
@@ -529,7 +535,8 @@ export class FloorService {
     };
 
     const completeness = describeCompleteness({
-      returnsRate: returns.rate,
+      returnsRate: returnsApply ? returns.rate : 0,
+      returnsApply,
       returnsSource: returns.source,
       storagePerUnitCents,
       adCostPerUnitCents,

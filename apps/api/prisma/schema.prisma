@@ -3481,6 +3481,9 @@ model RepricingMarketplaceCosts {
   marketplaceId              String  @id @map("marketplace_id")
   storageApplies             Boolean @default(false) @map("storage_applies")
   adsApply                   Boolean @default(false) @map("ads_apply")
+  /// Whether a returns allowance is counted here. On by default, because returns are a real cost
+  /// everywhere we sell; off means the floors and the profit check ignore them on this marketplace.
+  returnsApply               Boolean @default(true) @map("returns_apply")
   /// Used when a SKU carries no value of its own. Null = the SKU must supply one.
   defaultStoragePerUnitCents Int?    @map("default_storage_per_unit_cents")
   defaultAdCostPerUnitCents  Int?    @map("default_ad_cost_per_unit_cents")

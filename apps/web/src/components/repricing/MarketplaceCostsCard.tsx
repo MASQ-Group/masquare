@@ -66,10 +66,11 @@ function MarketRow({
   marketplace: string;
   current?: RepricingMarketplaceCosts;
   saving: boolean;
-  onSave: (patch: { storageApplies: boolean; adsApply: boolean; defaultStoragePerUnitCents: number | null; defaultAdCostPerUnitCents: number | null }) => void;
+  onSave: (patch: { storageApplies: boolean; adsApply: boolean; returnsApply: boolean; defaultStoragePerUnitCents: number | null; defaultAdCostPerUnitCents: number | null }) => void;
 }) {
   const [storage, setStorage] = useState(current?.storageApplies ?? false);
   const [ads, setAds] = useState(current?.adsApply ?? false);
+  const [returns, setReturns] = useState(current?.returnsApply ?? true);
   const [storageVal, setStorageVal] = useState(current?.defaultStoragePerUnitCents != null ? String(current.defaultStoragePerUnitCents / 100) : '');
   const [adsVal, setAdsVal] = useState(current?.defaultAdCostPerUnitCents != null ? String(current.defaultAdCostPerUnitCents / 100) : '');
 
@@ -77,6 +78,7 @@ function MarketRow({
   const dirty =
     storage !== (current?.storageApplies ?? false) ||
     ads !== (current?.adsApply ?? false) ||
+    returns !== (current?.returnsApply ?? true) ||
     cents(storageVal) !== (current?.defaultStoragePerUnitCents ?? null) ||
     cents(adsVal) !== (current?.defaultAdCostPerUnitCents ?? null);
 
@@ -112,14 +114,21 @@ function MarketRow({
         />
       )}
 
-      {!storage && !ads && <span className="text-[11.5px] text-n-400">Neither applies here</span>}
+      {/* Returns are the one cost that starts on: they were always counted before this switch. */}
+      <label className="flex cursor-pointer items-center gap-1.5">
+        <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--teal-500)]" checked={returns} onChange={(e) => setReturns(e.target.checked)} />
+        <span className="text-n-700">Returns</span>
+      </label>
+      {returns
+        ? <span className="text-[11px] text-n-400">Measured from our own returns</span>
+        : <span className="text-[11px] text-warning">Floors here ignore returns</span>}
 
       {storage && (
         <span className="text-[11px] text-n-400">Storage counts on FBA listings only</span>
       )}
 
       <button
-        onClick={() => onSave({ storageApplies: storage, adsApply: ads, defaultStoragePerUnitCents: cents(storageVal), defaultAdCostPerUnitCents: cents(adsVal) })}
+        onClick={() => onSave({ storageApplies: storage, adsApply: ads, returnsApply: returns, defaultStoragePerUnitCents: cents(storageVal), defaultAdCostPerUnitCents: cents(adsVal) })}
         disabled={!dirty || saving}
         className="ml-auto inline-flex h-7 items-center rounded-md border border-n-200 bg-n-0 px-2.5 text-[12px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-40"
       >

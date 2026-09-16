@@ -2444,7 +2444,7 @@ export const repricingApi = {
   purgeRetention: () =>
     api.post<{ decisions: number; snapshots: number; fees: number; stats: RepricingRetention }>('/amazon-repricing/retention/purge').then((r) => r.data),
   marketplaceCosts: () => api.get<RepricingMarketplaceCosts[]>('/amazon-repricing/marketplace-costs').then((r) => r.data),
-  setMarketplaceCosts: (body: { marketplace: string; storageApplies?: boolean; adsApply?: boolean; defaultStoragePerUnitCents?: number | null; defaultAdCostPerUnitCents?: number | null }) =>
+  setMarketplaceCosts: (body: { marketplace: string; storageApplies?: boolean; adsApply?: boolean; returnsApply?: boolean; defaultStoragePerUnitCents?: number | null; defaultAdCostPerUnitCents?: number | null }) =>
     api.post('/amazon-repricing/marketplace-costs', body).then((r) => r.data),
   strategies: () => api.get<RepricingStrategyPreset[]>('/amazon-repricing/strategies').then((r) => r.data),
   assignStrategy: (body: {
@@ -4474,6 +4474,8 @@ export interface StrategyAssignResult {
 export interface RepricingMarketplaceCosts {
   marketplaceId: string;
   storageApplies: boolean;
+  /** Whether a returns allowance is counted on this marketplace. */
+  returnsApply: boolean;
   adsApply: boolean;
   defaultStoragePerUnitCents: number | null;
   defaultAdCostPerUnitCents: number | null;
