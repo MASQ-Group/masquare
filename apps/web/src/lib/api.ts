@@ -2470,6 +2470,11 @@ export const repricingApi = {
   recomputeFloors: (marketplace?: string, limit?: number) =>
     api.post<JobView>('/amazon-repricing/floors/recompute', { marketplace, limit }).then((r) => r.data),
   /** Paged + filterable: onboarding seeds thousands of rows, so reaching one SKU needs both. */
+  /** Put one SKU live, back to shadow, or stop it. Refuses a live switch the SKU is not ready for. */
+  setAutomationState: (id: string, automationState: 'LIVE' | 'SHADOW' | 'KILLED') =>
+    api.patch<{ id: string; automationState: string; notes: string[]; liveWritesEnabled: boolean }>(
+      `/amazon-repricing/sku-pricing/${id}/state`, { automationState },
+    ).then((r) => r.data),
   /** Profit per unit at the given prices, from the same costs and fees as the floor. Reads only. */
   profitAt: (id: string, pricesCents: number[]) =>
     api.post<{ ok: true; currency: string; results: RepricingProfitLine[] } | { ok: false; reason: string; currency?: string }>(
