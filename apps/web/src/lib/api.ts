@@ -1510,6 +1510,21 @@ export interface RepricingRangeChange {
     | { mode: 'set'; floor: RepricingPriceSetting; reason: string; endsAt: string | null; untilStock: number | null }
     | { mode: 'clear' };
 }
+export interface RepricingProfitLine {
+  priceCents: number;
+  netOfVatCents: number;
+  vatCents: number;
+  referralFeeCents: number;
+  fulfilmentFeeCents: number;
+  closingFeeCents: number;
+  costCents: number;
+  shippingAndFixedCents: number;
+  returnsCents: number;
+  storageCents: number;
+  adsCents: number;
+  profitCents: number;
+  marginPct: number | null;
+}
 export interface RepricingRangeFilters {
   marketplace?: string; brandId?: string; vendorId?: string; productTypeId?: string; q?: string; state?: string; skuPricingIds?: string[];
 }
@@ -2455,6 +2470,11 @@ export const repricingApi = {
   recomputeFloors: (marketplace?: string, limit?: number) =>
     api.post<JobView>('/amazon-repricing/floors/recompute', { marketplace, limit }).then((r) => r.data),
   /** Paged + filterable: onboarding seeds thousands of rows, so reaching one SKU needs both. */
+  /** Profit per unit at the given prices, from the same costs and fees as the floor. Reads only. */
+  profitAt: (id: string, pricesCents: number[]) =>
+    api.post<{ ok: true; currency: string; results: RepricingProfitLine[] } | { ok: false; reason: string; currency?: string }>(
+      `/amazon-repricing/sku-pricing/${id}/profit`, { pricesCents },
+    ).then((r) => r.data),
   /** One SKU's range: min, max, margin, clearance. A margin change recomputes the floor as a job. */
   updateRange: (id: string, change: RepricingRangeChange) =>
     api.patch<RepricingRangeView & { applied: boolean; floorJobId: string | null }>(`/amazon-repricing/sku-pricing/${id}/range`, change).then((r) => r.data),

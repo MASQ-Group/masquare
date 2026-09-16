@@ -152,6 +152,51 @@ export function netRevenueExactCents(priceCents: number, inp: FloorInputs): numb
   );
 }
 
+/** Every term of the profit at one price, in whole cents, for a person to read. */
+export interface ProfitBreakdown {
+  priceCents: number;
+  /** The price without VAT: what the sale is actually worth to us. */
+  netOfVatCents: number;
+  vatCents: number;
+  referralFeeCents: number;
+  fulfilmentFeeCents: number;
+  closingFeeCents: number;
+  costCents: number;
+  shippingAndFixedCents: number;
+  returnsCents: number;
+  storageCents: number;
+  adsCents: number;
+  /** What is left per unit. Negative is a loss. */
+  profitCents: number;
+  /** Profit as a share of the net-of-VAT price, which is how the margin floor measures it. */
+  marginPct: number | null;
+}
+
+/**
+ * The profit at one price, term by term. The same terms, in the same arithmetic, as
+ * `netRevenueExactCents` — the function the floors are solved from — so a profit shown next to a
+ * minimum price and the margin floor cannot disagree about what the product earns.
+ */
+export function profitBreakdown(priceCents: number, inp: FloorInputs): ProfitBreakdown {
+  const net = grossToNet(priceCents, inp.vatRate);
+  const profit = netRevenueExactCents(priceCents, inp);
+  return {
+    priceCents,
+    netOfVatCents: Math.round(net),
+    vatCents: Math.round(priceCents - net),
+    referralFeeCents: Math.round(referralFee(priceCents, inp)),
+    fulfilmentFeeCents: Math.round(inp.fbaFulfillmentFeeCents ?? 0),
+    closingFeeCents: Math.round(inp.closingFeeCents ?? 0),
+    costCents: Math.round(inp.cogsLandedCents),
+    shippingAndFixedCents: Math.round(inp.fixedPerUnitCents ?? 0),
+    returnsCents: Math.round(returnsAllowance(priceCents, inp)),
+    storageCents: Math.round((inp.storagePerUnitCents ?? 0) + (inp.agedSurchargePerUnitCents ?? 0)),
+    adsCents: Math.round(inp.adCostPerUnitCents ?? 0),
+    profitCents: Math.round(profit),
+    marginPct: net > 0 ? Math.round((profit / net) * 1000) / 10 : null,
+  };
+}
+
 /**
  * NetRevenue(P) in whole cents (spec §4.3): rounded once from the exact P&L. Non-decreasing in P
  * within a referral bracket; discontinuous (jumps down) at bracket edges where the referral

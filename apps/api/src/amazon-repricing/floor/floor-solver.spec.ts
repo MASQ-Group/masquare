@@ -4,6 +4,7 @@ import {
   ReferralBracket,
   netRevenueCents,
   netRevenueExactCents,
+  profitBreakdown,
   referralPctAt,
   solveFloors,
 } from './floor-solver';
@@ -293,5 +294,43 @@ describe('search range in a small-unit currency', () => {
   it('leaves euro-sized SKUs exactly as they were', () => {
     const eur = { ...base, vatRate: 0.19, cogsLandedCents: 2000, fixedPerUnitCents: 500 };
     expect(solveFloors(eur, 0.12).strategyFloorCents).toBe(solveFloors({ ...eur, searchHiCents: 10_000_00 }, 0.12).strategyFloorCents);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// profitBreakdown — the profit a person sees beside a minimum or maximum price
+// ---------------------------------------------------------------------------
+
+describe('profitBreakdown', () => {
+  it('makes nothing at breakeven and the minimum margin at the margin floor', () => {
+    const inp = baseFba({ returnsRate: 0.03, storagePerUnitCents: 40 });
+    const floors = solveFloors(inp, 0.12);
+    const atBreakeven = profitBreakdown(floors.breakevenCents!, inp);
+    const atFloor = profitBreakdown(floors.strategyFloorCents!, inp);
+    // Whole cents: breakeven is the first cent at or above zero, so it rounds to zero or a cent over.
+    expect(atBreakeven.profitCents).toBeGreaterThanOrEqual(0);
+    expect(atBreakeven.profitCents).toBeLessThanOrEqual(1);
+    expect(atFloor.marginPct!).toBeGreaterThanOrEqual(12);
+  });
+
+  /** A person checking a price must be able to add the lines up to the profit shown. */
+  it('itemises every cost, and the lines add up to the profit', () => {
+    const b = profitBreakdown(2999, baseFba({ returnsRate: 0.05, adCostPerUnitCents: 60, fixedPerUnitCents: 25 }));
+    const costs = b.referralFeeCents + b.fulfilmentFeeCents + b.closingFeeCents + b.costCents
+      + b.shippingAndFixedCents + b.returnsCents + b.storageCents + b.adsCents;
+    expect(b.vatCents + b.netOfVatCents).toBe(2999);
+    expect(Math.abs(b.netOfVatCents - costs - b.profitCents)).toBeLessThanOrEqual(2); // per-line rounding
+  });
+
+  it('shows a loss below breakeven as a negative profit and margin', () => {
+    const b = profitBreakdown(900, baseFba());
+    expect(b.profitCents).toBeLessThan(0);
+    expect(b.marginPct!).toBeLessThan(0);
+  });
+
+  it('uses the referral bracket the price falls in', () => {
+    const inp = baseFba({ referralBrackets: TIERED });
+    expect(profitBreakdown(1400, inp).referralFeeCents).toBe(Math.round(1400 * 0.05));
+    expect(profitBreakdown(1600, inp).referralFeeCents).toBe(Math.round(1600 * 0.1));
   });
 });
