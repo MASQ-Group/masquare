@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { Calculator, Loader2 } from 'lucide-react';
 import { repricingApi, type RepricingProfitLine } from '../../lib/api';
+import { profitResultFresh } from '../../lib/profitResultFresh';
 
 const fmt = (c: number, ccy: string) => `${c < 0 ? '−' : ''}${(Math.abs(c) / 100).toFixed(2)} ${ccy}`;
 
@@ -35,9 +36,8 @@ export function RangeProfitCheck({ skuPricingId, currency, prices }: {
   const wanted = prices.filter((p) => p.cents != null && p.cents > 0) as { label: string; cents: number }[];
   const check = useMutation({ mutationFn: () => repricingApi.profitAt(skuPricingId, wanted.map((p) => p.cents)) });
   const data = check.data;
-  // A result belongs to the prices it was asked for; once they change it is stale and is hidden.
-  const asked = check.variables === undefined ? null : wanted.map((p) => p.cents).join(',');
-  const stale = data?.ok && data.results.map((r) => r.priceCents).join(',') !== [...new Set(wanted.map((p) => p.cents))].join(',');
+  // An answer is shown only while it still covers the prices on screen — see profitResultFresh.
+  const fresh = data?.ok === true && profitResultFresh(data.results.map((r) => r.priceCents), wanted.map((p) => p.cents));
 
   return (
     <div className="flex flex-col gap-2">
@@ -53,7 +53,7 @@ export function RangeProfitCheck({ skuPricingId, currency, prices }: {
       {data && !data.ok && <p className="text-[12px] text-danger">Profit can’t be worked out: {data.reason}</p>}
       {check.isError && <p className="text-[12px] text-danger">Could not calculate the profit.</p>}
 
-      {data?.ok && !stale && asked && (
+      {data?.ok && fresh && (
         <div className="grid gap-2 md:grid-cols-2">
           {wanted.map((p) => {
             const r = data.results.find((x) => x.priceCents === p.cents);
