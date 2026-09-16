@@ -70,6 +70,8 @@ export function describeCompleteness(parts: {
   storagePerUnitCents: number;
   adCostPerUnitCents: number;
   isFba: boolean;
+  /** Whether this marketplace counts a returns allowance at all. Default true. */
+  returnsApply?: boolean;
   /** Whether this marketplace accounts for storage at all. */
   storageApplies: boolean;
   /** Whether this marketplace accounts for advertising at all. */
@@ -80,7 +82,10 @@ export function describeCompleteness(parts: {
 
   includes.push(parts.isFba ? 'FBA fulfilment fee' : 'outbound shipping');
 
-  if (parts.returnsRate > 0) {
+  // A cost switched off for this marketplace is not missing from the floor — it is not a cost here.
+  if (parts.returnsApply === false) {
+    // Nothing: returns are excluded on purpose, so the floor is complete without them.
+  } else if (parts.returnsRate > 0) {
     includes.push(`returns (${(parts.returnsRate * 100).toFixed(1)}%, ${parts.returnsSource})`);
   } else {
     omits.push('returns');

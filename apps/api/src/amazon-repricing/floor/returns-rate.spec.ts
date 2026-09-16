@@ -71,3 +71,24 @@ describe('describing what a floor covers', () => {
     expect(c.omits).toEqual(['returns']);
   });
 });
+
+describe('describeCompleteness — a cost switched off is not a gap', () => {
+  const base = { returnsSource: 'marketplace' as const, storagePerUnitCents: 0, adCostPerUnitCents: 0, isFba: true, storageApplies: false, adsApply: false };
+
+  it('counts returns when the marketplace applies them', () => {
+    const c = describeCompleteness({ ...base, returnsRate: 0.04 });
+    expect(c.includes.join(' ')).toContain('returns (4.0%');
+    expect(c.omits).not.toContain('returns');
+  });
+
+  /** Switched off, returns are not a cost here — so the floor is complete without them. */
+  it('neither counts nor misses returns when the marketplace has them switched off', () => {
+    const c = describeCompleteness({ ...base, returnsRate: 0, returnsApply: false });
+    expect(c.omits).not.toContain('returns');
+    expect(c.includes.join(' ')).not.toContain('returns');
+  });
+
+  it('still reports returns as missing when they apply but no rate is known', () => {
+    expect(describeCompleteness({ ...base, returnsRate: 0 }).omits).toContain('returns');
+  });
+});

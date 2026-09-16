@@ -447,7 +447,7 @@ export class RepricingController {
    */
   @Post('marketplace-costs')
   async setMarketplaceCosts(
-    @Body() body: { marketplace: string; storageApplies?: boolean; adsApply?: boolean; defaultStoragePerUnitCents?: number | null; defaultAdCostPerUnitCents?: number | null },
+    @Body() body: { marketplace: string; storageApplies?: boolean; adsApply?: boolean; returnsApply?: boolean; defaultStoragePerUnitCents?: number | null; defaultAdCostPerUnitCents?: number | null },
   ) {
     const iso = body?.marketplace?.trim().toUpperCase();
     const marketplaceId = iso ? ISO_TO_MARKETPLACE[iso] : undefined;
@@ -455,6 +455,9 @@ export class RepricingController {
     const data = {
       storageApplies: body.storageApplies ?? false,
       adsApply: body.adsApply ?? false,
+      // Absent means unchanged-from-default here, and the default is ON: a caller that does not
+      // mention returns must not silently switch them off.
+      returnsApply: body.returnsApply ?? true,
       defaultStoragePerUnitCents: body.defaultStoragePerUnitCents ?? null,
       defaultAdCostPerUnitCents: body.defaultAdCostPerUnitCents ?? null,
     };
