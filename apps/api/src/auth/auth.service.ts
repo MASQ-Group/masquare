@@ -41,7 +41,7 @@ export class AuthService {
   /** Full profile for the authenticated user, including the companies and modules
    *  they may use. Admins implicitly hold every grant (Module 1 §4.8). */
   async me(auth: AuthUser) {
-    const user = await this.prisma.user.findUnique({ where: { id: auth.sub } });
+    const user = await this.prisma.user.findUnique({ where: { id: auth.sub }, include: { customer: { select: { id: true, name: true, active: true } } } });
     if (!user || user.deletedAt) {
       throw new UnauthorizedException();
     }
@@ -80,6 +80,14 @@ export class AuthService {
       email: user.email,
       isAdmin: user.isAdmin,
       status: user.status,
+      /**
+       * Set when this person belongs to a logistics customer rather than to us.
+       *
+       * The app reads it to decide which of the two it is: the platform, or that customer's own
+       * portal. It is a fact about the account and not a permission — the boundary itself is the
+       * guard, which refuses these accounts everywhere outside the portal.
+       */
+      customer: user.customer ? { id: user.customer.id, name: user.customer.name, active: user.customer.active } : null,
       access,
       companies: companies.map((c) => ({
         id: c.id,

@@ -124,6 +124,11 @@ export interface Me {
   status: string;
   companies: CompanyRef[];
   modules: ModuleRef[];
+  /**
+   * Set when this person belongs to a logistics customer rather than to us. The app shows them
+   * their own portal and nothing else; the API refuses them everywhere else regardless.
+   */
+  customer: { id: string; name: string; active: boolean } | null;
   /** What this person may actually do. The sidebar and the in-page buttons are built from it. */
   access: EffectiveAccess;
 }
@@ -2594,6 +2599,21 @@ export interface LogisticsCustomer {
 
 export type CustomerPatch = Partial<Omit<LogisticsCustomer, 'id' | 'company' | 'contactPersons' | 'nextReference' | 'referenceSeq' | 'createdAt' | 'updatedAt'>>;
 
+export interface CustomerPortalUser {
+  id: string;
+  fullName: string;
+  email: string;
+  status: string;
+  createdAt: string;
+  /** Where they are in getting started, which is what the list is actually asked. */
+  invite: { state: 'valid' | 'used' | 'expired'; sentAt: string; expiresAt: string } | null;
+}
+
+export interface InviteResult {
+  sent: boolean;
+  message: string;
+}
+
 export const customersApi = {
   list: (params: { q?: string; active?: string } = {}) => api.get<LogisticsCustomer[]>('/customers', { params }).then((r) => r.data),
   get: (id: string) => api.get<LogisticsCustomer>(`/customers/${id}`).then((r) => r.data),
@@ -2604,6 +2624,23 @@ export const customersApi = {
   updateContact: (id: string, contactId: string, body: Partial<CustomerContact>) =>
     api.patch<LogisticsCustomer>(`/customers/${id}/contacts/${contactId}`, body).then((r) => r.data),
   removeContact: (id: string, contactId: string) => api.delete<LogisticsCustomer>(`/customers/${id}/contacts/${contactId}`).then((r) => r.data),
+
+  // Their people, who sign in to the portal.
+  users: (id: string) => api.get<CustomerPortalUser[]>(`/customers/${id}/users`).then((r) => r.data),
+  addUser: (id: string, body: { fullName: string; email: string }) =>
+    api.post<{ user: { id: string; fullName: string; email: string }; invite: InviteResult }>(`/customers/${id}/users`, body).then((r) => r.data),
+  reinvite: (id: string, userId: string) => api.post<InviteResult>(`/customers/${id}/users/${userId}/invite`).then((r) => r.data),
+  updateUser: (id: string, userId: string, body: { fullName?: string; status?: string }) =>
+    api.patch<CustomerPortalUser[]>(`/customers/${id}/users/${userId}`, body).then((r) => r.data),
+  removeUser: (id: string, userId: string) => api.delete<CustomerPortalUser[]>(`/customers/${id}/users/${userId}`).then((r) => r.data),
+};
+
+/** Setting a password from an emailed invitation. No session — the token is the authorisation. */
+export const invitesApi = {
+  describe: (token: string) =>
+    api.get<{ ok: boolean; reason?: string; fullName?: string; email?: string; customerName?: string | null }>(`/invites/${encodeURIComponent(token)}`).then((r) => r.data),
+  accept: (token: string, password: string) =>
+    api.post<{ ok: boolean }>(`/invites/${encodeURIComponent(token)}`, { password }).then((r) => r.data),
 };
 
 // ---- Notifications ----

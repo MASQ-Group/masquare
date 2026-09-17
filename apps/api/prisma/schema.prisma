@@ -179,6 +179,15 @@ model User {
   /// restore it.
   isAdmin      Boolean    @default(false) @map("is_admin")
 
+  /**
+   * The customer this person belongs to, when they are one of THEIRS rather than one of ours.
+   *
+   * The whole of the portal boundary rests on this column. Set, and the platform's own pages refuse
+   * them and every portal query is scoped to it; null, and they are staff. There is deliberately no
+   * third state: a user is internal or external, never both.
+   */
+  customerId      String? @map("customer_id") @db.Uuid
+
   /// Starting point for this user's access. Null means they hold only their overrides.
   roleId          String? @map("role_id") @db.Uuid
   /// Per-user deltas ON TOP of the role, shaped like a role's grants. A key present here REPLACES
@@ -192,12 +201,15 @@ model User {
   deletedAt   DateTime? @map("deleted_at")
 
   role          Role?               @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  customer      Customer?           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invites       UserInvite[]
   companyAccess UserCompanyAccess[]
   moduleAccess  UserModuleAccess[]
   activity      Activity[]          @relation("ActivityActor")
   notifications Notification[]
 
   @@index([roleId])
+  @@index([customerId])
   @@map("user")
 }
 
@@ -4105,6 +4117,8 @@ model Customer {
 
   company        Company?                @relation(fields: [companyId], references: [id], onDelete: SetNull)
   contactPersons CustomerContactPerson[]
+  /// The people who sign in to the portal on their behalf.
+  users          User[]
 
   @@index([name])
   @@map("customer")
@@ -4128,4 +4142,33 @@ model CustomerContactPerson {
 
   @@index([customerId])
   @@map("customer_contact_person")
+}
+
+/**
+ * An invitation to set a password, sent by email.
+ *
+ * The platform never knows a portal user's password and never sets one for them: an admin creates
+ * the account and the person chooses their own, which is the difference between a password only
+ * they know and one that was also read aloud over the telephone.
+ *
+ * Only the HASH of the token is stored. A stolen database is then a list of useless hashes rather
+ * than a set of working invitations, exactly as it is for passwords — and for the same reason.
+ */
+model UserInvite {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  /// SHA-256 of the token that was emailed. The token itself exists only in that email.
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  /// When it was used. A used invitation is spent — one link, one password.
+  usedAt    DateTime? @map("used_at")
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  createdById String?  @map("created_by") @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_invite")
 }
