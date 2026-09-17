@@ -72,6 +72,7 @@ model Company {
   fbaFulfilmentPools  FbaFulfilmentPool[]
   stockTransfers      StockTransfer[]
   carrierAccounts     CarrierAccount[]
+  logisticsCustomers  Customer[]
 
   @@map("company")
 }
@@ -4043,4 +4044,88 @@ model Notification {
   @@index([userId, readAt, createdAt])
   @@index([userId, dedupeKey])
   @@map("notification")
+}
+
+/**
+ * A company we provide logistics services to.
+ *
+ * Not one of ours (`Company`) and not a supplier (`Vendor`): a third party whose shipments we book
+ * and whose people sign in to file them. It is the tenant of the customer portal, so nearly every
+ * question the portal asks — may this person see this, whose shipment is this, who is billed — is
+ * answered by the row they belong to.
+ *
+ * `referencePrefix` is theirs and nobody else's: every shipment they file is numbered from it, which
+ * is what lets a reference be quoted over the phone and mean one thing. Unique across customers for
+ * the same reason, and two letters because a reference is read aloud more often than it is typed.
+ */
+model Customer {
+  id String @id @default(uuid()) @db.Uuid
+
+  name        String
+  /// The registered name, where it differs from the one everybody uses.
+  legalName   String? @map("legal_name")
+  vatNumber   String? @map("vat_number")
+  /// Their own trader identifier, for the customs paperwork on their international shipments.
+  eori        String?
+
+  email        String?
+  phone        String?
+  website      String?
+  addressLine1 String? @map("address_line1")
+  addressLine2 String? @map("address_line2")
+  addressCity  String? @map("address_city")
+  addressRegion String? @map("address_region")
+  addressPostalCode String? @map("address_postal_code")
+  /// ISO-2, so it means the same thing as every other country on a shipment.
+  addressCountryIso String? @map("address_country_iso")
+
+  /// Two letters, upper case. The prefix of every shipment reference they will ever have.
+  referencePrefix String @unique @map("reference_prefix")
+  /**
+   * The last number handed out under that prefix.
+   *
+   * Kept here rather than counted from the shipments, because counting cannot be made safe against
+   * two people filing at the same moment: both would count the same number and both would use it.
+   * Incremented inside the transaction that creates the shipment.
+   */
+  referenceSeq Int @default(0) @map("reference_seq")
+
+  /// Which of our companies serves them, and bills them.
+  companyId String? @map("company_id") @db.Uuid
+
+  /// Whether they may still file shipments. Their history stays whatever this says.
+  active Boolean @default(true)
+  notes  String?
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  company        Company?                @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  contactPersons CustomerContactPerson[]
+
+  @@index([name])
+  @@map("customer")
+}
+
+/// Somebody to speak to at a customer. Not a login — see the portal users, which are User rows.
+model CustomerContactPerson {
+  id         String  @id @default(uuid()) @db.Uuid
+  customerId String  @map("customer_id") @db.Uuid
+  name       String
+  surname    String?
+  email      String?
+  phone      String?
+  role       String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("customer_contact_person")
 }

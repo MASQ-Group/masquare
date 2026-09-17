@@ -119,6 +119,7 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
       { to: '/shipments', label: 'Shipments', area: 'shipments', icon: Truck },
       { to: '/fba-shipments', label: 'FBA Shipments', area: 'shipments', icon: Container },
       { to: '/shipments-tracking', label: 'Shipments Tracking', area: 'shipments', icon: Radar },
+      { to: '/logistics-customers', label: 'Logistics Customers', area: 'logistics_customers', icon: Building2 },
     ],
   },
   {

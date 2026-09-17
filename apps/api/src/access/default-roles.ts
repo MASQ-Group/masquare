@@ -29,6 +29,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'edit',
         shipments: 'edit',
+        logistics_customers: 'edit',
         products: 'edit',
         inventory: 'edit',
         purchasing: 'edit',
@@ -62,6 +63,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'view',
         shipments: 'edit',
+        logistics_customers: 'view',
         products: 'view',
         inventory: 'edit',
         purchasing: 'view',
@@ -97,6 +99,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'view',
         shipments: 'none',
+        logistics_customers: 'none',
         products: 'edit',
         inventory: 'view',
         purchasing: 'edit',
@@ -130,6 +133,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'edit',
         shipments: 'view',
+        logistics_customers: 'view',
         products: 'view',
         inventory: 'view',
         purchasing: 'view',
@@ -164,6 +168,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'view',
         shipments: 'view',
+        logistics_customers: 'none',
         products: 'none',
         inventory: 'none',
         purchasing: 'none',
@@ -199,6 +204,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'view',
         shipments: 'view',
+        logistics_customers: 'view',
         products: 'view',
         inventory: 'view',
         purchasing: 'view',
@@ -215,6 +221,48 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       },
       capabilities: {
         // Read-only means read-only: no bulk anything and nothing that leaves our database.
+        marketplace_write: false,
+        bulk_import: false,
+        delete_records: false,
+        trigger_sync: false,
+        unlock_transactions: false,
+        manage_credentials: false,
+      },
+    },
+  },
+  {
+    key: 'logistics_customer',
+    name: 'Logistics Customer',
+    description:
+      'Somebody at a customer we ship for. They sign in to the customer portal and see only their own company’s shipments — this role grants nothing in the platform itself, deliberately.',
+    grants: {
+      /**
+       * Every area none, and that is the whole role.
+       *
+       * What a portal user may see is decided by the customer they belong to, not by a grant: the
+       * portal scopes every query to that customer, and the platform's own pages refuse anyone who
+       * has one. The role exists so that an admin can see at a glance who is external, and so that
+       * a grant given here by mistake still lands on somebody with nothing to open.
+       */
+      areas: {
+        sales_transactions: 'none',
+        shipments: 'none',
+        logistics_customers: 'none',
+        products: 'none',
+        inventory: 'none',
+        purchasing: 'none',
+        receiving: 'none',
+        pricing: 'none',
+        channel_listings: 'none',
+        repricing: 'none',
+        expenses: 'none',
+        analytics: 'none',
+        integrations: 'none',
+        global_settings: 'none',
+        activity: 'none',
+        administration: 'none',
+      },
+      capabilities: {
         marketplace_write: false,
         bulk_import: false,
         delete_records: false,

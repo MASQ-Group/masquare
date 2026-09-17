@@ -39,7 +39,7 @@ export interface AreaDef {
 }
 
 /**
- * The 15 areas.
+ * The 16 areas.
  *
  * Where several screens are named by one area, splitting them would produce a grant nobody could
  * act on — someone who may adjust stock but not see the warehouse it sits in, or edit a product
@@ -59,6 +59,13 @@ export const AREAS: AreaDef[] = [
     group: 'Sales',
     description:
       'Outbound and pending fulfilment, dispatched elsewhere, and FBA shipments with their costs. One area: recording a shipment changes its order’s fulfilment status, and an FBA shipment’s cost feeds the profit on every order fulfilled from it.',
+  },
+  {
+    key: 'logistics_customers',
+    label: 'Logistics customers',
+    group: 'Sales',
+    description:
+      'The companies we provide logistics services to, and their people. Separate from Shipments because it is a customer record rather than a parcel: whoever books the parcels rarely decides who we take on, what they are charged, or who at their end may sign in.',
   },
   {
     key: 'products',
