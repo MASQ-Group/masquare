@@ -2552,6 +2552,60 @@ export const CUSTOMS_LABEL: Record<CustomsLane, string> = {
   export: 'customs declaration included',
 };
 
+// ---- Logistics customers ----
+
+export interface CustomerContact {
+  id: string;
+  name: string;
+  surname: string | null;
+  email: string | null;
+  phone: string | null;
+  role: string | null;
+}
+
+export interface LogisticsCustomer {
+  id: string;
+  name: string;
+  legalName: string | null;
+  vatNumber: string | null;
+  eori: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  addressCity: string | null;
+  addressRegion: string | null;
+  addressPostalCode: string | null;
+  addressCountryIso: string | null;
+  /** Two letters. Every shipment they file is numbered from it. */
+  referencePrefix: string;
+  referenceSeq: number;
+  /** What their next shipment would be called. */
+  nextReference: string;
+  companyId: string | null;
+  company: { id: string; officialName: string } | null;
+  active: boolean;
+  notes: string | null;
+  contactPersons: CustomerContact[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CustomerPatch = Partial<Omit<LogisticsCustomer, 'id' | 'company' | 'contactPersons' | 'nextReference' | 'referenceSeq' | 'createdAt' | 'updatedAt'>>;
+
+export const customersApi = {
+  list: (params: { q?: string; active?: string } = {}) => api.get<LogisticsCustomer[]>('/customers', { params }).then((r) => r.data),
+  get: (id: string) => api.get<LogisticsCustomer>(`/customers/${id}`).then((r) => r.data),
+  create: (body: CustomerPatch) => api.post<LogisticsCustomer>('/customers', body).then((r) => r.data),
+  update: (id: string, body: CustomerPatch) => api.patch<LogisticsCustomer>(`/customers/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete<{ removed: boolean }>(`/customers/${id}`).then((r) => r.data),
+  addContact: (id: string, body: Partial<CustomerContact>) => api.post<LogisticsCustomer>(`/customers/${id}/contacts`, body).then((r) => r.data),
+  updateContact: (id: string, contactId: string, body: Partial<CustomerContact>) =>
+    api.patch<LogisticsCustomer>(`/customers/${id}/contacts/${contactId}`, body).then((r) => r.data),
+  removeContact: (id: string, contactId: string) => api.delete<LogisticsCustomer>(`/customers/${id}/contacts/${contactId}`).then((r) => r.data),
+};
+
 // ---- Notifications ----
 
 export interface NotificationRow {

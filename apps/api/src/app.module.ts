@@ -12,6 +12,7 @@ import { AccessModule } from './access/access.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { MailModule } from './mail/mail.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { CustomersModule } from './customers/customers.module';
 import { JobsModule } from './jobs/jobs.module';
 import { ListingModule } from './listing/listing.module';
 import { McpModule } from './mcp/mcp.module';
@@ -73,6 +74,7 @@ import { HealthController } from './health.controller';
     CryptoModule,
     MailModule,
     NotificationsModule,
+    CustomersModule,
     JobsModule,
     StorageModule,
     AuthModule,

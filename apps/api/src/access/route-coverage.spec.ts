@@ -76,8 +76,8 @@ describe('access declarations', () => {
     // missing entirely — a floor cannot notice an omission above it. If this number moves, a
     // controller was added or removed and somebody should say which.
     const classes = FILES.reduce((n, f) => n + declarations(readFileSync(f, 'utf8')).length, 0);
-    // 62 since NotificationsController (17 Sep 2026) — a person's own notifications.
-    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(62);
+    // 63 since CustomersController (17 Sep 2026) — the companies we ship for.
+    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(63);
   });
 
   it('declares an area or an explicit exemption on every controller', () => {
