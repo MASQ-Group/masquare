@@ -127,26 +127,60 @@ export function FulfilCustomerShipmentModal({ shipment, onClose }: { shipment: C
         <div>
           <div className="mb-1.5 text-[13px] font-semibold text-n-800">What they asked for</div>
           <dl className="grid grid-cols-[130px_1fr] gap-x-3 gap-y-1 text-[12.5px]">
-            <dt className="text-n-500">Collect from</dt>
-            <dd className="text-n-700">{[shipment.fromCompany || shipment.fromName, shipment.fromCity, shipment.fromCountryIso].filter(Boolean).join(', ') || '—'}</dd>
             <dt className="text-n-500">Deliver to</dt>
-            <dd className="text-n-700">{[shipment.toCompany || shipment.toName, shipment.toLine1, shipment.toCity, shipment.toPostalCode, shipment.toCountryIso].filter(Boolean).join(', ') || '—'}</dd>
-            <dt className="text-n-500">Goods</dt>
             <dd className="text-n-700">
-              {shipment.goodsDescription ?? '—'}
-              {shipment.goodsValue ? <span className="text-n-500"> · declared {shipment.goodsValue} {shipment.goodsCurrency ?? ''}</span> : null}
+              {[shipment.toCompany || shipment.toName, shipment.toLine1, shipment.toLine2, shipment.toLine3, shipment.toCity, shipment.toRegion, shipment.toPostalCode, shipment.toCountryIso].filter(Boolean).join(', ') || '—'}
             </dd>
-            <dt className="text-n-500">Parcels</dt>
-            <dd className="text-n-700">
-              {shipment.parcels.map((p, i) => (
-                <span key={p.id} className="mono">
-                  {i > 0 ? ' · ' : ''}{Number(p.weightKg)}kg
-                  {p.lengthCm && p.widthCm && p.heightCm ? ` ${Number(p.lengthCm)}×${Number(p.widthCm)}×${Number(p.heightCm)}cm` : ''}
-                </span>
-              ))}
-            </dd>
+            <dt className="text-n-500">Contact</dt>
+            <dd className="text-n-700">{[shipment.toName, shipment.toPhone, shipment.toEmail].filter(Boolean).join(' · ') || '—'}</dd>
+            {shipment.toVatNumber && (<><dt className="text-n-500">Their VAT</dt><dd className="mono text-n-700">{shipment.toVatNumber}</dd></>)}
+            {shipment.deliveryInstructions && (
+              <><dt className="text-n-500">Instructions</dt><dd className="text-n-700">{shipment.deliveryInstructions}</dd></>
+            )}
+            {shipment.serialNumbers.length > 0 && (
+              <><dt className="text-n-500">Serial numbers</dt><dd className="mono text-n-700">{shipment.serialNumbers.join(', ')}</dd></>
+            )}
             {shipment.notes && (<><dt className="text-n-500">Their note</dt><dd className="text-n-700">{shipment.notes}</dd></>)}
           </dl>
+
+          {/*
+            Per package, because that is how it was declared and how it has to be booked. Dangerous
+            goods and priority are called out rather than listed among the dimensions: booking a
+            lithium parcel as ordinary freight is the mistake this screen exists to prevent.
+          */}
+          <div className="mt-3 flex flex-col gap-2">
+            {shipment.parcels.map((p, i) => (
+              <div key={p.id} className="rounded-md border border-n-100 p-2.5 text-[12.5px]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-n-800">Package {i + 1}</span>
+                  <span className="mono text-n-600">
+                    {Number(p.weightKg)} kg
+                    {p.lengthCm && p.widthCm && p.heightCm ? ` · ${Number(p.lengthCm)}×${Number(p.widthCm)}×${Number(p.heightCm)} cm` : ''}
+                  </span>
+                  {p.dangerousGoods && (
+                    <span className="tag bg-warning-bg text-warning" title={p.batteryType ?? undefined}>
+                      Dangerous goods{p.batteryType ? ` · ${p.batteryType.replace(/_/g, ' ')}` : ''}
+                    </span>
+                  )}
+                  {p.priorityHandling && <span className="tag bg-info-bg text-info">Priority</span>}
+                  {p.insurance && (
+                    <span className="tag bg-teal-50 text-teal-700">
+                      Insured{Number(p.insuranceAmount) > 0 ? ` · ${Number(p.insuranceAmount).toFixed(2)}` : ''}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-0.5 text-n-700">{p.goodsDescription ?? '—'}</div>
+                {(Number(p.declaredValue) > 0 || p.customerReference) && (
+                  <div className="text-[11.5px] text-n-500">
+                    {[
+                      Number(p.declaredValue) > 0 ? `Declared ${Number(p.declaredValue).toFixed(2)} ${shipment.goodsCurrency ?? ''}` : null,
+                      p.customerReference ? `Their ref ${p.customerReference}` : null,
+                    ].filter(Boolean).join(' · ')}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </ModalShell>

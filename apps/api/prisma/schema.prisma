@@ -4224,8 +4224,10 @@ model CustomerShipment {
 
   /// `AB-0001`, from the customer's prefix. Unique, quotable, and theirs.
   reference String @unique
-  /// Their own reference for it — a job number, a purchase order — shown beside ours.
+  /// Their own reference for the whole order — a job number, a purchase order — beside ours.
   customerReference String? @map("customer_reference")
+  /// Serial numbers of what is being sent, as many as the goods have.
+  serialNumbers String[] @default([]) @map("serial_numbers")
 
   /**
    * SUBMITTED   filed, waiting for us.
@@ -4270,8 +4272,13 @@ model CustomerShipment {
   toRegion     String? @map("to_region")
   toPostalCode String? @map("to_postal_code")
   toCountryIso String? @map("to_country_iso")
+  toLine3      String? @map("to_line3")
   toPhone      String? @map("to_phone")
   toEmail      String? @map("to_email")
+  /// The recipient's VAT number, where they have one — a customs field on a business delivery.
+  toVatNumber  String? @map("to_vat_number")
+  /// Anything the driver needs to know: a gate code, a delivery window, who to ask for.
+  deliveryInstructions String? @map("delivery_instructions")
 
   // ── what we did with it ──────────────────────────────────────────────────────────────────────
   /// The carrier it went with, from the same list our own shipments use — which is what gives the
@@ -4319,8 +4326,29 @@ model CustomerShipmentParcel {
   lengthCm Decimal? @map("length_cm") @db.Decimal(10, 1)
   widthCm  Decimal? @map("width_cm") @db.Decimal(10, 1)
   heightCm Decimal? @map("height_cm") @db.Decimal(10, 1)
-  /// What is in this particular box, where it differs from the shipment's description.
-  contents String?
+  /// What is in this particular box. Required of a customer filing through the portal; a shipment
+  /// we file for them over the telephone may not have it yet.
+  goodsDescription String? @map("goods_description")
+  /// Their own reference for this box, where the boxes of one order are referenced separately.
+  customerReference String? @map("customer_reference")
+
+  /// What this box is worth, for customs and for insurance. In the shipment's currency.
+  declaredValue Decimal? @map("declared_value") @db.Decimal(12, 2)
+  /**
+   * Insurance, and what it costs.
+   *
+   * The amount is stored rather than recomputed on read: it is a price that was quoted to somebody,
+   * and a rate that changes later must not silently restate what they were told at the time.
+   */
+  insurance       Boolean  @default(false)
+  insuranceAmount Decimal? @map("insurance_amount") @db.Decimal(12, 2)
+
+  /// Dangerous goods, and which packing instruction the batteries fall under (PI 965–970).
+  dangerousGoods Boolean @default(false) @map("dangerous_goods")
+  batteryType    String? @map("battery_type")
+
+  /// Asked to be handled as a priority. What that costs is settled when we book it.
+  priorityHandling Boolean @default(false) @map("priority_handling")
 
   createdAt DateTime @default(now()) @map("created_at")
 

@@ -76,20 +76,46 @@ describe('access declarations', () => {
     // missing entirely — a floor cannot notice an omission above it. If this number moves, a
     // controller was added or removed and somebody should say which.
     const classes = FILES.reduce((n, f) => n + declarations(readFileSync(f, 'utf8')).length, 0);
-    // 65 since CustomerShipmentsController (18 Sep 2026) — the queue of shipments customers filed.
-    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(65);
+    // 66 since PortalController (18 Sep 2026) — the customer portal.
+    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(66);
   });
 
-  it('declares an area or an explicit exemption on every controller', () => {
+  it('declares an area, an explicit exemption, or the portal on every controller', () => {
     const undeclared: string[] = [];
     for (const file of FILES) {
       const source = readFileSync(file, 'utf8');
       for (const { className, decorators } of declarations(source)) {
-        const has = decorators.includes('@AccessArea(') || decorators.includes('@NoAccessCheck()');
+        const has = decorators.includes('@AccessArea(')
+          || decorators.includes('@NoAccessCheck()')
+          // A third kind of declaration, and a narrower one: the portal's routes belong to a
+          // customer's own people, whose access is not an area at all. They are scoped by
+          // PortalGuard to the customer the signed-in person belongs to, and the platform's guard
+          // refuses those accounts everywhere else. Listed below, so adding one stays deliberate.
+          || decorators.includes('@PortalRoute()');
         if (!has) undeclared.push(`${file.replace(SRC, '')} → ${className}`);
       }
     }
-    expect(undeclared, `Add @AccessArea(...) or @NoAccessCheck() to:\n  ${undeclared.join('\n  ')}`).toEqual([]);
+    expect(undeclared, `Add @AccessArea(...), @NoAccessCheck() or @PortalRoute() to:\n  ${undeclared.join('\n  ')}`).toEqual([]);
+  });
+
+  /**
+   * The controllers a logistics customer's own people can reach.
+   *
+   * Asserted by name for the same reason as the exemption list: these are the only routes outside
+   * the platform's area checks that an external account may call, and one appearing here should be
+   * a decision somebody made in the open rather than a decorator that turned up in a controller.
+   */
+  it('keeps the portal to its own controllers', () => {
+    const portal = FILES.filter((f) => readFileSync(f, 'utf8').includes('@PortalRoute()'))
+      .map((f) => f.replace(SRC, '').replace(/\\/g, '/'))
+      .sort();
+    expect(portal).toEqual([
+      // Signing in and reading your own profile — shared with staff, and the only two the portal
+      // needs from the platform's own controllers.
+      '/auth/auth.controller.ts',
+      // The portal itself: every route scoped to the caller's customer by PortalGuard.
+      '/portal/portal.controller.ts',
+    ]);
   });
 
   it('names only areas the catalogue knows', () => {

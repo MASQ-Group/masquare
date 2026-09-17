@@ -23,8 +23,8 @@ import {
  */
 
 export interface AddressInput {
-  name?: string | null; company?: string | null;
-  line1?: string | null; line2?: string | null;
+  name?: string | null; company?: string | null; vatNumber?: string | null;
+  line1?: string | null; line2?: string | null; line3?: string | null;
   city?: string | null; region?: string | null; postalCode?: string | null; countryIso?: string | null;
   phone?: string | null; email?: string | null;
 }
@@ -34,11 +34,21 @@ export interface ParcelInput {
   lengthCm?: number | null;
   widthCm?: number | null;
   heightCm?: number | null;
-  contents?: string | null;
+  goodsDescription?: string | null;
+  customerReference?: string | null;
+  declaredValue?: number | null;
+  insurance?: boolean | null;
+  /** Worked out by the caller from the declared value — never taken from a browser. */
+  insuranceAmount?: number | null;
+  dangerousGoods?: boolean | null;
+  batteryType?: string | null;
+  priorityHandling?: boolean | null;
 }
 
 export interface ShipmentInput {
   customerReference?: string | null;
+  serialNumbers?: string[] | null;
+  deliveryInstructions?: string | null;
   requestedDate?: string | null;
   goodsDescription?: string | null;
   goodsValue?: number | null;
@@ -121,6 +131,8 @@ export class CustomerShipmentsService {
           customerId,
           reference: formatReference(customer.referencePrefix, customer.referenceSeq),
           customerReference: text(input.customerReference),
+          serialNumbers: (input.serialNumbers ?? []).map((v) => v.trim()).filter(Boolean),
+          deliveryInstructions: text(input.deliveryInstructions),
           status: 'SUBMITTED',
           requestedDate: date(input.requestedDate),
           goodsDescription: text(input.goodsDescription),
@@ -131,13 +143,7 @@ export class CustomerShipmentsService {
           ...addressFields('to', input.to),
           createdById: actorId ?? null,
           parcels: {
-            create: parcels.map((p) => ({
-              weightKg: new Prisma.Decimal(p.weightKg),
-              lengthCm: p.lengthCm != null ? new Prisma.Decimal(p.lengthCm) : null,
-              widthCm: p.widthCm != null ? new Prisma.Decimal(p.widthCm) : null,
-              heightCm: p.heightCm != null ? new Prisma.Decimal(p.heightCm) : null,
-              contents: text(p.contents),
-            })),
+            create: parcels.map((p) => parcelData(p)),
           },
         },
         include: INCLUDE,
@@ -323,6 +329,8 @@ export class CustomerShipmentsService {
           where: { id },
           data: {
             ...(patch?.customerReference !== undefined ? { customerReference: text(patch.customerReference) } : {}),
+            ...(patch?.serialNumbers !== undefined ? { serialNumbers: (patch.serialNumbers ?? []).map((v) => v.trim()).filter(Boolean) } : {}),
+            ...(patch?.deliveryInstructions !== undefined ? { deliveryInstructions: text(patch.deliveryInstructions) } : {}),
             ...(patch?.requestedDate !== undefined ? { requestedDate: date(patch.requestedDate) } : {}),
             ...(patch?.goodsDescription !== undefined ? { goodsDescription: text(patch.goodsDescription) } : {}),
             ...(patch?.goodsValue !== undefined ? { goodsValue: patch.goodsValue != null ? new Prisma.Decimal(patch.goodsValue) : null } : {}),
@@ -338,14 +346,7 @@ export class CustomerShipmentsService {
         if (parcels.length) {
           await tx.customerShipmentParcel.deleteMany({ where: { shipmentId: id } });
           await tx.customerShipmentParcel.createMany({
-            data: parcels.map((p) => ({
-              shipmentId: id,
-              weightKg: new Prisma.Decimal(p.weightKg),
-              lengthCm: p.lengthCm != null ? new Prisma.Decimal(p.lengthCm) : null,
-              widthCm: p.widthCm != null ? new Prisma.Decimal(p.widthCm) : null,
-              heightCm: p.heightCm != null ? new Prisma.Decimal(p.heightCm) : null,
-              contents: text(p.contents) ?? null,
-            })),
+            data: parcels.map((p) => ({ shipmentId: id, ...parcelData(p) })),
           });
         }
       });
@@ -399,6 +400,31 @@ export class CustomerShipmentsService {
   }
 }
 
+/**
+ * One package, as its columns.
+ *
+ * Written once and used by both the filing and the customer's own edit, because a field added to
+ * one and forgotten in the other is a field that silently empties itself when somebody corrects a
+ * shipment.
+ */
+function parcelData(p: ParcelInput) {
+  const dec = (v: number | null | undefined) => (v != null && Number.isFinite(Number(v)) ? new Prisma.Decimal(v) : null);
+  return {
+    weightKg: new Prisma.Decimal(p.weightKg),
+    lengthCm: dec(p.lengthCm),
+    widthCm: dec(p.widthCm),
+    heightCm: dec(p.heightCm),
+    goodsDescription: text(p.goodsDescription),
+    customerReference: text(p.customerReference),
+    declaredValue: dec(p.declaredValue),
+    insurance: !!p.insurance,
+    insuranceAmount: dec(p.insuranceAmount),
+    dangerousGoods: !!p.dangerousGoods,
+    batteryType: p.dangerousGoods ? text(p.batteryType) : null,
+    priorityHandling: !!p.priorityHandling,
+  };
+}
+
 const text = (v: string | null | undefined): string | null => {
   const s = (v ?? '').trim();
   return s === '' ? null : s;
@@ -417,8 +443,10 @@ function addressFields(side: 'from' | 'to', a?: AddressInput) {
   return {
     [key('Name')]: text(a.name),
     [key('Company')]: text(a.company),
+    ...(side === 'to' ? { toVatNumber: text(a.vatNumber) } : {}),
     [key('Line1')]: text(a.line1),
     [key('Line2')]: text(a.line2),
+    ...(side === 'to' ? { toLine3: text(a.line3) } : {}),
     [key('City')]: text(a.city),
     [key('Region')]: text(a.region),
     [key('PostalCode')]: text(a.postalCode),
