@@ -66,6 +66,12 @@ export class CustomerShipmentsController {
     return this.shipments.requestInfo(id, body?.question ?? '');
   }
 
+  /** Ask the carrier where this parcel is, now. */
+  @Post(':id/refresh-tracking')
+  refreshTracking(@Param('id') id: string) {
+    return this.shipments.refreshTracking(id);
+  }
+
   @Post(':id/reopen')
   reopen(@Param('id') id: string) {
     return this.shipments.reopen(id);

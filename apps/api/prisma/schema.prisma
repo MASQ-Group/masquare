@@ -2504,8 +2504,18 @@ model CarrierBooking {
  * de-duplicates numbers before it calls FedEx so the batch of thirty is not spent twice on one box.
  */
 model ShipmentTracking {
-  id         String @id @default(uuid()) @db.Uuid
-  shipmentId String @unique @map("shipment_id") @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  /**
+   * What this is tracking: one of OUR shipments, or one we sent for a logistics customer.
+   *
+   * Exactly one is set. Two nullable columns rather than a second table because everything about
+   * following a parcel — the six-hourly cadence, the failure count, FedEx's own scans, the sweep
+   * that keeps it current — is identical whoever the parcel belongs to. A copy of this table would
+   * be a copy of that sweep, and the second copy is the one that quietly stops running.
+   */
+  shipmentId         String? @unique @map("shipment_id") @db.Uuid
+  customerShipmentId String? @unique @map("customer_shipment_id") @db.Uuid
 
   /// 'fedex' for now — the same code CarrierAccount uses, so a second carrier is a row not a migration.
   carrier String @default("fedex")
@@ -2591,7 +2601,8 @@ model ShipmentTracking {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  shipment         Shipment?         @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  customerShipment CustomerShipment? @relation(fields: [customerShipmentId], references: [id], onDelete: Cascade)
 
   @@index([trackingNumber])
   @@index([deliveredAt])
@@ -4290,6 +4301,8 @@ model CustomerShipment {
   shippingService ShippingService?           @relation("CustomerShipmentService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
   parcels         CustomerShipmentParcel[]
   documents       CustomerShipmentDocument[]
+  /// What the carrier says about it, for the carriers we can ask. Shared with our own shipments.
+  tracking        ShipmentTracking?
 
   /// The queue as it is read: what is waiting, oldest first.
   @@index([status, createdAt])
