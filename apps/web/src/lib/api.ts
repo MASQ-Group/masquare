@@ -2552,6 +2552,29 @@ export const CUSTOMS_LABEL: Record<CustomsLane, string> = {
   export: 'customs declaration included',
 };
 
+// ---- Notifications ----
+
+export interface NotificationRow {
+  id: string;
+  kind: string;
+  title: string;
+  body: string | null;
+  /** An in-app path, never an external URL. */
+  link: string | null;
+  relatedType: string | null;
+  relatedId: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export const notificationsApi = {
+  list: (limit = 30) => api.get<{ items: NotificationRow[]; unread: number }>('/notifications', { params: { limit } }).then((r) => r.data),
+  /** Just the badge — polled, so deliberately only a count. */
+  unreadCount: () => api.get<{ unread: number }>('/notifications/unread-count').then((r) => r.data),
+  markRead: (id: string) => api.post<{ unread: number }>(`/notifications/${id}/read`).then((r) => r.data),
+  markAllRead: () => api.post<{ unread: number; marked: number }>('/notifications/read-all').then((r) => r.data),
+};
+
 // ---- Email (Google Workspace) ----
 
 export interface EmailSettings {

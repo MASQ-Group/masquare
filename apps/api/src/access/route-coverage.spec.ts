@@ -76,8 +76,8 @@ describe('access declarations', () => {
     // missing entirely — a floor cannot notice an omission above it. If this number moves, a
     // controller was added or removed and somebody should say which.
     const classes = FILES.reduce((n, f) => n + declarations(readFileSync(f, 'utf8')).length, 0);
-    // 61 since MailController (17 Sep 2026) — how the platform sends email.
-    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(61);
+    // 62 since NotificationsController (17 Sep 2026) — a person's own notifications.
+    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(62);
   });
 
   it('declares an area or an explicit exemption on every controller', () => {
@@ -163,6 +163,10 @@ describe('access declarations', () => {
       // controller itself. It then acts as one named user, and that user's ordinary company grants
       // still decide what it can reach — so the exemption is from the login guard, not from scoping.
       '/mcp/mcp.controller.ts',
+      // A person's own notifications. Nothing here can reach anybody else's — every route is scoped
+      // to the signed-in user — so there is no area to check, and the exemption says so out loud
+      // rather than leaving the decorator off and looking like an oversight.
+      '/notifications/notifications.controller.ts',
     ]);
   });
 });

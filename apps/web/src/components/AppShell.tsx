@@ -56,6 +56,7 @@ import { settingsApi } from '../lib/api';
 import { applyFonts } from '../lib/fonts';
 import { CompanySwitcher } from './CompanySwitcher';
 import { GlobalSearch } from './GlobalSearch';
+import { NotificationBell } from './NotificationBell';
 import { RouteBoundary } from './common/RouteBoundary';
 
 interface NavDef {
@@ -463,6 +464,7 @@ export function AppShell() {
           />
 
           <div className="ml-auto flex items-center gap-1.5">
+            <NotificationBell />
             <button className="grid h-[38px] w-[38px] place-items-center rounded-md text-n-600 hover:bg-n-100" title="Help">
               <HelpCircle size={19} />
             </button>
