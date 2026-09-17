@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { carriersApi, type CarrierAccount } from '../../lib/api';
+import { CUSTOMS_LABEL, carriersApi, type CarrierAccount } from '../../lib/api';
 
 interface Props {
   account: CarrierAccount;
@@ -115,7 +115,7 @@ export function RateQuoteModal({ account, onClose }: Props) {
                       as a bad credential, so leaving it implicit sends people hunting for lost keys. */}
                   Shipped from <span className="mono text-n-700">{[result.originPostalCode, result.originCountry].filter(Boolean).join(' ') || 'nowhere recorded'}</span>
                   {' '}({result.origin === 'account' ? 'this account' : 'the company address'}) ·{' '}
-                  {result.customs ? 'customs declaration included' : 'no customs declaration (same customs area)'}
+                  {CUSTOMS_LABEL[result.customs]}
                 </span>
               </div>
 
@@ -182,7 +182,7 @@ export function RateQuoteModal({ account, onClose }: Props) {
 
                   {/* FedEx's own words on every international quote, and easy to forget: the price
                       above is carriage only. Where we ship duty-paid it is not the whole cost. */}
-                  {result.customs && (
+                  {result.customs === 'export' && (
                     <p className="mt-2 text-[12px] text-n-500">
                       Carriage only. Duties, taxes and clearance fees are not included — on a
                       duty-paid shipment they are a second cost.

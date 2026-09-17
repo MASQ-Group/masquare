@@ -323,7 +323,7 @@ export const carriersApi = {
     dutiesPaidBy: 'sender' | 'recipient';
     labelImageType?: 'PDF' | 'PNG' | 'ZPLII';
   }) =>
-    api.post<{ ok: boolean; status: number; message: string | null; request: unknown; response: unknown; customs: boolean }>(
+    api.post<{ ok: boolean; status: number; message: string | null; request: unknown; response: unknown; customs: CustomsLane }>(
       `/carriers/accounts/${id}/test-book`, body,
     ).then((r) => r.data),
   rateQuote: (id: string, body: {
@@ -343,7 +343,7 @@ export const carriersApi = {
       /** The origin actually sent. A refusal is unreadable without it. */
       originCountry: string | null;
       originPostalCode: string | null;
-      customs: boolean;
+      customs: CustomsLane;
     }>(`/carriers/accounts/${id}/rate-quote`, body).then((r) => r.data),
 };
 
@@ -2539,6 +2539,18 @@ export interface RepricingReportFilters {
   q?: string; state?: string;
   limit?: number; offset?: number;
 }
+
+/**
+ * Which customs block a FedEx request carried. `intra_eu` is a real block — FedEx refuses two
+ * countries with none — but it declares only what the goods are, and there is no border to pay.
+ */
+export type CustomsLane = 'none' | 'intra_eu' | 'export';
+
+export const CUSTOMS_LABEL: Record<CustomsLane, string> = {
+  none: 'no customs declaration (same country)',
+  intra_eu: 'goods description only (inside the EU)',
+  export: 'customs declaration included',
+};
 
 export const repricingApi = {
   retention: () => api.get<RepricingRetention>('/amazon-repricing/retention').then((r) => r.data),
