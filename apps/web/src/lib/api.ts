@@ -2552,6 +2552,44 @@ export const CUSTOMS_LABEL: Record<CustomsLane, string> = {
   export: 'customs declaration included',
 };
 
+// ---- Email (Google Workspace) ----
+
+export interface EmailSettings {
+  id: string;
+  enabled: boolean;
+  senderAddress: string | null;
+  senderName: string;
+  replyTo: string | null;
+  clientEmail: string | null;
+  keyId: string | null;
+  keyLoadedAt: string | null;
+  lastTestStatus: string | null;
+  lastTestMessage: string | null;
+  lastTestedAt: string | null;
+  /** Whether a private key is held. The key itself never leaves the server. */
+  hasKey: boolean;
+}
+
+export interface EmailMessageRow {
+  id: string;
+  toAddress: string;
+  subject: string;
+  kind: string;
+  status: string;
+  error: string | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+
+export const emailApi = {
+  settings: () => api.get<EmailSettings>('/email/settings').then((r) => r.data),
+  save: (patch: { senderAddress?: string; senderName?: string; replyTo?: string; enabled?: boolean; serviceAccountJson?: string }) =>
+    api.put<EmailSettings>('/email/settings', patch).then((r) => r.data),
+  /** Sends a real message. Works before sending is switched on — that is the point of it. */
+  test: (to: string) => api.post<{ ok: boolean; message: string }>('/email/settings/test', { to }).then((r) => r.data),
+  messages: (limit = 50) => api.get<EmailMessageRow[]>('/email/messages', { params: { limit } }).then((r) => r.data),
+};
+
 export const repricingApi = {
   retention: () => api.get<RepricingRetention>('/amazon-repricing/retention').then((r) => r.data),
   setRetention: (body: { decisionDays?: number; feeDays?: number }) =>

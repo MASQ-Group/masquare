@@ -10,6 +10,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ActivityModule } from './activity/activity.module';
 import { AccessModule } from './access/access.module';
 import { CryptoModule } from './crypto/crypto.module';
+import { MailModule } from './mail/mail.module';
 import { JobsModule } from './jobs/jobs.module';
 import { ListingModule } from './listing/listing.module';
 import { McpModule } from './mcp/mcp.module';
@@ -69,6 +70,7 @@ import { HealthController } from './health.controller';
     ActivityModule,
     AccessModule,
     CryptoModule,
+    MailModule,
     JobsModule,
     StorageModule,
     AuthModule,

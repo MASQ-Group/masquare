@@ -3905,3 +3905,93 @@ model ProductChannelAvailability {
   @@index([companyId])
   @@map("product_channel_availability")
 }
+
+/**
+ * How the platform sends email. One row.
+ *
+ * Google Workspace, through a service account with domain-wide delegation: the platform mints its
+ * own token and sends AS a chosen mailbox, with no user sitting in front of a consent screen and no
+ * password to rotate. The alternative, SMTP relay, is authorised by sender IP — and this runs on a
+ * host whose address changes, which would break it at a time nobody chose.
+ *
+ * The private key is encrypted at rest with the same envelope as an integration secret, and is the
+ * one field that never leaves the server: the settings screen shows the key's id and the date it was
+ * loaded, never the key.
+ */
+model EmailSettings {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Off until somebody has sent a successful test. Nothing is sent while this is false.
+  enabled Boolean @default(false)
+
+  /// The mailbox we send as, and impersonate. A real Workspace address in your own domain.
+  senderAddress String? @map("sender_address")
+  /// The display name on the From line.
+  senderName    String  @default("maSquare") @map("sender_name")
+  /// Where replies should go, when it differs from the sender. Blank means the sender.
+  replyTo       String? @map("reply_to")
+
+  /// The service account's own address, from the JSON key file.
+  clientEmail String? @map("client_email")
+  /// `private_key_id` from the key file — enough to tell two keys apart without holding either.
+  keyId       String? @map("key_id")
+
+  /// The private key, AES-256-GCM, same envelope as IntegrationSecret.
+  privateKeyCiphertext String? @map("private_key_ciphertext")
+  privateKeyIv         String? @map("private_key_iv")
+  privateKeyAuthTag    String? @map("private_key_auth_tag")
+  privateKeyVersion    Int?    @map("private_key_version")
+  /// When the key was loaded, so an expiry or a rotation can be reasoned about.
+  keyLoadedAt          DateTime? @map("key_loaded_at")
+
+  /// The last test send: whether it worked, when, and what Google said if it did not.
+  lastTestStatus  String?   @map("last_test_status")
+  lastTestMessage String?   @map("last_test_message")
+  lastTestedAt    DateTime? @map("last_tested_at")
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedById String?  @map("updated_by") @db.Uuid
+
+  @@map("email_settings")
+}
+
+/**
+ * Every message the platform tried to send.
+ *
+ * Written whether or not the send succeeded, because the failures are the point: an invitation that
+ * never arrived is indistinguishable from one the recipient ignored, and without this row nobody can
+ * tell which. Holds our own outbound text, never anything read from a mailbox — the platform sends
+ * mail and does not receive it.
+ */
+model EmailMessage {
+  id String @id @default(uuid()) @db.Uuid
+
+  toAddress String  @map("to_address")
+  subject   String
+  bodyText  String  @map("body_text")
+  /// What this message is for: test | invite | notification. Kept as a string so a new kind of
+  /// message is a new value rather than a migration.
+  kind      String  @default("notification")
+
+  /// queued | sent | failed. Queued exists for the moment between the row and the send.
+  status    String  @default("queued")
+  /// Google's own words when it refused, already interpreted into something actionable.
+  error     String?
+  /// Gmail's id for the sent message, which is how it is found in the sent folder afterwards.
+  providerMessageId String? @map("provider_message_id")
+  sentAt    DateTime? @map("sent_at")
+
+  /// What the message was about, when it was about something — a customer shipment, a user invite.
+  /// Deliberately loose: a foreign key per kind of subject would be a migration per feature.
+  relatedType String? @map("related_type")
+  relatedId   String? @map("related_id") @db.Uuid
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  createdById String?  @map("created_by") @db.Uuid
+
+  @@index([createdAt])
+  @@index([relatedType, relatedId])
+  @@index([status])
+  @@map("email_message")
+}

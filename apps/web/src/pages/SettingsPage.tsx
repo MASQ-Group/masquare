@@ -7,6 +7,7 @@ import { SalesChannelsTab } from '../components/settings/SalesChannelsTab';
 import { ShippingServicesTab } from '../components/settings/ShippingServicesTab';
 import { ProfitTiersTab } from '../components/settings/ProfitTiersTab';
 import { CustomsFxTab } from '../components/settings/CustomsFxTab';
+import { EmailTab } from '../components/settings/EmailTab';
 import { VendorsSection } from '../components/settings/VendorsSection';
 import { BrandsSection, ProductTypesSection, FulfilmentTypesSection } from '../components/settings/SimpleSections';
 import { CategoriesSection } from '../components/settings/CategoriesSection';
@@ -16,7 +17,7 @@ import { VatClassesSection } from '../components/settings/VatClassesSection';
 import { ProductClassesSection } from '../components/settings/ProductClassesSection';
 import { ComplianceSection } from '../components/settings/ComplianceSection';
 
-type TopTab = 'general' | 'countries' | 'products' | 'sales-channels' | 'shipping-services' | 'profit-tiers' | 'customs-fx';
+type TopTab = 'general' | 'countries' | 'products' | 'sales-channels' | 'shipping-services' | 'profit-tiers' | 'customs-fx' | 'email';
 
 const TOP_TABS: [TopTab, string][] = [
   ['general', 'General'],
@@ -26,6 +27,7 @@ const TOP_TABS: [TopTab, string][] = [
   ['shipping-services', 'Shipping Services'],
   ['profit-tiers', 'Profit Tiers'],
   ['customs-fx', 'Customs FX (CY)'],
+  ['email', 'Email'],
 ];
 
 const PRODUCT_SECTIONS = [
@@ -91,6 +93,7 @@ export function SettingsPage() {
       {top === 'shipping-services' && <ShippingServicesTab />}
       {top === 'profit-tiers' && <ProfitTiersTab />}
       {top === 'customs-fx' && <CustomsFxTab />}
+      {top === 'email' && <EmailTab />}
 
       {top === 'products' && (
         <div className="flex gap-6 max-[900px]:flex-col">
