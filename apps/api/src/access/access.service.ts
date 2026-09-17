@@ -20,6 +20,14 @@ const CACHE_TTL_MS = 10_000;
 @Injectable()
 export class AccessService {
   private readonly cache = new Map<string, { at: number; access: EffectiveAccess }>();
+  /**
+   * Who belongs to a customer rather than to us.
+   *
+   * Cached without a clock, because the answer cannot change: an account is created against a
+   * customer or it is not, and `create` refuses an email that already belongs to a platform user.
+   * There is no route from one to the other, so there is nothing to expire.
+   */
+  private readonly portalUsers = new Map<string, boolean>();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -54,6 +62,16 @@ export class AccessService {
     return access;
   }
 
+  /** Whether this person is a customer's, which decides whether they may be here at all. */
+  async isPortalUser(userId: string): Promise<boolean> {
+    const held = this.portalUsers.get(userId);
+    if (held !== undefined) return held;
+    const user = await this.prisma.user.findFirst({ where: { id: userId }, select: { customerId: true } });
+    const isPortal = !!user?.customerId;
+    this.portalUsers.set(userId, isPortal);
+    return isPortal;
+  }
+
   /**
    * Forget what was resolved.
    *
@@ -62,7 +80,7 @@ export class AccessService {
    * single re-read per active user.
    */
   invalidate(userId?: string): void {
-    if (userId) this.cache.delete(userId);
-    else this.cache.clear();
+    if (userId) { this.cache.delete(userId); this.portalUsers.delete(userId); }
+    else { this.cache.clear(); this.portalUsers.clear(); }
   }
 }

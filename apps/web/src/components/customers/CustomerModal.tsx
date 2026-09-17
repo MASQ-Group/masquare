@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Loader2, Trash2 } from 'lucide-react';
 import { ModalShell, Select } from '@masquare/ui';
 import { companiesApi, countriesApi, customersApi, type LogisticsCustomer } from '../../lib/api';
+import { CustomerPortalUsers } from './CustomerPortalUsers';
 
 /**
  * One logistics customer.
@@ -203,7 +204,9 @@ export function CustomerModal({ customer, onClose }: { customer: LogisticsCustom
           </span>
         </label>
 
-        {/* Contacts need a customer to belong to, so they appear once there is one to attach them to. */}
+        {/* Logins and contacts both need a customer to belong to, so they appear once there is one. */}
+        {editing && <CustomerPortalUsers customerId={customer!.id} customerName={customer!.name} />}
+
         {editing && (
           <div>
             <div className="mb-2 text-[13px] font-semibold text-n-800">People to speak to</div>

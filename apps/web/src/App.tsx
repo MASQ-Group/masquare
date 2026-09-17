@@ -28,6 +28,8 @@ const SalesTransactionFormPage = lazyPage(() => import('./pages/SalesTransaction
 const ShipmentsPage = lazyPage(() => import('./pages/ShipmentsPage'), 'ShipmentsPage');
 const FbaShipmentsPage = lazyPage(() => import('./pages/FbaShipmentsPage'), 'FbaShipmentsPage');
 const LogisticsCustomersPage = lazyPage(() => import('./pages/LogisticsCustomersPage'), 'LogisticsCustomersPage');
+const PortalHomePage = lazyPage(() => import('./pages/PortalHomePage'), 'PortalHomePage');
+const SetPasswordPage = lazyPage(() => import('./pages/SetPasswordPage'), 'SetPasswordPage');
 const ShipmentsTrackingPage = lazyPage(() => import('./pages/ShipmentsTrackingPage'), 'ShipmentsTrackingPage');
 const WarehousesPage = lazyPage(() => import('./pages/WarehousesPage'), 'WarehousesPage');
 const PurchaseOrdersPage = lazyPage(() => import('./pages/PurchaseOrdersPage'), 'PurchaseOrdersPage');
@@ -66,6 +68,21 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
   if (loading) return <FullScreenLoader />;
   if (!user) return <Navigate to="/login" replace />;
+  /**
+   * A logistics customer's own person has no business in the platform, and the API agrees — every
+   * route here refuses them. Sending them to their own portal is the difference between a boundary
+   * and a wall of red errors.
+   */
+  if (user.customer) return <Navigate to="/portal" replace />;
+  return children;
+}
+
+/** The other side of the same line: staff have no portal, and land back in the platform. */
+function RequirePortalUser({ children }: { children: JSX.Element }) {
+  const { user, loading } = useAuth();
+  if (loading) return <FullScreenLoader />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!user.customer) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -119,6 +136,9 @@ export function App() {
     <ConfirmProvider>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Signed out by definition: the person holding the link has no account to reach yet. */}
+      <Route path="/portal/set-password" element={<SetPasswordPage />} />
+      <Route path="/portal" element={<RequirePortalUser><PortalHomePage /></RequirePortalUser>} />
       <Route
         element={
           <RequireAuth>

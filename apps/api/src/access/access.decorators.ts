@@ -5,6 +5,7 @@ export const ACCESS_AREA = 'access:area';
 export const ACCESS_LEVEL = 'access:level';
 export const ACCESS_CAPABILITY = 'access:capability';
 export const ACCESS_SKIP = 'access:skip';
+export const ACCESS_PORTAL = 'access:portal';
 
 /**
  * Which area of the platform this controller (or one route on it) belongs to.
@@ -45,3 +46,13 @@ export const RequireCapability = (capability: string) => SetMetadata(ACCESS_CAPA
  * that arrives with no user at all, and progress polling for a job the caller already started.
  */
 export const NoAccessCheck = () => SetMetadata(ACCESS_SKIP, true);
+
+/**
+ * A route a logistics customer's own people may reach.
+ *
+ * Portal users are refused everywhere by default — including on routes that skip the area check —
+ * because the platform is ours and they are not in it. This marks the few places that are theirs:
+ * signing in, their own profile, and the portal itself. Default-deny, so a new internal route is
+ * closed to them without anybody remembering to close it.
+ */
+export const PortalRoute = () => SetMetadata(ACCESS_PORTAL, true);

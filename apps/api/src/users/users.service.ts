@@ -44,7 +44,9 @@ export class UsersService {
 
   async list() {
     const users = await this.prisma.user.findMany({
-      where: { deletedAt: null },
+      // Staff only. A customer's people are managed on their customer, where the person editing can
+      // see whose they are — and where there is no access tab to grant them anything by mistake.
+      where: { deletedAt: null, customerId: null },
       include: { companyAccess: true, moduleAccess: true, role: true },
       orderBy: { fullName: 'asc' },
     });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { AccessGuard } from './access.guard';
-import { ACCESS_AREA, ACCESS_CAPABILITY, ACCESS_LEVEL, ACCESS_SKIP } from './access.decorators';
+import { ACCESS_AREA, ACCESS_CAPABILITY, ACCESS_LEVEL, ACCESS_PORTAL, ACCESS_SKIP } from './access.decorators';
 import { resolveAccess } from './resolve';
 import { DEFAULT_ROLES } from './default-roles';
 
@@ -16,10 +16,13 @@ import { DEFAULT_ROLES } from './default-roles';
 
 const ROLE = (key: string) => DEFAULT_ROLES.find((r) => r.key === key)!.grants;
 
-function guard(meta: Record<string, unknown>, opts: { method?: string; user?: { sub: string } | null; access?: any } = {}) {
+function guard(meta: Record<string, unknown>, opts: { method?: string; user?: { sub: string } | null; access?: any; portalUser?: boolean } = {}) {
   const req: any = { method: opts.method ?? 'GET', user: opts.user === undefined ? { sub: 'u1' } : opts.user };
   const reflector: any = { getAllAndOverride: (key: string) => meta[key] };
-  const service: any = { forUser: async () => opts.access ?? resolveAccess({ isAdmin: true }) };
+  const service: any = {
+    forUser: async () => opts.access ?? resolveAccess({ isAdmin: true }),
+    isPortalUser: async () => opts.portalUser === true,
+  };
   const ctx: any = {
     getType: () => 'http',
     getHandler: () => function handler() {},
@@ -170,5 +173,46 @@ describe('what the handler is given', () => {
     const { guard: g, ctx, req } = guard({ [ACCESS_AREA]: ['inventory'] }, { access });
     await g.canActivate(ctx);
     expect(req.access.capabilities.marketplace_write).toBe(false);
+  });
+});
+
+/**
+ * A logistics customer's own person, loose in the platform.
+ *
+ * Their grants are all none, so the area check would refuse them anyway — but `@NoAccessCheck()`
+ * routes never reach it, and the countries list and a person's own notifications are both of those.
+ * This is the check that closes them.
+ */
+describe('a portal user', () => {
+  it('is refused on an ordinary route', async () => {
+    const { guard: g, ctx } = guard({ [ACCESS_AREA]: ['shipments'] }, { portalUser: true });
+    await expect(g.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  /** The one that matters: a route with no area is not a route without a boundary. */
+  it('is refused even where no access check applies', async () => {
+    const { guard: g, ctx } = guard({ [ACCESS_SKIP]: true }, { portalUser: true });
+    await expect(g.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('is told what kind of account they are using', async () => {
+    const { guard: g, ctx } = guard({ [ACCESS_SKIP]: true }, { portalUser: true });
+    await expect(g.canActivate(ctx)).rejects.toThrow(/customer portal/);
+  });
+
+  it('is let through the routes marked for them', async () => {
+    const { guard: g, ctx } = guard({ [ACCESS_SKIP]: true, [ACCESS_PORTAL]: true }, { portalUser: true });
+    await expect(g.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  it('leaves staff unaffected', async () => {
+    const { guard: g, ctx } = guard({ [ACCESS_SKIP]: true }, { portalUser: false });
+    await expect(g.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  /** Nobody signed in is nobody to refuse — that case belongs to the 401 below it. */
+  it('does not turn an anonymous request into a forbidden one', async () => {
+    const { guard: g, ctx } = guard({ [ACCESS_AREA]: ['shipments'] }, { user: null });
+    await expect(g.canActivate(ctx)).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });

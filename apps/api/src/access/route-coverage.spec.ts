@@ -76,8 +76,8 @@ describe('access declarations', () => {
     // missing entirely — a floor cannot notice an omission above it. If this number moves, a
     // controller was added or removed and somebody should say which.
     const classes = FILES.reduce((n, f) => n + declarations(readFileSync(f, 'utf8')).length, 0);
-    // 63 since CustomersController (17 Sep 2026) — the companies we ship for.
-    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(63);
+    // 64 since InvitesController (17 Sep 2026) — setting a password from an emailed link.
+    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(64);
   });
 
   it('declares an area or an explicit exemption on every controller', () => {
@@ -137,6 +137,10 @@ describe('access declarations', () => {
       // The four below exempt their READ routes only — country, carrier, channel, brand, product
       // type, fulfilment type and compliance lists, which nearly every form needs and which say
       // nothing worth withholding. Their writes still require Global settings.
+      // Setting a password from an emailed invitation. Public by necessity — the person holding the
+      // link has no account to sign in to yet, which is what the link is for — and the token is the
+      // authorisation: 32 random bytes, single-use, a week long, stored only as a hash.
+      '/customers/invites.controller.ts',
       '/global-data/global-data.controllers.ts',
       // Brand channel restrictions: the READ is exempt because the listing flow has to raise the
       // warning, and gating it would hide the restriction from the one screen obliged to show it.

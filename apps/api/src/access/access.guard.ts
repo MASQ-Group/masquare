@@ -1,7 +1,7 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { AuthUser } from '../common/current-user.decorator';
-import { ACCESS_AREA, ACCESS_CAPABILITY, ACCESS_LEVEL, ACCESS_SKIP } from './access.decorators';
+import { ACCESS_AREA, ACCESS_CAPABILITY, ACCESS_LEVEL, ACCESS_PORTAL, ACCESS_SKIP } from './access.decorators';
 import { AccessService } from './access.service';
 import { AREAS, CAPABILITIES, type AccessLevel } from './catalogue';
 import { canArea, canDo } from './resolve';
@@ -40,10 +40,24 @@ export class AccessGuard implements CanActivate {
     const controller = context.getClass();
     const pick = <T>(key: string) => this.reflector.getAllAndOverride<T>(key, [handler, controller]);
 
-    if (pick<boolean>(ACCESS_SKIP)) return true;
-
     const req = context.switchToHttp().getRequest();
     const user = req.user as AuthUser | undefined;
+
+    /**
+     * A logistics customer's own person, somewhere in the platform.
+     *
+     * Checked BEFORE the skip, deliberately: `@NoAccessCheck()` means "no area applies to this
+     * route", which is true of the countries list and of a person's own notifications — and an
+     * external user has no business in either. Their grants are all none, so the area check would
+     * refuse them anyway; this closes the routes that never reach it.
+     *
+     * Default-deny, so a new internal route is shut to them without anyone remembering to shut it.
+     */
+    if (user?.sub && !pick<boolean>(ACCESS_PORTAL) && (await this.access.isPortalUser(user.sub))) {
+      throw new ForbiddenException('This account is for the customer portal and cannot be used here.');
+    }
+
+    if (pick<boolean>(ACCESS_SKIP)) return true;
     /**
      * No authenticated user.
      *

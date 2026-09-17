@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { AccessArea } from '../access/access.decorators';
 import { CustomersService, type ContactInput, type CustomerInput } from './customers.service';
+import { CustomerUsersService } from './customer-users.service';
 
 /** The companies we provide logistics services to, and the people to speak to at each. */
 @ApiTags('customers')
@@ -12,7 +13,10 @@ import { CustomersService, type ContactInput, type CustomerInput } from './custo
 @Controller('customers')
 @AccessArea('logistics_customers')
 export class CustomersController {
-  constructor(private readonly customers: CustomersService) {}
+  constructor(
+    private readonly customers: CustomersService,
+    private readonly users: CustomerUsersService,
+  ) {}
 
   @Get()
   list(@Query('q') q?: string, @Query('active') active?: string) {
@@ -37,6 +41,35 @@ export class CustomersController {
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.customers.remove(id, user.sub);
+  }
+
+  // ── their people, who sign in to the portal ──────────────────────────────────────────────────
+
+  @Get(':id/users')
+  listUsers(@Param('id') id: string) {
+    return this.users.list(id);
+  }
+
+  /** Creates the login and emails the invitation. The person chooses their own password. */
+  @Post(':id/users')
+  createUser(@Param('id') id: string, @Body() dto: { fullName?: string; email?: string }, @CurrentUser() user: AuthUser) {
+    return this.users.create(id, dto ?? {}, user.sub);
+  }
+
+  /** Send the invitation again. Any outstanding link is superseded. */
+  @Post(':id/users/:userId/invite')
+  reinvite(@Param('id') id: string, @Param('userId') userId: string, @CurrentUser() user: AuthUser) {
+    return this.users.invite(id, userId, user.sub);
+  }
+
+  @Patch(':id/users/:userId')
+  updateUser(@Param('id') id: string, @Param('userId') userId: string, @Body() dto: { fullName?: string; status?: string }) {
+    return this.users.update(id, userId, dto ?? {});
+  }
+
+  @Delete(':id/users/:userId')
+  removeUser(@Param('id') id: string, @Param('userId') userId: string) {
+    return this.users.remove(id, userId);
   }
 
   @Post(':id/contacts')
