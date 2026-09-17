@@ -819,6 +819,15 @@ model PlatformSettings {
   /// whatever its age. The rest is history nobody consults.
   ///
   /// 0 means keep forever, on both.
+  /**
+   * Who is emailed when a logistics customer files a shipment.
+   *
+   * One person, named, rather than everybody with access: an alert that reaches a distribution list
+   * is an alert nobody owns. The in-app notification goes to everyone who could act on it; this is
+   * the one who will be looking at a mailbox at six in the morning.
+   */
+  logisticsAlertUserId String? @map("logistics_alert_user_id") @db.Uuid
+
   repricingDecisionRetentionDays Int @default(90) @map("repricing_decision_retention_days")
   repricingFeeRetentionDays      Int @default(30) @map("repricing_fee_retention_days")
 
@@ -2135,6 +2144,7 @@ model ShippingService {
   countryMappings     CountryShippingZone[]
   salesTransactions   SalesTransaction[]    @relation("TxShippingService")
   shipments           Shipment[]            @relation("ShipmentShippingService")
+  customerShipments   CustomerShipment[]    @relation("CustomerShipmentService")
   fbaShipments        FbaShipment[]         @relation("FbaShipmentService")
 
   @@map("shipping_service")
@@ -4059,16 +4069,15 @@ model Notification {
 }
 
 /**
- * A company we provide logistics services to.
+ * Somebody we provide a service to.
  *
- * Not one of ours (`Company`) and not a supplier (`Vendor`): a third party whose shipments we book
- * and whose people sign in to file them. It is the tenant of the customer portal, so nearly every
- * question the portal asks — may this person see this, whose shipment is this, who is billed — is
- * answered by the row they belong to.
+ * Deliberately general. Not one of ours (`Company`) and not a supplier (`Vendor`) — a third party we
+ * do work for. What that work is lives in `types`: a customer is one record however many services
+ * they take, and each type switches on the part of the platform that serves it. Logistics is the
+ * first; the next service is a new type and a module that checks for it, not a second customer table.
  *
- * `referencePrefix` is theirs and nobody else's: every shipment they file is numbered from it, which
- * is what lets a reference be quoted over the phone and mean one thing. Unique across customers for
- * the same reason, and two letters because a reference is read aloud more often than it is typed.
+ * Fields that belong to one type stay optional here and are required by that type instead — a
+ * customer who only buys from us has no use for a shipment reference prefix.
  */
 model Customer {
   id String @id @default(uuid()) @db.Uuid
@@ -4091,10 +4100,20 @@ model Customer {
   /// ISO-2, so it means the same thing as every other country on a shipment.
   addressCountryIso String? @map("address_country_iso")
 
-  /// Two letters, upper case. The prefix of every shipment reference they will ever have.
-  referencePrefix String @unique @map("reference_prefix")
   /**
-   * The last number handed out under that prefix.
+   * The services they take from us. Keys from the catalogue in customers/customer-types.ts.
+   * A list, because one customer can take several, and empty until somebody decides.
+   */
+  types String[] @default([])
+
+  /**
+   * Logistics: two letters, upper case — the prefix of every shipment reference they will have.
+   * Required for a logistics customer and meaningless for anybody else, so optional here. Still
+   * unique: a reference has to name one customer, and Postgres lets any number of rows have none.
+   */
+  referencePrefix String? @unique @map("reference_prefix")
+  /**
+   * Logistics: the last number handed out under that prefix.
    *
    * Kept here rather than counted from the shipments, because counting cannot be made safe against
    * two people filing at the same moment: both would count the same number and both would use it.
@@ -4119,6 +4138,7 @@ model Customer {
   contactPersons CustomerContactPerson[]
   /// The people who sign in to the portal on their behalf.
   users          User[]
+  shipments      CustomerShipment[]
 
   @@index([name])
   @@map("customer")
@@ -4171,4 +4191,148 @@ model UserInvite {
 
   @@index([userId])
   @@map("user_invite")
+}
+
+/**
+ * A shipment a logistics customer asked us to send.
+ *
+ * Its own table rather than a variant of Shipment, which is welded to a sales transaction: that
+ * column is required, deleting the order takes the shipment with it, and its cost feeds the order's
+ * profit. None of that is true here — nothing was sold, and the money runs the other way. Making
+ * `transactionId` optional would have put "is this one of ours?" into every profit, fulfilment and
+ * analytics query in the platform.
+ *
+ * Two amounts, and they never meet. `costCents` is what the carrier charges US and is never shown
+ * to the customer; `chargeCents` is what they pay, and appears to them once it is set. The portal's
+ * responses are built from their own objects with no cost field in them at all, so the separation
+ * does not depend on anybody remembering it.
+ */
+model CustomerShipment {
+  id         String @id @default(uuid()) @db.Uuid
+  customerId String @map("customer_id") @db.Uuid
+
+  /// `AB-0001`, from the customer's prefix. Unique, quotable, and theirs.
+  reference String @unique
+  /// Their own reference for it — a job number, a purchase order — shown beside ours.
+  customerReference String? @map("customer_reference")
+
+  /**
+   * SUBMITTED   filed, waiting for us.
+   * NEEDS_INFO  sent back with a question; theirs to answer.
+   * FULFILLED   booked with a carrier, tracking recorded.
+   * CANCELLED   withdrawn before we acted on it.
+   * ARCHIVED    done with, and cleared from their active list by them.
+   */
+  status String @default("SUBMITTED")
+  /// What we asked them for, when it went back. Cleared when they resubmit.
+  infoRequest String? @map("info_request")
+
+  /// When they would like it collected. Not a promise, and not a booking.
+  requestedDate DateTime? @map("requested_date")
+  /// What is in the boxes, in their words. The customs description on an export.
+  goodsDescription String? @map("goods_description")
+  /// Declared value for customs, in the currency beside it.
+  goodsValue    Decimal? @map("goods_value") @db.Decimal(12, 2)
+  goodsCurrency String?  @map("goods_currency")
+  /// Anything they want the person booking it to know.
+  notes String?
+
+  // ── where it goes, and where it comes from ───────────────────────────────────────────────────
+  // Typed per shipment rather than pointing at a stored address: a customer ships from wherever the
+  // goods happen to be, which is sometimes their own door and sometimes their supplier's.
+  fromName       String? @map("from_name")
+  fromCompany    String? @map("from_company")
+  fromLine1      String? @map("from_line1")
+  fromLine2      String? @map("from_line2")
+  fromCity       String? @map("from_city")
+  fromRegion     String? @map("from_region")
+  fromPostalCode String? @map("from_postal_code")
+  fromCountryIso String? @map("from_country_iso")
+  fromPhone      String? @map("from_phone")
+  fromEmail      String? @map("from_email")
+
+  toName       String? @map("to_name")
+  toCompany    String? @map("to_company")
+  toLine1      String? @map("to_line1")
+  toLine2      String? @map("to_line2")
+  toCity       String? @map("to_city")
+  toRegion     String? @map("to_region")
+  toPostalCode String? @map("to_postal_code")
+  toCountryIso String? @map("to_country_iso")
+  toPhone      String? @map("to_phone")
+  toEmail      String? @map("to_email")
+
+  // ── what we did with it ──────────────────────────────────────────────────────────────────────
+  /// The carrier it went with, from the same list our own shipments use — which is what gives the
+  /// customer a tracking link without a second table of carrier URLs.
+  shippingServiceId String?   @map("shipping_service_id") @db.Uuid
+  trackingNumber    String?   @map("tracking_number")
+  shippedAt         DateTime? @map("shipped_at")
+  fulfilledAt       DateTime? @map("fulfilled_at")
+  fulfilledById     String?   @map("fulfilled_by") @db.Uuid
+
+  /// What the carrier charged US, in euro cents. Never leaves our side.
+  costCents Int? @map("cost_cents")
+  /// What the customer pays, in the currency beside it. Shown to them once set.
+  chargeCents    Int?   @map("charge_cents")
+  chargeCurrency String @default("EUR") @map("charge_currency")
+
+  /// When they cleared it from their active list.
+  archivedAt DateTime? @map("archived_at")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  /// The portal user who filed it, or the one of ours who filed it for them.
+  createdById String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  customer        Customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  shippingService ShippingService?           @relation("CustomerShipmentService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
+  parcels         CustomerShipmentParcel[]
+  documents       CustomerShipmentDocument[]
+
+  /// The queue as it is read: what is waiting, oldest first.
+  @@index([status, createdAt])
+  @@index([customerId, status])
+  @@map("customer_shipment")
+}
+
+/// One box. A shipment is several often enough that a single weight would be a lie.
+model CustomerShipmentParcel {
+  id         String @id @default(uuid()) @db.Uuid
+  shipmentId String @map("shipment_id") @db.Uuid
+
+  weightKg Decimal  @map("weight_kg") @db.Decimal(10, 3)
+  lengthCm Decimal? @map("length_cm") @db.Decimal(10, 1)
+  widthCm  Decimal? @map("width_cm") @db.Decimal(10, 1)
+  heightCm Decimal? @map("height_cm") @db.Decimal(10, 1)
+  /// What is in this particular box, where it differs from the shipment's description.
+  contents String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  shipment CustomerShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId])
+  @@map("customer_shipment_parcel")
+}
+
+/// A file the customer attached: a commercial invoice, a packing list, a photograph of the goods.
+model CustomerShipmentDocument {
+  id         String @id @default(uuid()) @db.Uuid
+  shipmentId String @map("shipment_id") @db.Uuid
+
+  /// The object key in storage, not a URL: a storage endpoint change must not freeze an address.
+  storageKey  String @map("storage_key")
+  fileName    String @map("file_name")
+  contentType String @map("content_type")
+  sizeBytes   Int    @map("size_bytes")
+
+  uploadedAt   DateTime @default(now()) @map("uploaded_at")
+  uploadedById String?  @map("uploaded_by") @db.Uuid
+
+  shipment CustomerShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId])
+  @@map("customer_shipment_document")
 }

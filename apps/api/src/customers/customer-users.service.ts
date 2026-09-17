@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { INVITE_REFUSALS, createInviteToken, expiryFrom, hashToken, inviteState, passwordProblems } from './invite-token';
+import { LOGISTICS, NOT_LOGISTICS, hasType } from './customer-types';
 
 /**
  * The people at a customer who sign in to the portal.
@@ -67,7 +68,8 @@ export class CustomerUsersService {
    * be invited. The caller is told which happened.
    */
   async create(customerId: string, dto: { fullName?: string; email?: string }, actorId?: string) {
-    const customer = await this.assertCustomer(customerId);
+    // A login is a way into the logistics portal, so only a logistics customer can be given one.
+    await this.assertCustomer(customerId, { logistics: true });
     const fullName = (dto.fullName ?? '').trim();
     const email = (dto.email ?? '').trim().toLowerCase();
     if (!fullName) throw new BadRequestException('A name is required.');
@@ -104,6 +106,7 @@ export class CustomerUsersService {
 
   /** Send (or resend) the invitation. A new one supersedes any outstanding link. */
   async invite(customerId: string, userId: string, actorId?: string) {
+    await this.assertCustomer(customerId, { logistics: true });
     const user = await this.prisma.user.findFirst({ where: { id: userId, customerId, deletedAt: null }, select: { id: true } });
     if (!user) throw new NotFoundException('That person is not one of this customer’s users.');
     return this.sendInvite(userId, actorId);
@@ -145,7 +148,7 @@ export class CustomerUsersService {
       where: { tokenHash: hashToken(token) },
       select: {
         expiresAt: true, usedAt: true,
-        user: { select: { id: true, fullName: true, email: true, deletedAt: true, status: true, customer: { select: { name: true, active: true } } } },
+        user: { select: { id: true, fullName: true, email: true, deletedAt: true, status: true, customer: { select: { name: true, active: true, types: true } } } },
       },
     });
     // The same answer for a token that never existed as for one that has been tampered with: there
@@ -154,7 +157,7 @@ export class CustomerUsersService {
 
     const state = inviteState(invite);
     if (state !== 'valid') return { ok: false as const, reason: INVITE_REFUSALS[state] };
-    if (invite.user.status !== 'active' || invite.user.customer?.active === false) {
+    if (invite.user.status !== 'active' || !portalOpenFor(invite.user.customer)) {
       return { ok: false as const, reason: 'This account is not active. Ask your contact at maSquare.' };
     }
     return { ok: true as const, fullName: invite.user.fullName, email: invite.user.email, customerName: invite.user.customer?.name ?? null };
@@ -167,12 +170,15 @@ export class CustomerUsersService {
 
     const invite = await this.prisma.userInvite.findUnique({
       where: { tokenHash: hashToken(token) },
-      select: { id: true, expiresAt: true, usedAt: true, user: { select: { id: true, deletedAt: true, status: true } } },
+      select: {
+        id: true, expiresAt: true, usedAt: true,
+        user: { select: { id: true, deletedAt: true, status: true, customer: { select: { active: true, types: true } } } },
+      },
     });
     if (!invite || invite.user.deletedAt) throw new BadRequestException('This invitation is not valid. Ask your contact to send a new one.');
     const state = inviteState(invite);
     if (state !== 'valid') throw new BadRequestException(INVITE_REFUSALS[state]);
-    if (invite.user.status !== 'active') throw new BadRequestException('This account is not active. Ask your contact at maSquare.');
+    if (invite.user.status !== 'active' || !portalOpenFor(invite.user.customer)) throw new BadRequestException('This account is not active. Ask your contact at maSquare.');
 
     await this.prisma.$transaction([
       this.prisma.user.update({ where: { id: invite.user.id }, data: { passwordHash: await bcrypt.hash(password, 10) } }),
@@ -228,11 +234,23 @@ export class CustomerUsersService {
       : { sent: false, message: `The account is ready, but the invitation could not be sent: ${result.error}` };
   }
 
-  private async assertCustomer(customerId: string) {
-    const customer = await this.prisma.customer.findFirst({ where: { id: customerId, deletedAt: null }, select: { id: true, name: true } });
+  private async assertCustomer(customerId: string, opts: { logistics?: boolean } = {}) {
+    const customer = await this.prisma.customer.findFirst({ where: { id: customerId, deletedAt: null }, select: { id: true, name: true, types: true } });
     if (!customer) throw new NotFoundException('Customer not found');
+    if (opts.logistics && !hasType(customer, LOGISTICS)) throw new ConflictException(NOT_LOGISTICS);
     return customer;
   }
+}
+
+/**
+ * Whether a customer's people may use the portal at all.
+ *
+ * The portal is the logistics service, so it is open only to an active customer who takes that
+ * service. A customer who never did, or who has been deactivated, has people who can hold a login
+ * and still get nowhere with it.
+ */
+export function portalOpenFor(customer: { active: boolean; types: readonly string[] } | null | undefined): boolean {
+  return !!customer && customer.active && hasType(customer, LOGISTICS);
 }
 
 /**

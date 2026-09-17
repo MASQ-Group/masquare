@@ -61,11 +61,11 @@ export const AREAS: AreaDef[] = [
       'Outbound and pending fulfilment, dispatched elsewhere, and FBA shipments with their costs. One area: recording a shipment changes its order’s fulfilment status, and an FBA shipment’s cost feeds the profit on every order fulfilled from it.',
   },
   {
-    key: 'logistics_customers',
-    label: 'Logistics customers',
-    group: 'Sales',
+    key: 'customers',
+    label: 'Customers',
+    group: 'Customers',
     description:
-      'The companies we provide logistics services to, and their people. Separate from Shipments because it is a customer record rather than a parcel: whoever books the parcels rarely decides who we take on, what they are charged, or who at their end may sign in.',
+      'The companies we provide services to, what services they take, and the people at each who may sign in. Its own area because deciding who we take on — and who at their end gets a login — is a different decision from doing the work for them.',
   },
   {
     key: 'products',

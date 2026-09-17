@@ -75,6 +75,7 @@ export class SettingsService {
         ...(dto.bodyFont !== undefined ? { bodyFont: dto.bodyFont } : {}),
         ...(dto.monoFont !== undefined ? { monoFont: dto.monoFont } : {}),
         ...(dto.deductStockOnSale !== undefined ? { deductStockOnSale: dto.deductStockOnSale } : {}),
+        ...(dto.logisticsAlertUserId !== undefined ? { logisticsAlertUserId: dto.logisticsAlertUserId } : {}),
         ...(dto.applyChannelResolutions !== undefined ? { applyChannelResolutions: dto.applyChannelResolutions } : {}),
         ...(dto.autoAdjustAvailabilityOnSale !== undefined ? { autoAdjustAvailabilityOnSale: dto.autoAdjustAvailabilityOnSale } : {}),
         ...(dto.launchMarginPct !== undefined ? { launchMarginPct: dto.launchMarginPct } : {}),

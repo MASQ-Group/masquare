@@ -59,7 +59,7 @@ export function SetPasswordPage() {
         <CheckCircle2 size={22} className="mb-2 text-teal-600" />
         <h1 className="mb-2 text-[17px] font-semibold text-n-900">Your password is set</h1>
         <p className="mb-5 text-[13px] leading-relaxed text-n-600">You can sign in with {invite.data.email} from now on.</p>
-        <Link to="/login" className="btn-primary inline-block">Sign in</Link>
+        <Link to="/login" className="btn btn-primary">Sign in</Link>
       </>,
     );
   }
@@ -75,10 +75,10 @@ export function SetPasswordPage() {
           </p>
 
           <label className="mb-3 block">
-            <span className="mb-1 block text-[12px] font-medium text-n-700">Password</span>
+            <span className="label">Password</span>
             <input
               type="password"
-              className="h-10 w-full rounded-md border border-n-200 px-3 text-[14px] outline-none focus:border-teal-400"
+              className="input"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoFocus
@@ -89,10 +89,10 @@ export function SetPasswordPage() {
           </label>
 
           <label className="mb-4 block">
-            <span className="mb-1 block text-[12px] font-medium text-n-700">Password again</span>
+            <span className="label">Password again</span>
             <input
               type="password"
-              className="h-10 w-full rounded-md border border-n-200 px-3 text-[14px] outline-none focus:border-teal-400"
+              className="input"
               value={again}
               onChange={(e) => setAgain(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && ready) accept.mutate(); }}
@@ -100,7 +100,7 @@ export function SetPasswordPage() {
             {mismatch && <span className="mt-1 block text-[11.5px] text-orange-700">The two do not match.</span>}
           </label>
 
-          <button type="button" className="btn-primary w-full" disabled={!ready} onClick={() => accept.mutate()}>
+          <button type="button" className="btn btn-primary w-full justify-center" disabled={!ready} onClick={() => accept.mutate()}>
             {accept.isPending && <Loader2 size={14} className="mr-1.5 inline animate-spin" />}Set password and continue
           </button>
 

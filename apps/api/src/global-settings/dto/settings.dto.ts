@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
 
 export class UpdateSettingsDto {
   @IsOptional() @IsIn(['metric', 'imperial']) measurementSystem?: 'metric' | 'imperial';
@@ -38,4 +38,6 @@ export class UpdateSettingsDto {
   @IsOptional() @IsBoolean() channelPricePushEnabled?: boolean;
   /** How many listings one run may take from a real quantity down to zero before it refuses. */
   @IsOptional() @IsNumber() maxZeroingPushesPerRun?: number;
+  /** Who is emailed when a customer files a shipment. Null clears it. */
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() logisticsAlertUserId?: string | null;
 }

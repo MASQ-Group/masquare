@@ -444,6 +444,8 @@ export interface Attribute {
 }
 export interface PlatformSettings {
   id: string;
+  /** Who is emailed when a logistics customer files a shipment. */
+  logisticsAlertUserId?: string | null;
   measurementSystem: 'metric' | 'imperial';
   dateFormat: 'ddmmyyyy' | 'mmddyyyy' | 'yyyymmdd';
   salesTxStandardColumns: string[] | null;
@@ -2557,7 +2559,98 @@ export const CUSTOMS_LABEL: Record<CustomsLane, string> = {
   export: 'customs declaration included',
 };
 
-// ---- Logistics customers ----
+// ---- Customer shipments (logistics services) ----
+
+export interface CustomerShipmentParcel {
+  id: string;
+  weightKg: string;
+  lengthCm: string | null;
+  widthCm: string | null;
+  heightCm: string | null;
+  contents: string | null;
+}
+
+export interface CustomerShipmentDoc {
+  id: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+}
+
+export interface CustomerShipment {
+  id: string;
+  reference: string;
+  customerReference: string | null;
+  status: 'SUBMITTED' | 'NEEDS_INFO' | 'FULFILLED' | 'CANCELLED' | 'ARCHIVED';
+  infoRequest: string | null;
+  requestedDate: string | null;
+  goodsDescription: string | null;
+  goodsValue: string | null;
+  goodsCurrency: string | null;
+  notes: string | null;
+
+  fromName: string | null; fromCompany: string | null; fromLine1: string | null; fromLine2: string | null;
+  fromCity: string | null; fromRegion: string | null; fromPostalCode: string | null; fromCountryIso: string | null;
+  fromPhone: string | null; fromEmail: string | null;
+
+  toName: string | null; toCompany: string | null; toLine1: string | null; toLine2: string | null;
+  toCity: string | null; toRegion: string | null; toPostalCode: string | null; toCountryIso: string | null;
+  toPhone: string | null; toEmail: string | null;
+
+  shippingServiceId: string | null;
+  shippingService: { id: string; name: string; trackingUrlTemplate: string | null } | null;
+  trackingNumber: string | null;
+  shippedAt: string | null;
+  fulfilledAt: string | null;
+  /** What the carrier charged us. Ours only — the portal never receives this field. */
+  costCents: number | null;
+  /** What the customer pays. */
+  chargeCents: number | null;
+  chargeCurrency: string;
+  archivedAt: string | null;
+  createdAt: string;
+  customer: { id: string; name: string; referencePrefix: string };
+  parcels: CustomerShipmentParcel[];
+  documents: CustomerShipmentDoc[];
+}
+
+export interface CustomerShipmentFulfilment {
+  shippingServiceId?: string | null;
+  trackingNumber?: string | null;
+  shippedAt?: string | null;
+  costCents?: number | null;
+  chargeCents?: number | null;
+  chargeCurrency?: string | null;
+  notes?: string | null;
+}
+
+export const customerShipmentsApi = {
+  list: (params: { queue?: string; q?: string; customerId?: string; take?: number; skip?: number }) =>
+    api.get<{ items: CustomerShipment[]; total: number }>('/customer-shipments', { params }).then((r) => r.data),
+  pendingCount: () => api.get<{ pending: number }>('/customer-shipments/pending-count').then((r) => r.data),
+  get: (id: string) => api.get<CustomerShipment>(`/customer-shipments/${id}`).then((r) => r.data),
+  fulfil: (id: string, body: CustomerShipmentFulfilment) =>
+    api.post<CustomerShipment>(`/customer-shipments/${id}/fulfil`, body).then((r) => r.data),
+  amend: (id: string, body: CustomerShipmentFulfilment) =>
+    api.patch<CustomerShipment>(`/customer-shipments/${id}`, body).then((r) => r.data),
+  requestInfo: (id: string, question: string) =>
+    api.post<CustomerShipment>(`/customer-shipments/${id}/request-info`, { question }).then((r) => r.data),
+  reopen: (id: string) => api.post<CustomerShipment>(`/customer-shipments/${id}/reopen`).then((r) => r.data),
+  cancel: (id: string) => api.post<CustomerShipment>(`/customer-shipments/${id}/cancel`).then((r) => r.data),
+};
+
+// ---- Customers ----
+
+/** A service a customer can take from us. The catalogue lives in the API. */
+export interface CustomerType {
+  key: string;
+  label: string;
+  description: string;
+}
+
+/** The type that opens the logistics portal and numbers shipments from a prefix. */
+export const LOGISTICS_TYPE = 'logistics';
 
 export interface CustomerContact {
   id: string;
@@ -2568,9 +2661,11 @@ export interface CustomerContact {
   role: string | null;
 }
 
-export interface LogisticsCustomer {
+export interface Customer {
   id: string;
   name: string;
+  /** The services they take from us — keys from the customer-type catalogue. */
+  types: string[];
   legalName: string | null;
   vatNumber: string | null;
   eori: string | null;
@@ -2583,11 +2678,11 @@ export interface LogisticsCustomer {
   addressRegion: string | null;
   addressPostalCode: string | null;
   addressCountryIso: string | null;
-  /** Two letters. Every shipment they file is numbered from it. */
-  referencePrefix: string;
+  /** Logistics: two letters. Every shipment they file is numbered from it. Null for anybody else. */
+  referencePrefix: string | null;
   referenceSeq: number;
-  /** What their next shipment would be called. */
-  nextReference: string;
+  /** Logistics: what their next shipment would be called. */
+  nextReference: string | null;
   companyId: string | null;
   company: { id: string; officialName: string } | null;
   active: boolean;
@@ -2597,7 +2692,7 @@ export interface LogisticsCustomer {
   updatedAt: string;
 }
 
-export type CustomerPatch = Partial<Omit<LogisticsCustomer, 'id' | 'company' | 'contactPersons' | 'nextReference' | 'referenceSeq' | 'createdAt' | 'updatedAt'>>;
+export type CustomerPatch = Partial<Omit<Customer, 'id' | 'company' | 'contactPersons' | 'nextReference' | 'referenceSeq' | 'createdAt' | 'updatedAt'>>;
 
 export interface CustomerPortalUser {
   id: string;
@@ -2615,15 +2710,17 @@ export interface InviteResult {
 }
 
 export const customersApi = {
-  list: (params: { q?: string; active?: string } = {}) => api.get<LogisticsCustomer[]>('/customers', { params }).then((r) => r.data),
-  get: (id: string) => api.get<LogisticsCustomer>(`/customers/${id}`).then((r) => r.data),
-  create: (body: CustomerPatch) => api.post<LogisticsCustomer>('/customers', body).then((r) => r.data),
-  update: (id: string, body: CustomerPatch) => api.patch<LogisticsCustomer>(`/customers/${id}`, body).then((r) => r.data),
+  list: (params: { q?: string; active?: string; type?: string } = {}) => api.get<Customer[]>('/customers', { params }).then((r) => r.data),
+  /** The services a customer can take. */
+  types: () => api.get<CustomerType[]>('/customers/types').then((r) => r.data),
+  get: (id: string) => api.get<Customer>(`/customers/${id}`).then((r) => r.data),
+  create: (body: CustomerPatch) => api.post<Customer>('/customers', body).then((r) => r.data),
+  update: (id: string, body: CustomerPatch) => api.patch<Customer>(`/customers/${id}`, body).then((r) => r.data),
   remove: (id: string) => api.delete<{ removed: boolean }>(`/customers/${id}`).then((r) => r.data),
-  addContact: (id: string, body: Partial<CustomerContact>) => api.post<LogisticsCustomer>(`/customers/${id}/contacts`, body).then((r) => r.data),
+  addContact: (id: string, body: Partial<CustomerContact>) => api.post<Customer>(`/customers/${id}/contacts`, body).then((r) => r.data),
   updateContact: (id: string, contactId: string, body: Partial<CustomerContact>) =>
-    api.patch<LogisticsCustomer>(`/customers/${id}/contacts/${contactId}`, body).then((r) => r.data),
-  removeContact: (id: string, contactId: string) => api.delete<LogisticsCustomer>(`/customers/${id}/contacts/${contactId}`).then((r) => r.data),
+    api.patch<Customer>(`/customers/${id}/contacts/${contactId}`, body).then((r) => r.data),
+  removeContact: (id: string, contactId: string) => api.delete<Customer>(`/customers/${id}/contacts/${contactId}`).then((r) => r.data),
 
   // Their people, who sign in to the portal.
   users: (id: string) => api.get<CustomerPortalUser[]>(`/customers/${id}/users`).then((r) => r.data),

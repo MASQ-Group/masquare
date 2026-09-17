@@ -4,7 +4,8 @@ import { Link, useLocation } from 'react-router-dom';
 import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BadgeCheck, CircleCheck, Coins, Download, ExternalLink, MapPin, Package, PackageCheck, PackagePlus, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadSheet, Pagination, Select } from '@masquare/ui';
-import { countriesApi, fbaShipmentsApi, salesChannelsApi, shipmentsApi, type FbaShipment, type PendingShipment, type Shipment } from '../lib/api';
+import { CustomerShipmentsTab } from '../components/shipments/CustomerShipmentsTab';
+import { countriesApi, fbaShipmentsApi, salesChannelsApi, shipmentsApi, type FbaShipment, type PendingShipment, type Shipment, customerShipmentsApi } from '../lib/api';
 import { CountryTag } from '../components/common/Flag';
 import { ChannelChip, useChannelChips } from '../components/common/ChannelChip';
 import { useAuth } from '../lib/auth';
@@ -20,7 +21,7 @@ import { ShipmentActualCostModal } from '../components/shipments/ShipmentActualC
 import { ShipmentTrackingModal } from '../components/shipments/ShipmentTrackingModal';
 import { PageHeader } from '../components/common/PageHeader';
 
-type Tab = 'pending' | 'dispatched' | 'all' | 'fba';
+type Tab = 'pending' | 'dispatched' | 'all' | 'fba' | 'customer-pending' | 'customer-fulfilled';
 
 const eur = (v: number | null | undefined) => (v != null ? `€${v.toFixed(2)}` : '—');
 
@@ -262,6 +263,13 @@ export function ShipmentsPage() {
   const allRows = useMemo(() => (tab === 'all' ? (allQ.data?.items ?? []) : []), [tab, allQ.data]);
   const fbaRows = useMemo(() => (tab === 'fba' ? (fbaQ.data?.items ?? []) : []), [tab, fbaQ.data]);
 
+  /**
+   * How many customer shipments are waiting. Polled like the rest of the page's counts, so the tab
+   * carries the number the Google Sheets notification used to carry.
+   */
+  const customerPending = useQuery({ queryKey: ['customer-shipments', 'pending-count'], queryFn: customerShipmentsApi.pendingCount, refetchInterval: 60_000 });
+  const customerTab = tab === 'customer-pending' || tab === 'customer-fulfilled';
+
   return (
     <div className="w-full">
       <PageHeader
@@ -272,6 +280,10 @@ export function ShipmentsPage() {
           { key: 'pending', label: 'Pending fulfilment', count: (pendingQ.data?.total ?? 0) > 0 ? pendingQ.data?.total : undefined, attention: true },
           { key: 'dispatched', label: 'Dispatched elsewhere', count: (dispatchedQ.data?.total ?? 0) > 0 ? dispatchedQ.data?.total : undefined },
           { key: 'fba', label: 'FBA shipments', count: (fbaQ.data?.total ?? 0) > 0 ? fbaQ.data?.total : undefined, attention: true },
+          // The queue that replaces the shared spreadsheet, with the badge that replaces its
+          // notification: what a customer has filed and nobody has acted on yet.
+          { key: 'customer-pending', label: 'Customer shipments', count: (customerPending.data?.pending ?? 0) > 0 ? customerPending.data?.pending : undefined, attention: true },
+          { key: 'customer-fulfilled', label: 'Customer fulfilled' },
           { key: 'all', label: 'All shipments' },
         ]}
         activeTab={tab}
@@ -340,6 +352,12 @@ export function ShipmentsPage() {
         }
       />
 
+      {/* A different kind of work entirely: shipments somebody else asked us to send. Rendered
+          instead of the order tables rather than beside them — the rows share no columns, and the
+          bulk actions above belong to orders. */}
+      {customerTab && <CustomerShipmentsTab queue={tab === 'customer-pending' ? 'pending' : 'fulfilled'} />}
+
+      {!customerTab && (<>
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           {/* Both tabs are order worklists with identical rows, so both render this table. Gating
@@ -705,6 +723,7 @@ export function ShipmentsPage() {
           onSaved={() => { setCombineOpen(false); setSelected(new Set()); invalidate(); }}
         />
       )}
+      </>)}
     </div>
   );
 }

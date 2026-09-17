@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { CheckCircle2, Loader2, Mail, Send, XCircle } from 'lucide-react';
-import { emailApi } from '../../lib/api';
+import { emailApi, settingsApi, usersApi } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
+import { Select } from '@masquare/ui';
 import { SectionHeader } from './shared';
 
 /**
@@ -58,9 +59,21 @@ export function EmailTab() {
 
   const messages = useQuery({ queryKey: ['email', 'messages'], queryFn: () => emailApi.messages(20) });
 
+  /**
+   * Who is told by email when a customer files a shipment. Staff only — the list the API returns
+   * excludes customers' own people, and the sender refuses one regardless.
+   */
+  const platform = useQuery({ queryKey: ['settings'], queryFn: settingsApi.get });
+  const staff = useQuery({ queryKey: ['users'], queryFn: usersApi.list, enabled: !readOnly });
+  const setAlertUser = useMutation({
+    mutationFn: (logisticsAlertUserId: string | null) => settingsApi.update({ logisticsAlertUserId }),
+    onSuccess: () => { toast.success('Saved'); qc.invalidateQueries({ queryKey: ['settings'] }); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save'),
+  });
+
   const busy = save.isPending || test.isPending;
   const configured = !!data?.senderAddress && !!data?.hasKey;
-  const field = 'h-9 w-full rounded-md border border-n-200 px-2.5 text-[13px] outline-none focus:border-teal-400 disabled:bg-n-25';
+  const field = 'input';
 
   if (isLoading) return <div className="py-10 text-center text-[13px] text-n-500">Loading…</div>;
 
@@ -88,21 +101,21 @@ export function EmailTab() {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
-            <span className="mb-1 block text-[12px] font-medium text-n-700">Send from</span>
+            <span className="label">Send from</span>
             <input className={field} disabled={readOnly || busy} value={senderAddress} onChange={(e) => setSenderAddress(e.target.value)} placeholder="shipments@yourdomain.com" />
             <span className="mt-1 block text-[11.5px] text-n-500">A real mailbox in your Workspace domain. Sent messages appear in its sent folder.</span>
           </label>
           <label className="block">
-            <span className="mb-1 block text-[12px] font-medium text-n-700">Shown as</span>
+            <span className="label">Shown as</span>
             <input className={field} disabled={readOnly || busy} value={senderName} onChange={(e) => setSenderName(e.target.value)} placeholder="maSquare" />
             <span className="mt-1 block text-[11.5px] text-n-500">The name recipients see beside the address.</span>
           </label>
           <label className="block">
-            <span className="mb-1 block text-[12px] font-medium text-n-700">Replies go to <span className="font-normal text-n-500">(optional)</span></span>
+            <span className="label">Replies go to <span className="font-normal text-n-500">(optional)</span></span>
             <input className={field} disabled={readOnly || busy} value={replyTo} onChange={(e) => setReplyTo(e.target.value)} placeholder="Leave blank to use the sending address" />
           </label>
           <div className="block">
-            <span className="mb-1 block text-[12px] font-medium text-n-700">Service account key</span>
+            <span className="label">Service account key</span>
             <div className="flex h-9 items-center text-[12.5px] text-n-600">
               {data?.hasKey
                 ? <span>Held{data.clientEmail ? <> for <span className="mono text-n-800">{data.clientEmail}</span></> : null}{data.keyId ? <span className="text-n-400"> · key {data.keyId.slice(0, 8)}…</span> : null}</span>
@@ -112,9 +125,9 @@ export function EmailTab() {
         </div>
 
         <label className="mt-4 block">
-          <span className="mb-1 block text-[12px] font-medium text-n-700">{data?.hasKey ? 'Replace the key' : 'Paste the JSON key file'}</span>
+          <span className="label">{data?.hasKey ? 'Replace the key' : 'Paste the JSON key file'}</span>
           <textarea
-            className="h-28 w-full rounded-md border border-n-200 p-2.5 font-mono text-[11.5px] outline-none focus:border-teal-400 disabled:bg-n-25"
+            className="input h-28 py-2 font-mono text-[12px]"
             disabled={readOnly || busy}
             value={json}
             onChange={(e) => setJson(e.target.value)}
@@ -128,7 +141,7 @@ export function EmailTab() {
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className="btn-primary"
+            className="btn btn-primary"
             disabled={readOnly || busy}
             onClick={() => save.mutate({ senderAddress, senderName, replyTo, serviceAccountJson: json.trim() || undefined })}
           >
@@ -156,6 +169,28 @@ export function EmailTab() {
 
         {data?.lastTestStatus === 'failed' && data.lastTestMessage && (
           <p className="mt-3 whitespace-pre-line rounded-md border border-orange-200 bg-orange-50 p-3 text-[12px] text-orange-900">{data.lastTestMessage}</p>
+        )}
+      </div>
+
+      <div className="card p-5">
+        <div className="mb-1 text-[13px] font-semibold text-n-800">Who is emailed when a customer files a shipment</div>
+        <p className="mb-3 text-[12px] text-n-500">
+          One named person. Everyone who can fulfil shipments also sees it in their notifications; this is the one who is emailed.
+        </p>
+        <div className="max-w-[360px]">
+          <Select
+            searchable
+            disabled={readOnly || setAlertUser.isPending}
+            value={platform.data?.logisticsAlertUserId ?? ''}
+            onChange={(v) => setAlertUser.mutate(v || null)}
+            options={[
+              { value: '', label: 'Nobody — notifications only' },
+              ...(staff.data ?? []).filter((u) => u.status === 'active').map((u) => ({ value: u.id, label: `${u.fullName} (${u.email})` })),
+            ]}
+          />
+        </div>
+        {!data?.enabled && (
+          <p className="mt-2 text-[12px] text-orange-800">Sending is off, so nothing is emailed until it is switched on above.</p>
         )}
       </div>
 
