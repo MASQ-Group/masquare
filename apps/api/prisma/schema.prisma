@@ -194,6 +194,7 @@ model User {
   companyAccess UserCompanyAccess[]
   moduleAccess  UserModuleAccess[]
   activity      Activity[]          @relation("ActivityActor")
+  notifications Notification[]
 
   @@index([roleId])
   @@map("user")
@@ -3994,4 +3995,52 @@ model EmailMessage {
   @@index([relatedType, relatedId])
   @@index([status])
   @@map("email_message")
+}
+
+/**
+ * Something the platform needs to tell a person, waiting for them to look.
+ *
+ * Per RECIPIENT, not per event: five people who should hear about a filed shipment get five rows,
+ * because read is a fact about a person and not about the news. The alternative — one row and a
+ * join table of who has seen it — costs a table and a join to express the same thing.
+ *
+ * `link` is an in-app path and never a URL. A notification is a shortcut to a screen in here; one
+ * that could point anywhere would be a way to put a link to anywhere in front of a colleague.
+ */
+model Notification {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  /// What kind of news this is — customer_shipment_filed, sync_failed. A string, so a new kind of
+  /// notification is a new value rather than a migration.
+  kind  String
+  title String
+  body  String?
+  /// Where to go when it is clicked. A path within the platform, e.g. `/shipments?tab=customer-pending`.
+  link  String?
+
+  relatedType String? @map("related_type")
+  relatedId   String? @map("related_id") @db.Uuid
+
+  /// Null is unread. The only state this carries, because "seen it" is the only thing anyone does.
+  readAt DateTime? @map("read_at")
+
+  /**
+   * One notification per event per person.
+   *
+   * A sweep that notices the same failing sync every two hours would otherwise bury everything else
+   * under the same sentence. A repeat with a key that already has an UNREAD row is dropped; once the
+   * person has read it, the same news can be raised again, because by then it is news that it is
+   * still happening.
+   */
+  dedupeKey String? @map("dedupe_key")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The list as it is read: one person's, newest first, unread first.
+  @@index([userId, readAt, createdAt])
+  @@index([userId, dedupeKey])
+  @@map("notification")
 }
