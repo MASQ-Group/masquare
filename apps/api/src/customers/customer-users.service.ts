@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -111,14 +112,19 @@ export class CustomerUsersService {
   async update(customerId: string, userId: string, dto: { fullName?: string; status?: string }) {
     const user = await this.prisma.user.findFirst({ where: { id: userId, customerId, deletedAt: null }, select: { id: true } });
     if (!user) throw new NotFoundException('That person is not one of this customer’s users.');
-    const status = dto.status && ['active', 'disabled'].includes(dto.status) ? dto.status : undefined;
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        ...(dto.fullName !== undefined ? { fullName: (dto.fullName ?? '').trim() || undefined } : {}),
-        ...(status ? { status } : {}),
-      },
-    });
+    /**
+     * Narrowed to the two values the column accepts, and the payload typed outright.
+     *
+     * `['active','disabled'].includes(x)` proves nothing to the type checker — it leaves `string`,
+     * which an enum column refuses. Inside an inline spread that mismatch went unnoticed by one
+     * compiler and was caught by another; naming the type means it is caught by every one.
+     */
+    const status = dto.status === 'active' || dto.status === 'disabled' ? dto.status : undefined;
+    const data: Prisma.UserUpdateInput = {
+      ...(dto.fullName !== undefined ? { fullName: (dto.fullName ?? '').trim() || undefined } : {}),
+      ...(status ? { status } : {}),
+    };
+    await this.prisma.user.update({ where: { id: userId }, data });
     return this.list(customerId);
   }
 
