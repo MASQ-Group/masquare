@@ -29,7 +29,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'edit',
         shipments: 'edit',
-        logistics_customers: 'edit',
+        customers: 'edit',
         products: 'edit',
         inventory: 'edit',
         purchasing: 'edit',
@@ -63,7 +63,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'view',
         shipments: 'edit',
-        logistics_customers: 'view',
+        customers: 'view',
         products: 'view',
         inventory: 'edit',
         purchasing: 'view',
@@ -99,7 +99,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'view',
         shipments: 'none',
-        logistics_customers: 'none',
+        customers: 'none',
         products: 'edit',
         inventory: 'view',
         purchasing: 'edit',
@@ -133,7 +133,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'edit',
         shipments: 'view',
-        logistics_customers: 'view',
+        customers: 'view',
         products: 'view',
         inventory: 'view',
         purchasing: 'view',
@@ -168,7 +168,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'view',
         shipments: 'view',
-        logistics_customers: 'none',
+        customers: 'none',
         products: 'none',
         inventory: 'none',
         purchasing: 'none',
@@ -204,7 +204,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'view',
         shipments: 'view',
-        logistics_customers: 'view',
+        customers: 'view',
         products: 'view',
         inventory: 'view',
         purchasing: 'view',
@@ -247,7 +247,7 @@ export const DEFAULT_ROLES: DefaultRole[] = [
       areas: {
         sales_transactions: 'none',
         shipments: 'none',
-        logistics_customers: 'none',
+        customers: 'none',
         products: 'none',
         inventory: 'none',
         purchasing: 'none',

@@ -27,7 +27,7 @@ const SalesTransactionsPage = lazyPage(() => import('./pages/SalesTransactionsPa
 const SalesTransactionFormPage = lazyPage(() => import('./pages/SalesTransactionFormPage'), 'SalesTransactionFormPage');
 const ShipmentsPage = lazyPage(() => import('./pages/ShipmentsPage'), 'ShipmentsPage');
 const FbaShipmentsPage = lazyPage(() => import('./pages/FbaShipmentsPage'), 'FbaShipmentsPage');
-const LogisticsCustomersPage = lazyPage(() => import('./pages/LogisticsCustomersPage'), 'LogisticsCustomersPage');
+const CustomersPage = lazyPage(() => import('./pages/CustomersPage'), 'CustomersPage');
 const PortalHomePage = lazyPage(() => import('./pages/PortalHomePage'), 'PortalHomePage');
 const SetPasswordPage = lazyPage(() => import('./pages/SetPasswordPage'), 'SetPasswordPage');
 const ShipmentsTrackingPage = lazyPage(() => import('./pages/ShipmentsTrackingPage'), 'ShipmentsTrackingPage');
@@ -155,7 +155,9 @@ export function App() {
         <Route path="/shipments" element={<RequireArea area="shipments"><ShipmentsPage /></RequireArea>} />
         <Route path="/fba-shipments" element={<RequireArea area="shipments"><FbaShipmentsPage /></RequireArea>} />
         <Route path="/shipments-tracking" element={<RequireArea area="shipments"><ShipmentsTrackingPage /></RequireArea>} />
-        <Route path="/logistics-customers" element={<RequireArea area="logistics_customers"><LogisticsCustomersPage /></RequireArea>} />
+        <Route path="/customers" element={<RequireArea area="customers"><CustomersPage /></RequireArea>} />
+        {/* Where customers lived for a day, before they became their own section. */}
+        <Route path="/logistics-customers" element={<Navigate to="/customers?type=logistics" replace />} />
         <Route path="/inventory" element={<RequireArea area="inventory"><InventoryPage /></RequireArea>} />
         <Route path="/availability" element={<RequireArea area="products"><RequireTradingCompany><AvailabilityPage /></RequireTradingCompany></RequireArea>} />
         <Route path="/channel-listings" element={<RequireArea area="channel_listings"><RequireTradingCompany><ChannelListingsPage /></RequireTradingCompany></RequireArea>} />

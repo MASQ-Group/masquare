@@ -6,12 +6,12 @@ import { AccessArea } from '../access/access.decorators';
 import { CustomersService, type ContactInput, type CustomerInput } from './customers.service';
 import { CustomerUsersService } from './customer-users.service';
 
-/** The companies we provide logistics services to, and the people to speak to at each. */
+/** The companies we provide services to, what they take from us, and the people at each. */
 @ApiTags('customers')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('customers')
-@AccessArea('logistics_customers')
+@AccessArea('customers')
 export class CustomersController {
   constructor(
     private readonly customers: CustomersService,
@@ -19,8 +19,14 @@ export class CustomersController {
   ) {}
 
   @Get()
-  list(@Query('q') q?: string, @Query('active') active?: string) {
-    return this.customers.list({ q, active });
+  list(@Query('q') q?: string, @Query('active') active?: string, @Query('type') type?: string) {
+    return this.customers.list({ q, active, type: type?.trim() || undefined });
+  }
+
+  /** The services a customer can take. Declared before `:id`, which would otherwise swallow it. */
+  @Get('types')
+  types() {
+    return this.customers.types();
   }
 
   @Get(':id')

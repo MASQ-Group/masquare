@@ -13,6 +13,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Coins,
+  Contact,
   Container,
   Radar,
   FolderTree,
@@ -100,6 +101,12 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
       { to: '/sales-transactions', label: 'Sales Transactions', area: 'sales_transactions', icon: Receipt },
     ],
   },
+  {
+    label: 'Customers',
+    items: [
+      { to: '/customers', label: 'Customers', area: 'customers', icon: Contact },
+    ],
+  },
   /**
    * Getting goods to the customer, kept apart from selling to them.
    *
@@ -119,7 +126,6 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
       { to: '/shipments', label: 'Shipments', area: 'shipments', icon: Truck },
       { to: '/fba-shipments', label: 'FBA Shipments', area: 'shipments', icon: Container },
       { to: '/shipments-tracking', label: 'Shipments Tracking', area: 'shipments', icon: Radar },
-      { to: '/logistics-customers', label: 'Logistics Customers', area: 'logistics_customers', icon: Building2 },
     ],
   },
   {

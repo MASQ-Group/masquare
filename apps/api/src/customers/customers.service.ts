@@ -2,14 +2,14 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { formatReference, normalisePrefix } from './customer-reference';
+import { CUSTOMER_TYPES, LOGISTICS, missingForTypes, normaliseTypes } from './customer-types';
 
 /**
- * The companies we provide logistics services to.
+ * The companies we provide services to.
  *
- * A customer is the tenant of the portal: their people sign in against this row, their shipments are
- * numbered from its prefix, and their invoices belong to the company named on it. Nearly every
- * question the portal will ask is answered here, which is why it exists before any of the portal
- * does.
+ * General on purpose: a customer is one record, and what we do for them is a list of types. Each
+ * type brings its own requirements — a logistics customer needs a reference prefix, because their
+ * shipments are numbered from it — and nothing here assumes which types a customer has.
  */
 
 export interface CustomerInput {
@@ -26,7 +26,10 @@ export interface CustomerInput {
   addressRegion?: string | null;
   addressPostalCode?: string | null;
   addressCountryIso?: string | null;
-  referencePrefix?: string;
+  /** Keys from the customer-type catalogue. */
+  types?: string[];
+  /** Logistics only. */
+  referencePrefix?: string | null;
   companyId?: string | null;
   active?: boolean;
   notes?: string | null;
@@ -44,12 +47,18 @@ export interface ContactInput {
 export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(params: { q?: string; active?: string } = {}) {
+  /** The services a customer can take, for the form that chooses them. */
+  types() {
+    return CUSTOMER_TYPES;
+  }
+
+  async list(params: { q?: string; active?: string; type?: string } = {}) {
     const term = params.q?.trim();
     const items = await this.prisma.customer.findMany({
       where: {
         deletedAt: null,
         ...(params.active === 'true' ? { active: true } : params.active === 'false' ? { active: false } : {}),
+        ...(params.type ? { types: { has: params.type } } : {}),
         ...(term
           ? {
             OR: [
@@ -67,9 +76,7 @@ export class CustomersService {
         contactPersons: { where: { deletedAt: null }, orderBy: { name: 'asc' } },
       },
     });
-    // The next reference each customer would hand out, which is the question people actually ask of
-    // a prefix — "what number are they on".
-    return items.map((c) => ({ ...c, nextReference: formatReference(c.referencePrefix, c.referenceSeq + 1) }));
+    return items.map((c) => this.shape(c));
   }
 
   async get(id: string) {
@@ -81,21 +88,22 @@ export class CustomersService {
       },
     });
     if (!row) throw new NotFoundException('Customer not found');
-    return { ...row, nextReference: formatReference(row.referencePrefix, row.referenceSeq + 1) };
+    return this.shape(row);
   }
 
   async create(dto: CustomerInput, actorId?: string) {
     const name = (dto.name ?? '').trim();
     if (!name) throw new BadRequestException('A customer name is required.');
-    const prefix = normalisePrefix(dto.referencePrefix);
-    if (!prefix.ok) throw new BadRequestException(prefix.reason);
-    await this.assertPrefixFree(prefix.prefix);
+    const types = normaliseTypes(dto.types);
+    if (!types.ok) throw new BadRequestException(types.reason);
+    const prefix = await this.resolvePrefix(types.types, dto.referencePrefix, null);
 
     const row = await this.prisma.customer.create({
       data: {
         ...this.fields(dto),
         name,
-        referencePrefix: prefix.prefix,
+        types: types.types,
+        referencePrefix: prefix,
         createdById: actorId ?? null,
         updatedById: actorId ?? null,
       },
@@ -105,7 +113,7 @@ export class CustomersService {
   }
 
   async update(id: string, dto: CustomerInput, actorId?: string) {
-    const current = await this.prisma.customer.findFirst({ where: { id, deletedAt: null }, select: { id: true, referencePrefix: true, referenceSeq: true } });
+    const current = await this.prisma.customer.findFirst({ where: { id, deletedAt: null }, select: { id: true, referencePrefix: true, referenceSeq: true, types: true } });
     if (!current) throw new NotFoundException('Customer not found');
 
     const data: Prisma.CustomerUpdateInput = { ...this.fields(dto), updatedById: actorId ?? null };
@@ -114,26 +122,27 @@ export class CustomersService {
       if (!name) throw new BadRequestException('A customer name is required.');
       data.name = name;
     }
-    if (dto.referencePrefix !== undefined) {
-      const prefix = normalisePrefix(dto.referencePrefix);
-      if (!prefix.ok) throw new BadRequestException(prefix.reason);
-      if (prefix.prefix !== current.referencePrefix) {
-        /**
-         * The prefix is part of every reference already handed out.
-         *
-         * Changing it after shipments exist would leave the customer holding paperwork quoting a
-         * prefix that no longer names them, and the numbering would carry on from where the old one
-         * stopped. Refused while any reference has been issued; free to correct before that.
-         */
-        if (current.referenceSeq > 0) {
-          throw new ConflictException(
-            `Their shipments are already numbered ${current.referencePrefix}-…, and those references are on paperwork. The prefix cannot be changed now.`,
-          );
-        }
-        await this.assertPrefixFree(prefix.prefix);
-        data.referencePrefix = prefix.prefix;
+    let types = current.types;
+    if (dto.types !== undefined) {
+      const next = normaliseTypes(dto.types);
+      if (!next.ok) throw new BadRequestException(next.reason);
+      /**
+       * A service with history cannot simply be switched off: their shipments are numbered from the
+       * prefix and their people sign in through it. Removing the type would strand both, so it is
+       * refused once anything has been issued — mark the customer inactive instead.
+       */
+      if (current.types.includes(LOGISTICS) && !next.types.includes(LOGISTICS) && current.referenceSeq > 0) {
+        throw new ConflictException(
+          `They have ${current.referenceSeq} logistics shipment${current.referenceSeq === 1 ? '' : 's'} on record, so they stay a logistics customer. Mark them inactive to stop new ones.`,
+        );
       }
+      types = next.types;
+      data.types = types;
     }
+
+    const wanted = dto.referencePrefix !== undefined ? dto.referencePrefix : current.referencePrefix;
+    const prefix = await this.resolvePrefix(types, wanted, current);
+    if (prefix !== current.referencePrefix) data.referencePrefix = prefix;
 
     await this.prisma.customer.update({ where: { id }, data });
     return this.get(id);
@@ -189,9 +198,47 @@ export class CustomersService {
 
   // ── internals ────────────────────────────────────────────────────────────────────────────────
 
-  /** Names the customer already holding it, rather than reporting a unique-index violation. */
-  private async assertPrefixFree(prefix: string) {
-    const taken = await this.prisma.customer.findFirst({ where: { referencePrefix: prefix, deletedAt: null }, select: { name: true } });
+  /** A customer as the screens read it. A next reference only means something for logistics. */
+  private shape<T extends { referencePrefix: string | null; referenceSeq: number }>(c: T) {
+    return { ...c, nextReference: c.referencePrefix ? formatReference(c.referencePrefix, c.referenceSeq + 1) : null };
+  }
+
+  /**
+   * The prefix this customer should hold, given its types.
+   *
+   * Required for logistics, and cleared for everyone else — a prefix left on somebody who is no longer
+   * a logistics customer would reserve two letters nobody can use. Fixed once a reference has been
+   * issued under it: those references are on paperwork, and changing the prefix would leave the
+   * customer quoting letters that no longer name them.
+   */
+  private async resolvePrefix(
+    types: readonly string[],
+    raw: string | null | undefined,
+    current: { id: string; referencePrefix: string | null; referenceSeq: number } | null,
+  ): Promise<string | null> {
+    const gaps = missingForTypes(types, { referencePrefix: raw });
+    if (gaps.length) throw new BadRequestException(gaps.join(' '));
+    if (!types.includes(LOGISTICS)) return current && current.referenceSeq > 0 ? current.referencePrefix : null;
+
+    const prefix = normalisePrefix(raw);
+    if (!prefix.ok) throw new BadRequestException(prefix.reason);
+    if (current?.referencePrefix && prefix.prefix !== current.referencePrefix && current.referenceSeq > 0) {
+      throw new ConflictException(
+        `Their shipments are already numbered ${current.referencePrefix}-…, and those references are on paperwork. The prefix cannot be changed now.`,
+      );
+    }
+    if (prefix.prefix !== current?.referencePrefix) await this.assertPrefixFree(prefix.prefix, current?.id);
+    return prefix.prefix;
+  }
+
+  /**
+   * Names the customer already holding it, rather than reporting a unique-index violation.
+   *
+   * Removed customers are included: the database index still holds their prefix, and a soft-deleted
+   * customer's references are still on somebody's paperwork.
+   */
+  private async assertPrefixFree(prefix: string, exceptId?: string) {
+    const taken = await this.prisma.customer.findFirst({ where: { referencePrefix: prefix, ...(exceptId ? { id: { not: exceptId } } : {}) }, select: { name: true } });
     if (taken) throw new ConflictException(`The prefix ${prefix} is already ${taken.name}’s. Every reference has to name one customer, so pick another.`);
   }
 
