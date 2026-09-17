@@ -7,7 +7,7 @@ import {
   type CachedToken,
 } from './fedex-token';
 import {
-  RATE_PATH, buildRateRequest, derivedWeightKg, describeRateFailure, missingForQuote, needsCustoms,
+  RATE_PATH, buildRateRequest, customsLane, derivedWeightKg, describeRateFailure, missingForQuote,
   rateHeaders, resolveQuoteDestination,
   type RateQuoteInput, type RateEndpoint, type RateParcel,
 } from './fedex-rate';
@@ -446,7 +446,7 @@ export class CarriersService {
     }
 
     const eu = await this.euCountryCodes();
-    const customs = needsCustoms(quote.shipper.countryIso, quote.recipient.countryIso, eu);
+    const customs = customsLane(quote.shipper.countryIso, quote.recipient.countryIso, eu);
     const body = buildRateRequest(quote, { customs });
 
     const send = async (token: string) =>
@@ -473,7 +473,12 @@ export class CarriersService {
     try { parsed = JSON.parse(text); } catch { /* left as raw text below */ }
 
     if (!res.ok) {
-      this.logger.warn(`FedEx rate quote failed (${res.status}) on account ${accountId}`);
+      // The lane and FedEx's own words: "failed (400)" alone left the last customs refusal to be
+      // reconstructed from the user's screen, since nothing here said where the quote was going.
+      this.logger.warn(
+        `FedEx rate quote failed (${res.status}) on account ${accountId}, ${quote.shipper.countryIso}→${quote.recipient.countryIso} (${customs}): ` +
+          describeRateFailure(res.status, parsed).split('\n')[0].slice(0, 300),
+      );
     }
     return {
       ok: res.ok,
@@ -761,7 +766,7 @@ export class CarriersService {
     if (gaps.length) throw new BadRequestException(`Cannot book yet — still needed: ${gaps.join(', ')}.`);
 
     const eu = await this.euCountryCodes();
-    const customs = needsCustoms(shipInput.shipper.address.countryCode, shipInput.recipient.address.countryCode, eu);
+    const customs = customsLane(shipInput.shipper.address.countryCode, shipInput.recipient.address.countryCode, eu);
     const body = buildShipRequest(shipInput, { customs });
 
     const send = async (token: string) =>
@@ -901,7 +906,7 @@ export class CarriersService {
     if (gaps.length) throw new BadRequestException(`Cannot book yet — still needed: ${gaps.join(', ')}.`);
 
     const eu = await this.euCountryCodes();
-    const customs = needsCustoms(shipInput.shipper.address.countryCode, shipInput.recipient.address.countryCode, eu);
+    const customs = customsLane(shipInput.shipper.address.countryCode, shipInput.recipient.address.countryCode, eu);
     const body = buildShipRequest(shipInput, { customs });
 
     const send = async (token: string) =>

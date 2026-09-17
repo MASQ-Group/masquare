@@ -101,18 +101,28 @@ export const SERVICE_LABELS: Record<string, string> = {
 export const RATE_PATH = '/rate/v1/rates/quotes';
 
 /**
- * Whether this quote crosses a customs border.
+ * What kind of border a shipment crosses, as far as FedEx's customs block is concerned.
  *
- * Cyprus is in the EU, so Cyprus→Germany is an intra-EU movement with no declaration, while
- * Cyprus→United Kingdom is an export. Getting this wrong in either direction is expensive: a
- * customs block on an intra-EU quote is noise, and its absence on an export is a rejected request.
+ *   none      same country — no customs block at all.
+ *   intra_eu  two EU countries. NOT a customs-free request: FedEx treats any two countries as an
+ *             international shipment and refuses one with no customsClearanceDetail ("Customs
+ *             clearance detail cannot be null"). Goods in free circulation need only a commodity
+ *             description; the rest of the commodity detail is optional and ignored.
+ *   export    leaving the EU — the full declaration.
+ *
+ * This was a yes/no until a Cyprus→EU quote proved otherwise. "Intra-EU means no customs" is true of
+ * the border and false of FedEx's API, and only the second one decides whether a request is accepted.
+ * Northern Ireland is outside this rule by FedEx's own definition, but it shares the GB country code,
+ * so it already falls under export here.
  */
-export function needsCustoms(shipperIso: string | null, recipientIso: string | null, euCountries: Set<string>): boolean {
-  if (!shipperIso || !recipientIso) return false;
+export type CustomsLane = 'none' | 'intra_eu' | 'export';
+
+export function customsLane(shipperIso: string | null, recipientIso: string | null, euCountries: Set<string>): CustomsLane {
+  if (!shipperIso || !recipientIso) return 'none';
   const a = shipperIso.toUpperCase();
   const b = recipientIso.toUpperCase();
-  if (a === b) return false;
-  return !(euCountries.has(a) && euCountries.has(b));
+  if (a === b) return 'none';
+  return euCountries.has(a) && euCountries.has(b) ? 'intra_eu' : 'export';
 }
 
 /** What is missing before FedEx could quote this at all. Named, so a screen can say which. */
@@ -138,7 +148,7 @@ const dim = (v: number | null | undefined): number | null => (typeof v === 'numb
  * nothing and makes the discount visible; asking only for LIST would quietly overstate every
  * shipping cost in the platform.
  */
-export function buildRateRequest(input: RateQuoteInput, opts: { customs: boolean }): Record<string, unknown> {
+export function buildRateRequest(input: RateQuoteInput, opts: { customs: CustomsLane }): Record<string, unknown> {
   const endpoint = (e: RateEndpoint) => ({
     address: {
       postalCode: e.postalCode,
@@ -177,7 +187,9 @@ export function buildRateRequest(input: RateQuoteInput, opts: { customs: boolean
     },
   };
 
-  if (opts.customs) {
+  // The same commodity line on both lanes. An intra-EU quote strictly needs only the description,
+  // and FedEx ignores the quantity and value it does not need, so one shape serves both.
+  if (opts.customs !== 'none') {
     body.requestedShipment.customsClearanceDetail = {
       commodities: [
         {

@@ -6,7 +6,7 @@ import {
   describeRateFailure,
   derivedWeightKg,
   missingForQuote,
-  needsCustoms,
+  customsLane,
   resolveQuoteDestination,
   rateHeaders,
   type RateQuoteInput,
@@ -49,24 +49,24 @@ describe('asking for the right prices', () => {
   it('requests the negotiated rate as well as the published one', () => {
     // ACCOUNT is what we actually pay and what belongs in a profit calculation. Asking only for
     // LIST would overstate every shipping cost in the platform, quietly and consistently.
-    const body: any = buildRateRequest(base, { customs: true });
+    const body: any = buildRateRequest(base, { customs: 'export' });
     expect(body.requestedShipment.rateRequestType).toEqual(['ACCOUNT', 'LIST']);
   });
 
   it('asks for transit times, which are half of what the page is for', () => {
-    const body: any = buildRateRequest(base, { customs: true });
+    const body: any = buildRateRequest(base, { customs: 'export' });
     expect(body.rateRequestControlParameters.returnTransitTimes).toBe('true');
   });
 
   it('omits serviceType by default, so every service on the lane comes back', () => {
     // 158 of FedEx's own samples leave it out. "What runs between these two postcodes, and at what
     // price" is the question somebody choosing a service is actually asking.
-    const body: any = buildRateRequest(base, { customs: true });
+    const body: any = buildRateRequest(base, { customs: 'export' });
     expect(body.requestedShipment.serviceType).toBeUndefined();
   });
 
   it('narrows to one service when asked', () => {
-    const body: any = buildRateRequest({ ...base, serviceType: 'INTERNATIONAL_PRIORITY' }, { customs: true });
+    const body: any = buildRateRequest({ ...base, serviceType: 'INTERNATIONAL_PRIORITY' }, { customs: 'export' });
     expect(body.requestedShipment.serviceType).toBe('INTERNATIONAL_PRIORITY');
   });
 });
@@ -75,7 +75,7 @@ describe('units', () => {
   it('sends kilograms and centimetres rather than converting', () => {
     // FedEx accepts both. Converting to pounds and inches would introduce rounding into a number
     // that ends up in a profit figure, for no gain whatsoever.
-    const body: any = buildRateRequest({ ...base, parcels: [{ weightKg: 2.4, lengthCm: 30, widthCm: 20, heightCm: 15 }] }, { customs: true });
+    const body: any = buildRateRequest({ ...base, parcels: [{ weightKg: 2.4, lengthCm: 30, widthCm: 20, heightCm: 15 }] }, { customs: 'export' });
     const item = body.requestedShipment.requestedPackageLineItems[0];
     expect(item.weight).toEqual({ units: 'KG', value: 2.4 });
     expect(item.dimensions).toEqual({ length: 30, width: 20, height: 15, units: 'CM' });
@@ -83,50 +83,64 @@ describe('units', () => {
 
   it('sends dimensions only when all three are present', () => {
     // A box with a length and no width is not something FedEx can rate; a partial set is rejected.
-    const body: any = buildRateRequest({ ...base, parcels: [{ weightKg: 2, lengthCm: 30 }] }, { customs: true });
+    const body: any = buildRateRequest({ ...base, parcels: [{ weightKg: 2, lengthCm: 30 }] }, { customs: 'export' });
     expect(body.requestedShipment.requestedPackageLineItems[0].dimensions).toBeUndefined();
   });
 
   it('treats a zero dimension as absent rather than sending it', () => {
     // Products carry 0 where nobody has measured them. Sent literally, FedEx rejects the request.
-    const body: any = buildRateRequest({ ...base, parcels: [{ weightKg: 2, lengthCm: 0, widthCm: 0, heightCm: 0 }] }, { customs: true });
+    const body: any = buildRateRequest({ ...base, parcels: [{ weightKg: 2, lengthCm: 0, widthCm: 0, heightCm: 0 }] }, { customs: 'export' });
     expect(body.requestedShipment.requestedPackageLineItems[0].dimensions).toBeUndefined();
   });
 
   it('rounds dimensions up, never down', () => {
     // Rounding a parcel smaller than it is quotes a price the invoice will not match.
-    const body: any = buildRateRequest({ ...base, parcels: [{ weightKg: 1, lengthCm: 30.2, widthCm: 20.9, heightCm: 15.1 }] }, { customs: true });
+    const body: any = buildRateRequest({ ...base, parcels: [{ weightKg: 1, lengthCm: 30.2, widthCm: 20.9, heightCm: 15.1 }] }, { customs: 'export' });
     expect(body.requestedShipment.requestedPackageLineItems[0].dimensions).toEqual({ length: 31, width: 21, height: 16, units: 'CM' });
   });
 });
 
-describe('when a customs declaration is needed', () => {
-  it('is not needed inside the EU — Cyprus to Germany crosses no border', () => {
-    // The commonest thing to get wrong from a Cyprus origin, and it cuts both ways.
-    expect(needsCustoms('CY', 'DE', EU)).toBe(false);
+describe('which customs block a quote carries', () => {
+  /**
+   * The mistake this replaced: Cyprus to Germany was treated as needing no customs block at all, and
+   * FedEx refused every such quote with "Customs clearance detail cannot be null". Crossing no
+   * border and needing no block are different things — FedEx wants the block on any two countries.
+   */
+  it('still sends one inside the EU — Cyprus to Germany is intra-EU, not customs-free', () => {
+    expect(customsLane('CY', 'DE', EU)).toBe('intra_eu');
+    const body: any = buildRateRequest({ ...base, recipient: { postalCode: '10115', countryIso: 'DE' } }, { customs: 'intra_eu' });
+    expect(body.requestedShipment.customsClearanceDetail.commodities[0].description).toBeTruthy();
   });
 
-  it('is needed leaving the EU — Cyprus to the United Kingdom is an export', () => {
-    expect(needsCustoms('CY', 'GB', EU)).toBe(true);
+  it('treats leaving the EU as an export — Cyprus to the United Kingdom', () => {
+    expect(customsLane('CY', 'GB', EU)).toBe('export');
   });
 
-  it('is not needed for a domestic movement', () => {
-    expect(needsCustoms('CY', 'CY', EU)).toBe(false);
+  it('treats Ireland as inside the EU, as FedEx does', () => {
+    expect(customsLane('CY', 'IE', EU)).toBe('intra_eu');
   });
 
-  it('says no when either country is unknown, rather than guessing', () => {
-    expect(needsCustoms(null, 'GB', EU)).toBe(false);
+  it('sends none for a domestic movement', () => {
+    expect(customsLane('CY', 'CY', EU)).toBe('none');
+  });
+
+  it('reads country codes whatever their case', () => {
+    expect(customsLane('cy', 'de', EU)).toBe('intra_eu');
+  });
+
+  it('says none when either country is unknown, rather than guessing', () => {
+    expect(customsLane(null, 'GB', EU)).toBe('none');
   });
 
   it('attaches the commodity only on a customs quote', () => {
-    const intl: any = buildRateRequest(base, { customs: true });
-    const domestic: any = buildRateRequest(base, { customs: false });
+    const intl: any = buildRateRequest(base, { customs: 'export' });
+    const domestic: any = buildRateRequest(base, { customs: 'none' });
     expect(intl.requestedShipment.customsClearanceDetail.commodities).toHaveLength(1);
     expect(domestic.requestedShipment.customsClearanceDetail).toBeUndefined();
   });
 
   it('uses the declared value it was given', () => {
-    const body: any = buildRateRequest({ ...base, customsValue: { amount: 149.99, currency: 'EUR' }, goodsDescription: 'Wine stopper' }, { customs: true });
+    const body: any = buildRateRequest({ ...base, customsValue: { amount: 149.99, currency: 'EUR' }, goodsDescription: 'Wine stopper' }, { customs: 'export' });
     const c = body.requestedShipment.customsClearanceDetail.commodities[0];
     expect(c.customsValue).toEqual({ amount: 149.99, currency: 'EUR' });
     expect(c.description).toBe('Wine stopper');
@@ -137,12 +151,12 @@ describe('residential or business', () => {
   it('sends nothing when nobody has said', () => {
     // FedEx has its own default. Guessing "business" on a home address quotes a price the invoice
     // will not match, and residential surcharges are exactly the sort of gap nobody spots.
-    const body: any = buildRateRequest(base, { customs: true });
+    const body: any = buildRateRequest(base, { customs: 'export' });
     expect(body.requestedShipment.recipient.address.residential).toBeUndefined();
   });
 
   it('sends it when it is known', () => {
-    const body: any = buildRateRequest({ ...base, recipient: { ...base.recipient, residential: true } }, { customs: true });
+    const body: any = buildRateRequest({ ...base, recipient: { ...base.recipient, residential: true } }, { customs: 'export' });
     expect(body.requestedShipment.recipient.address.residential).toBe(true);
   });
 });

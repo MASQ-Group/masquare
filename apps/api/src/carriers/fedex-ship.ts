@@ -1,3 +1,5 @@
+import type { CustomsLane } from './fedex-rate';
+
 /**
  * Building a FedEx Ship request, as pure logic.
  *
@@ -157,7 +159,7 @@ const party = (p: ShipParty) => ({
  * URL_ONLY, hands back a link that expires — and a label we cannot re-fetch is exactly the sort of
  * thing §2.2 warns about. We store the bytes.
  */
-export function buildShipRequest(input: ShipRequestInput, opts: { customs: boolean }): Record<string, unknown> {
+export function buildShipRequest(input: ShipRequestInput, opts: { customs: CustomsLane }): Record<string, unknown> {
   const body: Record<string, any> = {
     labelResponseOptions: 'LABEL',
     accountNumber: { value: input.accountNumber },
@@ -202,7 +204,23 @@ export function buildShipRequest(input: ShipRequestInput, opts: { customs: boole
     },
   };
 
-  if (opts.customs) {
+  /**
+   * Inside the EU: goods in free circulation, so FedEx asks only for what they are. No commercial
+   * invoice and no duties — there is no border to bill — but the block itself must still be there,
+   * or FedEx refuses the booking the same way it refused the quote.
+   */
+  if (opts.customs === 'intra_eu') {
+    const described = (input.commodities ?? []).map((c) => c.description).filter(Boolean);
+    body.requestedShipment.customsClearanceDetail = {
+      commodities: (described.length ? described : [input.goodsDescription || 'Consumer goods']).map((description) => ({
+        description,
+        quantity: 1,
+        quantityUnits: 'PCS',
+      })),
+    };
+  }
+
+  if (opts.customs === 'export') {
     body.requestedShipment.customsClearanceDetail = {
       commercialInvoice: { shipmentPurpose: 'SOLD' },
       /**

@@ -3,7 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Select } from '@masquare/ui';
-import { carriersApi, type CarrierAccount } from '../../lib/api';
+import { CUSTOMS_LABEL, carriersApi, type CarrierAccount } from '../../lib/api';
 
 interface Props {
   account: CarrierAccount;
@@ -138,7 +138,7 @@ export function TestBookingModal({ account, onClose }: Props) {
                 <span className={`tag border ${result.ok ? 'border-teal-100 bg-teal-50 text-teal-700' : 'border-orange-200 bg-orange-50 text-orange-800'}`}>
                   HTTP {result.status}
                 </span>
-                <span className="text-n-500">{result.customs ? 'customs declaration included' : 'no customs declaration'}</span>
+                <span className="text-n-500">{CUSTOMS_LABEL[result.customs]}</span>
               </div>
 
               {!result.ok && result.message && (

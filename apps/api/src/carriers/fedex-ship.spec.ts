@@ -46,7 +46,7 @@ describe('the reference that makes reconciliation possible', () => {
     // §8: what we send at label time is the ONLY join between a FedEx charge and a maSquare order.
     // FedEx has no other handle on it, and the invoice arrives one record per tracking number — so
     // it goes on each package, not once on the shipment.
-    const body: any = buildShipRequest({ ...base, parcels: [{ weightKg: 1 }, { weightKg: 2 }] }, { customs: true });
+    const body: any = buildShipRequest({ ...base, parcels: [{ weightKg: 1 }, { weightKg: 2 }] }, { customs: 'export' });
     const refs = body.requestedShipment.requestedPackageLineItems.map(
       (p: any) => p.customerReferences[0],
     );
@@ -67,14 +67,14 @@ describe('who pays the duty', () => {
   it('bills us at the border when the shipment is duty-paid', () => {
     // The Amazon AE case: a marketplace that forbids charging the buyer on delivery. SENDER puts
     // the duty on our account, where it becomes a cost of the order.
-    const body: any = buildShipRequest({ ...base, dutiesPaidBy: 'sender' }, { customs: true });
+    const body: any = buildShipRequest({ ...base, dutiesPaidBy: 'sender' }, { customs: 'export' });
     const dp = body.requestedShipment.customsClearanceDetail.dutiesPayment;
     expect(dp.paymentType).toBe('SENDER');
     expect(dp.payor.responsibleParty.accountNumber.value).toBe('789923272');
   });
 
   it('bills the buyer when it is not', () => {
-    const body: any = buildShipRequest(base, { customs: true });
+    const body: any = buildShipRequest(base, { customs: 'export' });
     expect(body.requestedShipment.customsClearanceDetail.dutiesPayment).toEqual({ paymentType: 'RECIPIENT' });
   });
 
@@ -91,28 +91,28 @@ describe('the label', () => {
   it('asks for the label in the reply, not a link to it', () => {
     // URL_ONLY hands back a link that expires. A label we cannot re-fetch is precisely what §2.2
     // warns about: FedEx will not give it to us again, so we store the bytes.
-    const body: any = buildShipRequest(base, { customs: true });
+    const body: any = buildShipRequest(base, { customs: 'export' });
     expect(body.labelResponseOptions).toBe('LABEL');
   });
 
   it('defaults to a 4x6 PDF and takes ZPL when a thermal printer is used', () => {
-    expect((buildShipRequest(base, { customs: true }) as any).requestedShipment.labelSpecification)
+    expect((buildShipRequest(base, { customs: 'export' }) as any).requestedShipment.labelSpecification)
       .toEqual({ labelStockType: 'PAPER_4X6', imageType: 'PDF' });
-    const zpl: any = buildShipRequest({ ...base, labelImageType: 'ZPLII' }, { customs: true });
+    const zpl: any = buildShipRequest({ ...base, labelImageType: 'ZPLII' }, { customs: 'export' });
     expect(zpl.requestedShipment.labelSpecification.imageType).toBe('ZPLII');
   });
 });
 
 describe('the parcels', () => {
   it('sends metric, and dimensions only when all three are present', () => {
-    const body: any = buildShipRequest({ ...base, parcels: [{ weightKg: 2, lengthCm: 30 }] }, { customs: true });
+    const body: any = buildShipRequest({ ...base, parcels: [{ weightKg: 2, lengthCm: 30 }] }, { customs: 'export' });
     const item = body.requestedShipment.requestedPackageLineItems[0];
     expect(item.weight).toEqual({ units: 'KG', value: 2 });
     expect(item.dimensions).toBeUndefined();
   });
 
   it('rounds dimensions up', () => {
-    const body: any = buildShipRequest({ ...base, parcels: [{ weightKg: 1, lengthCm: 30.1, widthCm: 20.2, heightCm: 15.9 }] }, { customs: true });
+    const body: any = buildShipRequest({ ...base, parcels: [{ weightKg: 1, lengthCm: 30.1, widthCm: 20.2, heightCm: 15.9 }] }, { customs: 'export' });
     expect(body.requestedShipment.requestedPackageLineItems[0].dimensions)
       .toEqual({ length: 31, width: 21, height: 16, units: 'CM' });
   });
@@ -120,25 +120,25 @@ describe('the parcels', () => {
 
 describe('the addresses', () => {
   it('sends the recipient as a one-element array, which is FedEx\'s schema', () => {
-    const body: any = buildShipRequest(base, { customs: true });
+    const body: any = buildShipRequest(base, { customs: 'export' });
     expect(Array.isArray(body.requestedShipment.recipients)).toBe(true);
     expect(body.requestedShipment.recipients).toHaveLength(1);
   });
 
   it('caps street lines at three, which is all FedEx accepts', () => {
     const long = { ...base, recipient: { ...base.recipient, address: { ...base.recipient.address, streetLines: ['a', 'b', 'c', 'd'] } } };
-    expect((buildShipRequest(long, { customs: true }) as any).requestedShipment.recipients[0].address.streetLines)
+    expect((buildShipRequest(long, { customs: 'export' }) as any).requestedShipment.recipients[0].address.streetLines)
       .toEqual(['a', 'b', 'c']);
   });
 
   it('carries tax identifiers where we hold them', () => {
     const withEori = { ...base, recipient: { ...base.recipient, tins: [{ tinType: EORI_TIN_TYPE, number: 'GB123456789000' }] } };
-    expect((buildShipRequest(withEori, { customs: true }) as any).requestedShipment.recipients[0].tins)
+    expect((buildShipRequest(withEori, { customs: 'export' }) as any).requestedShipment.recipients[0].tins)
       .toEqual([{ tinType: 'BUSINESS_NATIONAL', number: 'GB123456789000' }]);
   });
 
   it('omits tins entirely rather than sending an empty array', () => {
-    expect((buildShipRequest(base, { customs: true }) as any).requestedShipment.recipients[0].tins).toBeUndefined();
+    expect((buildShipRequest(base, { customs: 'export' }) as any).requestedShipment.recipients[0].tins).toBeUndefined();
   });
 
   it('records that the EORI tin type is an inference, not a confirmed fact', () => {
@@ -150,8 +150,31 @@ describe('the addresses', () => {
 });
 
 describe('customs', () => {
-  it('is attached only when the shipment crosses a customs border', () => {
-    expect((buildShipRequest(base, { customs: false }) as any).requestedShipment.customsClearanceDetail).toBeUndefined();
+  it('is left out of a domestic shipment', () => {
+    expect((buildShipRequest(base, { customs: 'none' }) as any).requestedShipment.customsClearanceDetail).toBeUndefined();
+  });
+
+  /** FedEx refuses an intra-EU booking with no block at all, exactly as it refused the quote. */
+  it('describes the goods inside the EU, with no invoice and no duties', () => {
+    const body: any = buildShipRequest({ ...base, goodsDescription: 'Water filter' }, { customs: 'intra_eu' });
+    const detail = body.requestedShipment.customsClearanceDetail;
+    expect(detail.commodities).toEqual([{ description: 'Water filter', quantity: 1, quantityUnits: 'PCS' }]);
+    expect(detail.commercialInvoice).toBeUndefined();
+    expect(detail.dutiesPayment).toBeUndefined();
+  });
+
+  it('describes every commodity it was given inside the EU', () => {
+    const line = { name: 'x', countryOfManufacture: null, harmonizedCode: null, quantity: 1, unitPriceAmount: 1, customsValueAmount: 1, currency: 'EUR', weightKg: 0.1 };
+    const body: any = buildShipRequest(
+      { ...base, commodities: [{ ...line, description: 'Filter' }, { ...line, description: 'Cartridge' }] },
+      { customs: 'intra_eu' },
+    );
+    expect(body.requestedShipment.customsClearanceDetail.commodities.map((c: any) => c.description)).toEqual(['Filter', 'Cartridge']);
+  });
+
+  it('never sends an intra-EU block with nothing in it', () => {
+    const body: any = buildShipRequest({ ...base, goodsDescription: null }, { customs: 'intra_eu' });
+    expect(body.requestedShipment.customsClearanceDetail.commodities[0].description).toBe('Consumer goods');
   });
 
   it('carries the HS code where the product has one', () => {
@@ -162,7 +185,7 @@ describe('customs', () => {
         harmonizedCode: '830990', quantity: 1, unitPriceAmount: 24.5, customsValueAmount: 24.5,
         currency: 'EUR', weightKg: 0.2,
       }],
-    }, { customs: true });
+    }, { customs: 'export' });
     const c = body.requestedShipment.customsClearanceDetail.commodities[0];
     expect(c.harmonizedCode).toBe('830990');
     expect(c.customsValue).toEqual({ amount: 24.5, currency: 'EUR' });
@@ -177,7 +200,7 @@ describe('customs', () => {
         name: 'x', description: 'x', countryOfManufacture: null, harmonizedCode: null,
         quantity: 1, unitPriceAmount: 1, customsValueAmount: 1, currency: 'EUR', weightKg: 0.1,
       }],
-    }, { customs: true });
+    }, { customs: 'export' });
     expect(body.requestedShipment.customsClearanceDetail.commodities[0].harmonizedCode).toBeUndefined();
   });
 });
