@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger, NotFoundExc
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CarriersService } from '../carriers/carriers.service';
 import { MailService } from '../mail/mail.service';
 import { formatReference } from '../customers/customer-reference';
 import { LOGISTICS, NOT_LOGISTICS, hasType } from '../customers/customer-types';
@@ -63,6 +64,17 @@ const INCLUDE = {
   shippingService: { select: { id: true, name: true, trackingUrlTemplate: true } },
   parcels: { orderBy: { createdAt: 'asc' } },
   documents: { orderBy: { uploadedAt: 'asc' } },
+  /**
+   * What the carrier last said, for the carriers we can ask. The same rows, sweep and cadence as
+   * our own shipments — a customer watching their parcel sees what we see.
+   */
+  tracking: {
+    select: {
+      statusCode: true, statusDescription: true, deliveredAt: true, estimatedDeliveryAt: true,
+      lastScanAt: true, lastScanDescription: true, lastScanLocation: true,
+      exceptionCode: true, exceptionDescription: true, checkedAt: true, found: true,
+    },
+  },
 } satisfies Prisma.CustomerShipmentInclude;
 
 @Injectable()
@@ -73,6 +85,7 @@ export class CustomerShipmentsService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly mail: MailService,
+    private readonly carriers: CarriersService,
   ) {}
 
   // ── filing ───────────────────────────────────────────────────────────────────────────────────
@@ -260,6 +273,19 @@ export class CustomerShipmentsService {
 
     await this.prisma.customerShipment.update({ where: { id }, data: { status: 'NEEDS_INFO', infoRequest: text_ } });
     return this.get(id);
+  }
+
+  /**
+   * Ask the carrier about this one now, rather than waiting for the sweep.
+   *
+   * Only FedEx can be asked at all; for anyone else the answer is honestly nothing, and the screen
+   * keeps showing the tracking link out to the carrier instead.
+   */
+  async refreshTracking(id: string) {
+    const shipment = await this.get(id);
+    if (!shipment.trackingNumber) throw new BadRequestException('This shipment has no tracking number yet.');
+    const result = await this.carriers.refreshTracking({ customerShipmentIds: [id], force: true });
+    return { ...result, shipment: await this.get(id) };
   }
 
   /** Undo a fulfilment that was not one. */

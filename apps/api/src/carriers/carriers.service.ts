@@ -30,6 +30,33 @@ import {
 export const FEDEX_SECRET_FIELDS = ['apiKey', 'secretKey'] as const;
 type SecretField = (typeof FEDEX_SECRET_FIELDS)[number];
 
+/**
+ * Which parcel a tracking row is about: one of ours, or one sent for a logistics customer.
+ *
+ * The sweep treats them identically — same cadence, same failure counting, same reply — so they
+ * are gathered into one list and told apart only where the row is written.
+ */
+export type TrackTarget = { kind: 'shipment'; id: string } | { kind: 'customer'; id: string };
+
+/** A parcel the sweep may ask FedEx about, whichever kind it is. */
+interface TrackCandidate {
+  target: TrackTarget;
+  trackingNumber: string | null;
+  /** When it went out. Drives the cadence and the retention window. */
+  shipmentDate: Date;
+  /** Whose FedEx account to ask with. */
+  companyId: string | null;
+  shippingService: { name: string | null; alias: string | null } | null;
+  tracking: {
+    trackingNumber: string;
+    deliveredAt: Date | null;
+    checkedAt: Date | null;
+    failureCount: number;
+    found: boolean | null;
+    detailsJson: Prisma.JsonValue | null;
+  } | null;
+}
+
 export interface CarrierAccountInput {
   companyId: string;
   carrier?: string;
@@ -1037,8 +1064,10 @@ export class CarriersService {
    */
   async refreshTracking(
     opts: {
-      /** Refresh these specific shipments. Omitted means everything due. */
+      /** Refresh these specific shipments of ours. Omitted means everything due. */
       shipmentIds?: string[] | null;
+      /** Refresh these specific customer shipments — the Refresh button on that side. */
+      customerShipmentIds?: string[] | null;
       companyIds?: string[] | null;
       /** Ignore the cadence. What the button on a screen does; never what the sweep does. */
       force?: boolean;
@@ -1049,7 +1078,9 @@ export class CarriersService {
     const now = new Date();
     const limit = Math.min(3_000, Math.max(1, opts.limit ?? 300));
 
-    const candidates = await this.prisma.shipment.findMany({
+    // A named request asks about what it named and nothing else: the Refresh button on one screen
+    // must not quietly re-ask the whole estate.
+    const ours = opts.customerShipmentIds?.length ? [] : await this.prisma.shipment.findMany({
       where: {
         deletedAt: null,
         trackingNumber: { not: null },
@@ -1078,6 +1109,68 @@ export class CarriersService {
         tracking: { select: { trackingNumber: true, deliveredAt: true, checkedAt: true, failureCount: true, found: true, detailsJson: true } },
       },
     });
+
+    /**
+     * Shipments we sent for a logistics customer, asked about on the same terms.
+     *
+     * Skipped entirely when the caller named specific shipments of ours — `shipmentIds` is the
+     * Refresh button on one of our own screens, and answering it with somebody else's parcels would
+     * be a surprise. The sweep, which names nothing, asks about both.
+     */
+    const theirs = opts.shipmentIds?.length
+      ? []
+      : await this.prisma.customerShipment.findMany({
+        where: {
+          deletedAt: null,
+          status: 'FULFILLED',
+          trackingNumber: { not: null },
+          ...(opts.customerShipmentIds?.length ? { id: { in: opts.customerShipmentIds } } : {}),
+          shippingService: {
+            is: {
+              OR: [
+                { name: { contains: FEDEX_NAME_FRAGMENT, mode: 'insensitive' } },
+                { alias: { contains: FEDEX_NAME_FRAGMENT, mode: 'insensitive' } },
+              ],
+            },
+          },
+          ...(opts.companyIds ? { customer: { companyId: { in: opts.companyIds } } } : {}),
+        },
+        orderBy: { shippedAt: 'desc' },
+        take: limit,
+        select: {
+          id: true, trackingNumber: true, shippedAt: true, fulfilledAt: true, createdAt: true,
+          shippingService: { select: { name: true, alias: true } },
+          customer: { select: { companyId: true } },
+          tracking: { select: { trackingNumber: true, deliveredAt: true, checkedAt: true, failureCount: true, found: true, detailsJson: true } },
+        },
+      });
+
+    /**
+     * Both kinds, in the one shape the rest of this method works on.
+     *
+     * A customer shipment has no despatch date of its own until it is fulfilled, so the date FedEx
+     * is measured against is when it actually went — falling back to when we recorded it. That date
+     * drives the cadence and the retention window, so guessing it late would ask too often and
+     * guessing it early would stop asking too soon.
+     */
+    const candidates: TrackCandidate[] = [
+      ...ours.map((s) => ({
+        target: { kind: 'shipment' as const, id: s.id },
+        trackingNumber: s.trackingNumber,
+        shipmentDate: s.shipmentDate,
+        companyId: s.transaction?.companyId ?? null,
+        shippingService: s.shippingService,
+        tracking: s.tracking,
+      })),
+      ...theirs.map((s) => ({
+        target: { kind: 'customer' as const, id: s.id },
+        trackingNumber: s.trackingNumber,
+        shipmentDate: s.shippedAt ?? s.fulfilledAt ?? s.createdAt,
+        companyId: s.customer?.companyId ?? null,
+        shippingService: s.shippingService,
+        tracking: s.tracking,
+      })),
+    ];
 
     const due = candidates.filter((s) => {
       if (!isFedexService(s.shippingService?.name, s.shippingService?.alias)) return false;
@@ -1148,7 +1241,7 @@ export class CarriersService {
 
     const byCompany = new Map<string, typeof due>();
     for (const s of due) {
-      const companyId = s.transaction?.companyId;
+      const companyId = s.companyId;
       if (!companyId || !accountByCompany.has(companyId)) {
         result.unaccounted += 1;
         continue;
@@ -1193,7 +1286,7 @@ export class CarriersService {
         for (const shipment of shipments) {
           const found = byNumber.get((shipment.trackingNumber ?? '').trim());
           if (!found) continue;
-          await this.writeTracking(shipment.id, shipment.trackingNumber!, found, now);
+          await this.writeTracking(shipment.target, shipment.trackingNumber!, found, now);
           result.updated += 1;
           if (found.deliveredAt) result.delivered += 1;
           if (!found.found) result.notFound += 1;
@@ -1339,7 +1432,7 @@ export class CarriersService {
    * expiring, and blanking a delivered parcel to "unknown" because its history aged out would be a
    * plain loss of information.
    */
-  private async writeTracking(shipmentId: string, trackingNumber: string, r: TrackResult, now: Date) {
+  private async writeTracking(target: TrackTarget, trackingNumber: string, r: TrackResult, now: Date) {
     const when = (iso: string | null) => (iso ? new Date(iso) : null);
 
     const common = { checkedAt: now, found: r.found, trackingNumber };
@@ -1377,10 +1470,14 @@ export class CarriersService {
         }
       : { ...common, lastError: r.errorMessage ?? r.errorCode, failureCount: { increment: 1 } };
 
+    // Ours or a customer's: one column or the other, never both. The rest of the row is identical,
+    // which is the whole reason this is one table and one sweep.
+    const owner = target.kind === 'customer' ? { customerShipmentId: target.id } : { shipmentId: target.id };
+
     await this.prisma.shipmentTracking.upsert({
-      where: { shipmentId },
+      where: owner,
       create: {
-        shipmentId,
+        ...owner,
         ...data,
         // `increment` is an update operation and means nothing on a create: the first refusal is
         // simply the first one.

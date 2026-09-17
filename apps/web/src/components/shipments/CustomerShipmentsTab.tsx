@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ExternalLink, MessageSquareWarning, Search, Undo2 } from 'lucide-react';
+import { ExternalLink, MessageSquareWarning, RefreshCcw, Search, Undo2 } from 'lucide-react';
 import { Pagination, TableScroll } from '@masquare/ui';
 import { customerShipmentsApi, type CustomerShipment } from '../../lib/api';
 import { useConfirm } from '../ConfirmProvider';
@@ -44,6 +44,18 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
   const reopen = useMutation({
     mutationFn: (id: string) => customerShipmentsApi.reopen(id),
     onSuccess: () => { toast.success('Back in the waiting queue'); refresh(); },
+    onError: failed,
+  });
+  const recheck = useMutation({
+    mutationFn: (id: string) => customerShipmentsApi.refreshTracking(id),
+    onSuccess: (r) => {
+      // What actually happened, rather than a cheerful nothing: a number the carrier does not
+      // recognise and a number with no news look identical unless the message says which.
+      if (r.updated === 0) toast.info(r.messages[0] ?? 'The carrier had nothing new.');
+      else if (r.notFound > 0) toast.warning('The carrier does not recognise that tracking number yet.');
+      else toast.success(r.delivered > 0 ? 'Delivered' : 'Tracking updated');
+      refresh();
+    },
     onError: failed,
   });
 
@@ -96,6 +108,7 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
               <th className={th}>Deliver to</th>
               <th className={th}>Parcels</th>
               {queue === 'fulfilled' && <th className={th}>Carrier</th>}
+              {queue === 'fulfilled' && <th className={th}>Where it is</th>}
               {queue === 'fulfilled' && <th className={th}>Tracking</th>}
               {queue === 'fulfilled' && <th className={`${th} text-right`}>Cost</th>}
               {queue === 'fulfilled' && <th className={`${th} text-right`}>Charged</th>}
@@ -104,10 +117,10 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
           </thead>
           <tbody>
             {query.isLoading ? (
-              <tr><td colSpan={11} className="px-4 py-6 text-center text-n-500">Loading…</td></tr>
+              <tr><td colSpan={12} className="px-4 py-6 text-center text-n-500">Loading…</td></tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-4 py-8 text-center text-n-500">
+                <td colSpan={12} className="px-4 py-8 text-center text-n-500">
                   {q ? 'Nothing matches that.' : queue === 'pending' ? 'Nothing waiting. Filed shipments appear here as soon as a customer sends one.' : 'Nothing sent yet.'}
                 </td>
               </tr>
@@ -134,6 +147,29 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
                     <td className={`${td} text-n-600`}>{[s.toCompany || s.toName, s.toCity, s.toCountryIso].filter(Boolean).join(', ') || '—'}</td>
                     <td className={`${td} mono text-n-600`}>{s.parcels.length} · {weight.toFixed(2)}kg</td>
                     {queue === 'fulfilled' && <td className={`${td} text-n-600`}>{s.shippingService?.name ?? '—'}</td>}
+                    {queue === 'fulfilled' && (
+                      <td className={td}>
+                        {/* Only the carriers with an API say anything here. For the rest the
+                            tracking link beside it is the whole answer, and pretending otherwise
+                            would be worse than a dash. */}
+                        {s.tracking?.deliveredAt ? (
+                          <span className="tag bg-teal-50 text-teal-700">Delivered {new Date(s.tracking.deliveredAt).toLocaleDateString()}</span>
+                        ) : s.tracking?.exceptionDescription ? (
+                          <span className="tag bg-warning-bg text-warning" title={s.tracking.exceptionCode ?? undefined}>{s.tracking.exceptionDescription}</span>
+                        ) : s.tracking?.found === false ? (
+                          <span className="text-n-500">Not recognised</span>
+                        ) : s.tracking?.statusDescription ? (
+                          <span className="text-n-700">{s.tracking.statusDescription}</span>
+                        ) : (
+                          <span className="text-n-400">—</span>
+                        )}
+                        {s.tracking?.lastScanDescription && !s.tracking.deliveredAt && (
+                          <div className="text-[11.5px] text-n-500">
+                            {[s.tracking.lastScanLocation, s.tracking.lastScanAt ? new Date(s.tracking.lastScanAt).toLocaleDateString() : null].filter(Boolean).join(' · ')}
+                          </div>
+                        )}
+                      </td>
+                    )}
                     {queue === 'fulfilled' && (
                       <td className={`${td} mono`}>
                         {link ? (
@@ -178,6 +214,17 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
                           >
                             <Undo2 size={12} className="mr-1 inline" />Reopen
                           </button>
+                          {s.trackingNumber && (
+                            <button
+                              type="button"
+                              className="mr-3 text-[11.5px] font-semibold text-n-600 hover:underline"
+                              title="Ask the carrier where it is now"
+                              disabled={recheck.isPending}
+                              onClick={() => recheck.mutate(s.id)}
+                            >
+                              <RefreshCcw size={12} className="mr-1 inline" />Recheck
+                            </button>
+                          )}
                           <button type="button" className="text-[11.5px] font-semibold text-teal-700 hover:underline" onClick={() => setFulfilling(s)}>
                             Amend
                           </button>

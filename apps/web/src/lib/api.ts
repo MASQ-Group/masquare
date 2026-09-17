@@ -2610,6 +2610,23 @@ export interface CustomerShipment {
   chargeCurrency: string;
   archivedAt: string | null;
   createdAt: string;
+  /**
+   * What the carrier last told us, for the carriers we can ask. Null where nobody has asked yet, or
+   * where the carrier has no API — the tracking link out to their own page still works.
+   */
+  tracking: {
+    statusCode: string | null;
+    statusDescription: string | null;
+    deliveredAt: string | null;
+    estimatedDeliveryAt: string | null;
+    lastScanAt: string | null;
+    lastScanDescription: string | null;
+    lastScanLocation: string | null;
+    exceptionCode: string | null;
+    exceptionDescription: string | null;
+    checkedAt: string | null;
+    found: boolean | null;
+  } | null;
   customer: { id: string; name: string; referencePrefix: string };
   parcels: CustomerShipmentParcel[];
   documents: CustomerShipmentDoc[];
@@ -2638,6 +2655,11 @@ export const customerShipmentsApi = {
     api.post<CustomerShipment>(`/customer-shipments/${id}/request-info`, { question }).then((r) => r.data),
   reopen: (id: string) => api.post<CustomerShipment>(`/customer-shipments/${id}/reopen`).then((r) => r.data),
   cancel: (id: string) => api.post<CustomerShipment>(`/customer-shipments/${id}/cancel`).then((r) => r.data),
+  /** Ask the carrier where it is, now, rather than waiting for the two-hourly sweep. */
+  refreshTracking: (id: string) =>
+    api.post<{ updated: number; delivered: number; notFound: number; messages: string[]; shipment: CustomerShipment }>(
+      `/customer-shipments/${id}/refresh-tracking`,
+    ).then((r) => r.data),
 };
 
 // ---- Customers ----
