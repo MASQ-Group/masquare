@@ -74,6 +74,19 @@ export class AccessGuard implements CanActivate {
       throw new UnauthorizedException();
     }
 
+    /**
+     * A portal route, reached by the customer's person it belongs to.
+     *
+     * Their access is not an area and never will be: PortalGuard scopes every one of these routes
+     * to the customer the signed-in person belongs to, and refuses anybody without one — including
+     * our own staff. So this guard's work is done once it has established there IS a signed-in
+     * person, which the check above did.
+     *
+     * Declared after the 401 rather than beside the skip, so an expired session on a portal screen
+     * is still asked to sign in again rather than told it is forbidden.
+     */
+    if (pick<boolean>(ACCESS_PORTAL)) return true;
+
     const areas = pick<string[]>(ACCESS_AREA);
     if (!areas?.length) {
       this.logger.error(

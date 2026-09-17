@@ -216,3 +216,29 @@ describe('a portal user', () => {
     await expect(g.canActivate(ctx)).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });
+
+/**
+ * A portal route, which declares neither an area nor an exemption.
+ *
+ * This shipped broken: the route-coverage test learned that `@PortalRoute()` is a declaration and
+ * the guard did not, so every portal request reached the "declares no access area" refusal and was
+ * forbidden. The customer's own screens were unusable while the tests were green, which is exactly
+ * the gap this file exists to close.
+ */
+describe('a portal route', () => {
+  it('is allowed for a signed-in portal user', async () => {
+    const { guard: g, ctx } = guard({ [ACCESS_PORTAL]: true }, { portalUser: true });
+    await expect(g.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  /** Staff reaching one is not this guard's refusal to make — PortalGuard has no customer for them. */
+  it('is allowed past this guard for staff too, because the portal guard is the gate', async () => {
+    const { guard: g, ctx } = guard({ [ACCESS_PORTAL]: true }, { portalUser: false });
+    await expect(g.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  it('still answers 401 when nobody is signed in', async () => {
+    const { guard: g, ctx } = guard({ [ACCESS_PORTAL]: true }, { user: null });
+    await expect(g.canActivate(ctx)).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+});
