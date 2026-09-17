@@ -2567,7 +2567,15 @@ export interface CustomerShipmentParcel {
   lengthCm: string | null;
   widthCm: string | null;
   heightCm: string | null;
-  contents: string | null;
+  goodsDescription: string | null;
+  customerReference: string | null;
+  declaredValue: string | null;
+  insurance: boolean;
+  insuranceAmount: string | null;
+  /** Whoever books this parcel has to know before they book it. */
+  dangerousGoods: boolean;
+  batteryType: string | null;
+  priorityHandling: boolean;
 }
 
 export interface CustomerShipmentDoc {
@@ -2582,6 +2590,10 @@ export interface CustomerShipment {
   id: string;
   reference: string;
   customerReference: string | null;
+  serialNumbers: string[];
+  deliveryInstructions: string | null;
+  toVatNumber: string | null;
+  toLine3: string | null;
   status: 'SUBMITTED' | 'NEEDS_INFO' | 'FULFILLED' | 'CANCELLED' | 'ARCHIVED';
   infoRequest: string | null;
   requestedDate: string | null;
@@ -2660,6 +2672,86 @@ export const customerShipmentsApi = {
     api.post<{ updated: number; delivered: number; notFound: number; messages: string[]; shipment: CustomerShipment }>(
       `/customer-shipments/${id}/refresh-tracking`,
     ).then((r) => r.data),
+};
+
+// ---- The customer portal ----
+
+/** A battery packing instruction, offered where dangerous goods are declared. */
+export interface BatteryType { key: string; label: string }
+
+/** What insurance costs, as a share of the declared value. The server works out the amount. */
+export const INSURANCE_RATE = 0.01;
+
+export interface PortalPackage {
+  id?: string;
+  lengthCm: number | string | null;
+  widthCm: number | string | null;
+  heightCm: number | string | null;
+  weightKg: number | string | null;
+  goodsDescription: string | null;
+  customerReference: string | null;
+  declaredValue: number | string | null;
+  insurance: boolean;
+  insuranceAmount?: number | string | null;
+  dangerousGoods: boolean;
+  batteryType: string | null;
+  priorityHandling: boolean;
+}
+
+export interface PortalShipment {
+  id: string;
+  reference: string;
+  orderReference: string | null;
+  serialNumbers: string[];
+  status: 'SUBMITTED' | 'NEEDS_INFO' | 'FULFILLED' | 'CANCELLED' | 'ARCHIVED';
+  infoRequest: string | null;
+  createdAt: string;
+  deliveryInstructions: string | null;
+  recipient: { companyName: string | null; vatNumber: string | null; contactName: string | null; phone: string | null; email: string | null };
+  address: { countryIso: string | null; postalCode: string | null; city: string | null; state: string | null; line1: string | null; line2: string | null; line3: string | null };
+  packages: PortalPackage[];
+  currency: string;
+  carrier: string | null;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  shippedAt: string | null;
+  tracking: {
+    status: string | null;
+    deliveredAt: string | null;
+    estimatedDeliveryAt: string | null;
+    lastScanAt: string | null;
+    lastScanDescription: string | null;
+    lastScanLocation: string | null;
+    exception: string | null;
+  } | null;
+  /** What they pay. What it cost us is never sent to the portal. */
+  charge: { amount: number; currency: string } | null;
+  archivedAt: string | null;
+}
+
+/** The shape the portal submits. Matches the form on screen, section by section. */
+export interface PortalShipmentForm {
+  orderReference?: string | null;
+  serialNumbers?: string[];
+  recipient?: { companyName?: string | null; vatNumber?: string | null; contactName?: string | null; phone?: string | null; email?: string | null; deliveryInstructions?: string | null };
+  address?: { countryIso?: string | null; postalCode?: string | null; city?: string | null; state?: string | null; line1?: string | null; line2?: string | null; line3?: string | null };
+  packages?: Array<Omit<PortalPackage, 'id' | 'insuranceAmount'>>;
+  currency?: string;
+}
+
+export const portalApi = {
+  home: () => api.get<{
+    customer: { name: string; referencePrefix: string | null };
+    counts: { active: number; archived: number; needsInfo: number };
+    batteryTypes: BatteryType[];
+  }>('/portal/home').then((r) => r.data),
+  list: (params: { view?: string; q?: string } = {}) => api.get<PortalShipment[]>('/portal/shipments', { params }).then((r) => r.data),
+  get: (id: string) => api.get<PortalShipment>(`/portal/shipments/${id}`).then((r) => r.data),
+  file: (form: PortalShipmentForm) => api.post<PortalShipment>('/portal/shipments', form).then((r) => r.data),
+  update: (id: string, form: PortalShipmentForm & { resubmit?: boolean }) =>
+    api.patch<PortalShipment>(`/portal/shipments/${id}`, form).then((r) => r.data),
+  cancel: (id: string) => api.post<PortalShipment>(`/portal/shipments/${id}/cancel`).then((r) => r.data),
+  archive: (id: string) => api.post<PortalShipment>(`/portal/shipments/${id}/archive`).then((r) => r.data),
 };
 
 // ---- Customers ----

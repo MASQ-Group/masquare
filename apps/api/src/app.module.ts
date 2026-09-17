@@ -14,6 +14,7 @@ import { MailModule } from './mail/mail.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { CustomersModule } from './customers/customers.module';
 import { CustomerShipmentsModule } from './customer-shipments/customer-shipments.module';
+import { PortalModule } from './portal/portal.module';
 import { JobsModule } from './jobs/jobs.module';
 import { ListingModule } from './listing/listing.module';
 import { McpModule } from './mcp/mcp.module';
@@ -77,6 +78,7 @@ import { HealthController } from './health.controller';
     NotificationsModule,
     CustomersModule,
     CustomerShipmentsModule,
+    PortalModule,
     JobsModule,
     StorageModule,
     AuthModule,

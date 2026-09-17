@@ -28,7 +28,10 @@ const SalesTransactionFormPage = lazyPage(() => import('./pages/SalesTransaction
 const ShipmentsPage = lazyPage(() => import('./pages/ShipmentsPage'), 'ShipmentsPage');
 const FbaShipmentsPage = lazyPage(() => import('./pages/FbaShipmentsPage'), 'FbaShipmentsPage');
 const CustomersPage = lazyPage(() => import('./pages/CustomersPage'), 'CustomersPage');
-const PortalHomePage = lazyPage(() => import('./pages/PortalHomePage'), 'PortalHomePage');
+const PortalLayout = lazyPage(() => import('./portal/PortalLayout'), 'PortalLayout');
+const PortalShipmentsPage = lazyPage(() => import('./portal/PortalShipmentsPage'), 'PortalShipmentsPage');
+const PortalNewShipmentPage = lazyPage(() => import('./portal/PortalNewShipmentPage'), 'PortalNewShipmentPage');
+const PortalShipmentPage = lazyPage(() => import('./portal/PortalShipmentPage'), 'PortalShipmentPage');
 const SetPasswordPage = lazyPage(() => import('./pages/SetPasswordPage'), 'SetPasswordPage');
 const ShipmentsTrackingPage = lazyPage(() => import('./pages/ShipmentsTrackingPage'), 'ShipmentsTrackingPage');
 const WarehousesPage = lazyPage(() => import('./pages/WarehousesPage'), 'WarehousesPage');
@@ -138,7 +141,13 @@ export function App() {
       <Route path="/login" element={<LoginPage />} />
       {/* Signed out by definition: the person holding the link has no account to reach yet. */}
       <Route path="/portal/set-password" element={<SetPasswordPage />} />
-      <Route path="/portal" element={<RequirePortalUser><PortalHomePage /></RequirePortalUser>} />
+      {/* The customer portal: its own shell, nothing of the platform's around it. */}
+      <Route path="/portal" element={<RequirePortalUser><PortalLayout /></RequirePortalUser>}>
+        <Route index element={<PortalShipmentsPage view="active" />} />
+        <Route path="new" element={<PortalNewShipmentPage />} />
+        <Route path="archived" element={<PortalShipmentsPage view="archived" />} />
+        <Route path=":id" element={<PortalShipmentPage />} />
+      </Route>
       <Route
         element={
           <RequireAuth>
