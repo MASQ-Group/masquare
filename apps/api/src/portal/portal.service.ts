@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CustomerShipmentsService, type ShipmentInput } from '../customer-shipments/customer-shipments.service';
 import { LOGISTICS, hasType } from '../customers/customer-types';
-import { BATTERY_TYPES, insuranceAmount, problemsWith, totalDeclaredValue, type ShipmentForm } from './../customer-shipments/shipment-form';
+import { BATTERY_TYPES, formToInput, problemsWith, type ShipmentForm } from './../customer-shipments/shipment-form';
 import { buildTrackingUrl } from '../carriers/tracking-url';
 
 export interface ProductInput {
@@ -115,7 +115,7 @@ export class PortalService {
     const problems = problemsWith(form);
     if (problems.length) throw new BadRequestException(problems.join(' '));
 
-    const created = await this.shipments.file(customerId, this.toInput(form), userId);
+    const created = await this.shipments.file(customerId, formToInput(form), userId);
     return this.get(customerId, created.id);
   }
 
@@ -125,7 +125,7 @@ export class PortalService {
     const problems = problemsWith(form);
     if (problems.length) throw new BadRequestException(problems.join(' '));
 
-    await this.shipments.customerAction(id, opts.resubmit ? 'resubmit' : 'edit', this.toInput(form));
+    await this.shipments.customerAction(id, opts.resubmit ? 'resubmit' : 'edit', formToInput(form));
     return this.get(customerId, id);
   }
 
@@ -228,53 +228,6 @@ export class PortalService {
   }
 
   /** The form, as the shipment service takes it. */
-  private toInput(form: ShipmentForm): ShipmentInput {
-    const r = form.recipient ?? {};
-    const a = form.address ?? {};
-    const packages = form.packages ?? [];
-    const currency = (form.currency ?? 'EUR').toUpperCase();
-
-    return {
-      customerReference: form.orderReference ?? null,
-      serialNumbers: (form.serialNumbers ?? []).map((s) => s.trim()).filter(Boolean),
-      goodsDescription: [...new Set(packages.map((p) => (p.goodsDescription ?? '').trim()).filter(Boolean))].join('; ') || null,
-      goodsValue: totalDeclaredValue(packages) || null,
-      goodsCurrency: currency,
-      notes: null,
-      deliveryInstructions: r.deliveryInstructions ?? null,
-      to: {
-        name: r.contactName ?? null,
-        company: r.companyName ?? null,
-        vatNumber: r.vatNumber ?? null,
-        line1: a.line1 ?? null,
-        line2: a.line2 ?? null,
-        line3: a.line3 ?? null,
-        city: a.city ?? null,
-        region: a.state ?? null,
-        postalCode: a.postalCode ?? null,
-        countryIso: a.countryIso ?? null,
-        phone: r.phone ?? null,
-        email: r.email ?? null,
-      },
-      parcels: packages.map((p) => ({
-        weightKg: Number(p.weightKg),
-        lengthCm: p.lengthCm ?? null,
-        widthCm: p.widthCm ?? null,
-        heightCm: p.heightCm ?? null,
-        goodsDescription: p.goodsDescription ?? null,
-        customerReference: p.customerReference ?? null,
-        declaredValue: p.declaredValue ?? null,
-        insurance: !!p.insurance,
-        // Worked out on the server, never taken from the browser: it is a price, and a price the
-        // caller could choose is not a price.
-        insuranceAmount: insuranceAmount(p.declaredValue, p.insurance),
-        dangerousGoods: !!p.dangerousGoods,
-        batteryType: p.dangerousGoods ? p.batteryType ?? null : null,
-        priorityHandling: !!p.priorityHandling,
-      })),
-    };
-  }
-
   /**
    * One shipment, as the customer may see it.
    *

@@ -28,6 +28,7 @@ const SalesTransactionFormPage = lazyPage(() => import('./pages/SalesTransaction
 const ShipmentsPage = lazyPage(() => import('./pages/ShipmentsPage'), 'ShipmentsPage');
 const FbaShipmentsPage = lazyPage(() => import('./pages/FbaShipmentsPage'), 'FbaShipmentsPage');
 const CustomersPage = lazyPage(() => import('./pages/CustomersPage'), 'CustomersPage');
+const NewCustomerShipmentPage = lazyPage(() => import('./pages/NewCustomerShipmentPage'), 'NewCustomerShipmentPage');
 const PortalLayout = lazyPage(() => import('./portal/PortalLayout'), 'PortalLayout');
 const PortalShipmentsPage = lazyPage(() => import('./portal/PortalShipmentsPage'), 'PortalShipmentsPage');
 const PortalNewShipmentPage = lazyPage(() => import('./portal/PortalNewShipmentPage'), 'PortalNewShipmentPage');
@@ -164,6 +165,8 @@ export function App() {
         <Route path="/sales-transactions/new" element={<RequireArea area="sales_transactions"><SalesTransactionFormPage /></RequireArea>} />
         <Route path="/sales-transactions/:id/edit" element={<RequireArea area="sales_transactions"><SalesTransactionFormPage /></RequireArea>} />
         <Route path="/shipments" element={<RequireArea area="shipments"><ShipmentsPage /></RequireArea>} />
+        {/* Filing on a customer's behalf. Its own page rather than a modal: it is their whole form. */}
+        <Route path="/shipments/customer/new" element={<RequireArea area="shipments"><NewCustomerShipmentPage /></RequireArea>} />
         <Route path="/fba-shipments" element={<RequireArea area="shipments"><FbaShipmentsPage /></RequireArea>} />
         <Route path="/shipments-tracking" element={<RequireArea area="shipments"><ShipmentsTrackingPage /></RequireArea>} />
         <Route path="/customers" element={<RequireArea area="customers"><CustomersPage /></RequireArea>} />

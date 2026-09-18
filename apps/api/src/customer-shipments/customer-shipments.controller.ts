@@ -3,7 +3,8 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { AccessArea, RequireCapability } from '../access/access.decorators';
-import { CustomerShipmentsService, type FulfilInput, type ShipmentInput } from './customer-shipments.service';
+import { CustomerShipmentsService, type FulfilInput } from './customer-shipments.service';
+import type { ShipmentForm } from './shipment-form';
 
 /**
  * Our side of a customer's shipments: the queue, and what we did with each one.
@@ -37,16 +38,40 @@ export class CustomerShipmentsController {
     return { pending: await this.shipments.pendingCount() };
   }
 
+  /**
+   * What the form needs to be drawn for one customer: their saved goods, and the battery list.
+   *
+   * One request rather than two, and the customer's own catalogue rather than the platform's — a
+   * shipment filed for them by us should offer exactly what they would have been offered filing it
+   * themselves, or the two routes produce different shipments from the same telephone call.
+   *
+   * Declared above `:id` because Nest matches in declaration order: below it, "form-options" is
+   * read as a shipment id, and the route answers nothing while looking like it works. It did
+   * exactly that for one run against a real server, which is how it was found.
+   */
+  @Get('form-options')
+  formOptions(@Query('customerId') customerId?: string) {
+    return this.shipments.formOptions(customerId ?? '');
+  }
+
   @Get(':id')
   get(@Param('id') id: string) {
     return this.shipments.get(id);
   }
 
-  /** File one on a customer's behalf — the telephone call that does not go through the portal. */
+  /**
+   * File one on a customer's behalf — the telephone call, or the email, that never reaches the
+   * portal.
+   *
+   * Takes the same form the customer's own screen submits, checked by the same rules. A shorter
+   * form for us would be a second set of rules about what a shipment needs, and the two would
+   * drift; what arrives in the queue is then indistinguishable from one they filed themselves,
+   * which is the point.
+   */
   @Post()
-  file(@Body() body: { customerId: string } & ShipmentInput, @CurrentUser() user: AuthUser) {
-    const { customerId, ...input } = body ?? ({} as any);
-    return this.shipments.file(customerId, input, user.sub);
+  file(@Body() body: { customerId?: string } & ShipmentForm, @CurrentUser() user: AuthUser) {
+    const { customerId, ...form } = body ?? ({} as { customerId?: string } & ShipmentForm);
+    return this.shipments.fileForm(customerId ?? '', form, user.sub);
   }
 
   /** Record what was booked: carrier, tracking, our cost and their charge. */

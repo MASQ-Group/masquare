@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BATTERY_TYPES, INSURANCE_RATE, insuranceAmount, isComplete, problemsWith, totalDeclaredValue, totalInsurance,
+  BATTERY_TYPES, INSURANCE_RATE, formToInput, insuranceAmount, isComplete, problemsWith, totalDeclaredValue, totalInsurance,
   type PackageForm, type ShipmentForm,
 } from './shipment-form';
 
@@ -165,5 +165,74 @@ describe('what the shipment is worth', () => {
 
   it('is zero when nothing was declared', () => {
     expect(totalDeclaredValue([parcel()])).toBe(0);
+  });
+});
+
+describe('formToInput', () => {
+  const full = (): ShipmentForm => ({
+    orderReference: 'PO-99',
+    serialNumbers: [' SN-1 ', '', 'SN-2'],
+    currency: 'gbp',
+    recipient: {
+      companyName: 'Acme Ltd', vatNumber: 'GB123', contactName: 'Maria Georgiou',
+      phone: '+357 99123456', email: 'maria@example.com', deliveryInstructions: 'Ring the bell',
+    },
+    address: { countryIso: 'CY', postalCode: '1010', city: 'Nicosia', state: 'Lefkosia', line1: '5 Makariou', line2: 'Flat 2', line3: null },
+    packages: [
+      { weightKg: 2.5, lengthCm: 30, widthCm: 20, heightCm: 10, goodsDescription: 'Guitar strings', declaredValue: 200, insurance: true, dangerousGoods: false, batteryType: null, priorityHandling: true, customerReference: 'BOX-A' },
+      { weightKg: 1, lengthCm: 10, widthCm: 10, heightCm: 10, goodsDescription: 'Cables', declaredValue: 50, insurance: false, dangerousGoods: true, batteryType: 'pi966', priorityHandling: false, customerReference: null },
+    ],
+  });
+
+  it('puts the recipient and the address into the one delivery address', () => {
+    const input = formToInput(full());
+    expect(input.to).toMatchObject({
+      name: 'Maria Georgiou', company: 'Acme Ltd', vatNumber: 'GB123',
+      line1: '5 Makariou', city: 'Nicosia', region: 'Lefkosia', postalCode: '1010', countryIso: 'CY',
+      phone: '+357 99123456', email: 'maria@example.com',
+    });
+  });
+
+  it('carries every package across, with its own answers', () => {
+    const input = formToInput(full());
+    expect(input.parcels).toHaveLength(2);
+    expect(input.parcels![0]).toMatchObject({ weightKg: 2.5, goodsDescription: 'Guitar strings', customerReference: 'BOX-A', priorityHandling: true });
+    expect(input.parcels![1]).toMatchObject({ weightKg: 1, dangerousGoods: true, batteryType: 'pi966' });
+  });
+
+  it('works out the insurance itself — a price the caller could choose is not a price', () => {
+    const form = full();
+    // Somebody submitting directly, claiming cover for nothing.
+    (form.packages![0] as { insuranceAmount?: number }).insuranceAmount = 0;
+    const input = formToInput(form);
+    expect(input.parcels![0].insuranceAmount).toBe(2);   // 1% of 200
+    expect(input.parcels![1].insuranceAmount).toBeNull(); // not insured
+  });
+
+  it('drops a battery type from a package that says it is not dangerous', () => {
+    const form = full();
+    form.packages![0].batteryType = 'pi966';
+    expect(formToInput(form).parcels![0].batteryType).toBeNull();
+  });
+
+  it('sums the declared values, and joins the descriptions without repeating one', () => {
+    const form = full();
+    form.packages![1].goodsDescription = 'Guitar strings';
+    const input = formToInput(form);
+    expect(input.goodsValue).toBe(250);
+    expect(input.goodsDescription).toBe('Guitar strings');
+  });
+
+  it('tidies the serial numbers and upper-cases the currency', () => {
+    const input = formToInput(full());
+    expect(input.serialNumbers).toEqual(['SN-1', 'SN-2']);
+    expect(input.goodsCurrency).toBe('GBP');
+  });
+
+  it('survives an empty form rather than throwing', () => {
+    const input = formToInput({});
+    expect(input.parcels).toEqual([]);
+    expect(input.to).toMatchObject({ name: null, countryIso: null });
+    expect(input.goodsCurrency).toBe('EUR');
   });
 });
