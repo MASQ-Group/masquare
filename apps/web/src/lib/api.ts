@@ -2391,9 +2391,23 @@ export interface EbayListingDefaults {
   paymentPolicyId: string | null;
   returnPolicyId: string | null;
 }
+/** What eBay is told about the item's condition. The only three the publish understands. */
+export type EbayCondition = 'NEW' | 'USED_EXCELLENT' | 'USED_GOOD';
+
 export interface EbayPreview {
   productSku: string;
   ebaySku: string;
+  /**
+   * Set once this product has been published to eBay UK, from what the publish recorded. Null means
+   * it has not. Without it the panel looked the same before and after, and still offered Publish.
+   */
+  listed: { itemId: string | null; listedAt: string | null; url: string | null; adopted: boolean } | null;
+  /**
+   * What pressing Publish would do. `update` sends the current details to the listing above;
+   * `refuse` means the product is already on eBay some other way and publishing would duplicate it.
+   */
+  action: 'create' | 'update' | 'refuse';
+  refusal: string | null;
   /** The category already saved for the product, if any — so its fields can be shown straight away. */
   categoryId: string | null;
   categoryName: string | null;
@@ -2406,7 +2420,7 @@ export interface EbayPreview {
   /** `listingDescription` is the designed page a buyer sees; the item's description is a plain summary. */
   offer: { listingDescription?: string } | null;
   /** What this listing would carry: the channel's defaults, or this product's own answers. */
-  listing: EbayListingDefaults & { quantity: number | null };
+  listing: EbayListingDefaults & { quantity: number | null; condition: EbayCondition };
   /** Only what THIS product overrides; null in a field means "whatever the channel says". */
   overrides: EbayListingDefaults;
   descriptionExtras: EbayDescriptionExtras;
@@ -2452,7 +2466,12 @@ export const ebayListingApi = {
   preview: (productId: string, body: Record<string, unknown> = {}) =>
     api.post<EbayPreview>(`/listing/ebay/products/${productId}/preview`, { productId, ...body }).then((r) => r.data),
   publish: (productId: string, body: Record<string, unknown>) =>
-    api.post<{ ok: true; listingId?: string; offerId?: string; ebaySku?: string }>(
+    api.post<{
+      ok: true; listingId?: string; offerId?: string; ebaySku?: string;
+      /** True when eBay already held this offer and it was brought up to date rather than created. */
+      offerReused?: boolean;
+      url?: string | null;
+    }>(
       '/listing/ebay/publish', { productId, confirm: true, ...body },
     ).then((r) => r.data),
 };

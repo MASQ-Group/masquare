@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildInventoryItem, buildOffer, ebaySafeSku, itemDescription, missingForPublish, offerUpdateBody, type EbayOfferInput } from './offer-payload';
+import { buildInventoryItem, buildOffer, ebayItemUrl, ebaySafeSku, itemDescription, missingForPublish, offerUpdateBody, type EbayOfferInput } from './offer-payload';
 
 const base: EbayOfferInput = {
   sku: '3G08437824100',
@@ -194,5 +194,22 @@ describe('offerUpdateBody', () => {
     expect(body).not.toHaveProperty('sku');
     expect(body).not.toHaveProperty('marketplaceId');
     expect(body).not.toHaveProperty('format');
+  });
+});
+
+describe('ebayItemUrl', () => {
+  it('links an item number to its eBay UK page', () => {
+    expect(ebayItemUrl('267438735742')).toBe('https://www.ebay.co.uk/itm/267438735742');
+  });
+
+  it('refuses anything that is not an item number, rather than building a broken link', () => {
+    expect(ebayItemUrl(null)).toBeNull();
+    expect(ebayItemUrl('')).toBeNull();
+    expect(ebayItemUrl('abc')).toBeNull();
+    expect(ebayItemUrl('123/../evil')).toBeNull();
+  });
+
+  it('trims what it was given', () => {
+    expect(ebayItemUrl(' 267438735742 ')).toBe('https://www.ebay.co.uk/itm/267438735742');
   });
 });

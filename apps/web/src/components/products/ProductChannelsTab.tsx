@@ -168,7 +168,19 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
             * same thing while implying eBay had two places to look.
             */}
           {key === ebayHomeGroup && <div className="border-b border-n-100 p-3"><EbayListingPanel productId={productId} /></div>}
-          {rows.map((row, i) => (
+          {rows
+            /*
+              * The eBay UK row is not drawn under the panel that IS eBay UK.
+              *
+              * Its drawer was the generic plan editor: a price and a dispatch time saved into the same
+              * record the panel above edits, and a third step that only pointed back up at the panel.
+              * Two editors for one number is how they come to disagree, and it looked — reasonably —
+              * like an abandoned copy. The one thing only it held, the item's condition, now lives in
+              * the panel. Other eBay markets keep their rows: eBaymag republishes to them, and their
+              * rows are where that is seen.
+              */
+            .filter((row) => !(key === ebayHomeGroup && row.channelType === 'ebay' && isoOf(row.marketplace) === 'GB'))
+            .map((row, i) => (
             <ChannelRow
               key={row.integrationId}
               row={row}

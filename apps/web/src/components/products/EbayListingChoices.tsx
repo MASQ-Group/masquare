@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { Select } from '@masquare/ui';
-import { ebayListingApi, type EbayListingDefaults, type EbayPrerequisites, type EbayPreview } from '../../lib/api';
+import { ebayListingApi, type EbayCondition, type EbayListingDefaults, type EbayPrerequisites, type EbayPreview } from '../../lib/api';
 import { Link } from 'react-router-dom';
 
 /**
@@ -17,6 +17,13 @@ import { Link } from 'react-router-dom';
  * The quantity is never a choice here: a listing offers the product's availability, which the
  * quantity push already keeps in step with the channels.
  */
+/** The conditions the publish can actually send. Anything else would go to eBay as New. */
+const EBAY_CONDITIONS: { value: EbayCondition; label: string }[] = [
+  { value: 'NEW', label: 'New' },
+  { value: 'USED_EXCELLENT', label: 'Used — excellent' },
+  { value: 'USED_GOOD', label: 'Used — good' },
+];
+
 export function EbayListingChoices({ productId, preview, pre }: {
   productId: string;
   preview: EbayPreview | undefined;
@@ -26,7 +33,7 @@ export function EbayListingChoices({ productId, preview, pre }: {
   const [editing, setEditing] = useState(false);
 
   const save = useMutation({
-    mutationFn: (body: Partial<EbayListingDefaults>) => ebayListingApi.savePlan(productId, body),
+    mutationFn: (body: Partial<EbayListingDefaults> & { condition?: EbayCondition }) => ebayListingApi.savePlan(productId, body),
     onSuccess: () => {
       toast.success('Saved for this product');
       qc.invalidateQueries({ queryKey: ['ebay', 'preview', productId] });
@@ -103,6 +110,29 @@ export function EbayListingChoices({ productId, preview, pre }: {
             </div>
           );
         })}
+        {/*
+          * The item's condition, per product.
+          *
+          * It used to be set in the eBay row's drawer further down, which offered New, Open box and
+          * Used — and the publish understands none but the three below, so anything else went to eBay
+          * as New. Nothing had been listed that way, but it was one click from selling used goods as
+          * new. These are exactly the values the publish sends.
+          */}
+        <div className="flex flex-col gap-0.5">
+          <dt className="text-n-500">Condition</dt>
+          {editing ? (
+            <Select
+              dense
+              value={preview.listing.condition}
+              onChange={(v) => save.mutate({ condition: v as EbayCondition })}
+              options={EBAY_CONDITIONS}
+            />
+          ) : (
+            <dd className="text-n-800">
+              {EBAY_CONDITIONS.find((c) => c.value === preview.listing.condition)?.label ?? preview.listing.condition}
+            </dd>
+          )}
+        </div>
         <div className="flex flex-col gap-0.5">
           <dt className="text-n-500">Quantity</dt>
           <dd className="mono text-n-800">

@@ -44,7 +44,28 @@ describe('renderEbayDescription — the Cards layout', () => {
     const html = renderEbayDescription(CASIO);
     expect(html).toContain('background:#0e7c7b');
     expect(html).toContain('background:#e4572e');
-    expect(html).toContain('max-width:720px');
+  });
+
+  it('sits against the left edge of eBay’s description area, not floating in the middle of it', () => {
+    // eBay's own "Item description from the seller" heading is left-aligned; a centred block under
+    // it looked detached from the page.
+    const outer = renderEbayDescription(CASIO).match(/^<div style="([^"]*)"/)![1];
+    expect(outer).toContain('margin:0;');
+    expect(outer).not.toContain('margin:0 auto');
+    expect(outer).toContain('max-width:960px');
+  });
+
+  it('keeps paragraphs to a readable measure however wide the frame is', () => {
+    // A paragraph stretched across 900px is a wall; the prose keeps the width it had at 720px.
+    const html = renderEbayDescription({ title: 'A product', intro: 'First paragraph.\n\nSecond paragraph.' });
+    const prose = html.match(/<div style="([^"]*)"><p /)![1];
+    expect(prose).toContain('max-width:640px');
+  });
+
+  it('never fixes a layout width, which is what scrolls sideways on a phone', () => {
+    // Three digits and up: a phone is ~360px, so only a width in the hundreds can push past it. The
+    // 8px square beside each section heading is decoration, not layout, and is fine.
+    expect(renderEbayDescription(CASIO)).not.toMatch(/[;"]width:\d{3,}px/);
   });
 
   /** Fixed for every listing, whatever the product. */

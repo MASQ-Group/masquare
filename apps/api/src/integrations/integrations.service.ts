@@ -880,6 +880,30 @@ export class IntegrationsService implements OnModuleInit {
   }
 
   /**
+   * The offers eBay's Inventory API holds under one SKU on one marketplace. Read-only.
+   *
+   * Every listing this platform has ever published went through the Inventory API, so this is the
+   * authority on whether we already made one — whether or not a sync has pulled it in yet, and
+   * whether or not it was linked to its product when it was.
+   */
+  async ebayOffersForSku(integrationId: string, sku: string, marketplaceId = 'EBAY_GB') {
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const url = `${base}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${encodeURIComponent(marketplaceId)}`;
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+    const json: any = await res.json().catch(() => null);
+    // No inventory item under that SKU is an answer, not a failure: nothing is there.
+    if (res.status === 404 || json?.errors?.some((e: any) => e.errorId === 25713)) return { ok: true as const, offers: [] };
+    if (!res.ok) return { ok: false as const, message: IntegrationsService.ebayErr(json) || ('HTTP ' + res.status) };
+    const offers = (json?.offers ?? []).map((o: any) => ({
+      offerId: String(o.offerId ?? ''),
+      marketplaceId: String(o.marketplaceId ?? ''),
+      status: String(o.status ?? ''),
+      listingId: o.listing?.listingId ? String(o.listing.listingId) : null,
+    }));
+    return { ok: true as const, offers };
+  }
+
+  /**
    * Replace an offer eBay already holds. Still private: an unpublished offer is not a listing, and a
    * published one is revised only when it is published again.
    */
@@ -3542,8 +3566,8 @@ export class IntegrationsService implements OnModuleInit {
    * Match an incoming SKU to a product: main SKU, then alias, then — only if both miss — the same
    * punctuation-blind key the listings are matched with.
    *
-   * The last step is new. The platform published twenty eBay listings with their SKUs stripped of
-   * hyphens (LE-83306 as LE83306). Listings were matched loosely and so were recognised; orders were
+   * The last step is new. The platform published eBay listings with their SKUs stripped of hyphens
+   * (LE-83306 as LE83306). Listings were matched loosely and so were recognised; orders were
    * matched exactly and so would not have been — each sale arriving belonging to no product. The two
    * halves of one sale disagreed about what it was. It uses the tested rule in sku-match.ts, which
    * refuses a key two products share rather than guess between them.

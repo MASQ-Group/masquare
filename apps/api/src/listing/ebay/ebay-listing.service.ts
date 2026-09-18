@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
-import { buildInventoryItem, buildOffer, ebaySafeSku, missingForPublish, offerUpdateBody, type EbayOfferInput } from './offer-payload';
+import { buildInventoryItem, buildOffer, ebayItemUrl, ebaySafeSku, missingForPublish, offerUpdateBody, type EbayOfferInput } from './offer-payload';
+import { publishIdentity } from './publish-identity';
 import { aspectsForPayload, missingAspects, resolveAspects } from './category-plan';
 import {
   applyUserEdits, classifyAspect, eligibleValues, isPayloadEligible, normaliseAspects, toJson,
@@ -1379,6 +1380,20 @@ export class EbayListingService {
     const { input, productSku, integrationId, planned, facts, categoryName, overrides, extras } = await this.buildInput(productId, args);
     const missing = missingForPublish(input);
 
+    /**
+     * Whether this product is already on eBay, and so what a publish would actually do.
+     *
+     * The panel is the same one before and after a listing exists, so without this it could not tell
+     * the two apart — it offered "Publish" on a product that had been live for an hour, and would
+     * have made a second listing of any product already on eBay by hand.
+     */
+    const row = await this.ebayIntegration(args.integrationId);
+    const { identity, listedAt } = await this.identityFor(productId, row, productSku);
+    if (identity.action !== 'refuse') input.sku = identity.sku;
+    const listed = identity.action === 'update'
+      ? { itemId: identity.itemId, listedAt, url: ebayItemUrl(identity.itemId), adopted: identity.adopted }
+      : null;
+
     if (input.categoryId) {
       const res = await this.integrations.ebayCategoryAspects(integrationId, input.categoryId);
       /**
@@ -1395,6 +1410,11 @@ export class EbayListingService {
     return {
       productSku,
       ebaySku: input.sku,
+      /** Set once this product has been published here. Null means it has not. */
+      listed,
+      /** What pressing Publish would do: create, update the listing above, or refuse to duplicate. */
+      action: identity.action,
+      refusal: identity.action === 'refuse' ? identity.reason : null,
       categoryId: input.categoryId ?? null,
       categoryName,
       missing,
@@ -1409,6 +1429,8 @@ export class EbayListingService {
         paymentPolicyId: input.paymentPolicyId ?? null,
         returnPolicyId: input.returnPolicyId ?? null,
         quantity: input.quantity ?? null,
+        /** As publish will send it — the stored value read through the same rule, NEW if unset. */
+        condition: input.condition,
       },
       overrides,
       /** The description's per-product parts, and the verified item specifics they may draw on. */
@@ -1425,6 +1447,62 @@ export class EbayListingService {
    * Refuses unless every gate is open and says which one is shut. Steps one and two are private and
    * reversible; step three is not, so it happens last and only after the first two have succeeded.
    */
+  /**
+   * What a publish of this product would be: a first listing, an update, or a refusal.
+   *
+   * Reads the plan (what we published and recorded) and the eBay UK listings the last sync saw for
+   * this product. Only eBay UK and listings whose market could not be told: eBaymag republishes each
+   * UK listing to other markets under the same SKU, and those copies are not second listings to
+   * refuse over. An unresolved row is counted because it might BE the UK listing — it errs towards
+   * refusing, which is the safe direction.
+   */
+  private async identityFor(productId: string, row: { id: string; marketplace: string | null }, mainSku: string) {
+    const plan = await this.prisma.productChannelPlan.findFirst({
+      where: { productId, ...this.planKey(row) },
+      select: { status: true, channelSku: true, externalListingId: true, listedAt: true },
+    });
+
+    /**
+     * Found by SKU as well as by product link. A listing our own code published with its SKU
+     * stripped is exactly the kind of row the sync may not have linked — LAGA158WEA9EF sat unlinked
+     * on eBay UK and Italy — and a guard that only asked "which listings belong to this product"
+     * could not see the very case it was written for.
+     */
+    const aliases = await this.prisma.productSkuAlias.findMany({ where: { productId, deletedAt: null }, select: { skuValue: true } });
+    const stripped = mainSku.replace(/[^a-zA-Z0-9]/g, '').slice(0, 50);
+    const forms = [...new Set([mainSku, stripped, ...aliases.map((a) => a.skuValue)])];
+    const rows = await this.prisma.channelListing.findMany({
+      where: {
+        integrationId: row.id,
+        marketplace: { in: ['GB', ''] },
+        OR: [{ productId }, { channelSku: { in: forms } }],
+      },
+      select: { channelSku: true, externalListingId: true },
+    });
+    const existing = rows.map((l) => ({ channelSku: l.channelSku, itemId: l.externalListingId }));
+
+    /**
+     * And eBay itself, for the one shape the database cannot be relied on for: a listing we published
+     * stripped that no sync has pulled in yet. LE-83306 was on eBay as LE83306 and nowhere in the
+     * platform. Asked only when there is something to find — a product whose SKU has punctuation,
+     * with no listing of ours recorded.
+     */
+    let unknown: string | null = null;
+    if (plan?.status !== 'LISTED' && stripped !== mainSku) {
+      const res = await this.integrations.ebayOffersForSku(row.id, stripped);
+      if (!res.ok) unknown = res.message;
+      else {
+        for (const o of res.offers) {
+          if (!o.listingId || existing.some((e) => e.itemId === o.listingId)) continue;
+          existing.push({ channelSku: stripped, itemId: o.listingId });
+        }
+      }
+    }
+
+    const identity = publishIdentity({ mainSku, plan, existing });
+    return { identity, listedAt: plan?.listedAt ?? null, unknown };
+  }
+
   async publish(productId: string, args: PublishArgs & { confirm?: boolean }) {
     if (!(await this.liveWritesEnabled())) {
       throw new BadRequestException(
@@ -1437,6 +1515,21 @@ export class EbayListingService {
 
     const row = await this.ebayIntegration(args.integrationId);
     const { input, productSku, integrationId, planned, facts } = await this.buildInput(productId, args);
+
+    /**
+     * Decided before anything is sent. A listing we made is updated under the SKU it was made with;
+     * anything else already on eBay for this product is refused rather than listed a second time.
+     * See publish-identity.ts.
+     */
+    const { identity, unknown } = await this.identityFor(productId, row, productSku);
+    if (identity.action === 'refuse') throw new BadRequestException(identity.reason);
+    // Could not ask eBay whether we already listed this under its old SKU. Not knowing is not "no":
+    // publishing on a guess is exactly how the duplicate this guards against gets made.
+    if (unknown && identity.action === 'create') {
+      throw new BadRequestException(`Could not confirm with eBay that this product is not already listed (${unknown}). Nothing was sent; try again.`);
+    }
+    input.sku = identity.sku;
+
     const missing = missingForPublish(input);
     if (missing.length > 0) throw new BadRequestException(`Not ready to list: ${missing.map((m) => m.label).join(', ')}`);
 
@@ -1478,6 +1571,32 @@ export class EbayListingService {
     }
 
     this.logger.log(`eBay listing published: ${productSku} -> ${input.sku} listing ${published.listingId}`);
+
+    /**
+     * Remember that it is listed, and as what.
+     *
+     * The listing id used to reach the browser in a toast and nowhere else. The product then reopened
+     * exactly as it looked before — the same checks, the same live Publish button — and nothing on
+     * screen said the listing existed until the next eBay sync happened to pull it in. Amazon's
+     * listings have said "Submitted" for weeks from these same columns, which exist for exactly this
+     * ("Set once the channel confirms the listing: ASIN, eBay ItemID, OnBuy OPC") and were simply
+     * never written for eBay.
+     *
+     * LISTED rather than SUBMITTED, because eBay's publish is synchronous: an item id back means a
+     * buyable listing, not a request still being considered. A failure to record it is logged and
+     * does not fail the publish — the listing is live either way, and a publish reported as failed
+     * would invite a second one.
+     */
+    try {
+      await this.prisma.productChannelPlan.updateMany({
+        where: { productId, ...this.planKey(row) },
+        // channelSku is what makes the next publish an update: it is the SKU eBay knows this listing by.
+        data: { status: 'LISTED', externalListingId: published.listingId ?? null, listedAt: new Date(), channelSku: input.sku },
+      });
+    } catch (e: any) {
+      this.logger.error(`eBay listing ${published.listingId} is live but could not be recorded on the plan: ${e?.message ?? e}`);
+    }
+
     return {
       ok: true,
       productSku,
@@ -1485,7 +1604,7 @@ export class EbayListingService {
       offerId: offer.offerId,
       offerReused: offer.reused,
       listingId: published.listingId,
-      url: `https://www.ebay.co.uk/itm/${published.listingId}`,
+      url: ebayItemUrl(published.listingId),
     };
   }
 

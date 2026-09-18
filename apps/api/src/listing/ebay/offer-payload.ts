@@ -67,7 +67,12 @@ export interface MissingField { key: string; label: string }
  *
  * And stripping was not harmless. Orders are matched to products by SKU, exactly, so an order for
  * LE83306 would have arrived belonging to nothing — stock not deducted, profit not counted, the
- * order sitting unrecognised. Twenty listings were published that way before it was noticed.
+ * order sitting unrecognised. At least two products went out that way before it was noticed —
+ * LE-83306, and LAG-A158WEA-9EF on eBay UK and Italy.
+ *
+ * Changing the SKU has a consequence of its own: eBay finds a listing by SKU, so re-publishing one
+ * of those under the unstripped SKU would miss it and make a second listing. publish-identity.ts
+ * decides that before anything is sent.
  *
  * So the SKU goes out as it is. If the Inventory API does refuse a character, it refuses on the
  * inventory item — a private record, deleted without trace, before anything is public — and says
@@ -186,4 +191,15 @@ export function buildOffer(input: EbayOfferInput) {
       ? { listingDescription: input.descriptionHtml.slice(0, LISTING_DESCRIPTION_MAX) }
       : {}),
   };
+}
+
+/**
+ * The public page for an eBay UK item.
+ *
+ * eBay UK because that is where the platform lists — eBaymag republishes to every other market, each
+ * with its own item number that this does not hold.
+ */
+export function ebayItemUrl(itemId: string | null | undefined): string | null {
+  const id = String(itemId ?? '').trim();
+  return /^\d+$/.test(id) ? `https://www.ebay.co.uk/itm/${id}` : null;
 }
