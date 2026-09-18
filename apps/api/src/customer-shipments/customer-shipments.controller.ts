@@ -1,8 +1,8 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
-import { AccessArea } from '../access/access.decorators';
+import { AccessArea, RequireCapability } from '../access/access.decorators';
 import { CustomerShipmentsService, type FulfilInput, type ShipmentInput } from './customer-shipments.service';
 
 /**
@@ -80,5 +80,18 @@ export class CustomerShipmentsController {
   @Post(':id/cancel')
   cancel(@Param('id') id: string) {
     return this.shipments.cancel(id);
+  }
+
+  /**
+   * Remove one that should never have existed — a test, a duplicate, the wrong customer.
+   *
+   * Behind the delete capability rather than plain edit rights: erasing a record and correcting one
+   * are different decisions, and the person who works the queue all day needs the second far more
+   * often than the first.
+   */
+  @Delete(':id')
+  @RequireCapability('delete_records')
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.shipments.remove(id, user.sub);
   }
 }
