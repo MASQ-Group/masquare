@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, Info, Plus, Trash2 } from 'lucide-react';
 import { Select } from '@masquare/ui';
 import { CountrySelect } from '../components/common/CountrySelect';
-import { INSURANCE_RATE, portalApi, type BatteryType, type CustomerProduct, type PortalPackage, type PortalShipmentForm } from '../lib/api';
-import { fieldProblem, sectionComplete, type SectionKey } from './formRules';
+import { INSURANCE_RATE, countriesApi, portalApi, type BatteryType, type CustomerProduct, type PortalCollection, type PortalPackage, type PortalShipmentForm } from '../lib/api';
+import { customsNeeded, fieldProblem, hasCollection, sectionComplete, type SectionKey } from './formRules';
 import { PhoneField } from './PhoneField';
 import { GoodsDescriptionField } from './GoodsDescriptionField';
 
@@ -25,12 +26,19 @@ export type FormState = Required<Pick<PortalShipmentForm, 'orderReference' | 'se
   recipient: NonNullable<PortalShipmentForm['recipient']>;
   address: NonNullable<PortalShipmentForm['address']>;
   packages: Array<Omit<PortalPackage, 'id' | 'insuranceAmount'>>;
+  /** Empty means the goods are already at our warehouse. */
+  collection: PortalCollection;
 };
+
+export const emptyCollection = (): PortalCollection => ({
+  companyName: '', contactName: '', phone: '', email: '', countryIso: '', postalCode: '', city: '', state: '', line1: '', line2: '',
+});
 
 export const emptyPackage = (): FormState['packages'][number] => ({
   lengthCm: '', widthCm: '', heightCm: '', weightKg: '',
   goodsDescription: '', customerReference: '', declaredValue: '',
   insurance: false, dangerousGoods: false, batteryType: null, priorityHandling: false,
+  quantity: '1', hsCode: '', countryOfOrigin: '',
 });
 
 export const emptyForm = (): FormState => ({
@@ -40,6 +48,7 @@ export const emptyForm = (): FormState => ({
   recipient: { companyName: '', vatNumber: '', contactName: '', phone: '', email: '', deliveryInstructions: '' },
   address: { countryIso: '', postalCode: '', city: '', state: '', line1: '', line2: '', line3: '' },
   packages: [emptyPackage()],
+  collection: emptyCollection(),
 });
 
 /** What the platform would charge to insure this package, shown as it is typed. */
@@ -80,8 +89,27 @@ export function ShipmentFormFields({ form, setForm, batteryTypes, products = [],
     // the API does with the same number.
     (touched[key] ? fieldProblem(kind, value as string, form.address.countryIso) : null);
 
+  /**
+   * Which countries are in the EU, from the same list the country picker already loaded — the same
+   * cache entry, so no second request. Decides whether each box must carry its customs line, by the
+   * rule the API applies on receipt.
+   */
+  const { data: countries = [] } = useQuery({
+    queryKey: ['countries', countrySource?.key ?? 'platform'],
+    queryFn: () => (countrySource ? countrySource.fetch() : countriesApi.list()),
+  });
+  const eu = useMemo(
+    () => new Set((countries as Array<{ isoCode: string; euVatZone?: boolean }>).filter((c) => c.euVatZone).map((c) => c.isoCode.toUpperCase())),
+    [countries],
+  );
+  const customs = customsNeeded(form, eu);
+
+  /** Collected from elsewhere, or already with us. Held apart from the address so an empty one can be chosen and then filled. */
+  const [collecting, setCollecting] = useState(() => hasCollection(form.collection));
+  const setCollection = (patch: Partial<PortalCollection>) => set({ collection: { ...form.collection, ...patch } });
+
   const [folded, setFolded] = useState<Partial<Record<SectionKey, boolean>>>({});
-  const complete = sectionComplete(form);
+  const complete = sectionComplete(form, eu);
   const sectionProps = (key: SectionKey) => ({
     complete: complete[key],
     open: !folded[key],
@@ -99,6 +127,8 @@ export function ShipmentFormFields({ form, setForm, batteryTypes, products = [],
       ...(p.declaredValue != null ? { declaredValue: String(p.declaredValue) } : {}),
       dangerousGoods: p.dangerousGoods,
       batteryType: p.dangerousGoods ? p.batteryType : null,
+      ...(p.hsCode ? { hsCode: p.hsCode } : {}),
+      ...(p.countryOfOrigin ? { countryOfOrigin: p.countryOfOrigin } : {}),
     });
 
   const yesNo = [{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }];
@@ -237,6 +267,98 @@ export function ShipmentFormFields({ form, setForm, batteryTypes, products = [],
       </Section>
 
       <Section
+        title="Collection"
+        hint={collecting ? 'Collected from the address below.' : 'The goods are already at the maSquare warehouse.'}
+        {...sectionProps('collection')}
+      >
+        <div className="flex flex-col gap-4">
+          <div className="max-w-[420px]">
+            <Field label="Where are the goods?">
+              <Select
+                value={collecting ? 'collect' : 'warehouse'}
+                onChange={(v) => {
+                  const next = v === 'collect';
+                  setCollecting(next);
+                  // Back to the warehouse clears the address, so none is sent that the form no longer shows.
+                  if (!next) set({ collection: emptyCollection() });
+                }}
+                options={[
+                  { value: 'warehouse', label: 'Already at the maSquare warehouse' },
+                  { value: 'collect', label: 'Collect them from another address' },
+                ]}
+              />
+            </Field>
+          </div>
+          {collecting && (
+            <div className="grid grid-cols-2 gap-4 max-[560px]:grid-cols-1">
+              <Field label="Company name">
+                <input className="input" value={form.collection.companyName ?? ''} onChange={(e) => setCollection({ companyName: e.target.value })} />
+              </Field>
+              <Field label="Contact name *" problem={problem('c.contactName', 'required', form.collection.contactName)}>
+                <input
+                  className={inputClass(problem('c.contactName', 'required', form.collection.contactName))}
+                  value={form.collection.contactName ?? ''}
+                  onBlur={leave('c.contactName')}
+                  onChange={(e) => setCollection({ contactName: e.target.value })}
+                />
+              </Field>
+              <Field label="Contact phone number *" problem={touched['c.phone'] ? fieldProblem('phone', form.collection.phone ?? '', form.collection.countryIso) : null}>
+                <div onBlur={leave('c.phone')}>
+                  <PhoneField
+                    value={form.collection.phone ?? ''}
+                    addressCountryIso={form.collection.countryIso ?? ''}
+                    invalid={!!(touched['c.phone'] && fieldProblem('phone', form.collection.phone ?? '', form.collection.countryIso))}
+                    onChange={(next) => setCollection({ phone: next })}
+                  />
+                </div>
+              </Field>
+              <Field label="Contact email">
+                <input className="input" type="email" value={form.collection.email ?? ''} onChange={(e) => setCollection({ email: e.target.value })} />
+              </Field>
+              <Field label="Country *" problem={problem('c.country', 'required', form.collection.countryIso)}>
+                <CountrySelect
+                  value={form.collection.countryIso || null}
+                  valueKind="code"
+                  source={countrySource}
+                  onChange={(v) => { setTouched((t) => ({ ...t, 'c.country': true })); setCollection({ countryIso: v ?? '' }); }}
+                />
+              </Field>
+              <Field label="Postal code *" problem={problem('c.postalCode', 'required', form.collection.postalCode)}>
+                <input
+                  className={`mono ${inputClass(problem('c.postalCode', 'required', form.collection.postalCode))}`}
+                  value={form.collection.postalCode ?? ''}
+                  onBlur={leave('c.postalCode')}
+                  onChange={(e) => setCollection({ postalCode: e.target.value })}
+                />
+              </Field>
+              <Field label="City *" problem={problem('c.city', 'required', form.collection.city)}>
+                <input
+                  className={inputClass(problem('c.city', 'required', form.collection.city))}
+                  value={form.collection.city ?? ''}
+                  onBlur={leave('c.city')}
+                  onChange={(e) => setCollection({ city: e.target.value })}
+                />
+              </Field>
+              <Field label="State or region">
+                <input className="input" value={form.collection.state ?? ''} onChange={(e) => setCollection({ state: e.target.value })} />
+              </Field>
+              <Field label="Address 1 *" problem={problem('c.line1', 'required', form.collection.line1)}>
+                <input
+                  className={inputClass(problem('c.line1', 'required', form.collection.line1))}
+                  value={form.collection.line1 ?? ''}
+                  onBlur={leave('c.line1')}
+                  onChange={(e) => setCollection({ line1: e.target.value })}
+                />
+              </Field>
+              <Field label="Address 2">
+                <input className="input" value={form.collection.line2 ?? ''} onChange={(e) => setCollection({ line2: e.target.value })} />
+              </Field>
+            </div>
+          )}
+        </div>
+      </Section>
+
+      <Section
         title="Package details"
         hint={form.packages.length > 1 ? `${form.packages.length} packages` : undefined}
         {...sectionProps('packages')}
@@ -308,14 +430,64 @@ export function ShipmentFormFields({ form, setForm, batteryTypes, products = [],
                       />
                     </div>
                   </Field>
-                  <Field label={`Declared value (${form.currency})`}>
-                    <input className="input mono" inputMode="decimal" value={p.declaredValue ?? ''} onChange={(e) => setPackage(i, { declaredValue: e.target.value })} />
+                  <Field
+                    label={`Declared value (${form.currency})${customs ? ' *' : ''}`}
+                    problem={customs ? problem(`p${i}.value`, 'positive', p.declaredValue) : null}
+                  >
+                    <input
+                      className={`mono ${inputClass(customs ? problem(`p${i}.value`, 'positive', p.declaredValue) : null)}`}
+                      inputMode="decimal"
+                      value={p.declaredValue ?? ''}
+                      onBlur={leave(`p${i}.value`)}
+                      onChange={(e) => setPackage(i, { declaredValue: e.target.value })}
+                    />
                   </Field>
                   <Field
                     label="Your reference"
                     hint="Optional. Your own label for this box — a pallet number, a job code. It is shown back to you and to our team; the carrier never sees it."
                   >
                     <input className="input mono" value={p.customerReference ?? ''} onChange={(e) => setPackage(i, { customerReference: e.target.value })} />
+                  </Field>
+                </div>
+
+                {/*
+                  The box as a customs line. Always offered, required only where a border is crossed —
+                  and said so, so nobody outside the EU is surprised by it at the submit.
+                */}
+                <div className="mt-3 grid grid-cols-3 gap-3 max-[700px]:grid-cols-1">
+                  <Field label="Quantity in this box" problem={problem(`p${i}.qty`, 'whole', p.quantity)}>
+                    <input
+                      className={`mono ${inputClass(problem(`p${i}.qty`, 'whole', p.quantity))}`}
+                      inputMode="numeric"
+                      value={p.quantity ?? ''}
+                      onBlur={leave(`p${i}.qty`)}
+                      onChange={(e) => setPackage(i, { quantity: e.target.value })}
+                    />
+                  </Field>
+                  <Field
+                    label={`Country of origin${customs ? ' *' : ''}`}
+                    hint="Where the goods were made. Needed by customs on a delivery outside the EU."
+                    problem={customs ? problem(`p${i}.origin`, 'required', p.countryOfOrigin) : null}
+                  >
+                    <CountrySelect
+                      value={p.countryOfOrigin || null}
+                      valueKind="code"
+                      source={countrySource}
+                      onChange={(v) => { setTouched((t) => ({ ...t, [`p${i}.origin`]: true })); setPackage(i, { countryOfOrigin: v ?? '' }); }}
+                    />
+                  </Field>
+                  <Field
+                    label={`HS code${customs ? ' *' : ''}`}
+                    hint="The goods' tariff number, 6 to 10 digits — for example 8516.79. Needed by customs on a delivery outside the EU."
+                    problem={problem(`p${i}.hs`, customs ? 'hsRequired' : 'hs', p.hsCode)}
+                  >
+                    <input
+                      className={`mono ${inputClass(problem(`p${i}.hs`, customs ? 'hsRequired' : 'hs', p.hsCode))}`}
+                      value={p.hsCode ?? ''}
+                      onBlur={leave(`p${i}.hs`)}
+                      onChange={(e) => setPackage(i, { hsCode: e.target.value })}
+                      placeholder="8516.79"
+                    />
                   </Field>
                 </div>
 

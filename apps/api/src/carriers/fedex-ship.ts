@@ -23,6 +23,8 @@ export interface ShipContact {
   personName: string | null;
   companyName?: string | null;
   phoneNumber?: string | null;
+  /** Where FedEx sends its own delivery messages, when we hold one. */
+  emailAddress?: string | null;
 }
 
 export interface ShipAddress {
@@ -66,11 +68,28 @@ export interface ShipParcel {
   widthCm?: number | null;
   heightCm?: number | null;
   declaredValue?: { amount: number; currency: string } | null;
+  /**
+   * Lithium batteries in this box, declared as FedEx's BATTERY special service.
+   *
+   * Only IATA Section II — the small consumer batteries that travel as ordinary parcels once
+   * declared. Anything larger is fully regulated dangerous goods with its own paperwork, which this
+   * platform does not produce; the caller refuses those before a request is built.
+   */
+  batteries?: { packing: 'CONTAINED_IN_EQUIPMENT' | 'PACKED_WITH_EQUIPMENT'; material: 'LITHIUM_ION' | 'LITHIUM_METAL' } | null;
 }
 
 export interface ShipRequestInput {
   accountNumber: string;
   shipper: ShipParty;
+  /**
+   * Where the goods physically leave from, when that is not the shipper's own address.
+   *
+   * A logistics customer's goods are sometimes collected from their door or their supplier's. We are
+   * still the shipper — the account FedEx bills, the name on the label's sender line — so the
+   * collection address goes in FedEx's separate `origin` block rather than replacing us. Null means
+   * the goods leave from the shipper's address.
+   */
+  origin?: ShipParty | null;
   recipient: ShipParty;
   serviceType: string;
   /** ISO date, `2026-09-09`. FedEx rejects a date in the past. */
@@ -99,6 +118,15 @@ export interface ShipRequestInput {
   commodities?: ShipCommodity[];
   /** Who produces the commercial invoice for an export. Only 'fedex' can be booked today. */
   invoice?: InvoiceSource | null;
+  /**
+   * Whose name the commercial invoice is issued in, where that is not the shipper.
+   *
+   * A logistics customer's goods are theirs and sold by them, so the invoice is in their name while
+   * we remain the shipper. FedEx's commercial invoice block has one field for this —
+   * `originatorName` — and no separate exporter party anywhere in its samples. What FedEx prints
+   * from it on a generated invoice is confirmed by reading one, not assumed.
+   */
+  invoiceIssuer?: string | null;
   goodsDescription?: string | null;
   /** PDF for laser stock, ZPLII for a thermal printer. */
   labelImageType?: 'PDF' | 'PNG' | 'ZPLII';
@@ -139,11 +167,15 @@ function baseGaps(input: Partial<ShipRequestInput>): string[] {
   if (!input.accountNumber) gaps.push('carrier account');
   if (!input.serviceType) gaps.push('service');
   if (!input.customerReference) gaps.push('order reference');
-  for (const [label, party] of [['ship-from', input.shipper], ['delivery', input.recipient]] as const) {
+  const parties: Array<readonly [string, ShipParty | null | undefined]> = [['ship-from', input.shipper], ['delivery', input.recipient]];
+  // A collection address is checked like the others once given: half of one is worse than none.
+  if (input.origin) parties.push(['collection', input.origin]);
+  for (const [label, party] of parties) {
     const a = party?.address;
     if (!a?.streetLines?.length || !a.city || !a.postalCode || !a.countryCode) gaps.push(`${label} address`);
     if (!party?.contact?.personName) gaps.push(`${label} contact name`);
   }
+  if (input.origin && !input.origin.contact?.phoneNumber) gaps.push('collection phone number');
   const parcels = input.parcels ?? [];
   if (parcels.length === 0) gaps.push('at least one parcel');
   else if (parcels.some((p) => !(p.weightKg > 0))) gaps.push('a weight for every parcel');
@@ -158,6 +190,7 @@ const party = (p: ShipParty) => ({
     personName: p.contact.personName,
     ...(p.contact.companyName ? { companyName: p.contact.companyName } : {}),
     ...(p.contact.phoneNumber ? { phoneNumber: p.contact.phoneNumber } : {}),
+    ...(p.contact.emailAddress ? { emailAddress: p.contact.emailAddress } : {}),
   },
   address: {
     streetLines: p.address.streetLines.filter(Boolean).slice(0, 3),
@@ -183,6 +216,7 @@ export function buildShipRequest(input: ShipRequestInput, opts: { customs: Custo
     accountNumber: { value: input.accountNumber },
     requestedShipment: {
       shipper: party(input.shipper),
+      ...(input.origin ? { origin: party(input.origin) } : {}),
       // An array in FedEx's schema even though a shipment has exactly one destination.
       recipients: [party(input.recipient)],
       shipDatestamp: input.shipDate,
@@ -217,6 +251,19 @@ export function buildShipRequest(input: ShipRequestInput, opts: { customs: Custo
           ...(l && w && h ? { dimensions: { length: l, width: w, height: h, units: 'CM' } } : {}),
           ...(p.declaredValue ? { declaredValue: { amount: p.declaredValue.amount, currency: p.declaredValue.currency } } : {}),
           ...(input.goodsDescription ? { itemDescriptionForClearance: input.goodsDescription } : {}),
+          // Shaped as FedEx's own samples (49 of them): the special service, and what the batteries are.
+          ...(p.batteries
+            ? {
+              packageSpecialServices: {
+                specialServiceTypes: ['BATTERY'],
+                batteryDetails: [{
+                  batteryPackingType: p.batteries.packing,
+                  batteryRegulatoryType: 'IATA_SECTION_II',
+                  batteryMaterialType: p.batteries.material,
+                }],
+              },
+            }
+            : {}),
         };
       }),
     },
@@ -242,7 +289,10 @@ export function buildShipRequest(input: ShipRequestInput, opts: { customs: Custo
     const commodities = input.commodities ?? [];
     const total = totalCustomsValue(commodities);
     body.requestedShipment.customsClearanceDetail = {
-      commercialInvoice: { shipmentPurpose: 'SOLD' },
+      commercialInvoice: {
+        shipmentPurpose: 'SOLD',
+        ...(input.invoiceIssuer?.trim() ? { originatorName: input.invoiceIssuer.trim().slice(0, 70) } : {}),
+      },
       /**
        * Who the border bills.
        *

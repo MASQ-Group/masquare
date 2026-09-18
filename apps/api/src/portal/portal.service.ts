@@ -6,6 +6,7 @@ import { LOGISTICS, hasType } from '../customers/customer-types';
 import { BATTERY_TYPES, formToInput, problemsWith, type ShipmentForm } from './../customer-shipments/shipment-form';
 import { trackingView } from '../carriers/tracking-view';
 import { buildTrackingUrl } from '../carriers/tracking-url';
+import { normaliseHsCode } from '../carriers/fedex-customs';
 
 export interface ProductInput {
   name?: string;
@@ -17,6 +18,8 @@ export interface ProductInput {
   currency?: string | null;
   dangerousGoods?: boolean | null;
   batteryType?: string | null;
+  hsCode?: string | null;
+  countryOfOrigin?: string | null;
   active?: boolean;
 }
 
@@ -64,7 +67,9 @@ export class PortalService {
   async countries() {
     return this.prisma.country.findMany({
       where: { deletedAt: null },
-      select: { id: true, isoCode: true, name: true },
+      // Whether each is in the EU, so the form can say before submitting which boxes need their
+      // customs line — the same rule the API applies on receipt.
+      select: { id: true, isoCode: true, name: true, euVatZone: true },
       orderBy: { name: 'asc' },
     });
   }
@@ -128,7 +133,7 @@ export class PortalService {
   /** File one. The form's rules are checked here as well as on the screen that drew it. */
   async file(customerId: string, userId: string, form: ShipmentForm) {
     await this.assertCanFile(customerId);
-    const problems = problemsWith(form);
+    const problems = problemsWith(form, { euCountries: await this.shipments.euCountries() });
     if (problems.length) throw new BadRequestException(problems.join(' '));
 
     const created = await this.shipments.file(customerId, formToInput(form), userId);
@@ -138,7 +143,7 @@ export class PortalService {
   /** Correct one we have not acted on yet, or answer a question and send it back. */
   async update(customerId: string, id: string, form: ShipmentForm, opts: { resubmit?: boolean } = {}) {
     await this.own(customerId, id);
-    const problems = problemsWith(form);
+    const problems = problemsWith(form, { euCountries: await this.shipments.euCountries() });
     if (problems.length) throw new BadRequestException(problems.join(' '));
 
     await this.shipments.customerAction(id, opts.resubmit ? 'resubmit' : 'edit', formToInput(form));
@@ -169,6 +174,7 @@ export class PortalService {
         lengthCm: true, widthCm: true, heightCm: true, weightKg: true,
         declaredValue: true, currency: true,
         dangerousGoods: true, batteryType: true, active: true,
+        hsCode: true, countryOfOrigin: true,
       },
       orderBy: [{ active: 'desc' }, { name: 'asc' }],
     });
@@ -190,6 +196,8 @@ export class PortalService {
       // The battery type belongs to the dangerous answer; keeping it after a No would carry a
       // packing instruction onto a product that no longer claims to need one.
       batteryType: input.dangerousGoods ? (input.batteryType ?? null) : null,
+      hsCode: normaliseHsCode(input.hsCode) ?? ((input.hsCode ?? '').trim() || null),
+      countryOfOrigin: (input.countryOfOrigin ?? '').trim().toUpperCase() || null,
       ...(input.active !== undefined ? { active: !!input.active } : {}),
     };
 
@@ -269,6 +277,21 @@ export class PortalService {
         phone: s.toPhone,
         email: s.toEmail,
       },
+      /** Where we collect it, when not from our warehouse. Null means the goods are with us. */
+      collection: s.fromLine1 || s.fromCity || s.fromPostalCode
+        ? {
+          companyName: s.fromCompany,
+          contactName: s.fromName,
+          phone: s.fromPhone,
+          email: s.fromEmail,
+          countryIso: s.fromCountryIso,
+          postalCode: s.fromPostalCode,
+          city: s.fromCity,
+          state: s.fromRegion,
+          line1: s.fromLine1,
+          line2: s.fromLine2,
+        }
+        : null,
       address: {
         countryIso: s.toCountryIso,
         postalCode: s.toPostalCode,
@@ -292,6 +315,9 @@ export class PortalService {
         dangerousGoods: p.dangerousGoods,
         batteryType: p.batteryType,
         priorityHandling: p.priorityHandling,
+        quantity: p.quantity,
+        hsCode: p.hsCode,
+        countryOfOrigin: p.countryOfOrigin,
       })),
       currency: s.goodsCurrency ?? 'EUR',
 

@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { portalApi, type PortalShipment } from '../lib/api';
 import { useConfirm } from '../components/ConfirmProvider';
-import { PORTAL_COUNTRIES, ShipmentFormFields, emptyForm, type FormState } from './ShipmentFormFields';
+import { PORTAL_COUNTRIES, ShipmentFormFields, emptyCollection, emptyForm, type FormState } from './ShipmentFormFields';
 import { toPayload } from './PortalNewShipmentPage';
 import { portalStatus } from './PortalShipmentsPage';
 import { TrackingPanel } from '../components/shipments/TrackingPanel';
@@ -154,6 +154,12 @@ export function PortalShipmentPage() {
                   .filter(Boolean).join(', ')}
               </dd>
               {s.deliveryInstructions && (<><dt className="text-n-500">Instructions</dt><dd className="text-n-800">{s.deliveryInstructions}</dd></>)}
+              <dt className="text-n-500">Collected from</dt>
+              <dd className="text-n-800">
+                {s.collection
+                  ? [s.collection.companyName || s.collection.contactName, s.collection.line1, s.collection.line2, s.collection.city, s.collection.postalCode, s.collection.countryIso].filter(Boolean).join(', ')
+                  : 'Already at the maSquare warehouse'}
+              </dd>
               {s.orderReference && (<><dt className="text-n-500">Order reference</dt><dd className="mono text-n-800">{s.orderReference}</dd></>)}
               {s.serialNumbers.length > 0 && (
                 <><dt className="text-n-500">Serial numbers</dt><dd className="mono text-n-800">{s.serialNumbers.join(', ')}</dd></>
@@ -179,7 +185,10 @@ export function PortalShipmentPage() {
                   <div className="mt-0.5 text-[12.5px] text-n-500">
                     {[
                       p.customerReference ? `Ref ${p.customerReference}` : null,
+                      Number(p.quantity) > 1 ? `${Number(p.quantity)} items` : null,
                       Number(p.declaredValue) > 0 ? `Declared ${money(Number(p.declaredValue), s.currency)}` : null,
+                      p.hsCode ? `HS ${p.hsCode}` : null,
+                      p.countryOfOrigin ? `Made in ${p.countryOfOrigin}` : null,
                       Number(p.insuranceAmount) > 0 ? `Insurance ${money(Number(p.insuranceAmount), s.currency)}` : null,
                     ].filter(Boolean).join(' · ')}
                   </div>
@@ -259,6 +268,12 @@ function formFrom(s: PortalShipment): FormState {
       dangerousGoods: p.dangerousGoods,
       batteryType: p.batteryType,
       priorityHandling: p.priorityHandling,
+      quantity: p.quantity != null ? String(p.quantity) : '1',
+      hsCode: p.hsCode ?? '',
+      countryOfOrigin: p.countryOfOrigin ?? '',
     })),
+    collection: s.collection
+      ? Object.fromEntries(Object.entries({ ...emptyCollection(), ...s.collection }).map(([k, v]) => [k, v ?? ''])) as FormState['collection']
+      : emptyCollection(),
   };
 }

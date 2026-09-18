@@ -5,6 +5,9 @@ import { Package, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Select } from '@masquare/ui';
 import { portalApi, type CustomerProduct, type CustomerProductInput } from '../lib/api';
 import { useConfirm } from '../components/ConfirmProvider';
+import { CountrySelect } from '../components/common/CountrySelect';
+import { PORTAL_COUNTRIES } from './ShipmentFormFields';
+import { fieldProblem } from './formRules';
 
 /**
  * A customer's own catalogue of goods.
@@ -138,12 +141,14 @@ interface Draft {
   currency: string;
   dangerousGoods: boolean;
   batteryType: string | null;
+  hsCode: string;
+  countryOfOrigin: string;
   active: boolean;
 }
 
 const emptyDraft = (currency: string): Draft => ({
   id: null, name: '', lengthCm: '', widthCm: '', heightCm: '', weightKg: '',
-  declaredValue: '', currency, dangerousGoods: false, batteryType: null, active: true,
+  declaredValue: '', currency, dangerousGoods: false, batteryType: null, hsCode: '', countryOfOrigin: '', active: true,
 });
 
 const draftOf = (p: CustomerProduct): Draft => ({
@@ -157,6 +162,8 @@ const draftOf = (p: CustomerProduct): Draft => ({
   currency: p.currency,
   dangerousGoods: p.dangerousGoods,
   batteryType: p.batteryType,
+  hsCode: p.hsCode ?? '',
+  countryOfOrigin: p.countryOfOrigin ?? '',
   active: p.active,
 });
 
@@ -175,6 +182,8 @@ const toInput = (d: Draft): CustomerProductInput => {
     currency: d.currency,
     dangerousGoods: d.dangerousGoods,
     batteryType: d.dangerousGoods ? d.batteryType : null,
+    hsCode: d.hsCode.trim() || null,
+    countryOfOrigin: d.countryOfOrigin.trim().toUpperCase() || null,
     active: d.active,
   };
 };
@@ -233,6 +242,25 @@ function ProductForm({ draft, setDraft, batteryTypes, saving, onSave, onCancel }
         </div>
       </div>
 
+      {/* Its customs answers, asked once here rather than on every shipment outside the EU. */}
+      <div className="mt-4 grid grid-cols-2 gap-3 max-[560px]:grid-cols-1">
+        <div>
+          <label className="label">Country of origin</label>
+          <CountrySelect value={draft.countryOfOrigin || null} valueKind="code" source={PORTAL_COUNTRIES} onChange={(v) => set({ countryOfOrigin: v ?? '' })} />
+        </div>
+        <div>
+          <label className="label">HS code</label>
+          <input
+            className={`input mono ${fieldProblem('hs', draft.hsCode) ? 'border-danger' : ''}`}
+            value={draft.hsCode}
+            onChange={(e) => set({ hsCode: e.target.value })}
+            placeholder="8516.79"
+          />
+          {fieldProblem('hs', draft.hsCode) && <p className="mt-1 text-[12px] text-danger">{fieldProblem('hs', draft.hsCode)}</p>}
+        </div>
+      </div>
+      <p className="mt-1.5 text-[12px] text-n-500">Needed by customs for deliveries outside the EU. Saved here, they fill in automatically when you choose this product.</p>
+
       {draft.dangerousGoods && (
         <div className="mt-4 max-w-[420px]">
           <label className="label">Battery type</label>
@@ -246,7 +274,7 @@ function ProductForm({ draft, setDraft, batteryTypes, saving, onSave, onCancel }
       )}
 
       <div className="mt-5 flex items-center gap-3">
-        <button type="button" className="btn btn-primary" disabled={saving || !draft.name.trim()} onClick={onSave}>
+        <button type="button" className="btn btn-primary" disabled={saving || !draft.name.trim() || !!fieldProblem('hs', draft.hsCode)} onClick={onSave}>
           {saving ? 'Saving…' : 'Save product'}
         </button>
         <button type="button" className="btn btn-ghost" onClick={onCancel}>Cancel</button>

@@ -232,3 +232,54 @@ describe('cancelling', () => {
     });
   });
 });
+
+describe('a logistics customer’s shipment', () => {
+  const collection = {
+    contact: { personName: 'Nikos', companyName: 'Supplier Ltd', phoneNumber: '22123456' },
+    address: { streetLines: ['5 Industrial Road'], city: 'Nicosia', postalCode: '2000', countryCode: 'CY' },
+  };
+
+  it('keeps us as the shipper and sends a collection address as the origin beside us', () => {
+    const body: any = buildShipRequest({ ...base, origin: collection }, { customs: 'export' });
+    expect(body.requestedShipment.shipper.contact.companyName).toBe('A.M.A. MASQUARE LTD');
+    expect(body.requestedShipment.origin.address.streetLines).toEqual(['5 Industrial Road']);
+  });
+
+  it('sends no origin when the goods leave from our own address', () => {
+    const body: any = buildShipRequest(base, { customs: 'export' });
+    expect(body.requestedShipment.origin).toBeUndefined();
+  });
+
+  it('refuses half a collection address, and one with no phone for the courier', () => {
+    const half = { ...collection, address: { ...collection.address, city: null } };
+    expect(missingForBooking({ ...base, origin: half })).toContain('collection address');
+    const silent = { ...collection, contact: { personName: 'Nikos' } };
+    expect(missingForBooking({ ...base, origin: silent })).toContain('collection phone number');
+  });
+
+  it('issues the commercial invoice in the customer’s name', () => {
+    const body: any = buildShipRequest({ ...base, invoiceIssuer: 'Acme Trading Ltd' }, { customs: 'export' });
+    expect(body.requestedShipment.customsClearanceDetail.commercialInvoice).toEqual({ shipmentPurpose: 'SOLD', originatorName: 'Acme Trading Ltd' });
+  });
+
+  it('declares Section II lithium batteries on the box that carries them, as FedEx’s samples do', () => {
+    const body: any = buildShipRequest(
+      { ...base, parcels: [{ weightKg: 1 }, { weightKg: 2, batteries: { packing: 'CONTAINED_IN_EQUIPMENT', material: 'LITHIUM_ION' } }] },
+      { customs: 'intra_eu' },
+    );
+    const [plain, battery] = body.requestedShipment.requestedPackageLineItems;
+    expect(plain.packageSpecialServices).toBeUndefined();
+    expect(battery.packageSpecialServices).toEqual({
+      specialServiceTypes: ['BATTERY'],
+      batteryDetails: [{ batteryPackingType: 'CONTAINED_IN_EQUIPMENT', batteryRegulatoryType: 'IATA_SECTION_II', batteryMaterialType: 'LITHIUM_ION' }],
+    });
+  });
+
+  it('passes a contact email through to FedEx', () => {
+    const body: any = buildShipRequest(
+      { ...base, recipient: { ...base.recipient, contact: { ...base.recipient.contact, emailAddress: 'a@b.co.uk' } } },
+      { customs: 'export' },
+    );
+    expect(body.requestedShipment.recipients[0].contact.emailAddress).toBe('a@b.co.uk');
+  });
+});

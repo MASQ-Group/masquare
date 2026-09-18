@@ -91,6 +91,11 @@ export function toPayload(form: FormState): PortalShipmentForm {
       weightKg: num(p.weightKg),
       declaredValue: num(p.declaredValue),
       batteryType: p.dangerousGoods ? p.batteryType : null,
+      quantity: num(p.quantity),
+      hsCode: String(p.hsCode ?? '').trim() || null,
+      countryOfOrigin: String(p.countryOfOrigin ?? '').trim().toUpperCase() || null,
     })),
+    // Sent even when empty: that is how a removed collection address is cleared on the shipment.
+    collection: form.collection,
   };
 }

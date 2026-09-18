@@ -1,4 +1,5 @@
 import type { FormState } from './ShipmentFormFields';
+import type { PortalCollection } from '../lib/api';
 import { phoneProblem } from './phoneNumber';
 
 /**
@@ -15,7 +16,30 @@ import { phoneProblem } from './phoneNumber';
  * PURE.
  */
 
-export type SectionKey = 'order' | 'customer' | 'address' | 'packages';
+export type SectionKey = 'order' | 'customer' | 'address' | 'collection' | 'packages';
+
+/** Mirrors normaliseHsCode in the API's fedex-customs.ts: 6 to 10 digits once dots and spaces go. */
+export const isHsCode = (v: string | null | undefined): boolean => /^\d{6,10}$/.test(String(v ?? '').replace(/[\s.\-]/g, ''));
+
+/** Mirrors hasCollection in the API's shipment-form.ts. Empty means the goods are at our warehouse. */
+export function hasCollection(c: PortalCollection | null | undefined): boolean {
+  if (!c) return false;
+  return [c.companyName, c.contactName, c.phone, c.email, c.countryIso, c.postalCode, c.city, c.state, c.line1, c.line2]
+    .some((v) => String(v ?? '').trim() !== '');
+}
+
+/**
+ * Mirrors customsNeeded in the API's shipment-form.ts: whether each box must carry its customs line.
+ * Outside the EU at either end; an empty EU list asks nothing, and the API checks again regardless.
+ */
+export function customsNeeded(form: Pick<FormState, 'address' | 'collection'>, eu: ReadonlySet<string>): boolean {
+  if (eu.size === 0) return false;
+  const to = String(form.address.countryIso ?? '').trim().toUpperCase();
+  const from = hasCollection(form.collection) ? String(form.collection.countryIso ?? '').trim().toUpperCase() : '';
+  if (!to) return false;
+  if (from && from === to) return false;
+  return !eu.has(to) || (!!from && !eu.has(from));
+}
 
 /** Mirrors the email check in the API's shipment-form.ts. */
 export const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -35,7 +59,7 @@ export const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
  * delivery country, which is what the API uses too.
  */
 export function fieldProblem(
-  kind: 'email' | 'phone' | 'required' | 'positive',
+  kind: 'email' | 'phone' | 'required' | 'positive' | 'whole' | 'hs' | 'hsRequired',
   value: string | number | null | undefined,
   hintIso?: string | null,
 ): string | null {
@@ -54,6 +78,18 @@ export function fieldProblem(
       if (!Number.isFinite(n)) return 'This should be a number.';
       return n > 0 ? null : 'This should be more than zero.';
     }
+    case 'whole': {
+      // Optional: an empty quantity is one box of one thing.
+      if (!text) return null;
+      const n = Number(text);
+      return Number.isInteger(n) && n >= 1 ? null : 'A whole number, 1 or more.';
+    }
+    case 'hs':
+      if (!text) return null;
+      return isHsCode(text) ? null : 'An HS code is 6 to 10 digits, like 8516.79.';
+    case 'hsRequired':
+      if (!text) return 'This is needed outside the EU.';
+      return isHsCode(text) ? null : 'An HS code is 6 to 10 digits, like 8516.79.';
   }
 }
 
@@ -69,9 +105,12 @@ const positive = (v: unknown) => {
  * Drives the colour on the section header: complete or not, and nothing in between. A section
  * nobody has touched yet reads as incomplete, which is honest — it is.
  */
-export function sectionComplete(form: FormState): Record<SectionKey, boolean> {
+export function sectionComplete(form: FormState, eu: ReadonlySet<string> = new Set()): Record<SectionKey, boolean> {
   const r = form.recipient;
   const a = form.address;
+  const c = form.collection;
+  const customs = customsNeeded(form, eu);
+  const whole = (v: unknown) => !String(v ?? '').trim() || (Number.isInteger(Number(v)) && Number(v) >= 1);
 
   return {
     // Nothing in the order section is required; it is complete by existing.
@@ -80,15 +119,23 @@ export function sectionComplete(form: FormState): Record<SectionKey, boolean> {
       && !fieldProblem('phone', r.phone ?? '', a.countryIso)
       && !fieldProblem('email', r.email ?? ''),
     address: filled(a.countryIso) && filled(a.postalCode) && filled(a.city) && filled(a.line1),
+    // Complete when the goods are with us, or when the collection address holds what a courier needs.
+    collection: !hasCollection(c) || (
+      filled(c.contactName) && !fieldProblem('phone', c.phone ?? '', c.countryIso)
+      && filled(c.countryIso) && filled(c.postalCode) && filled(c.city) && filled(c.line1)
+    ),
     packages:
       form.packages.length > 0
       && form.packages.every((p) =>
         positive(p.weightKg) && positive(p.lengthCm) && positive(p.widthCm) && positive(p.heightCm)
         && filled(p.goodsDescription)
         && (!p.dangerousGoods || filled(p.batteryType))
-        && (!p.insurance || positive(p.declaredValue))),
+        && (!p.insurance || positive(p.declaredValue))
+        && whole(p.quantity)
+        && (!filled(p.hsCode) || isHsCode(p.hsCode))
+        && (!customs || (positive(p.declaredValue) && isHsCode(p.hsCode) && filled(p.countryOfOrigin)))),
   };
 }
 
 /** Whether the whole form could be submitted. */
-export const formComplete = (form: FormState): boolean => Object.values(sectionComplete(form)).every(Boolean);
+export const formComplete = (form: FormState, eu?: ReadonlySet<string>): boolean => Object.values(sectionComplete(form, eu)).every(Boolean);
