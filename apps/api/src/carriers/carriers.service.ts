@@ -18,6 +18,7 @@ import {
   SHIP_CANCEL_PATH, SHIP_PATH, buildCancelRequest, buildShipRequest, missingForBooking,
   type ShipParty, type ShipRequestInput,
 } from './fedex-ship';
+import { parseShipReply } from './fedex-ship-parse';
 import {
   FEDEX_NAME_FRAGMENT, TRACK_HISTORY_DAYS, TRACK_PATH, buildTrackRequest, chunkTrackingNumbers,
   describeTrackFailure, dueForRefresh, isFedexService,
