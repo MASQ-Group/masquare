@@ -8,6 +8,7 @@ import type { ProgressSink } from '../jobs/jobs.service';
 import { syncDecision } from './sync-decision';
 import { deriveListingStatus } from './listing-status';
 import { zeroingVerdict } from './zeroing-guard';
+import { PUSH_MAX_ATTEMPTS, RECHECK_LIMIT, recheckCutoff } from './push-queue-recheck';
 import { planTransition } from './plan-transition';
 import { fullScopeIntegrationWhere } from '../common/amazon-scope';
 import { settlePushQueue, type PushResult } from './push-queue-settle';
@@ -857,8 +858,10 @@ export class ChannelListingsService implements OnApplicationBootstrap {
    * Without a ceiling a permanently rejected SKU is retried on every drain for ever, burning rate
    * limit that working products need. The row is KEPT rather than deleted, because a push we owe
    * and cannot make is exactly the thing somebody has to see.
+   *
+   * The number itself lives in push-queue-recheck.ts, beside the rule that decides when such a row
+   * is worth another look, so the limit and the reprieve cannot disagree about where the limit is.
    */
-  private static readonly PUSH_MAX_ATTEMPTS = 5;
 
   /**
    * Record that these products owe their channels a quantity, then drain shortly after.
@@ -915,14 +918,41 @@ export class ChannelListingsService implements OnApplicationBootstrap {
    * "is anything stuck?" becomes a SELECT rather than a question about production logs.
    */
   async drainPushQueue(): Promise<{ products: number; ok: number; failed: number; stuck: number }> {
-    const due = await this.prisma.channelPushQueue.findMany({
-      where: { attempts: { lt: ChannelListingsService.PUSH_MAX_ATTEMPTS } },
+    const owed = await this.prisma.channelPushQueue.findMany({
+      where: { attempts: { lt: PUSH_MAX_ATTEMPTS } },
       orderBy: { enqueuedAt: 'asc' },
       take: 500,
       select: { id: true, productId: true, attempts: true },
     });
+
+    /**
+     * Rows the queue had given up on, brought back for one look a day.
+     *
+     * The attempt limit was permanent: a row at it was never read again, so an error that had
+     * stopped being true stayed the last word for ever and nothing anywhere showed it. Seven rows
+     * sat like that for a week holding a refusal that a fix on 15 September had already made
+     * obsolete — and two genuine marketplace failures hid among them.
+     *
+     * The cadence and the cap are in push-queue-recheck.ts, with tests. Rarely, because a product
+     * that really is broken must not hammer a marketplace; and capped, because a thousand abandoned
+     * rows all coming back at once is its own incident.
+     */
+    const abandoned = await this.prisma.channelPushQueue.findMany({
+      where: {
+        attempts: { gte: PUSH_MAX_ATTEMPTS },
+        OR: [{ lastAttemptAt: null }, { lastAttemptAt: { lte: recheckCutoff() } }],
+      },
+      orderBy: { lastAttemptAt: 'asc' },
+      take: RECHECK_LIMIT,
+      select: { id: true, productId: true, attempts: true },
+    });
+    if (abandoned.length) {
+      this.logger.log(`Push queue: reconsidering ${abandoned.length} row(s) the attempt limit had abandoned.`);
+    }
+
+    const due = [...owed, ...abandoned];
     const stuck = await this.prisma.channelPushQueue.count({
-      where: { attempts: { gte: ChannelListingsService.PUSH_MAX_ATTEMPTS } },
+      where: { attempts: { gte: PUSH_MAX_ATTEMPTS } },
     });
     if (!due.length) return { products: 0, ok: 0, failed: 0, stuck };
 
@@ -988,7 +1018,17 @@ export class ChannelListingsService implements OnApplicationBootstrap {
   onApplicationBootstrap() {
     const t = setTimeout(() => {
       void this.prisma.channelPushQueue
-        .count({ where: { attempts: { lt: ChannelListingsService.PUSH_MAX_ATTEMPTS } } })
+        // Abandoned rows count too: a queue holding nothing else would otherwise never wake, and
+        // those are precisely the rows a deploy may have just made payable.
+        .count({
+          where: {
+            OR: [
+              { attempts: { lt: PUSH_MAX_ATTEMPTS } },
+              { lastAttemptAt: null },
+              { lastAttemptAt: { lte: recheckCutoff() } },
+            ],
+          },
+        })
         .then((n) => {
           if (!n) return undefined;
           this.logger.log(`Resuming ${n} channel push(es) owed from before the restart.`);
