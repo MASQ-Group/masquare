@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CarriersService } from '../carriers/carriers.service';
 import { ActivityService } from '../activity/activity.service';
+import { recipientsFor } from './alert-recipients';
 import { MailService } from '../mail/mail.service';
 import { formatReference } from '../customers/customer-reference';
 import { LOGISTICS, NOT_LOGISTICS, hasType } from '../customers/customer-types';
@@ -416,24 +417,41 @@ export class CustomerShipmentsService {
       { kind: 'customer_shipment_filed', title, body, link: '/shipments?tab=customer-pending', relatedType: 'customer_shipment', relatedId: shipmentId, dedupeKey: `customer_shipment:${shipmentId}` },
     );
 
-    const settings = await this.prisma.platformSettings.findFirst({ select: { logisticsAlertUserId: true } });
-    if (!settings?.logisticsAlertUserId) return;
-    const recipient = await this.prisma.user.findFirst({
-      // Staff only, checked here rather than trusted from the setting. A customer's person named in
-      // this field by mistake would otherwise be emailed every OTHER customer's shipments.
-      where: { id: settings.logisticsAlertUserId, deletedAt: null, status: 'active', customerId: null },
-      select: { email: true, fullName: true },
+    const settings = await this.prisma.platformSettings.findFirst({
+      select: { logisticsAlertUserId: true, logisticsAlertEmails: true },
     });
-    if (!recipient) return;
 
-    await this.mail.send({
-      to: recipient.email,
+    const named = settings?.logisticsAlertUserId
+      ? await this.prisma.user.findFirst({
+        // Staff only, checked here rather than trusted from the setting. A customer's person named
+        // in this field by mistake would otherwise be emailed every OTHER customer's shipments.
+        where: { id: settings.logisticsAlertUserId, deletedAt: null, status: 'active', customerId: null },
+        select: { email: true },
+      })
+      : null;
+
+    const recipients = recipientsFor(named?.email, settings?.logisticsAlertEmails ?? []);
+    if (recipients.length === 0) return;
+
+    const text = [`${title}.`, '', body, '', 'It is in the platform under Shipments → Customer shipments.'].join('\n');
+
+    /**
+     * One message each, rather than one message to everybody.
+     *
+     * Nobody on this list has agreed to have their address shown to the others — some of them are
+     * at the other company — and a single To: line would do exactly that. It also keeps the mail
+     * log readable: one row per delivery, so a bounce names the address that bounced.
+     *
+     * Settled rather than awaited in turn, so one bad address cannot stop the rest.
+     */
+    await Promise.allSettled(recipients.map((to) => this.mail.send({
+      to,
       subject: title,
-      text: [`${title}.`, '', body, '', 'It is in the platform under Shipments → Customer shipments.'].join('\n'),
+      text,
       kind: 'notification',
       relatedType: 'customer_shipment',
       relatedId: shipmentId,
-    });
+    })));
   }
 }
 

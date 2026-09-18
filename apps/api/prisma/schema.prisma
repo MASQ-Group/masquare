@@ -828,6 +828,14 @@ model PlatformSettings {
    */
   logisticsAlertUserId String? @map("logistics_alert_user_id") @db.Uuid
 
+  /// Anyone else who should get that email.
+  ///
+  /// Plain addresses rather than platform users, because the people who want this often have no
+  /// login: a shared operations mailbox, a forwarding alias, a colleague at the other company. They
+  /// cannot be checked against the staff table the way the named user is, so they are validated
+  /// hard on the way in — see alert-recipients.ts.
+  logisticsAlertEmails String[] @map("logistics_alert_emails")
+
   repricingDecisionRetentionDays Int @default(90) @map("repricing_decision_retention_days")
   repricingFeeRetentionDays      Int @default(30) @map("repricing_fee_retention_days")
 

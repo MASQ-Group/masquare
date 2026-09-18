@@ -446,6 +446,8 @@ export interface PlatformSettings {
   id: string;
   /** Who is emailed when a logistics customer files a shipment. */
   logisticsAlertUserId?: string | null;
+  /** Anyone else emailed about it — plain addresses, for people with no platform login. */
+  logisticsAlertEmails?: string[];
   measurementSystem: 'metric' | 'imperial';
   dateFormat: 'ddmmyyyy' | 'mmddyyyy' | 'yyyymmdd';
   salesTxStandardColumns: string[] | null;

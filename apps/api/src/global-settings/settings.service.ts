@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, ServiceUnavailableException } 
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { UpdateSettingsDto } from './dto/settings.dto';
+import { reviewRecipients } from '../customer-shipments/alert-recipients';
 
 @Injectable()
 export class SettingsService {
@@ -65,6 +66,16 @@ export class SettingsService {
   }
 
   async update(dto: UpdateSettingsDto) {
+    /**
+     * The extra alert addresses, checked before anything is stored.
+     *
+     * Refused rather than quietly tidied: a shipment email carries a customer's recipient, their
+     * address and what is in their boxes, and an address half-accepted here is how that reaches
+     * somebody nobody meant. The complaint names the entry that was wrong.
+     */
+    const reviewed = dto.logisticsAlertEmails !== undefined ? reviewRecipients(dto.logisticsAlertEmails) : null;
+    if (reviewed?.problems.length) throw new BadRequestException(reviewed.problems.join(' '));
+
     const current = await this.prisma.platformSettings.findFirst() ?? (await this.prisma.platformSettings.create({ data: {} }));
     const row = await this.prisma.platformSettings.update({
       where: { id: current.id },
@@ -76,6 +87,7 @@ export class SettingsService {
         ...(dto.monoFont !== undefined ? { monoFont: dto.monoFont } : {}),
         ...(dto.deductStockOnSale !== undefined ? { deductStockOnSale: dto.deductStockOnSale } : {}),
         ...(dto.logisticsAlertUserId !== undefined ? { logisticsAlertUserId: dto.logisticsAlertUserId } : {}),
+        ...(dto.logisticsAlertEmails !== undefined ? { logisticsAlertEmails: reviewed!.addresses } : {}),
         ...(dto.applyChannelResolutions !== undefined ? { applyChannelResolutions: dto.applyChannelResolutions } : {}),
         ...(dto.autoAdjustAvailabilityOnSale !== undefined ? { autoAdjustAvailabilityOnSale: dto.autoAdjustAvailabilityOnSale } : {}),
         ...(dto.launchMarginPct !== undefined ? { launchMarginPct: dto.launchMarginPct } : {}),

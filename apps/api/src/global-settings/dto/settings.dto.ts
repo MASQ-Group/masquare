@@ -40,4 +40,13 @@ export class UpdateSettingsDto {
   @IsOptional() @IsNumber() maxZeroingPushesPerRun?: number;
   /** Who is emailed when a customer files a shipment. Null clears it. */
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() logisticsAlertUserId?: string | null;
+  /**
+   * Anyone else to email about a filed shipment.
+   *
+   * Only shaped here — that each entry is a string. What counts as an address, and what would be a
+   * second header smuggled into one, is decided by alert-recipients.ts, which the service calls so
+   * the answer comes back as words somebody can act on rather than "logisticsAlertEmails.0 must be
+   * an email".
+   */
+  @IsOptional() @IsArray() @IsString({ each: true }) logisticsAlertEmails?: string[];
 }
