@@ -2741,6 +2741,14 @@ export interface PortalShipment {
     lastScanLocation: string | null;
     exception: string | null;
   } | null;
+  /**
+   * The whole journey, on the detail screen only.
+   *
+   * The same shape our own tracking panel reads, built by the same server-side rule, so a customer
+   * sees the journey we see. Our diagnostics — the raw carrier reply, the last error, the failure
+   * count — are stripped server-side rather than hidden here.
+   */
+  trackingDetail?: ShipmentTrackingDetail | null;
   /** What they pay. What it cost us is never sent to the portal. */
   charge: { amount: number; currency: string } | null;
   archivedAt: string | null;
