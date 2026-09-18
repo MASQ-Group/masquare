@@ -31,6 +31,24 @@ export function TestBookingModal({ account, onClose }: Props) {
   const [dutiesPaidBy, setDutiesPaidBy] = useState<'sender' | 'recipient'>('recipient');
   const [labelImageType, setLabelImageType] = useState<'PDF' | 'ZPLII'>('PDF');
 
+  /**
+   * One customs item, because the default lane leaves the customs area.
+   *
+   * The first test booking had none and FedEx refused it: TOTALCUSTOMSVALUE.REQUIRED. Pre-filled with
+   * a plausible item so a test is one click, and editable so the rules can be tried — the item's
+   * weight follows the parcel's until it is changed by hand, because a shipment must weigh what its
+   * items weigh and a test that fails on that by default proves nothing.
+   */
+  const [itemDescription, setItemDescription] = useState('Handheld massager');
+  const [itemQuantity, setItemQuantity] = useState('1');
+  const [itemValue, setItemValue] = useState('40');
+  const [itemCurrency, setItemCurrency] = useState('USD');
+  const [itemWeightKg, setItemWeightKg] = useState<string | null>(null);
+  const [itemOrigin, setItemOrigin] = useState('CN');
+  const [itemHsCode, setItemHsCode] = useState('9019.10');
+  const [invoice, setInvoice] = useState<'fedex' | 'platform'>('fedex');
+  const itemWeight = itemWeightKg ?? weightKg;
+
   const today = new Date();
   const [shipDate, setShipDate] = useState(new Date(today.getTime() + 86_400_000).toISOString().slice(0, 10));
 
@@ -51,6 +69,16 @@ export function TestBookingModal({ account, onClose }: Props) {
         parcels: [{ weightKg: Number(weightKg) || 1 }],
         dutiesPaidBy,
         labelImageType,
+        items: [{
+          description: itemDescription.trim(),
+          quantity: Number(itemQuantity) || 0,
+          value: Number(itemValue) || 0,
+          currency: itemCurrency.trim().toUpperCase(),
+          weightKg: Number(itemWeight) || 0,
+          countryOfOrigin: itemOrigin.trim().toUpperCase() || null,
+          hsCode: itemHsCode.trim() || null,
+        }],
+        invoice,
       }),
     onSuccess: (r) => {
       if (r.ok) toast.success('Sandbox booking made — the reply is below');
@@ -130,6 +158,61 @@ export function TestBookingModal({ account, onClose }: Props) {
                 { value: 'sender', label: 'Us — duty paid (DDP)' },
               ]}
             />
+          </div>
+
+          {/*
+            * The customs item and its invoice — what a shipment leaving the EU must carry.
+            *
+            * Six facts per item, the shipment weighing what the items weigh, and an invoice for the
+            * same value. Only sent when the destination is outside the customs area; inside it FedEx
+            * wants a description and nothing more.
+            */}
+          <div className="mt-4 border-t border-n-100 pt-3">
+            <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-n-500">Item for customs</div>
+            <div className="grid grid-cols-4 gap-3">
+              <div className="col-span-2">
+                <label className="label">Description</label>
+                <input className="input" value={itemDescription} onChange={(e) => setItemDescription(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Quantity</label>
+                <input className="input mono" inputMode="numeric" value={itemQuantity} onChange={(e) => setItemQuantity(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Weight (kg)</label>
+                <input className="input mono" inputMode="decimal" value={itemWeight} onChange={(e) => setItemWeightKg(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Value (line total)</label>
+                <input className="input mono" inputMode="decimal" value={itemValue} onChange={(e) => setItemValue(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Currency</label>
+                <input className="input mono uppercase" maxLength={3} value={itemCurrency} onChange={(e) => setItemCurrency(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Country of origin</label>
+                <input className="input mono uppercase" maxLength={2} value={itemOrigin} onChange={(e) => setItemOrigin(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">HS code</label>
+                <input className="input mono" value={itemHsCode} onChange={(e) => setItemHsCode(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="mt-3 w-1/2 pr-1.5">
+              <label className="label">Commercial invoice</label>
+              {/* The platform's own invoice is a process still to be defined. Offered, and refused by
+                  the API by name if chosen, so the choice exists before the route behind it does. */}
+              <Select
+                value={invoice}
+                onChange={(v) => setInvoice(v as 'fedex' | 'platform')}
+                options={[
+                  { value: 'fedex', label: 'FedEx generates it from the items' },
+                  { value: 'platform', label: 'Platform generates it — not set up yet' },
+                ]}
+              />
+            </div>
           </div>
 
           {result && (
