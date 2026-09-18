@@ -32,6 +32,8 @@ export function GeneralTab() {
   const [channelPriceWrites, setChannelPriceWrites] = useState(false);
   // Default TRUE so a failed load never reads as "pushes are off" and quietly stops outbound writes.
   const [channelQuantityPushEnabled, setChannelQuantityPushEnabled] = useState(true);
+  /** How much of the catalogue one automatic push may empty. Products, not listings. */
+  const [maxZeroingPushesPerRun, setMaxZeroingPushesPerRun] = useState('25');
   const [channelPricePushEnabled, setChannelPricePushEnabled] = useState(true);
 
   useEffect(() => {
@@ -47,6 +49,7 @@ export function GeneralTab() {
       setListingLiveWrites(data.listingLiveWrites ?? false);
       setChannelPriceWrites(data.channelPriceWrites ?? false);
       setChannelQuantityPushEnabled(data.channelQuantityPushEnabled ?? true);
+      setMaxZeroingPushesPerRun(String(data.maxZeroingPushesPerRun ?? 25));
       setChannelPricePushEnabled(data.channelPricePushEnabled ?? true);
     }
   }, [data]);
@@ -56,7 +59,7 @@ export function GeneralTab() {
   const previewFonts = (body: string, mono: string) => { setBodyFont(body); setMonoFont(mono); applyFonts(body, mono); };
 
   const save = useMutation({
-    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions, autoAdjustAvailabilityOnSale, launchMarginPct: Number(launchMarginPct) || 0, listingLiveWrites, channelPriceWrites, channelQuantityPushEnabled, channelPricePushEnabled }),
+    mutationFn: () => settingsApi.update({ measurementSystem, dateFormat, bodyFont, monoFont, deductStockOnSale, applyChannelResolutions, autoAdjustAvailabilityOnSale, launchMarginPct: Number(launchMarginPct) || 0, listingLiveWrites, channelPriceWrites, channelQuantityPushEnabled, channelPricePushEnabled, maxZeroingPushesPerRun: Number(maxZeroingPushesPerRun) || 0 }),
     onSuccess: () => { toast.success('Settings saved'); qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Save failed'),
   });
@@ -214,6 +217,32 @@ export function GeneralTab() {
                 until the catalogue is counted in there is little for a push to say.</span>
             </p>
           )}
+
+          {/*
+            The blast-radius ceiling. It had no control at all, while the refusal it produces told
+            people to raise it "in Settings" — a message pointing at a door that was not there.
+          */}
+          <div className="mt-4 border-t border-n-100 pt-4">
+            <label className="block text-[13.5px] font-semibold text-n-800">
+              Refuse a push that would empty more than
+            </label>
+            <div className="mt-1.5 flex items-center gap-2">
+              <input
+                className="input mono w-24"
+                inputMode="numeric"
+                disabled={readOnly}
+                value={maxZeroingPushesPerRun}
+                onChange={(e) => setMaxZeroingPushesPerRun(e.target.value.replace(/[^0-9]/g, ''))}
+              />
+              <span className="text-[13px] text-n-600">products at once</span>
+            </div>
+            <p className="mt-1.5 text-[12.5px] text-n-500">
+              A run that would take this many products from a real quantity down to zero is refused whole, and
+              nothing is sent. Counted in products rather than listings: one product that sells on thirty
+              marketplaces empties thirty listings and is not an incident. Zero means never empty anything
+              automatically.
+            </p>
+          </div>
         </div>
 
         <div className="border-t border-n-100 pt-4">
