@@ -13,10 +13,15 @@ import { DIAL_CODES, dialCodeFor, joinPhone, phoneCountry, splitPhone } from './
  * chosen from a list and the number typed beside it, rather than somebody being left to remember
  * whether we want 00357, +357 or neither.
  *
- * The chosen country is held here rather than read back out of the stored value, because an empty
- * number has no prefix to read: the first build wrote the choice into the value, the value refused
- * to hold a lone prefix — rightly, a prefix on its own is not a phone number — and so picking a
- * country before typing appeared to do nothing at all.
+ * The country AND the digits are both held here, and only joined on the way out. The first build
+ * kept neither: it wrote each keystroke into the shared value and read the box back out of it, and
+ * that round trip cost two bugs. Choosing a country with the number still empty did nothing, since
+ * a lone prefix is not a phone number and the value would not hold one. And every space typed
+ * vanished as it was typed, because reading the number back out trims it — "020 7946 0000" could
+ * only be entered as "02079460000".
+ *
+ * A field that fights the person typing into it is worse than no field, so the text they typed is
+ * now simply the text in the box, kept verbatim until they leave it.
  */
 export function PhoneField({ value, onChange, addressCountryIso, invalid }: {
   value: string | null | undefined;
@@ -31,7 +36,25 @@ export function PhoneField({ value, onChange, addressCountryIso, invalid }: {
   const [picked, setPicked] = useState<string | null>(null);
   const localRef = useRef<HTMLInputElement>(null);
 
-  const { dial, local } = splitPhone(value);
+  const fromValue = splitPhone(value);
+
+  /**
+   * The digits, exactly as typed.
+   *
+   * Held here rather than derived from the stored value on every keystroke — that is what ate the
+   * spaces. It re-syncs when the value changes underneath us (a different shipment loaded, a form
+   * reset), which is the only time the outside has something to say about what is in the box.
+   */
+  const [typed, setTyped] = useState(fromValue.local);
+  const [syncedFrom, setSyncedFrom] = useState(value ?? '');
+  if ((value ?? '') !== syncedFrom) {
+    // Rendering-phase sync, the documented alternative to an effect that would render once wrong.
+    setSyncedFrom(value ?? '');
+    setTyped(fromValue.local);
+  }
+
+  const { dial } = fromValue;
+  const local = typed;
 
   /**
    * Which country the field is showing.
@@ -64,8 +87,15 @@ export function PhoneField({ value, onChange, addressCountryIso, invalid }: {
     // Remembered here whether or not it can be written into the value, so choosing a country with
     // the number still empty sticks.
     setPicked(chosenIso);
-    onChange(joinPhone(code, local));
+    setSyncedFrom(joinPhone(code, typed));
+    onChange(joinPhone(code, typed));
     localRef.current?.focus();
+  };
+
+  const typeDigits = (text: string) => {
+    setTyped(text);
+    setSyncedFrom(joinPhone(effective, text));
+    onChange(joinPhone(effective, text));
   };
 
   return (
@@ -87,7 +117,7 @@ export function PhoneField({ value, onChange, addressCountryIso, invalid }: {
           inputMode="tel"
           value={local}
           placeholder="99 123456"
-          onChange={(e) => onChange(joinPhone(effective, e.target.value))}
+          onChange={(e) => typeDigits(e.target.value)}
         />
       </div>
 
