@@ -2830,6 +2830,8 @@ export interface Customer {
   /** Logistics: two letters. Every shipment they file is numbered from it. Null for anybody else. */
   referencePrefix: string | null;
   referenceSeq: number;
+  /** Which year that counter belongs to. The number restarts each January. */
+  referenceYear: number | null;
   /** Logistics: what their next shipment would be called. */
   nextReference: string | null;
   companyId: string | null;
@@ -2841,7 +2843,7 @@ export interface Customer {
   updatedAt: string;
 }
 
-export type CustomerPatch = Partial<Omit<Customer, 'id' | 'company' | 'contactPersons' | 'nextReference' | 'referenceSeq' | 'createdAt' | 'updatedAt'>>;
+export type CustomerPatch = Partial<Omit<Customer, 'id' | 'company' | 'contactPersons' | 'nextReference' | 'referenceSeq' | 'referenceYear' | 'createdAt' | 'updatedAt'>>;
 
 export interface CustomerPortalUser {
   id: string;
@@ -2870,6 +2872,8 @@ export const customersApi = {
   updateContact: (id: string, contactId: string, body: Partial<CustomerContact>) =>
     api.patch<Customer>(`/customers/${id}/contacts/${contactId}`, body).then((r) => r.data),
   removeContact: (id: string, contactId: string) => api.delete<Customer>(`/customers/${id}/contacts/${contactId}`).then((r) => r.data),
+  /** Start their shipment numbering again from one. References already issued are untouched. */
+  resetNumbering: (id: string) => api.post<Customer>(`/customers/${id}/reset-numbering`).then((r) => r.data),
 
   // Their people, who sign in to the portal.
   users: (id: string) => api.get<CustomerPortalUser[]>(`/customers/${id}/users`).then((r) => r.data),

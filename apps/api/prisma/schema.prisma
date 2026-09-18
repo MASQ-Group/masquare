@@ -4139,6 +4139,17 @@ model Customer {
    * Incremented inside the transaction that creates the shipment.
    */
   referenceSeq Int @default(0) @map("reference_seq")
+  /**
+   * Logistics: which year that number belongs to.
+   *
+   * The count restarts each January, so the counter alone cannot say whether 3 means the third of
+   * this year or the third of one four years ago. Allocating compares this against the year the
+   * shipment is being filed in and either carries on or starts again — in one statement, so the
+   * restart is as safe against two simultaneous filings as the increment is.
+   *
+   * Null for a customer who has never filed one, and after their numbering is reset.
+   */
+  referenceYear Int? @map("reference_year")
 
   /// Which of our companies serves them, and bills them.
   companyId String? @map("company_id") @db.Uuid

@@ -18,6 +18,12 @@ import { describe, expect, it } from 'vitest';
  * It reads the call's own arguments, following a `where` built in a variable just above. An earlier
  * version scanned a window of nearby lines and was worthless: a deliberately unfiltered query added
  * for the purpose passed, because the method underneath it happened to mention deletedAt.
+ *
+ * One query is legitimately allowed to see deleted rows, and says so in a comment above itself. It
+ * asks whether a reference string is free, and the unique index the database enforces counts
+ * deleted rows — so a check that skipped them would hand back a reference Postgres refuses a moment
+ * later. The exemption is written at the call site rather than listed here, because a list of
+ * blessed line numbers in a test file is a thing nobody maintains.
  */
 
 const SRC = join(__dirname, '..');
@@ -30,6 +36,9 @@ function sourceFiles(dir: string): string[] {
     return entry.endsWith('.ts') && !entry.endsWith('.spec.ts') ? [path] : [];
   });
 }
+
+/** What a query writes above itself to say that seeing deleted rows is the point. */
+const DELIBERATE = 'Deleted rows included on purpose';
 
 /** The text between `open` and its matching close, starting at the opening bracket. */
 function balanced(text: string, start: number, open: string, close: string): string {
@@ -68,14 +77,17 @@ function filtersDeleted(file: string, callArgs: string): boolean {
 describe('soft-deleted customer shipments stay hidden', () => {
   const callSites = sourceFiles(SRC).flatMap((path) => {
     const file = readFileSync(path, 'utf8');
-    const found: { path: string; line: number; args: string; file: string }[] = [];
+    const found: { path: string; line: number; args: string; file: string; exempt: boolean }[] = [];
     for (const match of file.matchAll(READS)) {
       const parenAt = match.index! + match[0].length - 1;
+      const before = file.slice(0, match.index!).split('\n');
       found.push({
         path,
-        line: file.slice(0, match.index!).split('\n').length,
+        line: before.length,
         args: balanced(file, parenAt, '(', ')'),
         file,
+        // The declaration has to be right above the call, in its own comment block.
+        exempt: before.slice(-16).join('\n').includes(DELIBERATE),
       });
     }
     return found;
@@ -89,10 +101,17 @@ describe('soft-deleted customer shipments stay hidden', () => {
 
   it('filters deletedAt at every one of them', () => {
     const unguarded = callSites
-      .filter(({ file, args }) => !filtersDeleted(file, args))
+      .filter(({ file, args, exempt }) => !exempt && !filtersDeleted(file, args))
       .map(({ path, line }) => `${path.replace(SRC, 'src')}:${line}`);
 
     expect(unguarded).toEqual([]);
+  });
+
+  it('has exactly one query that deliberately sees deleted rows', () => {
+    // Stated as a number so that a second exemption has to be a deliberate edit to this test, read
+    // by whoever is reviewing it, rather than a comment pasted from somewhere else.
+    const exempt = callSites.filter((c) => c.exempt).map(({ path, line }) => `${path.replace(SRC, 'src')}:${line}`);
+    expect(exempt).toHaveLength(1);
   });
 
   it('would notice a query that did not filter', () => {

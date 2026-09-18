@@ -1,8 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { formatReference, normalisePrefix } from './customer-reference';
-import { CUSTOMER_TYPES, LOGISTICS, missingForTypes, normaliseTypes } from './customer-types';
+import { formatReference, normalisePrefix, periodOf } from './customer-reference';
+import { CUSTOMER_TYPES, LOGISTICS, NOT_LOGISTICS, hasType, missingForTypes, normaliseTypes } from './customer-types';
 
 /**
  * The companies we provide services to.
@@ -198,9 +198,42 @@ export class CustomersService {
 
   // ── internals ────────────────────────────────────────────────────────────────────────────────
 
-  /** A customer as the screens read it. A next reference only means something for logistics. */
-  private shape<T extends { referencePrefix: string | null; referenceSeq: number }>(c: T) {
-    return { ...c, nextReference: c.referencePrefix ? formatReference(c.referencePrefix, c.referenceSeq + 1) : null };
+  /**
+   * A customer as the screens read it. A next reference only means something for logistics.
+   *
+   * What the next one WOULD be, worked out the same way filing works it out: carry on if the
+   * counter already belongs to this year, otherwise start at one. A screen that showed 0004 in
+   * January when filing would produce 0001 would be worse than showing nothing.
+   */
+  private shape<T extends { referencePrefix: string | null; referenceSeq: number; referenceYear: number | null }>(c: T) {
+    if (!c.referencePrefix) return { ...c, nextReference: null };
+    const period = periodOf();
+    const next = c.referenceYear === period.year ? c.referenceSeq + 1 : 1;
+    return { ...c, nextReference: formatReference(c.referencePrefix, period, next) };
+  }
+
+  /**
+   * Start this customer's shipment numbering again from one.
+   *
+   * For the shipments that were never real — a run of tests before a customer went live — where
+   * leaving the counter where they left it would have the customer's first genuine shipment called
+   * the fourth. Clearing the year rather than zeroing the counter, because the next filing then
+   * takes the year it actually happens in.
+   *
+   * References already issued are untouched. They are identifiers that may be on an email or a
+   * label, and rewriting one silently makes the old one point at nothing. If the old shipments are
+   * unwanted, delete them — that is a separate decision and has its own button.
+   */
+  async resetNumbering(id: string) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, referencePrefix: true, types: true },
+    });
+    if (!customer) throw new NotFoundException('Customer not found');
+    if (!hasType(customer, LOGISTICS) || !customer.referencePrefix) throw new ConflictException(NOT_LOGISTICS);
+
+    await this.prisma.customer.update({ where: { id }, data: { referenceSeq: 0, referenceYear: null } });
+    return this.get(id);
   }
 
   /**

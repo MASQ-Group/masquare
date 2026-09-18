@@ -6,7 +6,7 @@ import { CarriersService } from '../carriers/carriers.service';
 import { ActivityService } from '../activity/activity.service';
 import { recipientsFor } from './alert-recipients';
 import { MailService } from '../mail/mail.service';
-import { formatReference } from '../customers/customer-reference';
+import { formatReference, periodOf } from '../customers/customer-reference';
 import { LOGISTICS, NOT_LOGISTICS, hasType } from '../customers/customer-types';
 import {
   missingForFulfilment, planCustomerAction, planStaffAction, type CustomerAction, type ShipmentStatus, type StaffAction,
@@ -18,9 +18,9 @@ import {
  * The rules about who may do what live in customer-shipment-state.ts, tested; this is the part that
  * touches the database, and it asks that module before every change rather than restating any of it.
  *
- * Two things happen here that happen nowhere else. A reference is allocated by incrementing the
- * customer's counter INSIDE the transaction that writes the shipment, because counting existing
- * shipments cannot be made safe against two people filing at the same moment. And filing raises the
+ * Two things happen here that happen nowhere else. A reference is allocated from the customer's own
+ * counter INSIDE the transaction that writes the shipment, because counting existing shipments
+ * cannot be made safe against two people filing at the same moment. And filing raises the
  * notification and the email — the first caller either of those has ever had.
  */
 
@@ -114,25 +114,21 @@ export class CustomerShipmentsService {
     if (parcels.length === 0) throw new BadRequestException('A shipment needs at least one parcel with a weight.');
 
     const created = await this.prisma.$transaction(async (tx) => {
-      /**
-       * The reference, allocated by incrementing the customer's own counter.
-       *
-       * `increment` returns the new value from the database itself, so two people filing at the same
-       * instant get two different numbers — which counting rows could never guarantee.
-       */
-      const customer = await tx.customer.update({
+      const customer = await tx.customer.findUnique({
         where: { id: customerId },
-        data: { referenceSeq: { increment: 1 } },
-        select: { id: true, name: true, referencePrefix: true, referenceSeq: true, active: true, deletedAt: true, types: true },
+        select: { id: true, name: true, referencePrefix: true, active: true, deletedAt: true, types: true },
       });
-      // Refusing throws, which rolls the increment back with everything else in the transaction.
-      if (customer.deletedAt || !customer.active) throw new ConflictException('That customer is not active.');
+      // Refusing throws, which rolls the whole transaction back.
+      if (!customer || customer.deletedAt || !customer.active) throw new ConflictException('That customer is not active.');
       if (!hasType(customer, LOGISTICS) || !customer.referencePrefix) throw new ConflictException(NOT_LOGISTICS);
+
+      // Their next number, and the year and month it is stamped with. See allocateReference below.
+      const reference = await allocateReference(tx, customerId, customer.referencePrefix);
 
       return tx.customerShipment.create({
         data: {
           customerId,
-          reference: formatReference(customer.referencePrefix, customer.referenceSeq),
+          reference,
           customerReference: text(input.customerReference),
           serialNumbers: (input.serialNumbers ?? []).map((v) => v.trim()).filter(Boolean),
           deliveryInstructions: text(input.deliveryInstructions),
@@ -509,4 +505,61 @@ function addressFields(side: 'from' | 'to', a?: AddressInput) {
     [key('Phone')]: text(a.phone),
     [key('Email')]: text(a.email),
   };
+}
+
+
+/**
+ * Take the next reference for this customer.
+ *
+ * The counter lives on the customer and restarts each January, so taking a number means two things
+ * at once: carry on if we are still in the year the counter belongs to, start again at one if we
+ * are not. Both happen in a single UPDATE, because doing them as a read and then a write would let
+ * two people filing on New Year's morning both read "last year" and both start at one.
+ *
+ * `increment` could not express the restart, which is why this is raw SQL rather than Prisma's own
+ * update. The returned value is the number the database actually settled on, not one we hoped for.
+ *
+ * The loop exists for one case: numbering reset while shipments from that year are still on file.
+ * The reference column is unique platform-wide, so a collision would otherwise surface as a Prisma
+ * constraint error at the end of the transaction — a filing lost to something the person filing
+ * could neither see nor fix. Stepping over a number that is already taken costs one query and
+ * leaves a gap, and a gap in a numbering sequence is a far smaller problem than a refused shipment.
+ */
+export async function allocateReference(
+  tx: Prisma.TransactionClient,
+  customerId: string,
+  prefix: string,
+): Promise<string> {
+  const period = periodOf();
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const rows = await tx.$queryRaw<{ reference_seq: number }[]>`
+      UPDATE "customer"
+      SET "reference_seq" = CASE WHEN "reference_year" = ${period.year} THEN "reference_seq" + 1 ELSE 1 END,
+          "reference_year" = ${period.year}
+      WHERE "id" = ${customerId}::uuid
+      RETURNING "reference_seq"
+    `;
+    const sequence = rows[0]?.reference_seq;
+    if (sequence == null) throw new ConflictException('That customer is not active.');
+
+    const reference = formatReference(prefix, period, sequence);
+
+    /**
+     * Deleted rows included on purpose — the only query on this table for which that is right.
+     *
+     * Everywhere else, a deleted shipment should not be seen. Here the question is not "is there a
+     * shipment" but "is this string free", and the unique index the database enforces counts
+     * deleted rows too. Skipping them would produce a reference that passes this check and is
+     * refused by Postgres a moment later. A reference that has named a shipment never names another
+     * one, whatever became of the first.
+     */
+    const taken = await tx.customerShipment.findUnique({ where: { reference }, select: { id: true } });
+    if (!taken) return reference;
+  }
+
+  // Fifty taken in a row is not a collision, it is a prefix somebody has reused. Say so plainly.
+  throw new ConflictException(
+    'Could not allocate a reference for this shipment. The customer’s numbering appears to overlap shipments they already have.',
+  );
 }
