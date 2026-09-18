@@ -59,6 +59,7 @@ export interface RoleProbe {
 }
 import type { MappedOrder } from './mappings/types';
 import { isZeroDecimal, priceAmountFor } from '../common/currency-precision';
+import { buildLooseSkuIndex, looseOrderOwner, type LooseSkuIndex } from '../channel-listings/sku-match';
 
 /**
  * The language Amazon returns issue messages in.
@@ -3537,14 +3538,49 @@ export class IntegrationsService implements OnModuleInit {
 
   // --- Order import ---------------------------------------------------------
 
-  /** Match an incoming SKU to a product (main SKU, then alias), case-insensitively. */
+  /**
+   * Match an incoming SKU to a product: main SKU, then alias, then — only if both miss — the same
+   * punctuation-blind key the listings are matched with.
+   *
+   * The last step is new. The platform published twenty eBay listings with their SKUs stripped of
+   * hyphens (LE-83306 as LE83306). Listings were matched loosely and so were recognised; orders were
+   * matched exactly and so would not have been — each sale arriving belonging to no product. The two
+   * halves of one sale disagreed about what it was. It uses the tested rule in sku-match.ts, which
+   * refuses a key two products share rather than guess between them.
+   */
   private async resolveProductId(sku: string | null): Promise<string | null> {
     const s = (sku ?? '').trim();
     if (!s) return null;
     const p = await this.prisma.product.findFirst({ where: { deletedAt: null, mainSku: { equals: s, mode: 'insensitive' } }, select: { id: true } });
     if (p) return p.id;
     const a = await this.prisma.productSkuAlias.findFirst({ where: { deletedAt: null, skuValue: { equals: s, mode: 'insensitive' } }, select: { productId: true } });
-    return a?.productId ?? null;
+    if (a) return a.productId;
+    return looseOrderOwner(s, await this.looseSkuIndex())?.productId ?? null;
+  }
+
+  /**
+   * The punctuation-blind index, built from the catalogue and kept for a few minutes.
+   *
+   * Consulted only when an exact match has already failed, which is rare, but an import can bring
+   * many such lines at once and rebuilding it for each would read the whole catalogue every time.
+   * A few minutes stale is harmless: a product added in that window is picked up by the relink pass
+   * that already re-resolves unlinked lines.
+   */
+  private looseIndexCache: { at: number; index: LooseSkuIndex } | null = null;
+  private static readonly LOOSE_INDEX_TTL_MS = 5 * 60_000;
+
+  private async looseSkuIndex(): Promise<LooseSkuIndex> {
+    const now = Date.now();
+    if (this.looseIndexCache && now - this.looseIndexCache.at < IntegrationsService.LOOSE_INDEX_TTL_MS) {
+      return this.looseIndexCache.index;
+    }
+    const products = await this.prisma.product.findMany({
+      where: { deletedAt: null },
+      select: { id: true, mainSku: true, aliases: { where: { deletedAt: null }, select: { skuValue: true } } },
+    });
+    const index = buildLooseSkuIndex(products);
+    this.looseIndexCache = { at: now, index };
+    return index;
   }
 
   /** Re-resolve product links for this integration's still-unlinked items. Handles the

@@ -22,21 +22,26 @@ const base: EbayOfferInput = {
 };
 
 describe('ebaySafeSku', () => {
-  it('strips what eBay refuses', () => {
-    // Real SKUs from the catalogue. eBay allows alphanumerics only.
-    expect(ebaySafeSku('3G-084-378-24-100/0')).toBe('3G084378241000');
-    expect(ebaySafeSku('4B-DEH-S320BT')).toBe('4BDEHS320BT');
-    expect(ebaySafeSku('RE-MB4120')).toBe('REMB4120');
+  it('sends the product SKU exactly as it is, punctuation and all', () => {
+    // Stripping these made orders for them arrive belonging to no product. 4,508 of the account's
+    // 4,762 eBay listings already carry a hyphen, so eBay is not the one objecting.
+    expect(ebaySafeSku('LE-83306')).toBe('LE-83306');
+    expect(ebaySafeSku('3G-084-378-24-100/0')).toBe('3G-084-378-24-100/0');
+    expect(ebaySafeSku('RE-MB4120')).toBe('RE-MB4120');
   });
 
-  it('cuts at 50 characters, because eBay rejects longer', () => {
+  it('trims the ends, which are never part of a SKU', () => {
+    expect(ebaySafeSku('  LE-83306 ')).toBe('LE-83306');
+  });
+
+  it('cuts at 50 characters, the one limit eBay documents', () => {
     expect(ebaySafeSku('A'.repeat(80))).toHaveLength(50);
   });
 
-  it('can collide, which is why the mapping is stored and not recomputed', () => {
-    // These are different products and the same eBay SKU. Nothing here can prevent that; the
-    // listing row records which SKU was actually used so the collision is visible, not silent.
-    expect(ebaySafeSku('AB-12')).toBe(ebaySafeSku('A-B12'));
+  it('no longer merges two products into one eBay SKU', () => {
+    // Stripping made these the same SKU. Two products listed under one SKU is a listing that sells
+    // the wrong goods; sending them as they are keeps them apart.
+    expect(ebaySafeSku('AB-12')).not.toBe(ebaySafeSku('A-B12'));
   });
 });
 
