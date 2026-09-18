@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation } from 'react-router-dom';
-import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BadgeCheck, CircleCheck, Coins, Download, ExternalLink, MapPin, Package, PackageCheck, PackagePlus, Pencil, Search, Trash2, Truck, Upload } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BadgeCheck, CircleCheck, Coins, Download, ExternalLink, MapPin, Package, PackageCheck, PackagePlus, Pencil, Printer, Search, Trash2, Truck, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadSheet, Pagination, Select } from '@masquare/ui';
 import { CustomerShipmentsTab } from '../components/shipments/CustomerShipmentsTab';
@@ -14,6 +14,9 @@ import { usePersistentState } from '../lib/usePersistentState';
 import { formatDate } from '../lib/format';
 import { withReturn } from '../lib/useBackLink';
 import { ShipmentModal } from '../components/shipments/ShipmentModal';
+import { BookOrderModal } from '../components/shipments/BookOrderModal';
+import { LabelsModal } from '../components/shipments/BookingDocuments';
+import { useAccess } from '../lib/useAccess';
 import { CombineShipmentModal } from '../components/shipments/CombineShipmentModal';
 import { ShipmentImportModal } from '../components/shipments/ShipmentImportModal';
 import { SHIPMENT_HEADER, shipmentRowToCells } from '../components/shipments/shipmentColumns';
@@ -92,6 +95,10 @@ export function ShipmentsPage() {
   const [fbaActualFor, setFbaActualFor] = useState<FbaShipment | null>(null);
   const [costFor, setCostFor] = useState<Shipment | null>(null);
   const [trackFor, setTrackFor] = useState<Shipment | null>(null);
+  const [bookFor, setBookFor] = useState<PendingShipment | null>(null);
+  const [labelsFor, setLabelsFor] = useState<Shipment | null>(null);
+  // Booking buys a real label; the right to do that is the one booking always needs.
+  const { may } = useAccess();
   // Accounting's worklist is the unreviewed half; blank means both, which is everyone else's view.
   const [filterReview, setFilterReview] = usePersistentState<'' | 'reviewed' | 'unreviewed'>('shipments.filterReview', '');
   const [importOpen, setImportOpen] = useState(false);
@@ -453,6 +460,15 @@ export function ShipmentsPage() {
                         </button>
                       ) : (
                         <div className="flex justify-end gap-1.5">
+                          {may('marketplace_write') && (
+                            <button
+                              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-teal-300 bg-n-0 px-3 text-[12.5px] font-semibold text-teal-700 hover:bg-teal-50"
+                              title="Book it with FedEx from here: label, invoice and tracking, and the shipment recorded"
+                              onClick={() => setBookFor(r)}
+                            >
+                              <Truck size={14} /> Book FedEx
+                            </button>
+                          )}
                           <button className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12.5px] font-semibold text-white hover:bg-primary-hover" onClick={() => openForPending(r)}>
                             <Truck size={14} /> {r.outboundCount > 0 ? 'Add shipment' : 'Record shipment'}
                           </button>
@@ -545,6 +561,16 @@ export function ShipmentsPage() {
                         </div>
                       ) : (
                       <div className="flex justify-end gap-1">
+                        {/* Only where the platform bought the label: there is nothing to reprint otherwise. */}
+                        {(s.carrierBookings?.length ?? 0) > 0 && (
+                          <button
+                            className="grid h-8 w-8 place-items-center rounded-md text-n-500 hover:bg-n-100 hover:text-n-800"
+                            title="FedEx label and invoice"
+                            onClick={() => setLabelsFor(s)}
+                          >
+                            <Printer size={15} />
+                          </button>
+                        )}
                         {/* Offered on every row rather than only on FedEx ones: the modal is where
                             "this carrier is not connected" gets said, and a button that silently
                             disappears on some rows reads as a bug. */}
@@ -691,6 +717,18 @@ export function ShipmentsPage() {
           onClose={() => setModal(null)}
           onSaved={() => { setModal(null); invalidate(); }}
         />
+      )}
+      {bookFor && (
+        <BookOrderModal
+          transactionId={bookFor.id}
+          transactionRef={bookFor.transactionRef}
+          contextLine={ctxLine(bookFor)}
+          onClose={() => setBookFor(null)}
+          onDone={invalidate}
+        />
+      )}
+      {labelsFor && (
+        <LabelsModal bookings={labelsFor.carrierBookings ?? []} reference={labelsFor.transactionRef ?? ''} onClose={() => setLabelsFor(null)} />
       )}
       {trackFor && (
         <ShipmentTrackingModal

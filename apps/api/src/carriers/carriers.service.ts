@@ -758,7 +758,8 @@ export class CarriersService {
       transactionId: string;
       serviceType: string;
       shipDate: string;
-      parcels: Array<{ weightKg: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }>;
+      /** Each box, with any Section II lithium batteries it carries declared on it. */
+      parcels: ShipParcel[];
       dutiesPaidBy: 'sender' | 'recipient';
       goodsDescription?: string | null;
       quoted?: { amount: number; currency: string } | null;

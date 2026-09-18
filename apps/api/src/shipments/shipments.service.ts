@@ -92,6 +92,22 @@ const include = {
       weightKg: true, checkedAt: true, found: true,
     },
   },
+  /**
+   * Labels bought from the platform for this shipment, for reprinting from the log. Metadata only —
+   * the documents come through their own signed-in route, and what FedEx quoted is left out.
+   */
+  carrierBookings: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'desc' as const },
+    select: {
+      id: true, environment: true, status: true, serviceType: true, serviceName: true,
+      masterTrackingNumber: true, labelFormat: true, createdAt: true, cancelledAt: true,
+      documents: {
+        select: { id: true, kind: true, docType: true, pieceIndex: true, sizeBytes: true },
+        orderBy: [{ kind: 'desc' as const }, { pieceIndex: 'asc' as const }],
+      },
+    },
+  },
 } satisfies Prisma.ShipmentInclude;
 
 @Injectable()

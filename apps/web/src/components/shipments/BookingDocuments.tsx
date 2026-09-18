@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { FileText, Printer } from 'lucide-react';
 import { toast } from 'sonner';
+import { ModalShell } from '@masquare/ui';
 import { customerShipmentsApi, type CustomerShipmentBooking } from '../../lib/api';
 
 /**
@@ -67,5 +68,16 @@ export function BookingDocuments({ bookings, reference }: { bookings: CustomerSh
         );
       })}
     </div>
+  );
+}
+
+/** A shipment's FedEx labels and invoice, on their own — for reprinting from a list. */
+export function LabelsModal({ bookings, reference, onClose }: { bookings: CustomerShipmentBooking[]; reference: string; onClose: () => void }) {
+  return (
+    <ModalShell open title={`Labels — ${reference}`} primaryLabel="Close" onPrimary={onClose} onClose={onClose} initialSize={{ w: 720, h: 420 }}>
+      <div className="p-1">
+        <BookingDocuments bookings={bookings} reference={reference} />
+      </div>
+    </ModalShell>
   );
 }

@@ -6,6 +6,7 @@ import { VisibleCompanies } from '../common/active-company.decorator';
 import { ShipmentsService, type ShipmentQuery } from './shipments.service';
 import { CreateCombinedShipmentDto, CreateShipmentBatchDto, CreateShipmentDto, SetFulfilmentDto, ShipmentImportCommitDto, ShipmentImportValidateDto, UpdateShipmentDto } from './dto/shipment.dto';
 import { AccessArea, RequireCapability } from '../access/access.decorators';
+import { OrderBookingService, type OrderBookInput, type OrderParcelInput } from './order-booking.service';
 
 @ApiTags('shipments')
 @ApiBearerAuth()
@@ -13,7 +14,7 @@ import { AccessArea, RequireCapability } from '../access/access.decorators';
 @Controller('shipments')
 @AccessArea('shipments')
 export class ShipmentsController {
-  constructor(private readonly svc: ShipmentsService) {}
+  constructor(private readonly svc: ShipmentsService, private readonly booking: OrderBookingService) {}
 
   @Get()
   list(
@@ -149,6 +150,37 @@ export class ShipmentsController {
   @Post('transaction/:transactionId/fulfil-local')
   fulfilLocal(@Param('transactionId') transactionId: string, @CurrentUser() user: AuthUser) {
     return this.svc.fulfilLocal(transactionId, user.sub);
+  }
+
+  /** What the FedEx booking screen starts from: accounts, services, customs lines, earlier labels. */
+  @Get('transaction/:transactionId/fedex-options')
+  fedexOptions(@Param('transactionId') transactionId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.booking.options(transactionId, companyIds);
+  }
+
+  /** What FedEx would charge us for these boxes. Reads only — nothing is booked. */
+  @Post('transaction/:transactionId/fedex-quote')
+  fedexQuote(
+    @Param('transactionId') transactionId: string,
+    @Body() body: { accountId?: string; parcels?: OrderParcelInput[] },
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    return this.booking.quote(transactionId, body ?? {}, companyIds);
+  }
+
+  /**
+   * Book the order with FedEx: a real label, tracking number and charge on a production account, so
+   * behind the capability booking always needs. On success the shipment is recorded with it.
+   */
+  @Post('transaction/:transactionId/fedex-book')
+  @RequireCapability('marketplace_write')
+  fedexBook(
+    @Param('transactionId') transactionId: string,
+    @Body() body: OrderBookInput,
+    @CurrentUser() user: AuthUser,
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    return this.booking.book(transactionId, body ?? {}, user.sub, companyIds);
   }
 
   /** Several parcels sent together on one date (size-split consignment). */

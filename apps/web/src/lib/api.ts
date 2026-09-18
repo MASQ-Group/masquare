@@ -3448,7 +3448,55 @@ export interface Shipment {
    * from the rest: everything else here was typed by a person, and this was fetched.
    */
   tracking?: ShipmentTrackingSummary | null;
+  /** Labels bought from the platform for this shipment, for reprinting. Absent on older rows. */
+  carrierBookings?: CustomerShipmentBooking[];
   createdAt: string;
+}
+
+/** One customs line of an order booking, as the screen edits it. Value and weight are line totals. */
+export interface OrderCustomsItem {
+  sku?: string;
+  description: string;
+  quantity: number;
+  value: number;
+  currency: string;
+  weightKg: number;
+  countryOfOrigin: string | null;
+  hsCode: string | null;
+  /** False where the catalogue held no weight and the line was weighed at nothing. */
+  weightKnown?: boolean;
+}
+
+export interface OrderBookParcel {
+  weightKg: number;
+  lengthCm?: number | null;
+  widthCm?: number | null;
+  heightCm?: number | null;
+  /** A battery packing instruction key, or nothing. */
+  batteryType?: string | null;
+}
+
+export interface OrderFedexOptions {
+  transactionRef: string;
+  accounts: Array<{ id: string; name: string; environment: string; accountNumber: string; companyName: string | null; originCountry: string | null; customs: CustomsLane }>;
+  services: Array<{ value: string; label: string }>;
+  items: OrderCustomsItem[];
+  suggestedParcelKg: number | null;
+  batteryProducts: Array<{ sku: string; battery: string }>;
+  bookings: CustomerShipmentBooking[];
+}
+
+export interface OrderBookResult {
+  ok: boolean;
+  status: number;
+  message: string | null;
+  customs: CustomsLane;
+  environment: string;
+  shipmentId: string | null;
+  booking: { id: string; masterTrackingNumber: string | null; environment: string } | null;
+  bookings: CustomerShipmentBooking[];
+  request: unknown;
+  response: unknown;
 }
 
 export interface ShipmentTrackingSummary {
@@ -3686,6 +3734,26 @@ export const shipmentsApi = {
     api.post<{ closed: number; skipped: number }>('/shipments/accept-channel-dispatch', { transactionIds }).then((r) => r.data),
   forTransaction: (transactionId: string) => api.get<TransactionShipment[]>(`/shipments/transaction/${transactionId}`).then((r) => r.data),
   create: (body: any) => api.post<Shipment>('/shipments', body).then((r) => r.data),
+  /** What the FedEx booking screen for an order starts from. */
+  fedexOptions: (transactionId: string) =>
+    api.get<OrderFedexOptions>(`/shipments/transaction/${transactionId}/fedex-options`).then((r) => r.data),
+  /** What FedEx would charge us for these boxes. Nothing is booked. */
+  fedexQuote: (transactionId: string, body: { accountId: string; parcels: OrderBookParcel[] }) =>
+    api.post<{ ok: boolean; message: string | null; quote: FedexRateReply | null; customs: CustomsLane }>(
+      `/shipments/transaction/${transactionId}/fedex-quote`, body,
+    ).then((r) => r.data),
+  /**
+   * Book the order with FedEx. On production the shipment is recorded with FedEx's tracking number.
+   * A 409 with code ALREADY_BOOKED means a live label exists; send again with `another` once a
+   * person has said a second one is wanted.
+   */
+  fedexBook: (transactionId: string, body: {
+    accountId: string; serviceType: string; shipDate: string; dutiesPaidBy: 'sender' | 'recipient';
+    labelImageType: 'PDF' | 'ZPLII'; invoice: 'fedex' | 'platform';
+    parcels: OrderBookParcel[]; items: OrderCustomsItem[];
+    batteriesSectionII: boolean; shippingServiceId: string | null; costEur: number | null;
+    markShipped: boolean; another?: boolean;
+  }) => api.post<OrderBookResult>(`/shipments/transaction/${transactionId}/fedex-book`, body).then((r) => r.data),
   /** Several parcels sent together on one date — one row per parcel, each with its own
    *  carrier / tracking / cost. */
   createBatch: (body: {
