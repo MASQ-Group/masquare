@@ -19,6 +19,18 @@ import {
   type ShipParty, type ShipRequestInput,
 } from './fedex-ship';
 import { parseShipReply } from './fedex-ship-parse';
+import { commodityFromItem, type InvoiceSource } from './fedex-customs';
+
+/** One customs item as a person enters it: the line's total value and weight, not per unit. */
+export interface CustomsItemInput {
+  description: string;
+  quantity: number;
+  value: number;
+  currency: string;
+  weightKg: number;
+  countryOfOrigin: string | null;
+  hsCode: string | null;
+}
 import {
   FEDEX_NAME_FRAGMENT, TRACK_HISTORY_DAYS, TRACK_PATH, buildTrackRequest, chunkTrackingNumbers,
   describeTrackFailure, dueForRefresh, isFedexService,
@@ -737,6 +749,9 @@ export class CarriersService {
       goodsDescription?: string | null;
       quoted?: { amount: number; currency: string } | null;
       labelImageType?: 'PDF' | 'PNG' | 'ZPLII';
+      /** Customs items, for a shipment leaving the EU. Line totals, not unit prices. */
+      items?: CustomsItemInput[];
+      invoice?: InvoiceSource | null;
     },
     actorId?: string,
     companyIds?: string[],
@@ -789,13 +804,17 @@ export class CarriersService {
       dutiesPaidBy: input.dutiesPaidBy,
       goodsDescription: input.goodsDescription ?? null,
       labelImageType: input.labelImageType,
+      commodities: (input.items ?? []).map(commodityFromItem),
+      invoice: input.invoice ?? null,
     };
 
-    const gaps = missingForBooking(shipInput);
-    if (gaps.length) throw new BadRequestException(`Cannot book yet — still needed: ${gaps.join(', ')}.`);
-
+    // The route first: an export needs its customs items before it may be sent at all.
     const eu = await this.euCountryCodes();
     const customs = customsLane(shipInput.shipper.address.countryCode, shipInput.recipient.address.countryCode, eu);
+
+    const gaps = missingForBooking(shipInput, customs);
+    if (gaps.length) throw new BadRequestException(`Cannot book yet — still needed: ${gaps.join(', ')}.`);
+
     const body = buildShipRequest(shipInput, { customs });
 
     const send = async (token: string) =>
@@ -888,6 +907,9 @@ export class CarriersService {
       parcels: Array<{ weightKg: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }>;
       dutiesPaidBy: 'sender' | 'recipient';
       labelImageType?: 'PDF' | 'PNG' | 'ZPLII';
+      /** Customs items, for a destination outside the EU. The test takes the same ones a booking does. */
+      items?: CustomsItemInput[];
+      invoice?: InvoiceSource | null;
     },
     companyIds?: string[],
   ) {
@@ -929,13 +951,17 @@ export class CarriersService {
       customerReference: 'SANDBOX-TEST',
       dutiesPaidBy: input.dutiesPaidBy,
       labelImageType: input.labelImageType,
+      commodities: (input.items ?? []).map(commodityFromItem),
+      invoice: input.invoice ?? null,
     };
-
-    const gaps = missingForBooking(shipInput);
-    if (gaps.length) throw new BadRequestException(`Cannot book yet — still needed: ${gaps.join(', ')}.`);
 
     const eu = await this.euCountryCodes();
     const customs = customsLane(shipInput.shipper.address.countryCode, shipInput.recipient.address.countryCode, eu);
+
+    // The same gate a real booking passes, so the test proves the real rules rather than skipping them.
+    const gaps = missingForBooking(shipInput, customs);
+    if (gaps.length) throw new BadRequestException(`Cannot book yet — still needed: ${gaps.join(', ')}.`);
+
     const body = buildShipRequest(shipInput, { customs });
 
     const send = async (token: string) =>

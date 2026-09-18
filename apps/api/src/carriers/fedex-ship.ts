@@ -1,4 +1,5 @@
 import type { CustomsLane } from './fedex-rate';
+import { missingForExport, normaliseHsCode, totalCustomsValue, type InvoiceSource } from './fedex-customs';
 
 /**
  * Building a FedEx Ship request, as pure logic.
@@ -94,8 +95,10 @@ export interface ShipRequestInput {
    * 'sender' is DDP (we pay); 'recipient' is DAP (the buyer is billed on delivery).
    */
   dutiesPaidBy: 'sender' | 'recipient';
-  /** Only for shipments leaving the customs area. */
+  /** Only for shipments leaving the customs area. Required there — see fedex-customs.ts. */
   commodities?: ShipCommodity[];
+  /** Who produces the commercial invoice for an export. Only 'fedex' can be booked today. */
+  invoice?: InvoiceSource | null;
   goodsDescription?: string | null;
   /** PDF for laser stock, ZPLII for a thermal printer. */
   labelImageType?: 'PDF' | 'PNG' | 'ZPLII';
@@ -115,8 +118,23 @@ export interface ShipRequestInput {
  */
 export const EORI_TIN_TYPE = 'BUSINESS_NATIONAL';
 
-/** What a booking cannot proceed without. Named, so a screen can say which. */
-export function missingForBooking(input: Partial<ShipRequestInput>): string[] {
+/**
+ * What a booking cannot proceed without. Named, so a screen can say which.
+ *
+ * `customs` is the route. An export adds everything customs needs; without it this gate let a
+ * shipment to Canada through with no items at all, and FedEx refused it at the door.
+ */
+export function missingForBooking(input: Partial<ShipRequestInput>, customs?: CustomsLane): string[] {
+  const own = baseGaps(input);
+  if (customs !== 'export') return own;
+  return [...new Set([...own, ...missingForExport({
+    commodities: input.commodities ?? [],
+    parcels: input.parcels ?? [],
+    invoice: input.invoice ?? null,
+  })])];
+}
+
+function baseGaps(input: Partial<ShipRequestInput>): string[] {
   const gaps: string[] = [];
   if (!input.accountNumber) gaps.push('carrier account');
   if (!input.serviceType) gaps.push('service');
@@ -221,6 +239,8 @@ export function buildShipRequest(input: ShipRequestInput, opts: { customs: Custo
   }
 
   if (opts.customs === 'export') {
+    const commodities = input.commodities ?? [];
+    const total = totalCustomsValue(commodities);
     body.requestedShipment.customsClearanceDetail = {
       commercialInvoice: { shipmentPurpose: 'SOLD' },
       /**
@@ -232,11 +252,20 @@ export function buildShipRequest(input: ShipRequestInput, opts: { customs: Custo
       dutiesPayment: input.dutiesPaidBy === 'sender'
         ? { paymentType: 'SENDER', payor: { responsibleParty: { accountNumber: { value: input.accountNumber } } } }
         : { paymentType: 'RECIPIENT' },
-      commodities: (input.commodities ?? []).map((c) => ({
+      /**
+       * The value the invoice states, at the top of the customs detail.
+       *
+       * Never sent before, and FedEx refuses an export without it: TOTALCUSTOMSVALUE.REQUIRED was
+       * the first sandbox booking's answer. The sum of the items, so it cannot disagree with them.
+       */
+      ...(total ? { totalCustomsValue: total } : {}),
+      commodities: commodities.map((c) => ({
         name: c.name,
         description: c.description,
         countryOfManufacture: c.countryOfManufacture,
-        ...(c.harmonizedCode ? { harmonizedCode: c.harmonizedCode } : {}),
+        ...(c.harmonizedCode ? { harmonizedCode: normaliseHsCode(c.harmonizedCode) ?? c.harmonizedCode } : {}),
+        // One line of the invoice. FedEx's own samples carry this beside quantity.
+        numberOfPieces: 1,
         quantity: c.quantity,
         quantityUnits: 'PCS',
         unitPrice: { amount: c.unitPriceAmount, currency: c.currency },
@@ -244,6 +273,28 @@ export function buildShipRequest(input: ShipRequestInput, opts: { customs: Custo
         weight: { units: 'KG', value: c.weightKg },
       })),
     };
+
+    /**
+     * FedEx writes the commercial invoice from the items and sends it electronically.
+     *
+     * Shaped exactly as FedEx's own ETD samples in the Ship collection (41 of them carry a total
+     * customs value as well): the special service, and the document it should produce, on letter
+     * paper as a PDF. The invoice comes back beside the label, and its value is the items' value by
+     * construction — rule 2 cannot be broken this way.
+     *
+     * The platform producing its own invoice is the other route, and is refused before this point
+     * by missingForExport until that process is defined.
+     */
+    if (input.invoice === 'fedex') {
+      body.requestedShipment.shipmentSpecialServices = {
+        specialServiceTypes: ['ELECTRONIC_TRADE_DOCUMENTS'],
+        etdDetail: { requestedDocumentTypes: ['COMMERCIAL_INVOICE'] },
+      };
+      body.requestedShipment.shippingDocumentSpecification = {
+        shippingDocumentTypes: ['COMMERCIAL_INVOICE'],
+        commercialInvoiceDetail: { documentFormat: { stockType: 'PAPER_LETTER', docType: 'PDF' } },
+      };
+    }
   }
 
   return body;

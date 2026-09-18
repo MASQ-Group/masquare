@@ -327,6 +327,13 @@ export const carriersApi = {
     parcels: Array<{ weightKg: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }>;
     dutiesPaidBy: 'sender' | 'recipient';
     labelImageType?: 'PDF' | 'PNG' | 'ZPLII';
+    /** Customs items for a destination outside the EU. Value and weight are line totals. */
+    items?: Array<{
+      description: string; quantity: number; value: number; currency: string;
+      weightKg: number; countryOfOrigin: string | null; hsCode: string | null;
+    }>;
+    /** Who writes the commercial invoice. Only 'fedex' can be booked until the platform's is defined. */
+    invoice?: 'fedex' | 'platform';
   }) =>
     api.post<{
       ok: boolean; status: number; message: string | null; request: unknown; response: unknown; customs: CustomsLane;
