@@ -55,11 +55,10 @@ describe('renderEbayDescription — the Cards layout', () => {
     expect(outer).toContain('max-width:960px');
   });
 
-  it('keeps paragraphs to a readable measure however wide the frame is', () => {
-    // A paragraph stretched across 900px is a wall; the prose keeps the width it had at 720px.
+  it('runs the paragraphs as wide as the Key features box, so the blocks share their edges', () => {
     const html = renderEbayDescription({ title: 'A product', intro: 'First paragraph.\n\nSecond paragraph.' });
     const prose = html.match(/<div style="([^"]*)"><p /)![1];
-    expect(prose).toContain('max-width:640px');
+    expect(prose).not.toContain('max-width');
   });
 
   it('never fixes a layout width, which is what scrolls sideways on a phone', () => {

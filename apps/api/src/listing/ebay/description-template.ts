@@ -208,9 +208,10 @@ export function renderEbayDescription(content: DescriptionContent): string {
   // ── 4. Description ────────────────────────────────────────────────────────────────────────────
   if (paragraphs.length) {
     body.push(
-      // The reading measure: the width these paragraphs had when the whole description was 720px,
-      // kept now that the frame around them is wider. See the container, at the bottom.
-      `<div style="display:flex;flex-direction:column;gap:12px;color:${C.body};max-width:640px">`
+      // As wide as the Key features box below it, so the page reads as one column rather than a
+      // narrow block of prose above a wider card. They were held to 640px for line length; seen on
+      // eBay, the matching edges read better, and that was the call.
+      `<div style="display:flex;flex-direction:column;gap:12px;color:${C.body}">`
       + paragraphs.map((p) => `<p style="margin:0;text-wrap:pretty">${esc(p)}</p>`).join('')
       + '</div>',
     );
@@ -313,9 +314,9 @@ export function renderEbayDescription(content: DescriptionContent): string {
    * floated in the middle of empty space, detached from everything above it. Aligned left it reads as
    * part of the page.
    *
-   * Wider, but only where width helps: the banner, the at-a-glance strip, the feature grid and the
-   * specification tables. Running prose is held to its own measure below, because a paragraph
-   * stretched to 900px is a wall — roughly sixty to eighty characters a line is what reads.
+   * Wider, so the banner, the at-a-glance strip, the feature grid and the specification tables have
+   * room — and the paragraphs share the Key features box's width, so every block lines up on the
+   * same edges.
    *
    * Still `max-width` rather than a fixed width: eBay renders descriptions in a frame of
    * unpredictable width and allows no media queries, and a fixed width is what produces sideways
