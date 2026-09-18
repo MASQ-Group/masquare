@@ -50,6 +50,22 @@ const num = (v, n = 6) => String(v ?? '').padStart(n);
     for (const q of queued) reasons[q.reason ?? '—'] = (reasons[q.reason ?? '—'] ?? 0) + 1;
     console.log(`  why they were queued                 ${Object.entries(reasons).map(([k, v]) => `${k}=${v}`).join(', ')}`);
   }
+  // ── rows the drain will never pick up again ──────────────────────────────────────────────────
+  // The drain only takes rows under the attempt limit, so anything at it is not waiting, it is
+  // abandoned. That is invisible from the outside: the count is returned and nothing shows it.
+  const MAX_ATTEMPTS = 5;
+  const stuck = queued.filter((q) => (q.attempts ?? 0) >= MAX_ATTEMPTS);
+  if (stuck.length) {
+    console.log(`  rows at the attempt limit (${MAX_ATTEMPTS})        ${stuck.length}   <- the drain no longer picks these up`);
+    const byError = {};
+    for (const q of stuck) {
+      const key = (q.lastError ?? '(no error recorded)').slice(0, 110);
+      byError[key] = (byError[key] ?? 0) + 1;
+    }
+    for (const [err, n] of Object.entries(byError).sort((a, b) => b[1] - a[1])) {
+      console.log(`     ${String(n).padStart(3)} x  ${err}`);
+    }
+  }
   console.log('');
 
   if (!queued.length) {
