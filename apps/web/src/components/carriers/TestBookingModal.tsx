@@ -147,6 +147,36 @@ export function TestBookingModal({ account, onClose }: Props) {
                 </p>
               )}
 
+              {/*
+                What the reply yielded, which is the whole reason to make a sandbox booking at all.
+                The label's own bytes are deliberately not here: a base64 document fills a screen
+                with something nobody can read. Where it was found is the fact that settles the
+                mapping.
+              */}
+              {result.read && (
+                <div className="mb-3 rounded-md border border-n-200 bg-n-25 px-3 py-2.5 text-[12.5px]">
+                  <div className="mb-1.5 font-semibold text-n-800">What we could read back</div>
+                  <dl className="grid grid-cols-[150px_1fr] gap-x-3 gap-y-1">
+                    <dt className="text-n-500">Tracking number</dt>
+                    <dd className="mono text-n-800">{result.read.masterTrackingNumber ?? '— none found'}</dd>
+                    <dt className="text-n-500">Service</dt>
+                    <dd className="text-n-800">{result.read.serviceName ?? '—'}</dd>
+                    <dt className="text-n-500">Documents</dt>
+                    <dd className="text-n-800">
+                      {result.read.documents.length === 0 ? '— none found' : result.read.documents.map((d, i) => (
+                        <div key={i} className="mb-0.5">
+                          <span className="font-medium">{d.contentType ?? 'document'}</span>
+                          <span className="text-n-500"> · {d.docType ?? '?'}</span>
+                          <span className="text-n-500">{d.bytes != null ? ` · ${(d.bytes / 1024).toFixed(1)} kB` : d.url ? ' · hosted' : ''}</span>
+                          <div className="mono text-[11px] text-n-500">{d.foundAt}</div>
+                        </div>
+                      ))}
+                    </dd>
+                  </dl>
+                  {result.read.note && <p className="mt-2 text-[12px] text-warning">{result.read.note}</p>}
+                </div>
+              )}
+
               <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-n-500">What we sent</div>
               <pre className="max-h-[220px] overflow-auto rounded-md border border-n-200 bg-n-25 p-3 text-[11.5px] leading-[1.5] text-n-700">
                 {JSON.stringify(result.request, null, 2)}

@@ -948,6 +948,15 @@ export class CarriersService {
     let parsed: any = null;
     try { parsed = JSON.parse(text); } catch { /* raw below */ }
 
+    /**
+     * What we could make of the reply — the entire reason this endpoint exists.
+     *
+     * The label itself is not returned. It is a base64 document that would fill a screen and a log
+     * with something nobody can read; what is wanted here is whether one was found and WHERE, so
+     * the mapping can be settled from one line rather than from an afternoon of reading JSON.
+     */
+    const read = res.ok ? parseShipReply(parsed) : null;
+
     return {
       ok: res.ok,
       status: res.status,
@@ -955,6 +964,19 @@ export class CarriersService {
       request: body,
       response: parsed ?? text.slice(0, 40_000),
       customs,
+      read: read && {
+        masterTrackingNumber: read.masterTrackingNumber,
+        serviceName: read.serviceName,
+        note: read.note,
+        documents: read.documents.map((d) => ({
+          contentType: d.contentType,
+          docType: d.docType,
+          foundAt: d.foundAt,
+          /** Its size, not its content: enough to know a real document arrived. */
+          bytes: d.encoded ? Math.floor((d.encoded.length * 3) / 4) : null,
+          url: d.url,
+        })),
+      },
     };
   }
 
