@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DIAL_CODES, dialCodeFor, joinPhone, splitPhone } from './dialCodes';
+import { DIAL_CODES, dialCodeFor, joinPhone, phoneCountry, splitPhone } from './dialCodes';
 
 describe('dialCodeFor', () => {
   it('finds the prefix for a country', () => {
@@ -76,5 +76,38 @@ describe('the table', () => {
       expect(iso, `${iso} should be an ISO alpha-2 code`).toMatch(/^[A-Z]{2}$/);
       expect(code, `${iso} → ${code}`).toMatch(/^\d{1,4}$/);
     }
+  });
+});
+
+describe('phoneCountry', () => {
+  const isoCodes = ['CY', 'GB', 'GR', 'JE', 'US', 'CA'];
+
+  it('shows the country picked, even with the number still empty', () => {
+    // The bug this exists for: choosing a country before typing did nothing at all, because the
+    // choice was written into a value that refuses to hold a lone prefix.
+    expect(phoneCountry({ valueDial: null, picked: 'GB', isoCodes })).toBe('GB');
+  });
+
+  it('lets the prefix already on the number win — that is the number', () => {
+    expect(phoneCountry({ valueDial: '357', picked: 'GB', isoCodes })).toBe('CY');
+  });
+
+  it('keeps the picked country where several share a prefix', () => {
+    // +44 is Britain, Jersey, Guernsey and the Isle of Man. Somebody who said Jersey meant Jersey.
+    expect(phoneCountry({ valueDial: '44', picked: 'JE', isoCodes })).toBe('JE');
+    expect(phoneCountry({ valueDial: '1', picked: 'CA', isoCodes })).toBe('CA');
+  });
+
+  it('falls back to where the parcel is going, before anything is chosen', () => {
+    expect(phoneCountry({ valueDial: null, picked: null, addressIso: 'gr', isoCodes })).toBe('GR');
+  });
+
+  it('prefers what was picked over where the parcel is going', () => {
+    expect(phoneCountry({ valueDial: null, picked: 'CY', addressIso: 'GB', isoCodes })).toBe('CY');
+  });
+
+  it('shows nothing rather than guessing, when there is nothing to go on', () => {
+    expect(phoneCountry({ valueDial: null, picked: null, isoCodes })).toBeNull();
+    expect(phoneCountry({ valueDial: '999', picked: null, isoCodes })).toBeNull();
   });
 });

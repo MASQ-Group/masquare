@@ -80,3 +80,35 @@ export function joinPhone(dial: string | null, local: string): string {
   if (!rest) return '';
   return dial ? `+${dial} ${rest}` : rest;
 }
+
+/**
+ * Which country the phone field should show.
+ *
+ * Its own function because getting it wrong is invisible: the first build had no `picked` at all
+ * and wrote the choice straight into the stored value, which refuses to hold a lone prefix — so
+ * choosing a country before typing a number did nothing whatsoever, and nothing on screen said why.
+ *
+ * A prefix already on the number wins, because that IS the number and nothing on screen should
+ * disagree with it. Where several countries share that prefix and one of them was picked, the
+ * picked one is kept. Failing all that: what was picked, then the country the parcel is going to,
+ * then nothing.
+ */
+export function phoneCountry(opts: {
+  /** The dial code found on the stored number, if it has one. */
+  valueDial: string | null;
+  /** The country chosen from the picker, if any. */
+  picked: string | null;
+  /** Where the parcel is going — a guess, shown plainly and changeable. */
+  addressIso?: string | null;
+  /** The ISO codes on offer, in the order they should be searched. */
+  isoCodes: string[];
+}): string | null {
+  const { valueDial, picked, addressIso, isoCodes } = opts;
+
+  if (valueDial) {
+    if (picked && DIAL_CODES[picked.toUpperCase()] === valueDial) return picked.toUpperCase();
+    return isoCodes.map((c) => c.toUpperCase()).find((c) => DIAL_CODES[c] === valueDial) ?? null;
+  }
+  if (picked) return picked.toUpperCase();
+  return addressIso ? addressIso.toUpperCase() : null;
+}
