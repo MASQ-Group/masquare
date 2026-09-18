@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, Loader2, Mail, Send, XCircle } from 'lucide-react';
+import { CheckCircle2, Loader2, Mail, Plus, Send, Trash2, XCircle } from 'lucide-react';
 import { emailApi, settingsApi, usersApi } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { Select } from '@masquare/ui';
@@ -70,6 +70,31 @@ export function EmailTab() {
     onSuccess: () => { toast.success('Saved'); qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save'),
   });
+
+  /**
+   * The extra addresses, edited as a list and saved as one.
+   *
+   * Held locally while being typed — saving on every keystroke would store half an address, and the
+   * API rightly refuses those. It saves on Save.
+   */
+  const [extras, setExtras] = useState<string[]>([]);
+  const [extrasDirty, setExtrasDirty] = useState(false);
+  useEffect(() => {
+    if (!extrasDirty) setExtras(platform.data?.logisticsAlertEmails ?? []);
+  }, [platform.data?.logisticsAlertEmails, extrasDirty]);
+
+  const saveExtras = useMutation({
+    mutationFn: () => settingsApi.update({ logisticsAlertEmails: extras.map((e) => e.trim()).filter(Boolean) }),
+    onSuccess: () => {
+      toast.success('Saved');
+      setExtrasDirty(false);
+      qc.invalidateQueries({ queryKey: ['settings'] });
+    },
+    // The API names the entry that was wrong, so show what it said rather than a generic failure.
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save', { duration: 9000 }),
+  });
+
+  const editExtras = (next: string[]) => { setExtras(next); setExtrasDirty(true); };
 
   const busy = save.isPending || test.isPending;
   const configured = !!data?.senderAddress && !!data?.hasKey;
@@ -175,8 +200,9 @@ export function EmailTab() {
       <div className="card p-5">
         <div className="mb-1 text-[13px] font-semibold text-n-800">Who is emailed when a customer files a shipment</div>
         <p className="mb-3 text-[12px] text-n-500">
-          One named person. Everyone who can fulfil shipments also sees it in their notifications; this is the one who is emailed.
+          Everyone who can fulfil shipments sees it in their notifications. These are the people who are also emailed.
         </p>
+        <div className="mb-1.5 text-[12px] font-medium text-n-600">A platform user</div>
         <div className="max-w-[360px]">
           <Select
             searchable
@@ -189,8 +215,60 @@ export function EmailTab() {
             ]}
           />
         </div>
+        <div className="mt-5 border-t border-n-100 pt-4">
+          <div className="mb-1 text-[13px] font-semibold text-n-800">Anyone else</div>
+          <p className="mb-3 text-[12px] text-n-500">
+            Plain addresses, for people with no platform login — a shared operations mailbox, a colleague at the other
+            company. Each gets their own copy, so nobody's address is shown to the rest.
+          </p>
+
+          <div className="flex max-w-[420px] flex-col gap-2">
+            {extras.map((address, i) => (
+              <div key={i} className="flex gap-2">
+                <input
+                  className="input"
+                  type="email"
+                  value={address}
+                  disabled={readOnly}
+                  placeholder="shipments@example.com"
+                  onChange={(e) => editExtras(extras.map((a, idx) => (idx === i ? e.target.value : a)))}
+                />
+                <button
+                  type="button"
+                  className="grid h-10 w-10 flex-shrink-0 place-items-center rounded-md text-n-500 hover:bg-danger-bg hover:text-danger disabled:opacity-40"
+                  title="Remove"
+                  disabled={readOnly}
+                  onClick={() => editExtras(extras.filter((_, idx) => idx !== i))}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            ))}
+
+            <div className="flex items-center gap-3">
+              <button type="button" className="btn btn-ghost" disabled={readOnly} onClick={() => editExtras([...extras, ''])}>
+                <Plus size={16} /> Add an address
+              </button>
+              {extrasDirty && (
+                <>
+                  <button type="button" className="btn btn-primary" disabled={saveExtras.isPending} onClick={() => saveExtras.mutate()}>
+                    {saveExtras.isPending ? 'Saving…' : 'Save addresses'}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-[12.5px] font-medium text-n-600 hover:underline"
+                    onClick={() => { setExtrasDirty(false); setExtras(platform.data?.logisticsAlertEmails ?? []); }}
+                  >
+                    Discard
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
         {!data?.enabled && (
-          <p className="mt-2 text-[12px] text-orange-800">Sending is off, so nothing is emailed until it is switched on above.</p>
+          <p className="mt-4 text-[12px] text-orange-800">Sending is off, so nothing is emailed until it is switched on above.</p>
         )}
       </div>
 
