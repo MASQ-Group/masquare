@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
-import { AccessArea } from '../access/access.decorators';
+import { AccessArea, RequireCapability } from '../access/access.decorators';
 import { CustomersService, type ContactInput, type CustomerInput } from './customers.service';
 import { CustomerUsersService } from './customer-users.service';
 
@@ -91,5 +91,19 @@ export class CustomersController {
   @Delete(':id/contacts/:contactId')
   removeContact(@Param('id') id: string, @Param('contactId') contactId: string) {
     return this.customers.removeContact(id, contactId);
+  }
+
+  /**
+   * Start their shipment numbering again from one.
+   *
+   * Behind the delete capability, although it deletes nothing. What it does is make a number that
+   * has already been used available again, and every consequence of getting that wrong looks like
+   * the consequences of a bad delete: two shipments a customer cannot tell apart on a telephone
+   * call. The same people should hold both.
+   */
+  @Post(':id/reset-numbering')
+  @RequireCapability('delete_records')
+  resetNumbering(@Param('id') id: string) {
+    return this.customers.resetNumbering(id);
   }
 }

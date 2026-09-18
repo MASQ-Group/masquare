@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { ModalShell, Select } from '@masquare/ui';
 import { LOGISTICS_TYPE, companiesApi, customersApi, type Customer, type CustomerType } from '../../lib/api';
 import { CountrySelect } from '../common/CountrySelect';
 import { CustomerPortalUsers } from './CustomerPortalUsers';
+import { useConfirm } from '../ConfirmProvider';
+import { useAccess } from '../../lib/useAccess';
 
 /**
  * One customer: who they are, what they take from us, and who to speak to.
@@ -53,6 +55,32 @@ export function CustomerModal({ customer, types, onClose }: { customer: Customer
   // References already issued fix the prefix, and fix the logistics service with it.
   const issued = customer?.referenceSeq ?? 0;
   const savedAsLogistics = !!customer?.types.includes(LOGISTICS_TYPE);
+
+  /**
+   * Starting their numbering again.
+   *
+   * For a customer who was tested on before they went live, where the counter left where the tests
+   * left it would have their first genuine shipment called the fourth. References already issued
+   * are untouched — they may be on an email or a label — so the confirmation says that plainly
+   * rather than letting somebody expect a tidy-up that is not happening.
+   */
+  const confirm = useConfirm();
+  const { may } = useAccess();
+  const resetNumbering = useMutation({
+    mutationFn: () => customersApi.resetNumbering(customer!.id),
+    onSuccess: () => { toast.success('Numbering starts again from 1'); qc.invalidateQueries({ queryKey: ['customers'] }); },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not reset the numbering'),
+  });
+
+  const askReset = async () => {
+    const ok = await confirm({
+      title: `Start ${customer!.name}'s numbering again?`,
+      message: `Their next shipment becomes 0001 for this year. The ${issued} reference${issued === 1 ? '' : 's'} already issued keep${issued === 1 ? 's' : ''} the number ${issued === 1 ? 'it has' : 'they have'} — delete those shipments separately if they were only tests.`,
+      confirmLabel: 'Start again from 1',
+      tone: 'danger',
+    });
+    if (ok) resetNumbering.mutate();
+  };
 
   // Portal logins belong to a saved logistics customer: there is nothing to attach them to before.
   const tabs = savedAsLogistics ? [...BASE_TABS, { key: 'logins', label: 'Portal logins' }] : BASE_TABS;
@@ -200,8 +228,35 @@ export function CustomerModal({ customer, types, onClose }: { customer: Customer
                     <p className="mt-1.5 text-[12px] text-n-500">
                       {issued > 0
                         ? `Fixed: ${issued} reference${issued === 1 ? '' : 's'} already issued as ${customer!.referencePrefix}-…`
-                        : 'Two letters. Every shipment they file is numbered from it — AB-0001, AB-0002.'}
+                        : 'Two letters. The year and month of filing follow, then the number — AB-2026-09-0001.'}
                     </p>
+
+                    {/*
+                      Where the numbering stands, and the way to start it again.
+
+                      Shown rather than hidden behind the button, because the decision to reset is
+                      made by looking at what the next one would be: somebody who ran three tests
+                      wants to see 0004 before they decide it should be 0001.
+                    */}
+                    {editing && customer?.nextReference && (
+                      <div className="mt-4 rounded-lg border border-n-200 bg-n-25 p-3">
+                        <div className="text-[12px] text-n-500">Their next shipment would be</div>
+                        <div className="mono text-[13.5px] font-semibold text-n-800">{customer.nextReference}</div>
+                        <p className="mt-2 text-[12px] text-n-500">
+                          The number runs on through the year and starts again each January.
+                        </p>
+                        {may('delete_records') && customer.referenceSeq > 0 && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost mt-2"
+                            disabled={resetNumbering.isPending}
+                            onClick={askReset}
+                          >
+                            <RotateCcw size={15} /> {resetNumbering.isPending ? 'Resetting…' : 'Start numbering again from 1'}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
