@@ -74,10 +74,19 @@ export function splitPhone(value?: string | null): { dial: string | null; local:
   return { dial: null, local: text };
 }
 
-/** Put one back together for storing. */
+/**
+ * Put one back together for storing.
+ *
+ * A number typed with its own international prefix is kept whole rather than prefixed twice. People
+ * paste "+30 691..." or type "0030 691..." into the digits box without noticing the picker beside
+ * it, and "+357 0030 691..." is not a number anywhere — the picker is a convenience, not a claim
+ * about what they meant.
+ */
 export function joinPhone(dial: string | null, local: string): string {
   const rest = (local ?? '').trim();
   if (!rest) return '';
+  if (rest.startsWith('+')) return rest;
+  if (/^00\d/.test(rest.replace(/[\s.()-]/g, ''))) return `+${rest.replace(/[\s.()-]/g, '').slice(2)}`;
   return dial ? `+${dial} ${rest}` : rest;
 }
 

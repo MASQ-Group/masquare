@@ -111,3 +111,24 @@ describe('phoneCountry', () => {
     expect(phoneCountry({ valueDial: '999', picked: null, isoCodes })).toBeNull();
   });
 });
+
+describe('joinPhone with a number that carries its own prefix', () => {
+  it('keeps a number typed with a + rather than prefixing it twice', () => {
+    expect(joinPhone('357', '+30 6912345678')).toBe('+30 6912345678');
+  });
+
+  it('reads 00 as the international prefix it is', () => {
+    expect(joinPhone('357', '0030 6912345678')).toBe('+306912345678');
+    expect(joinPhone(null, '00 30 691 234 5678')).toBe('+306912345678');
+  });
+
+  it('leaves an ordinary national number alone, leading zero and all', () => {
+    // 020 is a London area code, not an international prefix. Only 00 introduces one.
+    expect(joinPhone('44', '020 7946 0000')).toBe('+44 020 7946 0000');
+    expect(joinPhone('49', '030 901820')).toBe('+49 030 901820');
+  });
+
+  it('keeps the spacing somebody typed', () => {
+    expect(joinPhone('357', '99 123 456')).toBe('+357 99 123 456');
+  });
+});
