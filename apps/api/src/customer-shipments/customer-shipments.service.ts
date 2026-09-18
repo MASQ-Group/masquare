@@ -12,6 +12,12 @@ import {
   missingForFulfilment, planCustomerAction, planStaffAction, type CustomerAction, type ShipmentStatus, type StaffAction,
 } from './customer-shipment-state';
 import { BATTERY_TYPES, formToInput, problemsWith, type ShipmentForm } from './shipment-form';
+import {
+  collectionParty, customsItems, dangerousGoodsRefusal, invoiceIssuer, recipientParty, shipParcels, withEdits,
+  type ParcelCustomsEdit,
+} from './booking-plan';
+import type { InvoiceSource } from '../carriers/fedex-customs';
+import { CYPRUS_SERVICE_TYPES, SERVICE_LABELS, customsLane } from '../carriers/fedex-rate';
 
 /**
  * Shipments filed by the companies we ship for.
@@ -46,6 +52,9 @@ export interface ParcelInput {
   dangerousGoods?: boolean | null;
   batteryType?: string | null;
   priorityHandling?: boolean | null;
+  quantity?: number | null;
+  hsCode?: string | null;
+  countryOfOrigin?: string | null;
 }
 
 export interface ShipmentInput {
@@ -72,6 +81,28 @@ export interface FulfilInput {
   notes?: string | null;
 }
 
+/** Booking a shipment with FedEx from the platform, as the screen sends it. */
+export interface BookInput {
+  accountId?: string;
+  serviceType?: string;
+  /** `2026-09-21`. FedEx refuses a date in the past. */
+  shipDate?: string;
+  dutiesPaidBy?: 'sender' | 'recipient';
+  labelImageType?: 'PDF' | 'ZPLII';
+  invoice?: InvoiceSource | null;
+  /** Our team's corrections to each box's customs line, saved before anything is sent. */
+  parcels?: ParcelCustomsEdit[];
+  /** A person's confirmation that declared lithium batteries are Section II. */
+  batteriesSectionII?: boolean;
+  /** Which of our carriers it went with, for the customer's tracking link. */
+  shippingServiceId?: string | null;
+  /** What the customer pays, recorded with the fulfilment. */
+  chargeCents?: number | null;
+  chargeCurrency?: string | null;
+  /** What FedEx quoted US for the chosen service, in euro cents — our cost, never shown to them. */
+  costCents?: number | null;
+}
+
 const INCLUDE = {
   customer: { select: { id: true, name: true, referencePrefix: true } },
   shippingService: { select: { id: true, name: true, trackingUrlTemplate: true } },
@@ -86,6 +117,23 @@ const INCLUDE = {
       statusCode: true, statusDescription: true, deliveredAt: true, estimatedDeliveryAt: true,
       lastScanAt: true, lastScanDescription: true, lastScanLocation: true,
       exceptionCode: true, exceptionDescription: true, checkedAt: true, found: true,
+    },
+  },
+  /**
+   * Labels bought from the platform, newest first, with the documents each one kept — for printing.
+   * Our side only: the portal reads its own include and never this one. What FedEx quoted is left
+   * out, because nothing on screen needs it.
+   */
+  bookings: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true, environment: true, status: true, serviceType: true, serviceName: true,
+      masterTrackingNumber: true, labelFormat: true, createdAt: true, cancelledAt: true,
+      documents: {
+        select: { id: true, kind: true, docType: true, pieceIndex: true, sizeBytes: true },
+        orderBy: [{ kind: 'desc' }, { pieceIndex: 'asc' }],
+      },
     },
   },
 } satisfies Prisma.CustomerShipmentInclude;
@@ -164,10 +212,19 @@ export class CustomerShipmentsService {
   async fileForm(customerId: string, form: ShipmentForm, actorId?: string) {
     if (!customerId) throw new BadRequestException('Choose which customer this shipment is for.');
 
-    const problems = problemsWith(form ?? {});
+    const problems = problemsWith(form ?? {}, { euCountries: await this.euCountries() });
     if (problems.length) throw new BadRequestException(problems.join(' '));
 
     return this.file(customerId, formToInput(form), actorId);
+  }
+
+  /**
+   * ISO-2 codes inside the EU, from our own countries table — what decides whether a box must carry
+   * its customs line. The same source the FedEx booking reads, so filing and booking agree.
+   */
+  async euCountries(): Promise<Set<string>> {
+    const rows = await this.prisma.country.findMany({ where: { euVatZone: true, deletedAt: null }, select: { isoCode: true } });
+    return new Set(rows.map((r) => (r.isoCode ?? '').toUpperCase()).filter(Boolean));
   }
 
   /**
@@ -192,6 +249,7 @@ export class CustomerShipmentsService {
         id: true, name: true,
         lengthCm: true, widthCm: true, heightCm: true, weightKg: true,
         declaredValue: true, currency: true, dangerousGoods: true, batteryType: true, active: true,
+        hsCode: true, countryOfOrigin: true,
       },
       orderBy: { name: 'asc' },
     });
@@ -294,6 +352,198 @@ export class CustomerShipmentsService {
       },
     });
     return this.get(id);
+  }
+
+  /**
+   * Book it with FedEx from the platform, and — on production — fulfil it with the tracking number.
+   *
+   * In order, and each step before the next because each is what makes the next safe:
+   *
+   *  1. The shipment is in a state that can be fulfilled, the account is one we may use for this
+   *     customer, and nothing is already booked for it on production. A second label for the same
+   *     boxes is a second charge.
+   *  2. Our team's corrections to the customs lines are SAVED. They are corrections to the shipment,
+   *     not to one attempt at booking it, and should survive FedEx refusing the attempt.
+   *  3. Dangerous goods the platform cannot declare are refused.
+   *  4. FedEx is asked. The booking, its reply and its documents are recorded by the carriers
+   *     service whatever else happens.
+   *  5. On production, the shipment is fulfilled with the tracking number FedEx returned, which is
+   *     what gives the customer their tracking. On sandbox it is not: a sandbox label is a test, and
+   *     the shipment stays in the queue for the real one.
+   */
+  async book(id: string, input: BookInput, actorId?: string) {
+    const shipment = await this.get(id);
+    const plan = planStaffAction(shipment.status as ShipmentStatus, 'fulfil');
+    if (!plan.ok) throw new ConflictException(plan.reason);
+
+    if (!input.accountId) throw new BadRequestException('Choose the FedEx account to book on.');
+    if (!input.serviceType) throw new BadRequestException('Choose the FedEx service.');
+    if (!input.shipDate || !/^\d{4}-\d{2}-\d{2}$/.test(input.shipDate)) throw new BadRequestException('Choose the date it is handed to FedEx.');
+    if (input.dutiesPaidBy !== 'sender' && input.dutiesPaidBy !== 'recipient') {
+      throw new BadRequestException('Say who pays duties and taxes at the border.');
+    }
+
+    const [customer, account] = await Promise.all([
+      this.prisma.customer.findFirst({
+        where: { id: shipment.customerId, deletedAt: null },
+        select: { name: true, legalName: true, companyId: true, company: { select: { officialName: true } } },
+      }),
+      this.prisma.carrierAccount.findFirst({
+        where: { id: input.accountId, deletedAt: null },
+        select: { id: true, environment: true, companyId: true, isActive: true, name: true },
+      }),
+    ]);
+    if (!customer) throw new NotFoundException('Customer not found');
+    if (!account) throw new NotFoundException('Carrier account not found');
+    if (!account.isActive) throw new BadRequestException('Test the connection on this account before booking with it.');
+    // The company that serves this customer bills them, so its account pays the carrier.
+    if (customer.companyId && account.companyId !== customer.companyId) {
+      throw new BadRequestException(
+        `${customer.name} is served by ${customer.company?.officialName ?? 'another of our companies'}. Book on that company's FedEx account.`,
+      );
+    }
+
+    const production = account.environment === 'production';
+    if (production) {
+      const existing = shipment.bookings.find((b) => b.environment === 'production' && b.status !== 'cancelled');
+      if (existing) {
+        throw new ConflictException(
+          `This shipment is already booked with FedEx${existing.masterTrackingNumber ? ` (tracking ${existing.masterTrackingNumber})` : ''}. Cancel that label before booking another.`,
+        );
+      }
+      // The customer's tracking link is built from our carrier list, so a real booking needs one.
+      if (!input.shippingServiceId) throw new BadRequestException('Choose which of our carriers this went with, so the customer gets a tracking link.');
+    }
+
+    // 2. Corrections first, kept whatever FedEx says.
+    const edits = (input.parcels ?? []).filter((e) => shipment.parcels.some((p) => p.id === e.id));
+    if (edits.length) {
+      const corrected = withEdits(shipment.parcels, edits);
+      await this.prisma.$transaction(corrected.map((p) => this.prisma.customerShipmentParcel.update({
+        where: { id: p.id },
+        data: {
+          goodsDescription: p.goodsDescription,
+          quantity: p.quantity,
+          declaredValue: p.declaredValue == null ? null : new Prisma.Decimal(String(p.declaredValue)),
+          hsCode: p.hsCode,
+          countryOfOrigin: p.countryOfOrigin,
+        },
+      })));
+    }
+    const current = await this.get(id);
+
+    // 3.
+    const refusal = dangerousGoodsRefusal(current.parcels, !!input.batteriesSectionII);
+    if (refusal) throw new BadRequestException(refusal);
+
+    // 4.
+    const result = await this.carriers.bookCustomerShipment({
+      accountId: account.id,
+      customerShipmentId: id,
+      recipient: recipientParty(current),
+      origin: collectionParty(current),
+      parcels: shipParcels(current.parcels),
+      items: customsItems(current, current.parcels),
+      invoice: input.invoice ?? null,
+      invoiceIssuer: invoiceIssuer(customer),
+      serviceType: input.serviceType,
+      shipDate: input.shipDate,
+      dutiesPaidBy: input.dutiesPaidBy,
+      labelImageType: input.labelImageType ?? 'PDF',
+      // Our reference for the shipment: what comes back on FedEx's invoice file and joins its charge
+      // to this shipment.
+      customerReference: current.reference,
+      goodsDescription: current.goodsDescription,
+    }, actorId);
+
+    // 5.
+    const tracking = result.ok ? result.booking?.masterTrackingNumber ?? null : null;
+    let fulfilled = false;
+    if (result.ok && production && tracking) {
+      await this.prisma.customerShipment.update({
+        where: { id },
+        data: {
+          status: 'FULFILLED',
+          shippingServiceId: input.shippingServiceId,
+          trackingNumber: tracking,
+          shippedAt: new Date(`${input.shipDate}T12:00:00Z`),
+          fulfilledAt: new Date(),
+          fulfilledById: actorId ?? null,
+          ...(input.chargeCents !== undefined ? { chargeCents: input.chargeCents } : {}),
+          ...(input.costCents !== undefined ? { costCents: input.costCents } : {}),
+          chargeCurrency: (input.chargeCurrency ?? current.chargeCurrency ?? 'EUR').toUpperCase(),
+          infoRequest: null,
+        },
+      });
+      fulfilled = true;
+    }
+
+    return {
+      ok: result.ok,
+      status: result.status,
+      message: result.ok
+        ? production
+          ? tracking
+            ? null
+            : 'Booked, but no tracking number could be read from FedEx’s reply, so the shipment was not marked as sent. The reply is stored against the booking.'
+          : 'Booked on SANDBOX: a test label, no real shipment. The shipment stays in the queue for the real booking.'
+        : result.message,
+      customs: result.customs,
+      environment: account.environment,
+      fulfilled,
+      booking: result.booking,
+      documents: result.documents,
+      request: result.request,
+      response: result.ok ? null : result.response,
+      shipment: await this.get(id),
+    };
+  }
+
+  /**
+   * What the booking screen needs for one shipment: the accounts it may book on, the services, and
+   * for each account which border the shipment crosses — which decides whether customs lines and
+   * an invoice are asked for at all.
+   */
+  async bookingOptions(id: string) {
+    const shipment = await this.get(id);
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: shipment.customerId },
+      select: { name: true, legalName: true, companyId: true },
+    });
+    const [accounts, eu] = await Promise.all([
+      this.carriers.accountsForBooking(customer?.companyId ?? null),
+      this.euCountries(),
+    ]);
+    const collected = collectionParty(shipment);
+    return {
+      accounts: accounts.map((a) => ({
+        ...a,
+        // Where the goods physically leave from: the collection address, or this account's own.
+        customs: customsLane(collected?.address.countryCode ?? a.originCountry, shipment.toCountryIso, eu),
+      })),
+      services: CYPRUS_SERVICE_TYPES.map((value) => ({ value, label: SERVICE_LABELS[value] ?? value })),
+      invoiceIssuer: customer ? invoiceIssuer(customer) : null,
+      collection: !!collected,
+    };
+  }
+
+  /**
+   * What FedEx would charge us for it, per service — our cost, before anything is booked.
+   *
+   * Rated from the account's own origin. A collection address in another country would be rated
+   * from the wrong place, so the screen says the quote is from our warehouse when there is one.
+   */
+  async quote(id: string, accountId: string) {
+    const shipment = await this.get(id);
+    if (!accountId) throw new BadRequestException('Choose the FedEx account to quote on.');
+    const value = shipment.parcels.reduce((t, p) => t + Number(p.declaredValue ?? 0), 0);
+    const r = await this.carriers.rateQuote(accountId, {
+      recipient: { postalCode: shipment.toPostalCode, countryIso: shipment.toCountryIso },
+      parcels: shipParcels(shipment.parcels).map((p) => ({ weightKg: p.weightKg, lengthCm: p.lengthCm, widthCm: p.widthCm, heightCm: p.heightCm })),
+      customsValue: value > 0 ? { amount: Math.round(value * 100) / 100, currency: (shipment.goodsCurrency ?? 'EUR').toUpperCase() } : null,
+      goodsDescription: shipment.goodsDescription,
+    });
+    return { ok: r.ok, message: r.message, quote: r.quote, customs: r.customs };
   }
 
   /** Correct a shipment we have already recorded — a mistyped tracking number, a changed charge. */
@@ -523,6 +773,9 @@ function parcelData(p: ParcelInput) {
     dangerousGoods: !!p.dangerousGoods,
     batteryType: p.dangerousGoods ? text(p.batteryType) : null,
     priorityHandling: !!p.priorityHandling,
+    quantity: Number.isInteger(Number(p.quantity)) && Number(p.quantity) >= 1 ? Number(p.quantity) : 1,
+    hsCode: text(p.hsCode),
+    countryOfOrigin: text(p.countryOfOrigin)?.toUpperCase() ?? null,
   };
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fieldProblem, formComplete, sectionComplete } from './formRules';
+import { customsNeeded, fieldProblem, formComplete, hasCollection, sectionComplete } from './formRules';
 import { emptyForm, emptyPackage, type FormState } from './ShipmentFormFields';
 
 /** A form with everything filled, which each test then breaks in one place. */
@@ -48,7 +48,7 @@ describe('fieldProblem', () => {
 
 describe('sectionComplete', () => {
   it('calls a fully filled form complete', () => {
-    expect(sectionComplete(good())).toEqual({ order: true, customer: true, address: true, packages: true });
+    expect(sectionComplete(good())).toEqual({ order: true, customer: true, address: true, collection: true, packages: true });
     expect(formComplete(good())).toBe(true);
   });
 
@@ -108,5 +108,44 @@ describe('sectionComplete', () => {
     form.packages = [];
     expect(sectionComplete(form).packages).toBe(false);
     expect(formComplete(form)).toBe(false);
+  });
+});
+
+describe('the customs line and the collection address', () => {
+  const EU = new Set(['CY', 'GR', 'DE']);
+  const toUk = (): FormState => ({ ...good(), address: { ...good().address, countryIso: 'GB', postalCode: 'LS1 1AA', city: 'Leeds' } });
+
+  it('is asked for outside the EU only — the same rule the API applies', () => {
+    expect(customsNeeded(good(), EU)).toBe(false);
+    expect(customsNeeded(toUk(), EU)).toBe(true);
+    // No list, nothing asked: the API checks again on receipt.
+    expect(customsNeeded(toUk(), new Set())).toBe(false);
+  });
+
+  it('keeps the packages section open until each box has a value, an HS code and an origin', () => {
+    const f = toUk();
+    expect(sectionComplete(f, EU).packages).toBe(false);
+    f.packages = [{ ...f.packages[0], declaredValue: '40', hsCode: '9209.94', countryOfOrigin: 'CN' }];
+    expect(sectionComplete(f, EU).packages).toBe(true);
+    expect(sectionComplete(good(), EU).packages).toBe(true);
+  });
+
+  it('checks the shape of an HS code and a quantity wherever they are given', () => {
+    expect(fieldProblem('hs', '')).toBeNull();
+    expect(fieldProblem('hs', '8516.79')).toBeNull();
+    expect(fieldProblem('hs', 'guitar')).toContain('6 to 10 digits');
+    expect(fieldProblem('hsRequired', '')).toContain('needed');
+    expect(fieldProblem('whole', '')).toBeNull();
+    expect(fieldProblem('whole', '3')).toBeNull();
+    expect(fieldProblem('whole', '1.5')).toContain('whole number');
+  });
+
+  it('treats an empty collection address as goods already at our warehouse, and half of one as unfinished', () => {
+    expect(hasCollection(good().collection)).toBe(false);
+    expect(sectionComplete(good()).collection).toBe(true);
+    const half = { ...good(), collection: { ...good().collection, city: 'Limassol' } };
+    expect(sectionComplete(half).collection).toBe(false);
+    const whole = { ...good(), collection: { ...good().collection, contactName: 'Nikos', phone: '+357 22123456', countryIso: 'CY', postalCode: '3000', city: 'Limassol', line1: '1 Port Road' } };
+    expect(sectionComplete(whole).collection).toBe(true);
   });
 });

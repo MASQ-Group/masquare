@@ -16,10 +16,11 @@ import { buildTrackingUrl, carrierSiteUrl } from './tracking-url';
 import { trackingView } from './tracking-view';
 import {
   SHIP_CANCEL_PATH, SHIP_PATH, buildCancelRequest, buildShipRequest, missingForBooking,
-  type ShipParty, type ShipRequestInput,
+  type ShipParcel, type ShipParty, type ShipRequestInput,
 } from './fedex-ship';
 import { documentDownload, documentsToStore, parseShipReply } from './fedex-ship-parse';
 import { commodityFromItem, type InvoiceSource } from './fedex-customs';
+import { fedexPhone } from './fedex-phone';
 
 /** One customs item as a person enters it: the line's total value and weight, not per unit. */
 export interface CustomsItemInput {
@@ -433,6 +434,29 @@ export class CarriersService {
     };
   }
 
+  /**
+   * The FedEx accounts a booking may use, each with the country its shipments leave from.
+   *
+   * Active only — nothing ships on an account nobody has seen answer — and the serving company's
+   * alone where the customer has one. Production first: it is the one a real booking wants, and
+   * sandbox is listed after it for testing.
+   */
+  async accountsForBooking(companyId: string | null) {
+    const rows = await this.prisma.carrierAccount.findMany({
+      where: { deletedAt: null, isActive: true, carrier: 'fedex', ...(companyId ? { companyId } : {}) },
+      select: { id: true, name: true, environment: true, accountNumber: true, company: { select: { officialName: true } } },
+      orderBy: [{ environment: 'asc' }, { name: 'asc' }],
+    });
+    return Promise.all(rows.map(async (r) => ({
+      id: r.id,
+      name: r.name,
+      environment: r.environment,
+      accountNumber: r.accountNumber,
+      companyName: r.company?.officialName ?? null,
+      originCountry: (await this.originFor(r.id))?.endpoint.countryIso?.toUpperCase() ?? null,
+    })));
+  }
+
   /** ISO-2 codes inside the EU VAT zone, from our own countries table rather than a second list. */
   private async euCountryCodes(): Promise<Set<string>> {
     const rows = await this.prisma.country.findMany({
@@ -726,17 +750,7 @@ export class CarriersService {
   // ------------------------------------------------------------------ booking
 
   /**
-   * Book a shipment and write down everything about it.
-   *
-   * The order of operations matters more here than anywhere else in this integration. FedEx has no
-   * shipment-history API (§2.2): once a label exists, anything we failed to record is unrecoverable.
-   * So the whole reply is stored before this function returns, and it is stored even when the reply
-   * cannot be fully understood.
-   *
-   * The response shape is NOT yet mapped. FedEx's Ship collection carries 1,335 sample requests and
-   * no sample responses, exactly as the rate collection did. Rather than invent field names, this
-   * keeps the reply whole and reports what it could and could not find. The first real booking
-   * settles it, and nothing is lost in the meantime.
+   * Book one of our own orders. The sending and the recording are placeBooking's, below.
    */
   async book(
     accountId: string,
@@ -808,9 +822,84 @@ export class CarriersService {
       invoice: input.invoice ?? null,
     };
 
-    // The route first: an export needs its customs items before it may be sent at all.
+    return this.placeBooking(account, { transactionId: tx.id }, shipInput, input.quoted ?? null, actorId);
+  }
+
+  /**
+   * Book a logistics customer's shipment.
+   *
+   * The caller — the customer-shipments service — has already decided everything that is about the
+   * customer: who receives it, where it is collected, what each box declares, whose name the invoice
+   * carries. What is decided here is what is about US: the account, and our own address as the
+   * shipper. We are the shipper whoever owns the goods; that is the arrangement with FedEx.
+   */
+  async bookCustomerShipment(
+    input: {
+      accountId: string;
+      customerShipmentId: string;
+      recipient: ShipParty;
+      origin: ShipParty | null;
+      parcels: ShipParcel[];
+      items: CustomsItemInput[];
+      invoice: InvoiceSource | null;
+      invoiceIssuer: string | null;
+      serviceType: string;
+      shipDate: string;
+      dutiesPaidBy: 'sender' | 'recipient';
+      labelImageType?: 'PDF' | 'PNG' | 'ZPLII';
+      customerReference: string;
+      goodsDescription?: string | null;
+    },
+    actorId?: string,
+  ) {
+    const account = await this.prisma.carrierAccount.findFirst({
+      where: { id: input.accountId, deletedAt: null },
+      select: { id: true, environment: true, accountNumber: true, isActive: true, company: { select: { officialName: true, phoneLandline: true } } },
+    });
+    if (!account) throw new NotFoundException('Carrier account not found');
+    if (!account.isActive) throw new BadRequestException('Test the connection on this account before booking with it.');
+
+    const shipInput: ShipRequestInput = {
+      accountNumber: account.accountNumber,
+      shipper: await this.shipperParty(account.id, account.company?.officialName ?? null, account.company?.phoneLandline ?? null),
+      origin: input.origin,
+      recipient: input.recipient,
+      serviceType: input.serviceType,
+      shipDate: input.shipDate,
+      parcels: input.parcels,
+      customerReference: input.customerReference,
+      dutiesPaidBy: input.dutiesPaidBy,
+      goodsDescription: input.goodsDescription ?? null,
+      labelImageType: input.labelImageType,
+      commodities: input.items.map(commodityFromItem),
+      invoice: input.invoice,
+      invoiceIssuer: input.invoiceIssuer,
+    };
+
+    return this.placeBooking(account, { customerShipmentId: input.customerShipmentId }, shipInput, null, actorId);
+  }
+
+  /**
+   * Send a booking to FedEx and write down everything about it. Shared by both kinds of owner.
+   *
+   * The order of operations matters more here than anywhere else in this integration. FedEx has no
+   * shipment-history API (§2.2): once a label exists, anything we failed to record is unrecoverable.
+   * So the whole reply is stored before this returns, and it is stored even when the reply cannot be
+   * fully understood.
+   */
+  private async placeBooking(
+    account: { id: string; environment: string },
+    owner: { transactionId: string } | { customerShipmentId: string },
+    shipInput: ShipRequestInput,
+    quoted: { amount: number; currency: string } | null,
+    actorId?: string,
+  ) {
+    // The route first: an export needs its customs items before it may be sent at all. Where the
+    // goods physically leave from decides which border they cross — a collection address where
+    // there is one, our own address otherwise.
     const eu = await this.euCountryCodes();
-    const customs = customsLane(shipInput.shipper.address.countryCode, shipInput.recipient.address.countryCode, eu);
+    const fromCountry = shipInput.origin?.address.countryCode ?? shipInput.shipper.address.countryCode;
+    const customs = customsLane(fromCountry, shipInput.recipient.address.countryCode, eu);
 
     const gaps = missingForBooking(shipInput, customs);
     if (gaps.length) throw new BadRequestException(`Cannot book yet — still needed: ${gaps.join(', ')}.`);
@@ -824,17 +913,30 @@ export class CarriersService {
         body: JSON.stringify(body),
       });
 
-    let res = await send(await this.token(accountId));
-    if (res.status === 401) res = await send(await this.token(accountId, { force: true }));
+    let res = await send(await this.token(account.id));
+    if (res.status === 401) res = await send(await this.token(account.id, { force: true }));
 
     const text = await res.text();
     let parsed: any = null;
     try { parsed = JSON.parse(text); } catch { /* kept as text below */ }
 
     if (!res.ok) {
-      // Nothing was booked, so nothing is recorded. A failed booking is not a shipment.
-      this.logger.warn(`FedEx booking failed (${res.status}) on account ${accountId}`);
-      return { ok: false as const, status: res.status, message: describeRateFailure(res.status, parsed), request: body, response: parsed ?? text.slice(0, 20_000), booking: null };
+      // Nothing was booked, so nothing is recorded. A failed booking is not a shipment. FedEx's own
+      // words are logged with the lane, so a refusal can be read later without the person's screen.
+      this.logger.warn(
+        `FedEx booking failed (${res.status}) on account ${account.id} for ${shipInput.customerReference} (${customs}): ` +
+          describeRateFailure(res.status, parsed).split('\n')[0].slice(0, 300),
+      );
+      return {
+        ok: false as const,
+        status: res.status,
+        message: describeRateFailure(res.status, parsed, { environment: account.environment, originCountry: fromCountry }),
+        request: body,
+        response: parsed ?? text.slice(0, 20_000),
+        booking: null,
+        documents: [],
+        customs,
+      };
     }
 
     /**
@@ -847,16 +949,16 @@ export class CarriersService {
 
     const booking = await this.prisma.carrierBooking.create({
       data: {
-        carrierAccountId: accountId,
-        transactionId: tx.id,
+        carrierAccountId: account.id,
+        ...owner,
         // Copied, not referenced — see the column comment.
         environment: account.environment,
-        serviceType: input.serviceType,
+        serviceType: shipInput.serviceType,
         serviceName: shipment?.serviceName ?? null,
         masterTrackingNumber,
-        quotedAmount: input.quoted?.amount ?? null,
-        quotedCurrency: input.quoted?.currency ?? null,
-        dutiesPaidBy: input.dutiesPaidBy,
+        quotedAmount: quoted?.amount ?? null,
+        quotedCurrency: quoted?.currency ?? null,
+        dutiesPaidBy: shipInput.dutiesPaidBy,
         customerReference: shipInput.customerReference,
         labelFormat: shipInput.labelImageType ?? 'PDF',
         responseJson: parsed ?? { unparsed: text.slice(0, 100_000) },
@@ -877,9 +979,10 @@ export class CarriersService {
       /** Said plainly when the reply did not yield what we expected — the raw is stored regardless. */
       message: masterTrackingNumber
         ? null
-        : 'Booked, but no tracking number could be read from the reply. The whole response is stored against the booking — the response shape needs mapping before this is used in earnest.',
+        : 'Booked, but no tracking number could be read from the reply. The whole response is stored against the booking.',
       request: body,
       response: parsed ?? text.slice(0, 20_000),
+      customs,
     };
   }
 
@@ -1543,18 +1646,20 @@ export class CarriersService {
     });
     const useAccount = !!(a?.originPostalCode && a?.originCountryIso);
     const c = a?.company;
+    const countryCode = (useAccount ? a?.originCountryIso : c?.addressCountry) ?? null;
     return {
       contact: {
         personName: companyName ?? c?.officialName ?? null,
         companyName: companyName ?? c?.officialName ?? null,
-        phoneNumber: (useAccount ? a?.originPhone : c?.phoneLandline) ?? phone ?? null,
+        // Digits only, as FedEx takes them; the settings screens keep whatever was typed.
+        phoneNumber: fedexPhone((useAccount ? a?.originPhone : c?.phoneLandline) ?? phone ?? null, countryCode),
       },
       address: {
         streetLines: (useAccount ? [a?.originLine1, a?.originLine2] : [c?.addressLine1, c?.addressLine2]).filter((x): x is string => !!x),
         city: (useAccount ? a?.originCity : c?.addressCity) ?? null,
         stateOrProvinceCode: (useAccount ? a?.originRegion : c?.addressRegion) ?? null,
         postalCode: (useAccount ? a?.originPostalCode : c?.addressPostalCode) ?? null,
-        countryCode: (useAccount ? a?.originCountryIso : c?.addressCountry) ?? null,
+        countryCode,
       },
     };
   }

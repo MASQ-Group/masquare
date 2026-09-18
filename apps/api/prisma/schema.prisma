@@ -4335,6 +4335,10 @@ model CustomerShipment {
   // ── where it goes, and where it comes from ───────────────────────────────────────────────────
   // Typed per shipment rather than pointing at a stored address: a customer ships from wherever the
   // goods happen to be, which is sometimes their own door and sometimes their supplier's.
+  //
+  // The `from` block is a COLLECTION address. Empty means the goods are at our warehouse, which is
+  // the ordinary case. Either way we are the shipper FedEx bills and prints: a collection address
+  // goes to FedEx as the shipment's origin, beside us, not in place of us.
   fromName       String? @map("from_name")
   fromCompany    String? @map("from_company")
   fromLine1      String? @map("from_line1")
@@ -4416,6 +4420,18 @@ model CustomerShipmentParcel {
   /// Their own reference for this box, where the boxes of one order are referenced separately.
   customerReference String? @map("customer_reference")
 
+  /**
+   * The box as a customs line: how many of the goods are in it, where they were made, and their
+   * tariff number. One line per box, so the line's value is the declared value below and its weight
+   * is the box's weight — which is what keeps FedEx's "items weigh what the shipment weighs" rule
+   * true by construction rather than by somebody adding up.
+   *
+   * Required only for a delivery outside the EU. Entered by the customer, correctable by us.
+   */
+  quantity        Int     @default(1)
+  hsCode          String? @map("hs_code")
+  countryOfOrigin String? @map("country_of_origin")
+
   /// What this box is worth, for customs and for insurance. In the shipment's currency.
   declaredValue Decimal? @map("declared_value") @db.Decimal(12, 2)
   /**
@@ -4489,6 +4505,10 @@ model CustomerProduct {
   /// Always set — the service writes one whether or not the form sent one, so nothing downstream
   /// has to decide what an amount with no currency means.
   currency      String   @default("EUR")
+
+  /// Its customs answers, so a box filled from this product arrives with them already given.
+  hsCode          String? @map("hs_code")
+  countryOfOrigin String? @map("country_of_origin")
 
   /// Dangerous goods, and the packing instruction, so a battery product carries its own answer.
   dangerousGoods Boolean @default(false) @map("dangerous_goods")

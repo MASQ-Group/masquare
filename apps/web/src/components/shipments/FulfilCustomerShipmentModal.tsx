@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ModalShell, Select } from '@masquare/ui';
 import { customerShipmentsApi, shippingServicesApi, type CustomerShipment } from '../../lib/api';
+import { BookingDocuments } from './BookingDocuments';
 
 /**
  * Recording what we booked for a customer.
@@ -71,6 +72,14 @@ export function FulfilCustomerShipmentModal({ shipment, onClose }: { shipment: C
       initialSize={{ w: 720, h: 520 }}
     >
       <div className="space-y-5 p-1">
+        {/* Labels bought from the platform, for reprinting. */}
+        {(shipment.bookings ?? []).length > 0 && (
+          <div>
+            <div className="mb-1.5 text-[13px] font-semibold text-n-800">FedEx labels and invoices</div>
+            <BookingDocuments bookings={shipment.bookings} reference={shipment.reference} />
+          </div>
+        )}
+
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
             <span className={label}>Carrier</span>
@@ -133,6 +142,12 @@ export function FulfilCustomerShipmentModal({ shipment, onClose }: { shipment: C
             </dd>
             <dt className="text-n-500">Contact</dt>
             <dd className="text-n-700">{[shipment.toName, shipment.toPhone, shipment.toEmail].filter(Boolean).join(' · ') || '—'}</dd>
+            <dt className="text-n-500">Collect from</dt>
+            <dd className="text-n-700">
+              {shipment.fromLine1 || shipment.fromCity
+                ? [shipment.fromCompany || shipment.fromName, shipment.fromLine1, shipment.fromLine2, shipment.fromCity, shipment.fromPostalCode, shipment.fromCountryIso, shipment.fromPhone].filter(Boolean).join(', ')
+                : 'Already at our warehouse'}
+            </dd>
             {shipment.toVatNumber && (<><dt className="text-n-500">Their VAT</dt><dd className="mono text-n-700">{shipment.toVatNumber}</dd></>)}
             {shipment.deliveryInstructions && (
               <><dt className="text-n-500">Instructions</dt><dd className="text-n-700">{shipment.deliveryInstructions}</dd></>
@@ -170,10 +185,13 @@ export function FulfilCustomerShipmentModal({ shipment, onClose }: { shipment: C
                   )}
                 </div>
                 <div className="mt-0.5 text-n-700">{p.goodsDescription ?? '—'}</div>
-                {(Number(p.declaredValue) > 0 || p.customerReference) && (
+                {(Number(p.declaredValue) > 0 || p.customerReference || p.hsCode || p.countryOfOrigin) && (
                   <div className="text-[11.5px] text-n-500">
                     {[
+                      Number(p.quantity) > 1 ? `${p.quantity} items` : null,
                       Number(p.declaredValue) > 0 ? `Declared ${Number(p.declaredValue).toFixed(2)} ${shipment.goodsCurrency ?? ''}` : null,
+                      p.hsCode ? `HS ${p.hsCode}` : null,
+                      p.countryOfOrigin ? `Made in ${p.countryOfOrigin}` : null,
                       p.customerReference ? `Their ref ${p.customerReference}` : null,
                     ].filter(Boolean).join(' · ')}
                   </div>

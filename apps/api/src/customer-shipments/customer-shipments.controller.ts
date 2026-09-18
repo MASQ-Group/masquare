@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { AccessArea, RequireCapability } from '../access/access.decorators';
-import { CustomerShipmentsService, type FulfilInput } from './customer-shipments.service';
+import { CustomerShipmentsService, type BookInput, type FulfilInput } from './customer-shipments.service';
 import type { ShipmentForm } from './shipment-form';
 
 /**
@@ -54,6 +54,12 @@ export class CustomerShipmentsController {
     return this.shipments.formOptions(customerId ?? '');
   }
 
+  /** The accounts, services and customs lane the booking screen draws from. */
+  @Get(':id/booking-options')
+  bookingOptions(@Param('id') id: string) {
+    return this.shipments.bookingOptions(id);
+  }
+
   @Get(':id')
   get(@Param('id') id: string) {
     return this.shipments.get(id);
@@ -78,6 +84,23 @@ export class CustomerShipmentsController {
   @Post(':id/fulfil')
   fulfil(@Param('id') id: string, @Body() body: FulfilInput, @CurrentUser() user: AuthUser) {
     return this.shipments.fulfil(id, body ?? {}, user.sub);
+  }
+
+  /**
+   * Book it with FedEx from here: a real label, a real tracking number and a real charge on a
+   * production account, so behind the same capability as booking one of our own orders. On success
+   * the shipment is fulfilled with FedEx's tracking number; on sandbox it is only a test label.
+   */
+  /** What FedEx would charge us for it. Reads only — nothing is booked. */
+  @Post(':id/quote')
+  quote(@Param('id') id: string, @Body() body: { accountId?: string }) {
+    return this.shipments.quote(id, body?.accountId ?? '');
+  }
+
+  @Post(':id/book')
+  @RequireCapability('marketplace_write')
+  book(@Param('id') id: string, @Body() body: BookInput, @CurrentUser() user: AuthUser) {
+    return this.shipments.book(id, body ?? {}, user.sub);
   }
 
   @Patch(':id')

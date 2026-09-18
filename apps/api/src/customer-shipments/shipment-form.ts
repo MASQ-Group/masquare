@@ -1,4 +1,5 @@
 import { phoneProblem } from './phone-number';
+import { normaliseHsCode } from '../carriers/fedex-customs';
 import type { ShipmentInput } from './customer-shipments.service';
 /**
  * The shipment form a logistics customer fills in, as rules rather than as a screen.
@@ -41,6 +42,30 @@ export interface PackageForm {
   batteryType?: string | null;
   priorityHandling?: boolean | null;
   insurance?: boolean | null;
+  /** The box as a customs line. Required only for a delivery outside the EU — see customsNeeded. */
+  quantity?: number | null;
+  hsCode?: string | null;
+  countryOfOrigin?: string | null;
+}
+
+/**
+ * Where we collect the goods, when they are not already at our warehouse.
+ *
+ * Optional as a whole: left empty, the goods are with us. Once any of it is filled in, the rest of
+ * what a courier needs to find the door becomes required — half an address is worse than none,
+ * because it reads as answered.
+ */
+export interface CollectionForm {
+  companyName?: string | null;
+  contactName?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  countryIso?: string | null;
+  postalCode?: string | null;
+  city?: string | null;
+  state?: string | null;
+  line1?: string | null;
+  line2?: string | null;
 }
 
 export interface ShipmentForm {
@@ -50,6 +75,7 @@ export interface ShipmentForm {
   address?: AddressForm;
   packages?: PackageForm[];
   currency?: string | null;
+  collection?: CollectionForm | null;
 }
 
 /**
@@ -105,6 +131,34 @@ export function totalDeclaredValue(packages: readonly PackageForm[]): number {
 const text = (v: string | null | undefined) => (v ?? '').trim();
 const positive = (v: number | null | undefined) => Number.isFinite(Number(v)) && Number(v) > 0;
 
+/** Whether any part of a collection address was given. Empty means the goods are at our warehouse. */
+export function hasCollection(c: CollectionForm | null | undefined): boolean {
+  if (!c) return false;
+  return [c.companyName, c.contactName, c.phone, c.email, c.countryIso, c.postalCode, c.city, c.state, c.line1, c.line2]
+    .some((v) => text(v) !== '');
+}
+
+/**
+ * Whether this shipment crosses a customs border, so each box must carry its customs line.
+ *
+ * Outside the EU at either end — the delivery country, or a collection country where one was given.
+ * Our warehouse is inside the EU, so with no collection address only the destination decides. The
+ * same answer FedEx's own lane gives (customsLane in fedex-rate.ts), asked earlier: at filing, where
+ * the customer still has the details to hand, rather than at booking, where we would have to send it
+ * back and ask.
+ *
+ * Needs the EU list, which lives in the countries table. Without one nothing is required, which is
+ * the safe direction for a caller that has not been given the list: the booking checks again.
+ */
+export function customsNeeded(form: ShipmentForm, euCountries?: ReadonlySet<string> | null): boolean {
+  if (!euCountries || euCountries.size === 0) return false;
+  const to = text(form.address?.countryIso).toUpperCase();
+  const from = hasCollection(form.collection) ? text(form.collection?.countryIso).toUpperCase() : '';
+  if (!to) return false;
+  if (from && from === to) return false;
+  return !euCountries.has(to) || (!!from && !euCountries.has(from));
+}
+
 /**
  * What is wrong with a submitted form, in the words the person filling it in needs.
  *
@@ -112,7 +166,7 @@ const positive = (v: number | null | undefined) => Number.isFinite(Number(v)) &&
  * 2 needs a weight" rather than "weight is required", because a form of four packages with one
  * empty box is otherwise a hunt.
  */
-export function problemsWith(form: ShipmentForm): string[] {
+export function problemsWith(form: ShipmentForm, opts: { euCountries?: ReadonlySet<string> | null } = {}): string[] {
   const problems: string[] = [];
   const r = form.recipient ?? {};
   const a = form.address ?? {};
@@ -133,6 +187,24 @@ export function problemsWith(form: ShipmentForm): string[] {
   if (!text(a.city)) problems.push('The delivery city is needed.');
   if (!text(a.line1)) problems.push('The first line of the delivery address is needed.');
 
+  const c = form.collection;
+  if (hasCollection(c)) {
+    if (!text(c?.contactName)) problems.push('The collection address needs a contact name.');
+    if (!text(c?.phone)) problems.push('The collection address needs a phone number, for the courier.');
+    else {
+      const bad = phoneProblem(c?.phone, text(c?.countryIso) || undefined);
+      if (bad) problems.push(`That collection phone number will not reach anybody. ${bad}`);
+    }
+    if (text(c?.email) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(c?.email))) {
+      problems.push('That collection email address does not look like an address.');
+    }
+    if (!text(c?.countryIso)) problems.push('The collection country is needed.');
+    if (!text(c?.postalCode)) problems.push('The collection postcode is needed.');
+    if (!text(c?.city)) problems.push('The collection city is needed.');
+    if (!text(c?.line1)) problems.push('The first line of the collection address is needed.');
+  }
+
+  const customs = customsNeeded(form, opts.euCountries);
   const packages = form.packages ?? [];
   if (packages.length === 0) problems.push('A shipment needs at least one package.');
 
@@ -158,6 +230,22 @@ export function problemsWith(form: ShipmentForm): string[] {
     if (p.insurance && !positive(p.declaredValue)) {
       problems.push(`${which} is insured, so it needs a declared value — the cover is ${INSURANCE_RATE * 100}% of it.`);
     }
+
+    // The customs line. Checked for shape whenever given; required only across a customs border.
+    if (p.quantity != null && String(p.quantity).trim() !== '' && !(Number.isInteger(Number(p.quantity)) && Number(p.quantity) >= 1)) {
+      problems.push(`${which} needs a whole-number quantity of 1 or more.`);
+    }
+    if (text(p.hsCode) && !normaliseHsCode(p.hsCode)) {
+      problems.push(`${which} has an HS code that is not one — it is 6 to 10 digits, like 8516.79.`);
+    }
+    if (text(p.countryOfOrigin) && !/^[A-Za-z]{2}$/.test(text(p.countryOfOrigin))) {
+      problems.push(`${which} needs its country of origin chosen from the list.`);
+    }
+    if (customs) {
+      if (!positive(p.declaredValue)) problems.push(`${which} needs a declared value — customs is told what it is worth on a delivery outside the EU.`);
+      if (!text(p.hsCode)) problems.push(`${which} needs an HS code for a delivery outside the EU.`);
+      if (!text(p.countryOfOrigin)) problems.push(`${which} needs the country the goods were made in, for a delivery outside the EU.`);
+    }
   });
 
   return problems;
@@ -181,6 +269,7 @@ export function formToInput(form: ShipmentForm): ShipmentInput {
   const a = form.address ?? {};
   const packages = form.packages ?? [];
   const currency = (form.currency ?? 'EUR').toUpperCase();
+  const c: CollectionForm = hasCollection(form.collection) ? form.collection ?? {} : {};
 
   return {
     customerReference: form.orderReference ?? null,
@@ -204,6 +293,22 @@ export function formToInput(form: ShipmentForm): ShipmentInput {
       phone: r.phone ?? null,
       email: r.email ?? null,
     },
+    /**
+     * Always written, even empty: an address cleared on the form must clear on the shipment, and
+     * leaving the key out would keep the old collection address under a form that no longer shows it.
+     */
+    from: {
+      name: c.contactName ?? null,
+      company: c.companyName ?? null,
+      line1: c.line1 ?? null,
+      line2: c.line2 ?? null,
+      city: c.city ?? null,
+      region: c.state ?? null,
+      postalCode: c.postalCode ?? null,
+      countryIso: c.countryIso ?? null,
+      phone: c.phone ?? null,
+      email: c.email ?? null,
+    },
     parcels: packages.map((p) => ({
       weightKg: Number(p.weightKg),
       lengthCm: p.lengthCm ?? null,
@@ -219,6 +324,10 @@ export function formToInput(form: ShipmentForm): ShipmentInput {
       dangerousGoods: !!p.dangerousGoods,
       batteryType: p.dangerousGoods ? p.batteryType ?? null : null,
       priorityHandling: !!p.priorityHandling,
+      quantity: Number.isInteger(Number(p.quantity)) && Number(p.quantity) >= 1 ? Number(p.quantity) : 1,
+      // Stored as the digits FedEx takes, so what we show is what is sent.
+      hsCode: normaliseHsCode(p.hsCode) ?? (text(p.hsCode) || null),
+      countryOfOrigin: text(p.countryOfOrigin).toUpperCase() || null,
     })),
   };
 }

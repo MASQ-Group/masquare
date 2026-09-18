@@ -2621,6 +2621,24 @@ export interface CustomerShipmentParcel {
   dangerousGoods: boolean;
   batteryType: string | null;
   priorityHandling: boolean;
+  /** The box as a customs line — needed by FedEx outside the EU. */
+  quantity: number;
+  hsCode: string | null;
+  countryOfOrigin: string | null;
+}
+
+/** A label bought from the platform for a customer's shipment, and the documents it kept. */
+export interface CustomerShipmentBooking {
+  id: string;
+  environment: 'sandbox' | 'production' | string;
+  status: 'created' | 'cancelled' | string;
+  serviceType: string;
+  serviceName: string | null;
+  masterTrackingNumber: string | null;
+  labelFormat: string | null;
+  createdAt: string;
+  cancelledAt: string | null;
+  documents: Array<{ id: string; kind: 'LABEL' | 'COMMERCIAL_INVOICE' | string; docType: string | null; pieceIndex: number | null; sizeBytes: number }>;
 }
 
 export interface CustomerShipmentDoc {
@@ -2687,6 +2705,39 @@ export interface CustomerShipment {
   customer: { id: string; name: string; referencePrefix: string };
   parcels: CustomerShipmentParcel[];
   documents: CustomerShipmentDoc[];
+  /** Labels bought from the platform, newest first. */
+  bookings: CustomerShipmentBooking[];
+}
+
+/** Booking a customer's shipment with FedEx from the platform. */
+export interface CustomerShipmentBookInput {
+  accountId: string;
+  serviceType: string;
+  shipDate: string;
+  dutiesPaidBy: 'sender' | 'recipient';
+  labelImageType: 'PDF' | 'ZPLII';
+  invoice: 'fedex' | 'platform';
+  parcels: Array<{ id: string; goodsDescription: string | null; quantity: number | null; declaredValue: number | null; hsCode: string | null; countryOfOrigin: string | null }>;
+  batteriesSectionII: boolean;
+  shippingServiceId: string | null;
+  chargeCents: number | null;
+  chargeCurrency: string;
+  /** Our cost from the quote, in euro cents. Never reaches the customer. */
+  costCents: number | null;
+}
+
+export interface CustomerShipmentBookResult {
+  ok: boolean;
+  status: number;
+  message: string | null;
+  customs: CustomsLane;
+  environment: string;
+  fulfilled: boolean;
+  booking: { id: string; masterTrackingNumber: string | null; environment: string } | null;
+  documents: Array<{ id: string; kind: string; docType: string | null; pieceIndex: number | null; sizeBytes: number }>;
+  request: unknown;
+  response: unknown;
+  shipment: CustomerShipment;
 }
 
 export interface CustomerShipmentFulfilment {
@@ -2727,6 +2778,55 @@ export const customerShipmentsApi = {
     api.post<CustomerShipment>('/customer-shipments', { customerId, ...form }).then((r) => r.data),
   /** Remove one that should never have existed. Needs the delete capability. */
   remove: (id: string) => api.delete<{ removed: boolean; reference: string }>(`/customer-shipments/${id}`).then((r) => r.data),
+  /** The FedEx accounts and services a booking may use, and which border each account's route crosses. */
+  bookingOptions: (id: string) =>
+    api.get<{
+      accounts: Array<{ id: string; name: string; environment: string; accountNumber: string; companyName: string | null; originCountry: string | null; customs: CustomsLane }>;
+      services: Array<{ value: string; label: string }>;
+      /** Whose name the commercial invoice is issued in. */
+      invoiceIssuer: string | null;
+      /** Whether the goods are collected from an address rather than our warehouse. */
+      collection: boolean;
+    }>(`/customer-shipments/${id}/booking-options`).then((r) => r.data),
+  /** What FedEx would charge us, per service. Nothing is booked. */
+  quote: (id: string, accountId: string) =>
+    api.post<{ ok: boolean; message: string | null; quote: FedexRateReply | null; customs: CustomsLane }>(
+      `/customer-shipments/${id}/quote`, { accountId },
+    ).then((r) => r.data),
+  /** Book it with FedEx from the platform. Production fulfils it with FedEx's tracking number. */
+  book: (id: string, body: CustomerShipmentBookInput) =>
+    api.post<CustomerShipmentBookResult>(`/customer-shipments/${id}/book`, body).then((r) => r.data),
+  /**
+   * Open a label or commercial invoice. The route needs the auth header, so the file is fetched and
+   * handed to the browser: a PDF opens in a new tab ready to print, a thermal file downloads.
+   *
+   * The tab is opened BEFORE the request, while the click still counts as the person's own — opened
+   * after an await, a browser treats it as a popup and blocks it.
+   */
+  openBookingDocument: async (bookingId: string, doc: { id: string; kind: string; docType: string | null; pieceIndex: number | null }, reference: string) => {
+    const pdf = (doc.docType ?? 'PDF').toUpperCase() === 'PDF';
+    const tab = pdf ? window.open('', '_blank') : null;
+    try {
+      const res = await api.get(`/carriers/bookings/${bookingId}/documents/${doc.id}`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data as Blob);
+      if (tab) {
+        tab.location.href = url;
+      } else {
+        const a = document.createElement('a');
+        a.href = url;
+        const what = doc.kind === 'LABEL' ? `label${doc.pieceIndex != null ? `-${doc.pieceIndex + 1}` : ''}` : 'invoice';
+        a.download = `${reference}-${what}.${pdf ? 'pdf' : 'zpl'}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+      // Kept long enough for the new tab to load it; a blob URL is only a handle on memory.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      tab?.close();
+      throw e;
+    }
+  },
   /** Ask the carrier where it is, now, rather than waiting for the two-hourly sweep. */
   refreshTracking: (id: string) =>
     api.post<{ updated: number; delivered: number; notFound: number; messages: string[]; shipment: CustomerShipment }>(
@@ -2756,6 +2856,24 @@ export interface PortalPackage {
   dangerousGoods: boolean;
   batteryType: string | null;
   priorityHandling: boolean;
+  /** The box as a customs line. Asked for on a delivery outside the EU. */
+  quantity: number | string | null;
+  hsCode: string | null;
+  countryOfOrigin: string | null;
+}
+
+/** Where we collect the goods, when they are not at our warehouse. */
+export interface PortalCollection {
+  companyName?: string | null;
+  contactName?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  countryIso?: string | null;
+  postalCode?: string | null;
+  city?: string | null;
+  state?: string | null;
+  line1?: string | null;
+  line2?: string | null;
 }
 
 export interface PortalShipment {
@@ -2769,6 +2887,8 @@ export interface PortalShipment {
   deliveryInstructions: string | null;
   recipient: { companyName: string | null; vatNumber: string | null; contactName: string | null; phone: string | null; email: string | null };
   address: { countryIso: string | null; postalCode: string | null; city: string | null; state: string | null; line1: string | null; line2: string | null; line3: string | null };
+  /** Null when the goods are at our warehouse. */
+  collection: PortalCollection | null;
   packages: PortalPackage[];
   currency: string;
   carrier: string | null;
@@ -2805,6 +2925,7 @@ export interface PortalShipmentForm {
   address?: { countryIso?: string | null; postalCode?: string | null; city?: string | null; state?: string | null; line1?: string | null; line2?: string | null; line3?: string | null };
   packages?: Array<Omit<PortalPackage, 'id' | 'insuranceAmount'>>;
   currency?: string;
+  collection?: PortalCollection | null;
 }
 
 /**
@@ -2824,6 +2945,8 @@ export interface CustomerProduct {
   currency: string;
   dangerousGoods: boolean;
   batteryType: string | null;
+  hsCode: string | null;
+  countryOfOrigin: string | null;
   active: boolean;
 }
 
@@ -2836,7 +2959,7 @@ export const portalApi = {
     batteryTypes: BatteryType[];
   }>('/portal/home').then((r) => r.data),
   /** The portal's own copy of the countries table — external accounts are refused the platform's. */
-  countries: () => api.get<{ id: string; isoCode: string; name: string }[]>('/portal/countries').then((r) => r.data),
+  countries: () => api.get<{ id: string; isoCode: string; name: string; euVatZone: boolean }[]>('/portal/countries').then((r) => r.data),
   list: (params: { view?: string; q?: string } = {}) => api.get<PortalShipment[]>('/portal/shipments', { params }).then((r) => r.data),
   get: (id: string) => api.get<PortalShipment>(`/portal/shipments/${id}`).then((r) => r.data),
   file: (form: PortalShipmentForm) => api.post<PortalShipment>('/portal/shipments', form).then((r) => r.data),

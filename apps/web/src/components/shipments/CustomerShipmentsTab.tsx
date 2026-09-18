@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ExternalLink, MessageSquareWarning, PackagePlus, RefreshCcw, Search, Trash2, Undo2 } from 'lucide-react';
+import { ExternalLink, MessageSquareWarning, PackagePlus, RefreshCcw, Search, Trash2, Truck, Undo2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Pagination, TableScroll } from '@masquare/ui';
 import { customerShipmentsApi, type CustomerShipment } from '../../lib/api';
 import { useConfirm } from '../ConfirmProvider';
 import { useAccess } from '../../lib/useAccess';
 import { FulfilCustomerShipmentModal } from './FulfilCustomerShipmentModal';
+import { BookCustomerShipmentModal } from './BookCustomerShipmentModal';
 import { AskCustomerModal } from './AskCustomerModal';
 
 /**
@@ -28,6 +29,7 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
   const [page, setPage] = useState(1);
   const [fulfilling, setFulfilling] = useState<CustomerShipment | null>(null);
   const [asking, setAsking] = useState<CustomerShipment | null>(null);
+  const [booking, setBooking] = useState<CustomerShipment | null>(null);
 
   const query = useQuery({
     queryKey: ['customer-shipments', queue, { q, page }],
@@ -105,6 +107,7 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
   return (
     <div className="card overflow-hidden">
       {fulfilling && <FulfilCustomerShipmentModal shipment={fulfilling} onClose={() => setFulfilling(null)} />}
+      {booking && <BookCustomerShipmentModal shipment={booking} onClose={() => setBooking(null)} />}
       {asking && (
         <AskCustomerModal
           shipment={asking}
@@ -240,7 +243,24 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
                               <Trash2 size={12} className="mr-1 inline" />Delete
                             </button>
                           )}
-                          <button type="button" className="text-[11.5px] font-semibold text-teal-700 hover:underline" onClick={() => setFulfilling(s)}>
+                          {/* Booked here, a real label on production; the right to do that is the
+                              same one booking our own orders needs. */}
+                          {may('marketplace_write') && (
+                            <button
+                              type="button"
+                              className="mr-3 text-[11.5px] font-semibold text-teal-700 hover:underline"
+                              title="Book it with FedEx from here: label, invoice and tracking"
+                              onClick={() => setBooking(s)}
+                            >
+                              <Truck size={12} className="mr-1 inline" />Book FedEx
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="text-[11.5px] font-semibold text-teal-700 hover:underline"
+                            title="Record a booking made on the carrier's own site"
+                            onClick={() => setFulfilling(s)}
+                          >
                             Fulfil
                           </button>
                         </>
