@@ -1,8 +1,10 @@
+import { Suspense } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Archive, PackagePlus, Truck } from 'lucide-react';
 import { portalApi } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { RouteBoundary } from '../components/common/RouteBoundary';
 
 /**
  * The shell a customer's own people see.
@@ -52,7 +54,18 @@ export function PortalLayout() {
       </header>
 
       <main className="mx-auto max-w-[1100px] px-6 py-6 max-[560px]:px-4">
-        <Outlet />
+        {/*
+          The boundary the platform's own shell has, and this one shipped without.
+          Every portal page is a lazily-loaded chunk; with nothing to catch the suspension while it
+          arrives, React rendered nothing at all — a white screen that came right only when the
+          browser was refreshed and the chunk was already in cache. The error boundary sits outside
+          it so a chunk that fails to load says so rather than unmounting the shell.
+        */}
+        <RouteBoundary>
+          <Suspense fallback={<div className="grid place-items-center py-16 text-[13px] text-n-500">Loading…</div>}>
+            <Outlet />
+          </Suspense>
+        </RouteBoundary>
       </main>
     </div>
   );
