@@ -208,7 +208,9 @@ export function renderEbayDescription(content: DescriptionContent): string {
   // ── 4. Description ────────────────────────────────────────────────────────────────────────────
   if (paragraphs.length) {
     body.push(
-      `<div style="display:flex;flex-direction:column;gap:12px;color:${C.body}">`
+      // The reading measure: the width these paragraphs had when the whole description was 720px,
+      // kept now that the frame around them is wider. See the container, at the bottom.
+      `<div style="display:flex;flex-direction:column;gap:12px;color:${C.body};max-width:640px">`
       + paragraphs.map((p) => `<p style="margin:0;text-wrap:pretty">${esc(p)}</p>`).join('')
       + '</div>',
     );
@@ -304,10 +306,22 @@ export function renderEbayDescription(content: DescriptionContent): string {
   out.push(`<div style="padding:32px 5.5% 40px">${body.join('')}</div>`);
 
   /**
-   * `max-width` with `margin:0 auto` rather than a fixed width: eBay renders descriptions inside an
-   * iframe of unpredictable width, and a fixed one is what produces sideways scrolling on a phone.
+   * Left-aligned, and wider than the text inside it.
+   *
+   * It was centred at 720px. On eBay's desktop page the description sits under a left-aligned
+   * "Item description from the seller" heading, in a frame much wider than 720px, so a centred block
+   * floated in the middle of empty space, detached from everything above it. Aligned left it reads as
+   * part of the page.
+   *
+   * Wider, but only where width helps: the banner, the at-a-glance strip, the feature grid and the
+   * specification tables. Running prose is held to its own measure below, because a paragraph
+   * stretched to 900px is a wall — roughly sixty to eighty characters a line is what reads.
+   *
+   * Still `max-width` rather than a fixed width: eBay renders descriptions in a frame of
+   * unpredictable width and allows no media queries, and a fixed width is what produces sideways
+   * scrolling on a phone.
    */
-  return `<div style="max-width:720px;margin:0 auto;font-family:${FONT};background:${C.paper}">`
+  return `<div style="max-width:960px;margin:0;font-family:${FONT};background:${C.paper}">`
     + `<div style="color:${C.ink};font-size:15px;line-height:1.6">${out.join('')}</div></div>`;
 }
 

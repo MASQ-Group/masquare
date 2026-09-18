@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Check, Loader2, Send } from 'lucide-react';
+import { AlertTriangle, Check, ExternalLink, Loader2, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { ebayListingApi } from '../../lib/api';
 import { EbayPricingSection } from './EbayPricingSection';
@@ -37,7 +37,7 @@ export function EbayListingPanel({ productId }: { productId: string }) {
     mutationFn: () => ebayListingApi.publish(productId, {}),
     onSuccess: (r) => {
       setConfirming(false);
-      toast.success(`Listed on eBay — listing ${r.listingId ?? r.offerId ?? ''}`);
+      toast.success(r.offerReused ? `eBay listing ${r.listingId ?? ''} updated` : `Listed on eBay — item ${r.listingId ?? r.offerId ?? ''}`);
       qc.invalidateQueries({ queryKey: ['ebay', 'preview', productId] });
       qc.invalidateQueries({ queryKey: ['listing', 'product-channels', productId] });
     },
@@ -55,7 +55,15 @@ export function EbayListingPanel({ productId }: { productId: string }) {
    */
   const missing = preview.data?.missing ?? [];
   const blockers = pre.data?.blockers ?? [];
-  const canPublish = missing.length === 0 && blockers.length === 0 && (pre.data?.liveWritesEnabled ?? false);
+  const listed = preview.data?.listed ?? null;
+  /**
+   * What the button would do. The same press either makes a listing or updates the one already
+   * there, and those deserve different words and a different warning; and a product already on eBay
+   * some other way gets no button at all, because either would make a second listing of it.
+   */
+  const action = preview.data?.action ?? 'create';
+  const refused = action === 'refuse';
+  const canPublish = !refused && missing.length === 0 && blockers.length === 0 && (pre.data?.liveWritesEnabled ?? false);
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-n-200 bg-n-25 p-3.5">
@@ -66,6 +74,33 @@ export function EbayListingPanel({ productId }: { productId: string }) {
           is created.
         </span>
       </div>
+
+      {/*
+        * Whether it is already on eBay — first, because it changes what everything below is for.
+        *
+        * This used to be absent. A listing went through, the toast said so and vanished, and the
+        * product reopened looking exactly as it had before with Publish still live. Amazon has said
+        * "Submitted" for weeks; eBay now says what it knows, and links to it.
+        */}
+      {listed && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-[12.5px] text-teal-900">
+          <Check size={14} className="shrink-0 text-teal-600" />
+          <span className="font-semibold">Listed on eBay UK</span>
+          {listed.itemId && <span className="mono">item {listed.itemId}</span>}
+          {listed.listedAt && <span className="text-teal-700">· {new Date(listed.listedAt).toLocaleDateString()}</span>}
+          {listed.url && (
+            <a href={listed.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-teal-700 hover:underline">
+              View on eBay <ExternalLink size={12} />
+            </a>
+          )}
+          {listed.adopted && (
+            <span className="w-full text-[11.5px] text-teal-800">
+              Found on eBay under its earlier SKU, from before SKUs kept their punctuation. Updating keeps that
+              listing rather than making a second one.
+            </span>
+          )}
+        </div>
+      )}
 
       {/* ── the account, once, because it is the same for every product ── */}
       {pre.isLoading && <Line icon="wait">Checking the eBay account…</Line>}
@@ -108,31 +143,50 @@ export function EbayListingPanel({ productId }: { productId: string }) {
       <EbayListingChoices productId={productId} preview={preview.data} pre={pre.data} />
 
       {/* ── the only step a buyer can see ── */}
-      <div className="flex items-center gap-2 border-t border-n-200 pt-3">
-        {!confirming ? (
-          <button
-            className="btn btn-primary !h-8 !text-[12.5px] disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!canPublish || publish.isPending}
-            onClick={() => setConfirming(true)}
-            title={canPublish ? 'Creates a live, publicly buyable listing' : 'Something above is still missing'}
-          >
-            <Send size={13} /> Publish to eBay UK
-          </button>
-        ) : (
-          <>
-            <span className="text-[12.5px] text-n-700">This creates a live listing buyers can purchase.</span>
-            <button className="btn btn-primary !h-8 !text-[12.5px] disabled:cursor-not-allowed disabled:opacity-50" onClick={() => publish.mutate()} disabled={publish.isPending}>
-              {publish.isPending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Yes, publish
+      {refused ? (
+        /*
+          * Already on eBay some other way — by hand, or through the older API the publish cannot see.
+          * No button: pressing it would make a second listing of the product, which eBay does not
+          * allow. The server refuses too; this only says so before anybody tries.
+          */
+        <div className="flex items-start gap-2 rounded-lg border border-warning-bd bg-warning-bg px-3 py-2.5 text-[12.5px] text-warning">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <span>{preview.data?.refusal}</span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 border-t border-n-200 pt-3">
+          {!confirming ? (
+            <button
+              className="btn btn-primary !h-8 !text-[12.5px] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!canPublish || publish.isPending}
+              onClick={() => setConfirming(true)}
+              title={!canPublish ? 'Something above is still missing'
+                : action === 'update' ? 'Sends these details to the live listing'
+                : 'Creates a live, publicly buyable listing'}
+            >
+              <Send size={13} /> {action === 'update' ? 'Update the eBay UK listing' : 'Publish to eBay UK'}
             </button>
-            <button className="hbtn" onClick={() => setConfirming(false)}>Cancel</button>
-          </>
-        )}
-        {!canPublish && (
-          <span className="text-[11.5px] text-n-500">
-            {missing.map((m) => m.label).slice(0, 4).join(', ') || 'Account not ready'}
-          </span>
-        )}
-      </div>
+          ) : (
+            <>
+              <span className="text-[12.5px] text-n-700">
+                {action === 'update'
+                  ? 'This changes the live listing — buyers see the new price and details straight away.'
+                  : 'This creates a live listing buyers can purchase.'}
+              </span>
+              <button className="btn btn-primary !h-8 !text-[12.5px] disabled:cursor-not-allowed disabled:opacity-50" onClick={() => publish.mutate()} disabled={publish.isPending}>
+                {publish.isPending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}{' '}
+                {action === 'update' ? 'Yes, update it' : 'Yes, publish'}
+              </button>
+              <button className="hbtn" onClick={() => setConfirming(false)}>Cancel</button>
+            </>
+          )}
+          {!canPublish && (
+            <span className="text-[11.5px] text-n-500">
+              {missing.map((m) => m.label).slice(0, 4).join(', ') || 'Account not ready'}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLooseSkuIndex, buildSkuOwnerIndex, looseSkuKey, matchSku, normaliseSku, relinkAction, suggestOwnerBySuffix } from './sku-match';
+import { buildLooseSkuIndex, buildSkuOwnerIndex, looseOrderOwner, looseSkuKey, matchSku, normaliseSku, relinkAction, suggestOwnerBySuffix } from './sku-match';
 
 const catalogue = [
   { id: 'p1', mainSku: 'IT68277', aliases: [{ skuValue: 'IT-68277' }] },
@@ -203,5 +203,44 @@ describe('suggestOwnerBySuffix', () => {
     expect(suggestOwnerBySuffix('COMPLETELY-NEW-THING', index)).toBeNull();
     expect(suggestOwnerBySuffix('IT40779', index)).toBeNull();
     expect(suggestOwnerBySuffix('', index)).toBeNull();
+  });
+});
+
+describe('looseOrderOwner', () => {
+  const catalogue = [
+    { id: 'le', mainSku: 'LE-83306', aliases: [] },
+    { id: 'ab12', mainSku: 'AB-12', aliases: [] },
+    { id: 'a-b12', mainSku: 'A-B12', aliases: [] },
+    { id: 'aliased', mainSku: 'MAIN-1', aliases: [{ skuValue: 'OLD-NAME' }] },
+  ];
+  const loose = buildLooseSkuIndex(catalogue);
+
+  it('recognises an order for a SKU eBay was sent without its hyphen', () => {
+    // The case that started this: the listing went out as LE83306, so its orders arrive as LE83306.
+    expect(looseOrderOwner('LE83306', loose)?.productId).toBe('le');
+  });
+
+  it('does not care about case or stray spaces either', () => {
+    expect(looseOrderOwner(' le83306 ', loose)?.productId).toBe('le');
+  });
+
+  it('reaches a product through its alias as well as its main SKU', () => {
+    expect(looseOrderOwner('OLDNAME', loose)?.productId).toBe('aliased');
+  });
+
+  it('refuses to choose when two products squash to the same key', () => {
+    // AB-12 and A-B12 both become AB12. Attaching the order to either would take stock from goods
+    // that did not sell, so it stays unrecognised for somebody to look at.
+    expect(looseOrderOwner('AB12', loose)).toBeNull();
+  });
+
+  it('answers nothing for a SKU nobody holds', () => {
+    expect(looseOrderOwner('ZZ999', loose)).toBeNull();
+  });
+
+  it('answers nothing for an empty SKU rather than matching everything', () => {
+    expect(looseOrderOwner('', loose)).toBeNull();
+    expect(looseOrderOwner(null, loose)).toBeNull();
+    expect(looseOrderOwner('---', loose)).toBeNull();
   });
 });

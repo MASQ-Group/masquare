@@ -123,6 +123,25 @@ export function matchSku(
 }
 
 /**
+ * The product an ORDER line belongs to, when its SKU matched nothing exactly.
+ *
+ * Orders were matched to products exactly — main SKU, then alias — while listings were matched with
+ * this looser key. So a listing published as LE83306 was correctly recognised as LE-83306, and the
+ * order it produced was not: it would arrive belonging to no product, stock undeducted and profit
+ * uncounted. The two sides of one sale disagreed about what it was.
+ *
+ * Only as a fallback, and only when exactly one product claims the key. Two products that squash to
+ * the same letters and digits make it ambiguous, and an order attached to the wrong product is worse
+ * than one left for somebody to look at — it quietly takes stock from goods that did not sell.
+ */
+export function looseOrderOwner(sku: string | null | undefined, loose: LooseSkuIndex): SkuOwner | null {
+  const key = looseSkuKey(sku);
+  if (!key) return null;
+  // `undefined` is nobody, `null` is several. Both mean: do not guess.
+  return loose.get(key) ?? null;
+}
+
+/**
  * What linking a row would do: nothing, claim an unlinked row, or move one to a different product.
  *
  * `move` is separated from `claim` because they deserve different amounts of trust. Claiming an

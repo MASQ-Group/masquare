@@ -22,7 +22,7 @@ const ITEM_DESCRIPTION_MAX = 4000;
 const LISTING_DESCRIPTION_MAX = 500_000;
 
 export interface EbayOfferInput {
-  /** eBay allows alphanumerics only, max 50 — our SKUs carry hyphens and slashes. */
+  /** The product's own SKU, as ebaySafeSku leaves it: unchanged but for trimming and the 50 cap. */
   sku: string;
   title: string | null;
   descriptionHtml: string | null;
@@ -57,13 +57,33 @@ export interface EbayOfferInput {
 export interface MissingField { key: string; label: string }
 
 /**
- * eBay rejects a SKU containing anything but letters and digits, and our catalogue is full of
- * hyphens and slashes (3G-084-378-24-100/0). Stripping them is not reversible on its own, so the
- * mapping is stored on the listing row rather than recomputed — this only produces the candidate.
+ * The SKU a listing goes to eBay under: the product's own, unchanged.
+ *
+ * It used to be stripped to letters and digits — LE-83306 went out as LE83306 — on the strength of
+ * a rule written in on 26 August: "eBay SKUs are alphanumeric only". That rule was asserted, never
+ * observed; the account had no Inventory API items when it was written, so no refusal could have
+ * taught it. Production says otherwise: 4,508 of this account's 4,762 eBay listings carry a hyphen,
+ * some a slash as well.
+ *
+ * And stripping was not harmless. Orders are matched to products by SKU, exactly, so an order for
+ * LE83306 would have arrived belonging to nothing — stock not deducted, profit not counted, the
+ * order sitting unrecognised. At least two products went out that way before it was noticed —
+ * LE-83306, and LAG-A158WEA-9EF on eBay UK and Italy.
+ *
+ * Changing the SKU has a consequence of its own: eBay finds a listing by SKU, so re-publishing one
+ * of those under the unstripped SKU would miss it and make a second listing. publish-identity.ts
+ * decides that before anything is sent.
+ *
+ * So the SKU goes out as it is. If the Inventory API does refuse a character, it refuses on the
+ * inventory item — a private record, deleted without trace, before anything is public — and says
+ * which. That is how the real rule gets learnt: by asking, not by guessing and then trusting the
+ * guess.
+ *
+ * Trimmed, and cut at 50, the one limit eBay documents. A SKU longer than that cannot match exactly
+ * whatever we do, and the listing row records what was actually sent so the difference is visible.
  */
 export function ebaySafeSku(sku: string): string {
-  const cleaned = sku.replace(/[^a-zA-Z0-9]/g, '');
-  return cleaned.slice(0, 50);
+  return sku.trim().slice(0, 50);
 }
 
 /** What is missing before eBay would accept this. Reported together rather than one 400 at a time. */
@@ -171,4 +191,15 @@ export function buildOffer(input: EbayOfferInput) {
       ? { listingDescription: input.descriptionHtml.slice(0, LISTING_DESCRIPTION_MAX) }
       : {}),
   };
+}
+
+/**
+ * The public page for an eBay UK item.
+ *
+ * eBay UK because that is where the platform lists — eBaymag republishes to every other market, each
+ * with its own item number that this does not hold.
+ */
+export function ebayItemUrl(itemId: string | null | undefined): string | null {
+  const id = String(itemId ?? '').trim();
+  return /^\d+$/.test(id) ? `https://www.ebay.co.uk/itm/${id}` : null;
 }
