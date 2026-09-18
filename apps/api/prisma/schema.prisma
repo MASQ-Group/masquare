@@ -2488,8 +2488,10 @@ model CarrierBooking {
   /// instead of merely puzzling.
   customerReference String @map("customer_reference")
 
-  /// The label, in object storage. FedEx returns it once and never again.
+  /// Unused: labels are stored in CarrierBookingDocument, not object storage. Kept, never written,
+  /// so no migration had to drop a column; the reason is on that model.
   labelUrl    String? @map("label_url")
+  /// The label's format — PDF, ZPLII — as it was booked, for a screen to say without opening it.
   labelFormat String? @map("label_format")
 
   /// 'created' or 'cancelled'. A cancelled booking is not a deleted row — the charge may still land.
@@ -2511,11 +2513,52 @@ model CarrierBooking {
   transaction      SalesTransaction? @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   customerShipment CustomerShipment? @relation(fields: [customerShipmentId], references: [id], onDelete: Cascade)
   shipment    Shipment?        @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  documents   CarrierBookingDocument[]
 
   @@index([transactionId])
   @@index([carrierAccountId])
   @@index([masterTrackingNumber])
   @@map("carrier_booking")
+}
+
+/**
+ * A document FedEx returned with a booking: a label per parcel, and the commercial invoice.
+ *
+ * In the database rather than object storage, deliberately. The platform's only bucket is public —
+ * it has to be, so eBay and Amazon can load product images — and a label carries the recipient's
+ * name, address and telephone, an invoice what they bought and for how much. Neither may live at a
+ * URL that works for anybody who holds it. Here they are private by default and reachable only
+ * through a signed-in download.
+ *
+ * Written straight after the booking row, and never able to undo it. FedEx returns a label once and
+ * it is already billable, so the booking is recorded first whatever happens here; if these rows
+ * could not be written, the bytes are still inside the reply stored on the booking, and can be
+ * recovered from there. A shared transaction would have let a failure here erase the booking.
+ */
+model CarrierBookingDocument {
+  id        String @id @default(uuid()) @db.Uuid
+  bookingId String @map("booking_id") @db.Uuid
+
+  /// LABEL or COMMERCIAL_INVOICE, from where in the reply it was found — see fedex-ship-parse.ts.
+  kind        String
+  /// FedEx's own word for it, and its format (PDF, ZPLII, PNG).
+  contentType String? @map("content_type")
+  docType     String? @map("doc_type")
+  /// Which parcel a label belongs to, and that parcel's tracking number. Null for the invoice.
+  pieceIndex     Int?    @map("piece_index")
+  trackingNumber String? @map("tracking_number")
+  /// Where in FedEx's reply it came from. Kept so a change in their reply shape is visible.
+  foundAt String @map("found_at")
+
+  content   Bytes
+  sizeBytes Int   @map("size_bytes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  booking CarrierBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@map("carrier_booking_document")
 }
 
 /**
