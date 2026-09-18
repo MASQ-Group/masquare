@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { CarriersService, type CarrierAccountInput } from './carriers.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
@@ -154,6 +155,36 @@ export class CarriersController {
     @AllowedCompanies() companyIds: string[],
   ) {
     return this.svc.cancel(bookingId, user.sub, companyIds);
+  }
+
+  /**
+   * A booking's label or commercial invoice, as a file.
+   *
+   * The only way to reach one: they carry a recipient's name, address and telephone, so they live in
+   * the database rather than the public bucket and come out through a signed-in request scoped to
+   * the companies the person may see.
+   *
+   * Shipments OR integrations, where the rest of this controller asks for integrations alone.
+   * Whoever puts the label on the box works in shipments and has no business needing access to API
+   * keys to print one.
+   */
+  @Get('bookings/:bookingId/documents/:documentId')
+  @AccessArea('shipments', 'integrations')
+  async bookingDocument(
+    @Param('bookingId') bookingId: string,
+    @Param('documentId') documentId: string,
+    @VisibleCompanies() companyIds: string[],
+    @Res() res: Response,
+  ) {
+    const { mime, filename, content } = await this.svc.bookingDocument(bookingId, documentId, companyIds);
+    res.setHeader('Content-Type', mime);
+    // Inline for a PDF so it opens in the browser, ready to print; a thermal file downloads, since a
+    // browser cannot render ZPL.
+    res.setHeader('Content-Disposition', `${mime === 'application/pdf' ? 'inline' : 'attachment'}; filename="${filename}"`);
+    res.setHeader('Content-Length', content.length);
+    // Never kept by a shared cache: an address label is not something a proxy should hold a copy of.
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.end(content);
   }
 
   /**

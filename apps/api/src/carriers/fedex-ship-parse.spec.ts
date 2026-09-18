@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { labelOf, parseShipReply } from './fedex-ship-parse';
+import { documentDownload, documentsToStore, labelOf, parseShipReply } from './fedex-ship-parse';
 
 /** The reply as FedEx documents it. Never yet observed — which is the whole point of this module. */
 const documented = () => ({
@@ -133,5 +133,70 @@ describe('choosing the label among several documents', () => {
     });
     expect(reply.documents.length).toBeGreaterThan(1);
     expect(labelOf(reply)!.encoded).toBe('bGFi');
+  });
+});
+
+describe('documentsToStore � the shape the first real export booking returned', () => {
+  // Observed on sandbox: label under the parcel, FedEx's commercial invoice under the shipment.
+  const observed = () => parseShipReply({
+    output: {
+      transactionShipments: [{
+        masterTrackingNumber: '794658123456',
+        pieceResponses: [{
+          trackingNumber: '794658123456',
+          packageDocuments: [{ contentType: 'LABEL', docType: 'PDF', encodedLabel: Buffer.from('%PDF-label').toString('base64') }],
+        }],
+        shipmentDocuments: [{ contentType: 'COMMERCIAL_INVOICE', docType: 'PDF', encodedLabel: Buffer.from('%PDF-invoice').toString('base64') }],
+      }],
+    },
+  });
+
+  it('keeps the label and the invoice, each named for what it is', () => {
+    const { documents, skipped } = documentsToStore(observed());
+    expect(skipped).toEqual([]);
+    expect(documents.map((d) => d.kind).sort()).toEqual(['COMMERCIAL_INVOICE', 'LABEL']);
+  });
+
+  it('decodes the bytes, so what is stored is the file rather than its base64', () => {
+    const { documents } = documentsToStore(observed());
+    expect(documents.find((d) => d.kind === 'LABEL')!.content.toString()).toBe('%PDF-label');
+    expect(documents.find((d) => d.kind === 'COMMERCIAL_INVOICE')!.content.toString()).toBe('%PDF-invoice');
+  });
+
+  it('ties each label to its parcel and that parcel\u2019s tracking number', () => {
+    const label = documentsToStore(observed()).documents.find((d) => d.kind === 'LABEL')!;
+    expect(label.pieceIndex).toBe(0);
+    expect(label.trackingNumber).toBe('794658123456');
+  });
+
+  it('treats a document under a parcel as its label, whatever FedEx called it', () => {
+    // Location is structural; contentType strings are the part most likely to vary.
+    const reply = parseShipReply({ output: { transactionShipments: [{ pieceResponses: [{}, { packageDocuments: [{ contentType: 'SHIPPING_LABEL_2', docType: 'ZPLII', encodedLabel: 'XkE=' }] }] }] } });
+    const [doc] = documentsToStore(reply).documents;
+    expect(doc).toMatchObject({ kind: 'LABEL', pieceIndex: 1, docType: 'ZPLII' });
+  });
+
+  it('leaves out a hosted document and says so, rather than storing a link that expires', () => {
+    const reply = parseShipReply({ output: { transactionShipments: [{ pieceResponses: [{ packageDocuments: [{ contentType: 'LABEL', docType: 'PDF', url: 'https://fedex.example/l.pdf' }] }] }] } });
+    const { documents, skipped } = documentsToStore(reply);
+    expect(documents).toEqual([]);
+    expect(skipped[0]).toContain('hosted');
+  });
+});
+
+describe('documentDownload', () => {
+  it('serves a PDF label as a PDF, named by reference and parcel', () => {
+    expect(documentDownload({ kind: 'LABEL', docType: 'PDF', trackingNumber: '1', pieceIndex: 0 }, 'CB-2026-09-0001'))
+      .toEqual({ mime: 'application/pdf', filename: 'CB-2026-09-0001-label-1.pdf' });
+  });
+
+  it('serves a thermal label as ZPL, and the invoice as the invoice', () => {
+    expect(documentDownload({ kind: 'LABEL', docType: 'ZPLII', trackingNumber: null, pieceIndex: 1 }, 'X').filename).toBe('X-label-2.zpl');
+    expect(documentDownload({ kind: 'COMMERCIAL_INVOICE', docType: 'PDF', trackingNumber: null, pieceIndex: null }, 'X').filename).toBe('X-invoice.pdf');
+  });
+
+  it('keeps anything but letters, digits and hyphens out of the filename', () => {
+    // It goes into a Content-Disposition header; a quote or a newline there is a header of its own.
+    expect(documentDownload({ kind: 'LABEL', docType: 'PDF', trackingNumber: null, pieceIndex: 0 }, 'A"B\r\nC/..').filename).toBe('ABC-label-1.pdf');
   });
 });

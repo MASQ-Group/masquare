@@ -18,7 +18,7 @@ import {
   SHIP_CANCEL_PATH, SHIP_PATH, buildCancelRequest, buildShipRequest, missingForBooking,
   type ShipParty, type ShipRequestInput,
 } from './fedex-ship';
-import { parseShipReply } from './fedex-ship-parse';
+import { documentDownload, documentsToStore, parseShipReply } from './fedex-ship-parse';
 import { commodityFromItem, type InvoiceSource } from './fedex-customs';
 
 /** One customs item as a person enters it: the line's total value and weight, not per unit. */
@@ -858,6 +858,7 @@ export class CarriersService {
         quotedCurrency: input.quoted?.currency ?? null,
         dutiesPaidBy: input.dutiesPaidBy,
         customerReference: shipInput.customerReference,
+        labelFormat: shipInput.labelImageType ?? 'PDF',
         responseJson: parsed ?? { unparsed: text.slice(0, 100_000) },
         createdById: actorId ?? null,
       },
@@ -865,10 +866,14 @@ export class CarriersService {
     });
 
     this.logger.log(`FedEx booking ${booking.id} created on ${account.environment} for ${shipInput.customerReference}`);
+
+    const documents = await this.keepDocuments(booking.id, parsed);
     return {
       ok: true as const,
       status: res.status,
       booking,
+      /** What was kept, without the bytes: the download route serves those. */
+      documents,
       /** Said plainly when the reply did not yield what we expected — the raw is stored regardless. */
       message: masterTrackingNumber
         ? null
@@ -876,6 +881,70 @@ export class CarriersService {
       request: body,
       response: parsed ?? text.slice(0, 20_000),
     };
+  }
+
+  /**
+   * Keep the documents a booking reply carried: a label per parcel, and FedEx's commercial invoice.
+   *
+   * After the booking row, never instead of it, and never able to undo it. FedEx returns a label once
+   * and it is already billable; if keeping the documents fails, the booking must still be on record,
+   * and the bytes are still inside the reply stored on it, from which they can be recovered. So a
+   * failure here is logged loudly and reported, and the booking stands.
+   */
+  private async keepDocuments(bookingId: string, reply: unknown) {
+    const read = parseShipReply(reply);
+    const { documents, skipped } = documentsToStore(read);
+    for (const s of skipped) this.logger.warn(`FedEx booking ${bookingId}: not kept — ${s}`);
+    if (!documents.length) {
+      this.logger.error(`FedEx booking ${bookingId}: no document could be kept from the reply. ${read.note ?? ''}`.trim());
+      return [];
+    }
+    try {
+      await this.prisma.carrierBookingDocument.createMany({
+        data: documents.map((d) => ({
+          bookingId,
+          kind: d.kind,
+          contentType: d.contentType,
+          docType: d.docType,
+          pieceIndex: d.pieceIndex,
+          trackingNumber: d.trackingNumber,
+          foundAt: d.foundAt,
+          // Copied into a plain Uint8Array: Prisma's Bytes wants one backed by an ArrayBuffer, which a
+          // Node Buffer need not be.
+          content: new Uint8Array(d.content),
+          sizeBytes: d.content.length,
+        })),
+      });
+    } catch (e: any) {
+      this.logger.error(`FedEx booking ${bookingId}: documents could not be kept (${e?.message ?? e}). They remain in the stored reply.`);
+      return [];
+    }
+    return this.prisma.carrierBookingDocument.findMany({
+      where: { bookingId },
+      select: { id: true, kind: true, docType: true, pieceIndex: true, trackingNumber: true, sizeBytes: true },
+      orderBy: [{ kind: 'desc' }, { pieceIndex: 'asc' }],
+    });
+  }
+
+  /**
+   * One booking document, for download. Only through a signed-in request, scoped to the companies the
+   * person may see — these carry a recipient's name, address and telephone.
+   */
+  async bookingDocument(bookingId: string, documentId: string, companyIds?: string[]) {
+    const doc = await this.prisma.carrierBookingDocument.findFirst({
+      where: {
+        id: documentId,
+        bookingId,
+        booking: { deletedAt: null, ...(companyIds ? { account: { companyId: { in: companyIds } } } : {}) },
+      },
+      select: {
+        kind: true, docType: true, pieceIndex: true, trackingNumber: true, content: true,
+        booking: { select: { customerReference: true } },
+      },
+    });
+    if (!doc) throw new NotFoundException('Document not found');
+    const { mime, filename } = documentDownload(doc, doc.booking.customerReference);
+    return { mime, filename, content: Buffer.from(doc.content) };
   }
 
   /**

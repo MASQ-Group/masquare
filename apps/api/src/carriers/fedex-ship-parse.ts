@@ -125,6 +125,80 @@ export function parseShipReply(reply: any): ShipReply {
   return { masterTrackingNumber, serviceName, documents, note: notes.length ? notes.join(' ') : null };
 }
 
+/** A document ready to keep: which kind it is, which parcel it belongs to, and its bytes. */
+export interface StorableDocument {
+  kind: 'LABEL' | 'COMMERCIAL_INVOICE' | 'OTHER';
+  contentType: string | null;
+  docType: string | null;
+  pieceIndex: number | null;
+  trackingNumber: string | null;
+  foundAt: string;
+  content: Buffer;
+}
+
+/**
+ * What to keep from a booking reply, and what each document is.
+ *
+ * Decided by WHERE it was found, which is now observed rather than documented: the first sandbox
+ * booking to leave the EU returned its label at pieceResponses[0].packageDocuments[0] and FedEx's
+ * commercial invoice at shipmentDocuments[0]. A document under a parcel is that parcel's label; one
+ * under the shipment is named by what FedEx calls it. Location first, because it is structural —
+ * FedEx's contentType strings are the part of a reply most likely to vary.
+ *
+ * Only documents with their bytes in the reply are kept. We ask for labels inline, and a hosted URL
+ * is one that expires: if FedEx ever sent one it is left out here and reported, rather than stored
+ * as a link that stops working.
+ */
+export function documentsToStore(reply: ShipReply): { documents: StorableDocument[]; skipped: string[] } {
+  const documents: StorableDocument[] = [];
+  const skipped: string[] = [];
+
+  for (const d of reply.documents) {
+    if (!d.encoded) {
+      skipped.push(`${d.contentType ?? 'document'} at ${d.foundAt} (hosted, not inlined)`);
+      continue;
+    }
+    const content = Buffer.from(d.encoded, 'base64');
+    if (content.length === 0) {
+      skipped.push(`${d.contentType ?? 'document'} at ${d.foundAt} (empty)`);
+      continue;
+    }
+
+    const piece = /pieceResponses\[(\d+)\]\.packageDocuments\[/.exec(d.foundAt);
+    const type = (d.contentType ?? '').toUpperCase();
+    const kind: StorableDocument['kind'] = piece
+      ? 'LABEL'
+      : type.includes('COMMERCIAL_INVOICE') ? 'COMMERCIAL_INVOICE'
+      : type.includes('LABEL') ? 'LABEL'
+      : 'OTHER';
+
+    documents.push({
+      kind,
+      contentType: d.contentType,
+      docType: d.docType,
+      pieceIndex: piece ? Number(piece[1]) : null,
+      trackingNumber: d.trackingNumber,
+      foundAt: d.foundAt,
+      content,
+    });
+  }
+
+  return { documents, skipped };
+}
+
+/** How a document should be served: its MIME type and a filename a person would recognise. */
+export function documentDownload(doc: { kind: string; docType: string | null; trackingNumber: string | null; pieceIndex: number | null }, reference: string) {
+  const type = (doc.docType ?? '').toUpperCase();
+  const [mime, ext] = type === 'PDF' ? ['application/pdf', 'pdf']
+    : type === 'PNG' ? ['image/png', 'png']
+    : type.startsWith('ZPL') ? ['application/x-zpl', 'zpl']
+    : ['application/octet-stream', 'bin'];
+  const what = doc.kind === 'COMMERCIAL_INVOICE' ? 'invoice' : doc.kind === 'LABEL' ? 'label' : 'document';
+  const which = doc.kind === 'LABEL' && doc.pieceIndex != null ? `-${doc.pieceIndex + 1}` : '';
+  const safeRef = String(reference || 'booking').replace(/[^A-Za-z0-9-]/g, '');
+  return { mime, filename: `${safeRef}-${what}${which}.${ext}` };
+}
+
 /** The label among the documents, preferring one FedEx labelled as such. */
 export function labelOf(reply: ShipReply): ShipDocument | null {
   return reply.documents.find((d) => (d.contentType ?? '').toUpperCase().includes('LABEL'))
