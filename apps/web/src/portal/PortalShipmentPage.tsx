@@ -25,6 +25,7 @@ export function PortalShipmentPage() {
   const [problems, setProblems] = useState<string[]>([]);
 
   const { data: home } = useQuery({ queryKey: ['portal', 'home'], queryFn: portalApi.home });
+  const { data: products } = useQuery({ queryKey: ['portal', 'products'], queryFn: portalApi.products });
   const { data: s, isLoading } = useQuery({ queryKey: ['portal', 'shipment', id], queryFn: () => portalApi.get(id), enabled: !!id });
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['portal'] });
@@ -95,7 +96,7 @@ export function PortalShipmentPage() {
 
       {editing ? (
         <>
-          <ShipmentFormFields form={editing} setForm={setEditing} batteryTypes={home?.batteryTypes ?? []} />
+          <ShipmentFormFields form={editing} setForm={setEditing} batteryTypes={home?.batteryTypes ?? []} products={products ?? []} />
           <div className="flex flex-wrap items-center gap-3">
             <button type="button" className="btn btn-primary" disabled={save.isPending} onClick={() => save.mutate(s.status === 'NEEDS_INFO')}>
               {save.isPending ? 'Saving…' : s.status === 'NEEDS_INFO' ? 'Send back to maSquare' : 'Save changes'}
