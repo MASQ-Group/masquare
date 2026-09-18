@@ -7,6 +7,7 @@ import { RepricingAnalyticsService } from '../amazon-repricing/analytics/reprici
 import type { ProgressSink } from '../jobs/jobs.service';
 import { syncDecision } from './sync-decision';
 import { deriveListingStatus } from './listing-status';
+import { zeroingVerdict } from './zeroing-guard';
 import { planTransition } from './plan-transition';
 import { fullScopeIntegrationWhere } from '../common/amazon-scope';
 import { settlePushQueue, type PushResult } from './push-queue-settle';
@@ -651,35 +652,43 @@ export class ChannelListingsService implements OnApplicationBootstrap {
       return { dryRun, count: 0, ok: 0, failed: 0, skipped: 0, blocked: 'Quantity pushes are switched off in Settings.', results: [] as any[] };
     }
 
-    // Blast radius. Count what this run would take from a REAL quantity down to zero, and refuse
-    // the whole run if that exceeds the configured ceiling.
+    // Blast radius. Work out what this run would take from a REAL quantity down to zero, and refuse
+    // the whole run if it is more of the catalogue than the ceiling allows.
     //
     // Listings went out of stock across the catalogue and nothing stopped it or even remarked on
     // it. A push that empties shelves is never routine, whatever the reason — an empty availability
     // table, a bad filter, a default that reads as data. Refusing and showing the number is the only
     // response that cannot be missed.
     //
+    // The ceiling counts PRODUCTS. It counted listings, and that unit refused a run for seven days
+    // because two sold-out products were listed across forty-five marketplaces between them — while
+    // those two stayed on sale advertising units nobody had. The rule, and the second ceiling that
+    // still watches the listing count for a different fault, are in zeroing-guard.ts.
+    //
     // Deliberately BEFORE the loop: a guard that trips halfway has already done the damage it
     // exists to prevent.
     const ceiling = settings?.maxZeroingPushesPerRun ?? 25;
-    const wouldZeroReal = listings.filter((l) => {
+    const candidates = listings.filter((l) => {
       if (l.integration.channelType === 'ebay' && !l.marketplace) return false;
       if (channelKeys && !channelKeys.has(channelKeyOf(l))) return false;
       if (l.productId == null || !qtyByProduct.has(l.productId)) return false; // skipped anyway
       return qtyByProduct.get(l.productId) === 0 && (l.listedQuantity ?? 0) > 0;
-    }).length;
-    if (!dryRun && wouldZeroReal > ceiling) {
-      this.logger.error('Push REFUSED: it would zero ' + wouldZeroReal + ' listings that currently hold stock (ceiling ' + ceiling + ').');
+    }).map((l) => ({ productId: l.productId as string }));
+    const verdict = zeroingVerdict(candidates, ceiling);
+    if (!dryRun && !verdict.ok) {
+      this.logger.error(
+        'Push REFUSED: it would zero ' + verdict.products + ' products (' + verdict.listings
+        + ' listings) that currently hold stock (ceiling ' + ceiling + ' products).',
+      );
       return {
         dryRun,
         count: 0,
         ok: 0,
         failed: 0,
         skipped: 0,
-        blocked:
-          'Refused: this would take ' + wouldZeroReal + ' listings from a real quantity down to zero, over the limit of ' +
-          ceiling + '. Nothing was sent. Raise the limit in Settings if this is genuinely intended.',
-        wouldZeroReal,
+        blocked: verdict.reason,
+        wouldZeroProducts: verdict.products,
+        wouldZeroReal: verdict.listings,
         results: [] as any[],
       };
     }

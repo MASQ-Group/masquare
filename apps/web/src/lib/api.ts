@@ -444,6 +444,8 @@ export interface Attribute {
 }
 export interface PlatformSettings {
   id: string;
+  /** How many PRODUCTS one automatic push may take to zero before the whole run is refused. */
+  maxZeroingPushesPerRun?: number;
   /** Who is emailed when a logistics customer files a shipment. */
   logisticsAlertUserId?: string | null;
   /** Anyone else emailed about it — plain addresses, for people with no platform login. */
