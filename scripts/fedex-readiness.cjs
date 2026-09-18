@@ -35,6 +35,26 @@ const pad = (s, n) => String(s ?? '').padEnd(n).slice(0, n);
   }
   console.log('');
 
+  // ── the rule that keeps a booking attached to exactly one shipment ───────────────────────────
+  // Read from the database's own catalogue rather than trusted from the migration file: a label
+  // charged to two shipments, or to none, cannot be put right afterwards, because FedEx will not say
+  // what we shipped.
+  const constraints = await p.$queryRawUnsafe(`
+    SELECT conname, pg_get_constraintdef(oid) AS def
+    FROM pg_constraint
+    WHERE conrelid = 'carrier_booking'::regclass AND contype = 'c'
+  `);
+  const owner = constraints.find((c) => c.conname === 'carrier_booking_one_owner');
+  console.log(`  one-owner rule on bookings           ${owner ? 'in place' : 'MISSING'}`);
+  if (owner) console.log(`    ${owner.def}`);
+  const cols = await p.$queryRawUnsafe(`
+    SELECT column_name, is_nullable FROM information_schema.columns
+    WHERE table_name = 'carrier_booking' AND column_name IN ('transaction_id', 'customer_shipment_id')
+    ORDER BY column_name
+  `);
+  for (const c of cols) console.log(`    ${c.column_name.padEnd(22)} nullable: ${c.is_nullable}`);
+  console.log('');
+
   // ── bookings so far ──────────────────────────────────────────────────────────────────────────
   const bookings = await p.carrierBooking.findMany({
     where: { deletedAt: null },
