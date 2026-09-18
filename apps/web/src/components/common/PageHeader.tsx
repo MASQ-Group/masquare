@@ -206,13 +206,26 @@ export function PageHeader({ module, moduleHref, parent, title, info, tabs, acti
 
         <div className="flex-1" />
 
-        {(actions || (overflow && overflow.length > 0) || primary) && (
-          <div className="flex shrink-0 items-center gap-2">
-            {actions}
-            {overflow && overflow.length > 0 && <OverflowMenu items={overflow} />}
-            {primary}
-          </div>
-        )}
+        {/*
+          Always here, even with nothing in it, and always the height of a header button.
+
+          The bar must not change height when you change tabs. Pages legitimately offer different
+          actions per tab — Shipments hides Export and Import on the tabs where neither describes
+          what you are looking at — and when this slot was rendered only if something filled it, the
+          whole bar shrank by the height of a button and every row on the page jumped up to meet it.
+          Reserving the space costs a few pixels on the pages that never use it and buys a header
+          that holds still.
+
+          A floor rather than a fixed height, set to the tallest control the row is meant to hold:
+          32px here, the height of .hbtn and .hbtn-primary. Anything taller that turns up later
+          grows the bar rather than hanging out of it — and if that becomes normal for a row, this
+          number is the one to raise.
+        */}
+        <div className="flex min-h-8 shrink-0 items-center gap-2">
+          {actions}
+          {overflow && overflow.length > 0 && <OverflowMenu items={overflow} />}
+          {primary}
+        </div>
       </div>
 
       {/* Row 2 — options: the page's tabs and toolbar. Single line on desktop (tabs never shrink,
@@ -241,11 +254,18 @@ export function PageHeader({ module, moduleHref, parent, title, info, tabs, acti
               })}
             </div>
           )}
-          {toolbar && (
-            <div className={`flex min-w-0 flex-1 items-center gap-2 ${tabs && tabs.length > 0 ? 'justify-end' : ''}`}>
-              {toolbar}
-            </div>
-          )}
+          {/*
+            Reserved for the same reason as the actions above: a tab whose toolbar is empty, or
+            which supplies none at all, must not shorten the row the tabs are sitting on.
+
+            36px rather than the 32 above, because this row holds dense Selects and those are h-9.
+            Measured rather than assumed — a 32px floor here left four pixels of movement between a
+            tab with filters and a tab without, which is smaller than the bug it replaced and just
+            as wrong.
+          */}
+          <div className={`flex min-h-9 min-w-0 flex-1 items-center gap-2 ${tabs && tabs.length > 0 ? 'justify-end' : ''}`}>
+            {toolbar}
+          </div>
         </div>
       )}
 

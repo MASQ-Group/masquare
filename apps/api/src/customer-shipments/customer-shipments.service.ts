@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CarriersService } from '../carriers/carriers.service';
+import { ActivityService } from '../activity/activity.service';
 import { MailService } from '../mail/mail.service';
 import { formatReference } from '../customers/customer-reference';
 import { LOGISTICS, NOT_LOGISTICS, hasType } from '../customers/customer-types';
@@ -96,6 +97,7 @@ export class CustomerShipmentsService {
     private readonly notifications: NotificationsService,
     private readonly mail: MailService,
     private readonly carriers: CarriersService,
+    private readonly activity: ActivityService,
   ) {}
 
   // ── filing ───────────────────────────────────────────────────────────────────────────────────
@@ -312,6 +314,41 @@ export class CustomerShipmentsService {
     if (!plan.ok) throw new ConflictException(plan.reason);
     await this.prisma.customerShipment.update({ where: { id }, data: { status: 'CANCELLED' } });
     return this.get(id);
+  }
+
+  /**
+   * Remove a shipment altogether.
+   *
+   * Not a status — cancelling says a real shipment is not going, and stays on the record because
+   * the customer filed it and is owed an account of what happened to it. This is for the ones that
+   * were never real: a test, a duplicate, something filed against the wrong customer.
+   *
+   * Soft, per the platform's rule against hard deletes, and that is enough to make it gone: every
+   * read of this table — both queues, the portal's list, the pending badge and the tracking sweep —
+   * already filters on deletedAt.
+   *
+   * Allowed at any status, including dispatched. Deleting the record does not recall the parcel, so
+   * whoever does it is saying the record should not exist rather than that the parcel should not
+   * have gone; the screen says as much before it asks. The reference is not returned to the
+   * customer's sequence — a number that named a shipment should never name a different one.
+   */
+  async remove(id: string, userId?: string) {
+    const shipment = await this.get(id);
+    await this.prisma.customerShipment.update({ where: { id }, data: { deletedAt: new Date() } });
+
+    // Who removed it, in the platform's own record of who did what. This table carries no
+    // updated-by column of its own, and the one question anybody asks about a vanished shipment is
+    // who made it vanish.
+    await this.activity.record({
+      entityType: 'customerShipment',
+      entityId: id,
+      entityLabel: shipment.reference,
+      action: 'delete',
+      actorId: userId ?? null,
+      summary: `Removed ${shipment.reference} (${shipment.status.toLowerCase()}) for ${shipment.customer?.name ?? 'a customer'}`,
+    });
+
+    return { removed: true, reference: shipment.reference };
   }
 
   // ── their side, used by the portal ───────────────────────────────────────────────────────────

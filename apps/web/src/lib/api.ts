@@ -2667,6 +2667,8 @@ export const customerShipmentsApi = {
     api.post<CustomerShipment>(`/customer-shipments/${id}/request-info`, { question }).then((r) => r.data),
   reopen: (id: string) => api.post<CustomerShipment>(`/customer-shipments/${id}/reopen`).then((r) => r.data),
   cancel: (id: string) => api.post<CustomerShipment>(`/customer-shipments/${id}/cancel`).then((r) => r.data),
+  /** Remove one that should never have existed. Needs the delete capability. */
+  remove: (id: string) => api.delete<{ removed: boolean; reference: string }>(`/customer-shipments/${id}`).then((r) => r.data),
   /** Ask the carrier where it is, now, rather than waiting for the two-hourly sweep. */
   refreshTracking: (id: string) =>
     api.post<{ updated: number; delivered: number; notFound: number; messages: string[]; shipment: CustomerShipment }>(

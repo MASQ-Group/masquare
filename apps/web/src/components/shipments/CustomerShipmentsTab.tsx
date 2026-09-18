@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ExternalLink, MessageSquareWarning, RefreshCcw, Search, Undo2 } from 'lucide-react';
+import { ExternalLink, MessageSquareWarning, RefreshCcw, Search, Trash2, Undo2 } from 'lucide-react';
 import { Pagination, TableScroll } from '@masquare/ui';
 import { customerShipmentsApi, type CustomerShipment } from '../../lib/api';
 import { useConfirm } from '../ConfirmProvider';
+import { useAccess } from '../../lib/useAccess';
 import { FulfilCustomerShipmentModal } from './FulfilCustomerShipmentModal';
 import { AskCustomerModal } from './AskCustomerModal';
 
@@ -21,6 +22,7 @@ const PAGE = 25;
 export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled' }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const { may } = useAccess();
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [fulfilling, setFulfilling] = useState<CustomerShipment | null>(null);
@@ -46,6 +48,34 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
     onSuccess: () => { toast.success('Back in the waiting queue'); refresh(); },
     onError: failed,
   });
+  /**
+   * Remove one altogether.
+   *
+   * For the ones that were never real — a test, a duplicate, the wrong customer. Cancelling is the
+   * answer when a real shipment is not going: it stays on the record, because the customer filed it
+   * and is owed an account of what became of it.
+   */
+  const remove = useMutation({
+    mutationFn: (id: string) => customerShipmentsApi.remove(id),
+    onSuccess: (r) => { toast.success(`${r.reference} removed`); refresh(); },
+    onError: failed,
+  });
+
+  const askRemove = async (s: CustomerShipment) => {
+    const sent = s.status === 'FULFILLED' || s.status === 'ARCHIVED';
+    const ok = await confirm({
+      title: `Remove ${s.reference}?`,
+      // What actually happens, and — where it applies — what does not. Deleting the record of a
+      // parcel already with the carrier does not stop the parcel.
+      message: sent
+        ? 'It disappears from both queues and from the customer’s own list. This parcel has already gone to the carrier; removing the record here does not recall it.'
+        : 'It disappears from this queue and from the customer’s own list. If it is a real shipment that is not going, send it back with a question or cancel it instead.',
+      confirmLabel: 'Remove',
+      tone: 'danger',
+    });
+    if (ok) remove.mutate(s.id);
+  };
+
   const recheck = useMutation({
     mutationFn: (id: string) => customerShipmentsApi.refreshTracking(id),
     onSuccess: (r) => {
@@ -193,6 +223,17 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
                           >
                             <MessageSquareWarning size={12} className="mr-1 inline" />Ask
                           </button>
+                          {may('delete_records') && (
+                            <button
+                              type="button"
+                              className="mr-3 text-[11.5px] font-semibold text-n-500 hover:text-danger hover:underline"
+                              title="Remove it altogether — for a test or a duplicate"
+                              disabled={remove.isPending}
+                              onClick={() => askRemove(s)}
+                            >
+                              <Trash2 size={12} className="mr-1 inline" />Delete
+                            </button>
+                          )}
                           <button type="button" className="text-[11.5px] font-semibold text-teal-700 hover:underline" onClick={() => setFulfilling(s)}>
                             Fulfil
                           </button>
@@ -223,6 +264,17 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
                               onClick={() => recheck.mutate(s.id)}
                             >
                               <RefreshCcw size={12} className="mr-1 inline" />Recheck
+                            </button>
+                          )}
+                          {may('delete_records') && (
+                            <button
+                              type="button"
+                              className="mr-3 text-[11.5px] font-semibold text-n-500 hover:text-danger hover:underline"
+                              title="Remove it altogether — for a test or a duplicate"
+                              disabled={remove.isPending}
+                              onClick={() => askRemove(s)}
+                            >
+                              <Trash2 size={12} className="mr-1 inline" />Delete
                             </button>
                           )}
                           <button type="button" className="text-[11.5px] font-semibold text-teal-700 hover:underline" onClick={() => setFulfilling(s)}>
