@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CustomerShipmentsService, type ShipmentInput } from '../customer-shipments/customer-shipments.service';
 import { LOGISTICS, hasType } from '../customers/customer-types';
 import { BATTERY_TYPES, formToInput, problemsWith, type ShipmentForm } from './../customer-shipments/shipment-form';
+import { trackingView } from '../carriers/tracking-view';
 import { buildTrackingUrl } from '../carriers/tracking-url';
 
 export interface ProductInput {
@@ -102,11 +103,26 @@ export class PortalService {
   }
 
   async get(customerId: string, id: string) {
-    const row = await this.prisma.customerShipment.findFirst({ where: { id, customerId, deletedAt: null }, include: INCLUDE });
+    const row = await this.prisma.customerShipment.findFirst({
+      where: { id, customerId, deletedAt: null },
+      include: DETAIL_INCLUDE,
+    });
     // Not found rather than forbidden: whether a shipment exists is not something to confirm to
     // somebody it does not belong to.
     if (!row) throw new NotFoundException('Shipment not found');
-    return this.view(row);
+
+    /**
+     * The full journey, on the one screen that shows one parcel.
+     *
+     * Not on the list: scan histories for two hundred shipments is a great deal of data to send so
+     * that a card can show one line of it. The same builder our own screens use, asked for the
+     * customer's version — which leaves our diagnostics behind rather than trusting this file to
+     * remember not to send them.
+     */
+    return {
+      ...this.view(row),
+      trackingDetail: row.trackingNumber ? trackingView(row, 'customer') : null,
+    };
   }
 
   /** File one. The form's rules are checked here as well as on the screen that drew it. */
@@ -311,6 +327,29 @@ const INCLUDE = {
     select: {
       statusDescription: true, deliveredAt: true, estimatedDeliveryAt: true,
       lastScanAt: true, lastScanDescription: true, lastScanLocation: true, exceptionDescription: true,
+    },
+  },
+} satisfies Prisma.CustomerShipmentInclude;
+
+/**
+ * The one shipment on screen, with everything its journey needs.
+ *
+ * A superset of INCLUDE, used only by `get`. The extra columns are the ones the tracking panel
+ * draws a journey from — the scans, the carrier's codes, whether the number was recognised at all.
+ * Named fields rather than the whole row: what we keep of a carrier's reply is our own record, and
+ * this file's job is to decide what leaves it.
+ */
+const DETAIL_INCLUDE = {
+  ...INCLUDE,
+  shippingService: { select: { name: true, alias: true, trackingUrlTemplate: true } },
+  tracking: {
+    select: {
+      trackingNumber: true, statusCode: true, statusDescription: true,
+      deliveredAt: true, estimatedDeliveryAt: true,
+      lastScanAt: true, lastScanDescription: true, lastScanLocation: true,
+      exceptionCode: true, exceptionDescription: true,
+      checkedAt: true, found: true, shippedAt: true, serviceName: true, shipperReference: true,
+      scans: true,
     },
   },
 } satisfies Prisma.CustomerShipmentInclude;

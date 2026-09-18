@@ -8,6 +8,7 @@ import { useConfirm } from '../components/ConfirmProvider';
 import { PORTAL_COUNTRIES, ShipmentFormFields, emptyForm, type FormState } from './ShipmentFormFields';
 import { toPayload } from './PortalNewShipmentPage';
 import { portalStatus } from './PortalShipmentsPage';
+import { TrackingPanel } from '../components/shipments/TrackingPanel';
 
 /**
  * One shipment, from the customer's side.
@@ -108,38 +109,31 @@ export function PortalShipmentPage() {
         <>
           {/* Where it is, first: it is the question somebody opens this page to ask. */}
           {(s.carrier || s.trackingNumber) && (
-            <section className="card p-5">
-              <h2 className="mb-3 text-[14px] font-semibold text-n-900">Where it is</h2>
-              <dl className="grid grid-cols-[150px_1fr] gap-x-4 gap-y-2 text-[13px] max-[560px]:grid-cols-1">
-                <dt className="text-n-500">Carrier</dt><dd className="text-n-800">{s.carrier ?? '—'}</dd>
-                <dt className="text-n-500">Tracking number</dt>
-                <dd className="mono text-n-800">
-                  {s.trackingUrl ? (
-                    <a href={s.trackingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-teal-700 hover:underline">
-                      {s.trackingNumber}<ExternalLink size={12} />
-                    </a>
-                  ) : (s.trackingNumber ?? '—')}
-                </dd>
-                {s.shippedAt && (<><dt className="text-n-500">Sent</dt><dd className="text-n-800">{new Date(s.shippedAt).toLocaleDateString()}</dd></>)}
-                {s.tracking?.deliveredAt ? (
-                  <><dt className="text-n-500">Delivered</dt><dd className="text-teal-700">{new Date(s.tracking.deliveredAt).toLocaleString()}</dd></>
-                ) : s.tracking?.estimatedDeliveryAt ? (
-                  <><dt className="text-n-500">Expected</dt><dd className="text-n-800">{new Date(s.tracking.estimatedDeliveryAt).toLocaleDateString()}</dd></>
-                ) : null}
-                {s.tracking?.lastScanDescription && (
-                  <>
-                    <dt className="text-n-500">Last update</dt>
-                    <dd className="text-n-800">
-                      {s.tracking.lastScanDescription}
-                      <span className="text-n-500">
-                        {[s.tracking.lastScanLocation, s.tracking.lastScanAt ? new Date(s.tracking.lastScanAt).toLocaleString() : null].filter(Boolean).map((x) => ` · ${x}`)}
-                      </span>
-                    </dd>
-                  </>
+            <section className="flex flex-col gap-4">
+              <h2 className="text-[14px] font-semibold text-n-900">Where it is</h2>
+
+              {/*
+                The panel our own people look at, reading the same journey from the same rule.
+                No refresh button: asking the carrier is ours to do, on the sweep, and a button that
+                spent our API quota on somebody else's impatience would be a poor trade. The number
+                itself is a link to the carrier, which is the thing they actually want.
+              */}
+              {s.trackingDetail
+                ? <TrackingPanel view={s.trackingDetail} />
+                : (
+                  <div className="card p-5 text-[13px] text-n-600">
+                    {s.carrier ? `Booked with ${s.carrier}. ` : ''}
+                    There is no tracking number on this shipment yet.
+                  </div>
                 )}
-                {s.tracking?.exception && (<><dt className="text-n-500">Problem</dt><dd className="text-warning">{s.tracking.exception}</dd></>)}
-                {s.charge && (<><dt className="text-n-500">Charged</dt><dd className="text-n-800">{money(s.charge.amount, s.charge.currency)}</dd></>)}
-              </dl>
+
+              {s.charge && (
+                <div className="card p-5">
+                  <dl className="grid grid-cols-[150px_1fr] gap-x-4 gap-y-2 text-[13px] max-[560px]:grid-cols-1">
+                    <dt className="text-n-500">Charged</dt><dd className="text-n-800">{money(s.charge.amount, s.charge.currency)}</dd>
+                  </dl>
+                </div>
+              )}
             </section>
           )}
 

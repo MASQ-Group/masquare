@@ -13,6 +13,7 @@ import {
 } from './fedex-rate';
 import { parseRateReply } from './fedex-rate-parse';
 import { buildTrackingUrl, carrierSiteUrl } from './tracking-url';
+import { trackingView } from './tracking-view';
 import {
   SHIP_CANCEL_PATH, SHIP_PATH, buildCancelRequest, buildShipRequest, missingForBooking,
   type ShipParty, type ShipRequestInput,
@@ -1310,7 +1311,7 @@ export class CarriersService {
       },
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
-    return this.trackingView(shipment);
+    return trackingView(shipment);
   }
 
   /**
@@ -1340,7 +1341,7 @@ export class CarriersService {
     return {
       transactionId,
       shipments: shipments.map((s) => ({
-        ...this.trackingView(s),
+        ...trackingView(s),
         type: s.type,
         shipmentDate: s.shipmentDate,
         serviceName: s.shippingService?.name ?? null,
@@ -1348,81 +1349,6 @@ export class CarriersService {
     };
   }
 
-  /**
-   * One shipment's tracking as a screen wants it.
-   *
-   * The stages are derived here rather than in the browser so that every surface showing this —
-   * the shipments log, the order summary, the order form — reads the same journey from the same
-   * rule, and that rule has tests.
-   */
-  private trackingView(shipment: {
-    id: string;
-    trackingNumber: string | null;
-    shippingService?: { name: string | null; alias: string | null; trackingUrlTemplate?: string | null } | null;
-    tracking: any;
-  }) {
-    const t = shipment.tracking ?? null;
-    const scans = (Array.isArray(t?.scans) ? t.scans : []) as TrackScan[];
-    const stages = t && t.found !== false
-      ? trackStages(scans, t.deliveredAt ? new Date(t.deliveredAt).toISOString() : null)
-      : [];
-    return {
-      shipmentId: shipment.id,
-      trackingNumber: shipment.trackingNumber,
-      /** Who is carrying it, as our people named the service. Shown beside the number. */
-      carrier: shipment.shippingService?.name ?? null,
-      /**
-       * The carrier's own public tracking page for this number.
-       *
-       * Built from the shipping service's template rather than hardcoded, because that column
-       * already exists for exactly this and every courier has a different URL. Null when no
-       * template is set, and the screen then shows the number as plain text rather than a link
-       * that goes nowhere.
-       */
-      trackingUrl: buildTrackingUrl(shipment.shippingService?.trackingUrlTemplate, shipment.trackingNumber),
-      /**
-       * The carrier's tracking PAGE, for couriers whose results cannot be linked to at all.
-       *
-       * Separate from trackingUrl so a screen can be honest about which it is offering: one lands
-       * on the parcel, the other on an empty form that needs the number pasted into it.
-       */
-      carrierUrl: carrierSiteUrl(shipment.shippingService?.trackingUrlTemplate),
-      /** Whether this is a carrier we can ask at all — the screen offers no button when it is not. */
-      trackable: isFedexService(shipment.shippingService?.name, shipment.shippingService?.alias),
-      tracking: t,
-      /** Collected → in transit → out for delivery → delivered. Empty when nobody has asked yet. */
-      stages,
-      /**
-       * The one-line answer in our words, and the tone to say it in.
-       *
-       * Derived here rather than in the browser so that a screen never parses carrier strings —
-       * and so the wording is the same one on every surface.
-       */
-      pill:
-        t && t.found !== false
-          ? statusPill({
-              statusCode: t.statusCode,
-              statusDescription: t.statusDescription,
-              deliveredAt: t.deliveredAt ? new Date(t.deliveredAt).toISOString() : null,
-              exceptionDescription: t.deliveredAt ? null : t.exceptionDescription,
-              stages,
-            })
-          : null,
-      /**
-       * When FedEx said it would arrive, whether that was an estimate or a commitment, and whether
-       * it was met. Derived here so the distinction is decided once, by a tested rule, rather than
-       * three screens each having a go at it.
-       */
-      promise:
-        t && t.found !== false
-          ? deliveryPromise(
-              t.detailsJson ?? null,
-              t.estimatedDeliveryAt ? new Date(t.estimatedDeliveryAt).toISOString() : null,
-              t.deliveredAt ? new Date(t.deliveredAt).toISOString() : null,
-            )
-          : null,
-    };
-  }
 
   /**
    * Write what FedEx said, without losing what it said last time.
