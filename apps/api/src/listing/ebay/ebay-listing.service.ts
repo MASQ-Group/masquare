@@ -37,8 +37,8 @@ import { PRODUCT_FIELD_LABELS } from '../../activity/product-fields';
  *
  * The immediate reason this exists is a question nobody can answer from documentation: does eBaymag
  * pick up a listing created through the Inventory API, or only ones made in Seller Central? The
- * account currently has ZERO inventory items — every one of its 5,150 listings came from the
- * Trading API or by hand — so the only way to find out is to publish one and look.
+ * account currently has ZERO inventory items â€” every one of its 5,150 listings came from the
+ * Trading API or by hand â€” so the only way to find out is to publish one and look.
  *
  * Publishing is staged deliberately. Steps one and two create private records that can be deleted
  * without trace; only `publish` produces something a buyer can see and purchase.
@@ -72,14 +72,14 @@ export class EbayListingService {
    * The eBay connection this request may use.
    *
    * `companyIds` is not optional decoration. Both companies sell on eBay, and an integration id is
-   * enough to reach a seller account — so a request that names one it may not see must fail here
+   * enough to reach a seller account â€” so a request that names one it may not see must fail here
    * rather than quietly act through the other company's token. Omitted only by callers with no user
    * behind them, which is background work and correctly unscoped.
    */
   /**
    * The row a plan is filed under.
    *
-   * `listing.service.upsertPlan` keys on the INTEGRATION's own marketplace — `"GB"` for eBay — and
+   * `listing.service.upsertPlan` keys on the INTEGRATION's own marketplace â€” `"GB"` for eBay â€” and
    * this used to hard-code `''`. Same product, same integration, two rows: a category chosen on the
    * Content tab was written somewhere the Channels tab never looked, so it read as unsaved.
    *
@@ -118,7 +118,7 @@ export class EbayListingService {
       salesChannelId: row.targetSalesChannelId ?? null,
       // Stated rather than left for the caller to work out from four empty arrays.
       blockers: [
-        ...(pre.locations.length === 0 ? ['No merchant location — every offer needs one'] : []),
+        ...(pre.locations.length === 0 ? ['No merchant location â€” every offer needs one'] : []),
         ...(pre.fulfillmentPolicies.length === 0 ? ['No postage policy'] : []),
         ...(pre.paymentPolicies.length === 0 ? ['No payment policy'] : []),
         ...(pre.returnPolicies.length === 0 ? ['No returns policy'] : []),
@@ -132,7 +132,7 @@ export class EbayListingService {
    *
    * Account-wide on purpose: they are the same for almost every listing, and the product form only
    * has to differ where a product genuinely does. Stores which of eBay's records were picked, not
-   * copies of them — eBay remains the owner of what a policy actually says.
+   * copies of them â€” eBay remains the owner of what a policy actually says.
    */
   async saveListingDefaults(
     args: {
@@ -165,15 +165,15 @@ export class EbayListingService {
   ): Promise<{ ok: true; descriptionStore: EbayDescriptionStore }> {
     const row = await this.ebayIntegration(args.integrationId, args.companyIds);
     /**
-     * These words appear on EVERY listing, so one eBay refuses — a "top rated" claim, a link, a phone
-     * number — would get every publish refused. Held to the same rules as a product's own text.
+     * These words appear on EVERY listing, so one eBay refuses â€” a "top rated" claim, a link, a phone
+     * number â€” would get every publish refused. Held to the same rules as a product's own text.
      */
     const pieces: [string, string | null | undefined][] = [
       ['store name', args.storeName], ['condition in the header', args.conditionLabel], ['condition card', args.conditionNote],
       ...(args.shipping ?? []).flatMap((r, i): [string, string][] => [[`shipping line ${i + 1}`, `${r.label} ${r.value}`]]),
     ];
     const problems = pieces.flatMap(([where, text]) => (text?.trim() ? checkBuyerText({ intro: text }, []).map((p) => `${where} ${p.problem}`) : []));
-    if (problems.length) throw new BadRequestException(`That text cannot go on a listing — ${problems.join('; ')}`);
+    if (problems.length) throw new BadRequestException(`That text cannot go on a listing â€” ${problems.join('; ')}`);
     const next: Partial<EbayDescriptionStore> = {};
     if (args.storeName !== undefined) next.storeName = args.storeName;
     if (args.conditionLabel !== undefined) next.conditionLabel = args.conditionLabel;
@@ -190,7 +190,7 @@ export class EbayListingService {
   /**
    * Create the merchant location the account is missing.
    *
-   * A write, but it creates an address record rather than a listing — nothing public, nothing
+   * A write, but it creates an address record rather than a listing â€” nothing public, nothing
    * buyable. That makes it the safest way to confirm the token really carries the write scope: if
    * it does not, this fails while there is still nothing to undo.
    */
@@ -215,7 +215,7 @@ export class EbayListingService {
    * Where eBay would file this product, asked of eBay.
    *
    * Its tree is its own and the LEAF decides which aspects are compulsory, so a category cannot be
-   * derived from our taxonomy — only requested. Searched on the eBay title where there is one,
+   * derived from our taxonomy â€” only requested. Searched on the eBay title where there is one,
    * because that is the text written for this channel, falling back to the catalogue title.
    *
    * Read-only. Nothing is stored until somebody chooses.
@@ -258,7 +258,7 @@ export class EbayListingService {
     /**
      * Only what may actually be used is handed to the resolution. A suggestion one marketplace made
      * and nothing corroborates is absent from `planned` entirely, so it falls through to the
-     * product's own brand or MPN and is still reported as missing — held back at every layer rather
+     * product's own brand or MPN and is still reported as missing â€” held back at every layer rather
      * than only at the payload.
      */
     const records = normaliseAspects(plan?.aspects);
@@ -293,7 +293,7 @@ export class EbayListingService {
    * the page and a publish months later sends what was decided rather than what a form last held.
    *
    * eBaymag republishes an eBay UK listing to every other eBay marketplace, so ONE plan per product
-   * is the whole requirement here — there is no per-marketplace fan-out for us to store.
+   * is the whole requirement here â€” there is no per-marketplace fan-out for us to store.
    */
   async savePlan(
     productId: string,
@@ -313,14 +313,14 @@ export class EbayListingService {
     });
     /**
      * Merged rather than replaced. The form only ever sends the fields it drew, so a wholesale
-     * overwrite would delete anything gathered for an aspect the category no longer lists — and
+     * overwrite would delete anything gathered for an aspect the category no longer lists â€” and
      * with it the evidence that made the value trustworthy.
      */
     const merged = applyUserEdits(normaliseAspects(existing?.aspects), args.aspects ?? {}, new Date().toISOString());
     const data = {
       /**
        * Only written when a category is actually supplied. The price and dispatch form saves through
-       * here too and has no category to send — writing `args.categoryId` unconditionally would erase
+       * here too and has no category to send â€” writing `args.categoryId` unconditionally would erase
        * the chosen category every time somebody saved a price, and the item specifics with it.
        */
       ...(args.categoryId?.trim()
@@ -332,7 +332,7 @@ export class EbayListingService {
       ...(args.offerPriceCents !== undefined ? { offerPriceCents: args.offerPriceCents } : {}),
       /**
        * Written only when sent, and null is a real answer meaning "go back to the channel's
-       * default" — which is why these use `!== undefined` rather than truthiness.
+       * default" â€” which is why these use `!== undefined` rather than truthiness.
        */
       ...(args.merchantLocationKey !== undefined ? { merchantLocationKey: args.merchantLocationKey } : {}),
       ...(args.fulfillmentPolicyId !== undefined ? { fulfillmentPolicyId: args.fulfillmentPolicyId } : {}),
@@ -350,7 +350,7 @@ export class EbayListingService {
   /**
    * Go and find the item specifics this category demands.
    *
-   * On demand, one product at a time, and never on a schedule — the category has to be right before
+   * On demand, one product at a time, and never on a schedule â€” the category has to be right before
    * this is worth running, and only a person can say that it is.
    *
    * What it does NOT do is as important as what it does. It refuses without an identifier precise
@@ -376,13 +376,13 @@ export class EbayListingService {
     const findings: SourceFinding[] = [];
 
     /**
-     * Pages a person nominated — read first, and trusted.
+     * Pages a person nominated â€” read first, and trusted.
      *
      * A nominated page is accepted as correct because a person chose it, which is a deliberate
      * business rule: the human looked at the page and decided it describes this product, and that
      * judgement beats anything this code could infer. So identity here WARNS rather than refuses.
      * Refusing would mean overruling the person who chose the page, and they know something we do
-     * not — but the Panasonic that came back branded Marley is also real, so a page that disagrees
+     * not â€” but the Panasonic that came back branded Marley is also real, so a page that disagrees
      * about the brand or the part number says so loudly beside its own findings.
      *
      * Several pages, because the answer is often split across them, and because two pages agreeing
@@ -414,7 +414,7 @@ export class EbayListingService {
         status: who.ok ? 'ok' : 'warned',
         message: who.ok
           ? `${page.pairs.length} fields from ${host}, confirmed by ${who.matchedOn.join(' and ')}.`
-          : `${page.pairs.length} fields from ${host}, used because you nominated it — but check it: ${who.reason}.`,
+          : `${page.pairs.length} fields from ${host}, used because you nominated it â€” but check it: ${who.reason}.`,
       });
 
       for (const pair of page.pairs) {
@@ -445,7 +445,7 @@ export class EbayListingService {
       const res = await this.integrations.amazonCatalogAttributes(amazon.id, verdict.searchOn.gtin, verdict.searchOn.gtinKind);
       /**
        * Identity before attributes, always. A barcode lookup returning exactly one product is not
-       * evidence that it is OUR product — it returned one Marley earphone for a Panasonic, and every
+       * evidence that it is OUR product â€” it returned one Marley earphone for a Panasonic, and every
        * attribute on it was faithfully recorded for the wrong thing. A mismatch is not a bad field
        * among good ones; it is a different product, so the whole source is dropped.
        */
@@ -480,7 +480,7 @@ export class EbayListingService {
      * The open web, searched by Claude.
      *
      * Last, after the pages a person nominated and after Amazon, because it is the least certain of
-     * the three — and because the two above give it something to agree with. Its findings are
+     * the three â€” and because the two above give it something to agree with. Its findings are
      * evidence like any other: a page on the maker's own domain is authoritative, two independent
      * sites agreeing is enough, and a lone retailer is held back for somebody to confirm.
      */
@@ -512,7 +512,7 @@ export class EbayListingService {
         sources.push({
           kind: 'web',
           status: 'ok',
-          message: `${found.findings.length} values from ${hosts.length} ${hosts.length === 1 ? 'page' : 'pages'} — ${hosts.join(', ')} (${found.costHint}).`,
+          message: `${found.findings.length} values from ${hosts.length} ${hosts.length === 1 ? 'page' : 'pages'} â€” ${hosts.join(', ')} (${found.costHint}).`,
         });
         findings.push(...found.findings);
       }
@@ -565,7 +565,7 @@ export class EbayListingService {
   }
 
   /**
-   * The two refusals every WRITE honours, whoever is writing — the gather button or Claude through
+   * The two refusals every WRITE honours, whoever is writing â€” the gather button or Claude through
    * the connector. One copy, so neither path can drift into accepting what the other refuses.
    */
   private async requireGatherable(ctx: Awaited<ReturnType<EbayListingService['gatherContext']>>) {
@@ -577,7 +577,7 @@ export class EbayListingService {
      */
     const plan = ctx.plan;
     if (!plan?.categoryRef) {
-      throw new BadRequestException('Choose an eBay category first — it decides which item specifics exist.');
+      throw new BadRequestException('Choose an eBay category first â€” it decides which item specifics exist.');
     }
     const cat = await this.integrations.ebayCategoryAspects(ctx.row.id, plan.categoryRef);
     if (!cat.ok) throw new BadRequestException(`Could not ask eBay what this category needs: ${cat.message}`);
@@ -585,7 +585,7 @@ export class EbayListingService {
   }
 
   /**
-   * Fold findings into the stored answers and save — the single place evidence becomes data.
+   * Fold findings into the stored answers and save â€” the single place evidence becomes data.
    *
    * Shared by the gather button and the connector for the same reason as `requireGatherable`: the
    * provenance rules must be applied identically no matter who found the evidence.
@@ -600,7 +600,7 @@ export class EbayListingService {
     const existing = normaliseAspects(plan.aspects);
     const { records, ignored, touched } = foldFindings(existing, findings, aspectNames, new Date().toISOString());
 
-    /** Nothing changed means nothing is written — an empty gather should not touch the row. */
+    /** Nothing changed means nothing is written â€” an empty gather should not touch the row. */
     if (touched.some((t) => t.changed)) {
       await this.prisma.productChannelPlan.update({
         where: { id: plan.id },
@@ -611,7 +611,7 @@ export class EbayListingService {
     const usable = touched.filter((t) => isPayloadEligible(records[t.name]));
     return {
       /**
-       * Required aspects with no answer of any kind — excluding Brand, MPN and Model, which are
+       * Required aspects with no answer of any kind â€” excluding Brand, MPN and Model, which are
        * filled from the product when the listing is built and so are never actually missing.
        * Listing them sent a researcher hunting for a value it is not allowed to write.
        */
@@ -626,7 +626,7 @@ export class EbayListingService {
   }
 
   /**
-   * Find a product by the SKU a person would type — its main SKU, or any alias it carries.
+   * Find a product by the SKU a person would type â€” its main SKU, or any alias it carries.
    *
    * Exact, case-insensitively, and nothing looser. A researcher asking about `RP-HJE201E-K` must get
    * that product or be told there is none; a nearest match would hand it a neighbouring model to
@@ -694,7 +694,7 @@ export class EbayListingService {
       const notReady = !verdict.ok
         ? verdict.reason
         : !plan?.categoryRef
-          ? 'No eBay category chosen yet — a person picks it on the eBay content tab.'
+          ? 'No eBay category chosen yet â€” a person picks it on the eBay content tab.'
           : null;
       return {
         sku: p.mainSku,
@@ -718,7 +718,7 @@ export class EbayListingService {
    * What a researcher needs to know before searching for one product. Read-only.
    *
    * Hands over the category's field names exactly as eBay spells them, the values eBay will accept
-   * where it restricts them, and what is already answered — so the research comes back under names
+   * where it restricts them, and what is already answered â€” so the research comes back under names
    * that match, and nobody spends searches on a field a person already settled.
    */
   async researchBrief(productId: string, companyIds: string[]) {
@@ -757,8 +757,8 @@ export class EbayListingService {
             acceptedValues: a.mode === 'SELECTION_ONLY' ? (a.values ?? []).slice(0, 80) : null,
             acceptedValuesTotal: a.mode === 'SELECTION_ONLY' ? a.valueCount ?? 0 : null,
             /**
-             * The words eBay's buyer filters use, for a field that accepts any text. Not a restriction —
-             * eBay takes anything here — but a value outside this list matches no filter, so a listing
+             * The words eBay's buyer filters use, for a field that accepts any text. Not a restriction â€”
+             * eBay takes anything here â€” but a value outside this list matches no filter, so a listing
              * reading `Department: Wristwatches` is accepted and then never appears in a "Unisex Adults"
              * search. Handed to the researcher so it can report in eBay's vocabulary where a page states
              * the same thing in other words.
@@ -776,9 +776,9 @@ export class EbayListingService {
   /**
    * What eBay really charges this account, measured from orders it has already settled.
    *
-   * Published rates are a starting point and rarely the truth — they vary by category, subscription
-   * and whatever has been negotiated — and a wrong rate is wrong on every listing in the same
-   * direction. The fee has the shape `percentage × order + fixed per order`, so a line fitted
+   * Published rates are a starting point and rarely the truth â€” they vary by category, subscription
+   * and whatever has been negotiated â€” and a wrong rate is wrong on every listing in the same
+   * direction. The fee has the shape `percentage Ã— order + fixed per order`, so a line fitted
    * through real orders recovers both.
    *
    * Aggregated to the ORDER, not the line: eBay's fixed fee is charged once per order, and fitting
@@ -824,7 +824,7 @@ export class EbayListingService {
       .map((tx) => {
       const sum = (pick: (i: (typeof tx.items)[number]) => number | null) =>
         tx.items.reduce((total, item) => total + (pick(item) ?? 0), 0);
-      // What the buyer paid in total — eBay charges its fee on the goods, the postage and the tax.
+      // What the buyer paid in total â€” eBay charges its fee on the goods, the postage and the tax.
       const gross = sum((i) => i.netSalesAmount) + sum((i) => i.vatAmount)
         + sum((i) => i.shippingAmount) + sum((i) => i.shippingAmountVat);
       return { grossCents: Math.round(gross * 100), feeCents: Math.round(sum((i) => i.salesChannelSalesFeeAmount) * 100) };
@@ -842,7 +842,7 @@ export class EbayListingService {
    * the facts and puts them together.
    *
    * The competitor half is deliberately cautious. eBay's catalogue does not carry our barcodes, so
-   * the search is by words and returns neighbouring models as readily as this one — everything that
+   * the search is by words and returns neighbouring models as readily as this one â€” everything that
    * does not carry the part number is set aside, with the reason, rather than quietly averaged in.
    */
   async pricing(
@@ -894,7 +894,7 @@ export class EbayListingService {
     /**
      * The listing sells in the marketplace's currency, and the cost is recorded in whatever we
      * bought in. Pricing a EUR cost into a GBP listing without converting produces a confident
-     * number in no currency at all — roughly 15% wrong here, in the direction of underpricing.
+     * number in no currency at all â€” roughly 15% wrong here, in the direction of underpricing.
      */
     const listingCurrency = EBAY_CURRENCY[(row.marketplace ?? 'GB').toUpperCase()] ?? 'GBP';
     const costCurrency = product.purchaseCostCurrency ?? 'EUR';
@@ -946,7 +946,7 @@ export class EbayListingService {
       sku: product.mainSku,
       title: product.ebayTitle ?? product.title,
       manufacturerSku: product.manufacturerSku,
-      /** The currency the LISTING sells in — every figure below is in it. */
+      /** The currency the LISTING sells in â€” every figure below is in it. */
       currency: listingCurrency,
       /** What the cost was recorded in, so a converted figure does not look like the original. */
       costCurrency,
@@ -966,7 +966,7 @@ export class EbayListingService {
    *
    * Stored as PROSE, not markup. The eBay description is rendered from this at publish through one
    * house template, so a writer supplies what the product is and the platform supplies how it looks
-   * — which is the only way every listing can share a design.
+   * â€” which is the only way every listing can share a design.
    *
    * Shared with the Content tab rather than kept for eBay alone: it is the same sentence about the
    * same product wherever it sells, and a second copy would drift from the first.
@@ -1010,7 +1010,7 @@ export class EbayListingService {
     const forbidden = [product.mainSku, ...product.aliases.map((a) => a.skuValue)];
     const problems = checkBuyerText({ title, intro, features }, forbidden);
     /**
-     * Every other part a buyer reads is held to the same rules — no internal SKU, contact details,
+     * Every other part a buyer reads is held to the same rules â€” no internal SKU, contact details,
      * links or markup. Checked one piece at a time so the reply names the piece to rewrite.
      */
     const pieces: [string, string | null | undefined][] = [
@@ -1025,7 +1025,7 @@ export class EbayListingService {
     }
     if (problems.length > 0) {
       throw new BadRequestException(
-        `That text cannot go on a listing — ${problems.map((p) => `${p.where} ${p.problem}`).join('; ')}`,
+        `That text cannot go on a listing â€” ${problems.map((p) => `${p.where} ${p.problem}`).join('; ')}`,
       );
     }
 
@@ -1040,20 +1040,20 @@ export class EbayListingService {
 
     /**
      * Into the full Description, never `shortDescription`. That field is the two-sentence blurb under
-     * the price on the B2B store — "deliberately short and plain" — and this used to fill it with
+     * the price on the B2B store â€” "deliberately short and plain" â€” and this used to fill it with
      * several paragraphs of eBay copy.
      */
     const data: { ebayTitle?: string; descriptionHtml?: string; keyFeatures?: string[]; updatedById?: string } = {};
     if (title) {
-      if (hadTitle && !args.replaceExisting) skipped.push('title (one is already written — ask for it to be replaced)');
+      if (hadTitle && !args.replaceExisting) skipped.push('title (one is already written â€” ask for it to be replaced)');
       else data.ebayTitle = title;
     }
     if (intro) {
-      if (hadIntro && !args.replaceExisting) skipped.push('description (one is already written — ask for it to be replaced)');
+      if (hadIntro && !args.replaceExisting) skipped.push('description (one is already written â€” ask for it to be replaced)');
       else data.descriptionHtml = proseToHtml(intro);
     }
     if (features.length) {
-      if (hadFeatures && !args.replaceExisting) skipped.push('features (they are already written — ask for them to be replaced)');
+      if (hadFeatures && !args.replaceExisting) skipped.push('features (they are already written â€” ask for them to be replaced)');
       else data.keyFeatures = features;
     }
 
@@ -1109,7 +1109,7 @@ export class EbayListingService {
           const present = Array.isArray(value) ? value.length > 0 : !!value;
           if (!present) return;
           const had = Array.isArray(current[key]) ? (current[key] as unknown[]).length > 0 : !!current[key];
-          if (had && !args.replaceExisting) { skipped.push(`${label} (already written — ask for it to be replaced)`); return; }
+          if (had && !args.replaceExisting) { skipped.push(`${label} (already written â€” ask for it to be replaced)`); return; }
           (next as any)[key] = value;
           wroteExtras.push(label);
         };
@@ -1127,12 +1127,12 @@ export class EbayListingService {
           await this.prisma.productChannelPlan.update({ where: { id: plan.id }, data: { descriptionExtras: next as never } });
           this.logger.log(`Description parts written for ${product.mainSku}: ${wroteExtras.join(', ')}`);
         }
-        // Stored as sent, shown only while backed by a verified value — said now, so it can be fixed.
+        // Stored as sent, shown only while backed by a verified value â€” said now, so it can be fixed.
         const verified = eligibleValues(normaliseAspects(plan.aspects));
         const shown = new Set(resolveGlance(next.glance, verified).map((g) => `${g.label}|${g.value}`));
         for (const g of next.glance) {
           if (!shown.has(`${g.label}|${g.value}`)) {
-            notShown.push(`"${g.label}: ${g.value}" is not shown — "${g.aspect}" has no verified value containing it`);
+            notShown.push(`"${g.label}: ${g.value}" is not shown â€” "${g.aspect}" has no verified value containing it`);
           }
         }
       }
@@ -1148,7 +1148,7 @@ export class EbayListingService {
   }
 
   /**
-   * Evidence a researcher brought back — screened, then folded exactly as a gather's would be.
+   * Evidence a researcher brought back â€” screened, then folded exactly as a gather's would be.
    *
    * Screening first: a finding reaches the provenance rules only if the page it came from was
    * declared, states which product it describes, and that product is this one. Then the same fold
@@ -1189,7 +1189,7 @@ export class EbayListingService {
    * A person has read where a value came from and accepted it.
    *
    * The one way a held-back suggestion becomes something that can be published. It changes no value
-   * — that would be an edit, and an edit already records itself as one — it records that somebody
+   * â€” that would be an edit, and an edit already records itself as one â€” it records that somebody
    * looked. Deliberately per aspect: "I checked the wattage" is a claim a person can honestly make
    * about one field and rarely about fourteen at once.
    */
@@ -1231,7 +1231,15 @@ export class EbayListingService {
       where: { id: productId, deletedAt: null },
       include: {
         brand: { select: { name: true } },
-        media: { where: { deletedAt: null }, select: { url: true }, orderBy: { createdAt: 'asc' } },
+        /**
+         * In the platform's order, so the featured image leads.
+         *
+         * eBay makes the first image the listing's main one. This read them by upload time, while the
+         * product page â€” and every other screen â€” orders by sortOrder, which is what "Make featured"
+         * rewrites. So a product whose featured image was chosen after upload went to eBay led by
+         * whichever picture happened to be uploaded first. Upload time stays as the tie-breaker.
+         */
+        media: { where: { deletedAt: null }, select: { url: true }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] },
       },
       // `manufacturerSku` is already selected by `include`'s implicit scalar set; named here only
       // so the aspect resolution below is obviously reading a real column.
@@ -1240,7 +1248,7 @@ export class EbayListingService {
 
     /**
      * The saved plan is the default for everything a category decides. Arguments still win, so a
-     * preview can try a different category without disturbing what was agreed — but a publish with
+     * preview can try a different category without disturbing what was agreed â€” but a publish with
      * no arguments sends what somebody chose, rather than nothing.
      */
     const row = await this.ebayIntegration(args.integrationId);
@@ -1257,7 +1265,7 @@ export class EbayListingService {
     /**
      * Where an offer's location and policies come from: this product, else the channel's defaults.
      * They are the same for almost every listing, so they are answered once on the channel and only
-     * overridden where a product genuinely differs — otherwise every product would ask four
+     * overridden where a product genuinely differs â€” otherwise every product would ask four
      * questions whose answer never changes.
      */
     const defaults = ebayListingDefaults(row.config);
@@ -1272,7 +1280,7 @@ export class EbayListingService {
     });
     /**
      * Read through the provenance rules, not straight out of the column. The column now holds
-     * records rather than strings, and — more importantly — a value nothing vouches for must not
+     * records rather than strings, and â€” more importantly â€” a value nothing vouches for must not
      * reach a payload just because it is stored.
      */
     const planned = eligibleValues(normaliseAspects(plan?.aspects));
@@ -1297,8 +1305,8 @@ export class EbayListingService {
         title: product.ebayTitle ?? product.title ?? null,
         /**
          * Rendered here rather than stored, so every listing shares one design and restyling them
-         * all is an edit to the template. The specification table is built from `planned` — the
-         * answers that already passed identity checks and the two-source rule — so nothing
+         * all is an edit to the template. The specification table is built from `planned` â€” the
+         * answers that already passed identity checks and the two-source rule â€” so nothing
          * unverified can appear in a table that reads as authoritative.
          */
         descriptionHtml: renderEbayDescription({
@@ -1322,8 +1330,8 @@ export class EbayListingService {
           intro: htmlToPlainText(product.descriptionHtml) || htmlToPlainText(product.shortDescription),
           features: Array.isArray(product.keyFeatures) ? (product.keyFeatures as string[]) : [],
           /**
-           * Built from `planned` — the answers that already passed identity checks and the
-           * two-source rule — so nothing unverified can appear in a table that reads as
+           * Built from `planned` â€” the answers that already passed identity checks and the
+           * two-source rule â€” so nothing unverified can appear in a table that reads as
            * authoritative. The groups only arrange it.
            */
           specGroups: groupSpecs({ brand: product.brand?.name ?? null, mpn: product.manufacturerSku ?? null }, planned, extras.groups),
@@ -1340,7 +1348,7 @@ export class EbayListingService {
         ean: product.ean ?? null,
         condition: args.condition ?? ebayCondition(plan?.condition) ?? 'NEW',
         // Availability only. A quantity passed in the request would be a figure no person set in
-        // Availability, reaching a live listing — which only Push to channels and orders may do.
+        // Availability, reaching a live listing â€” which only Push to channels and orders may do.
         quantity: availability?.quantity ?? null,
         priceValue: args.priceValue ?? (plan?.offerPriceCents != null ? plan.offerPriceCents / 100 : null),
         currency: args.currency ?? 'GBP',
@@ -1354,7 +1362,7 @@ export class EbayListingService {
         /**
          * The plan stores one value per aspect; the payload wants a list. Converted here rather than
          * stored as lists, because a form that can only ever set one value should not pretend
-         * otherwise — and an explicit argument still overrides the whole aspect.
+         * otherwise â€” and an explicit argument still overrides the whole aspect.
          */
         extraAspects: {
           ...Object.fromEntries(
@@ -1373,7 +1381,7 @@ export class EbayListingService {
    *
    * Item specifics are part of "missing" even though `missingForPublish` cannot see them: which
    * aspects a category demands is only knowable by asking eBay, so the answer is fetched here and
-   * folded in. Without it the gate could read READY on a listing eBay would refuse — which is the
+   * folded in. Without it the gate could read READY on a listing eBay would refuse â€” which is the
    * one thing a preview must never do.
    */
   async preview(productId: string, args: PublishArgs) {
@@ -1384,7 +1392,7 @@ export class EbayListingService {
      * Whether this product is already on eBay, and so what a publish would actually do.
      *
      * The panel is the same one before and after a listing exists, so without this it could not tell
-     * the two apart — it offered "Publish" on a product that had been live for an hour, and would
+     * the two apart â€” it offered "Publish" on a product that had been live for an hour, and would
      * have made a second listing of any product already on eBay by hand.
      */
     const row = await this.ebayIntegration(args.integrationId);
@@ -1398,7 +1406,7 @@ export class EbayListingService {
       const res = await this.integrations.ebayCategoryAspects(integrationId, input.categoryId);
       /**
        * A failed lookup is not an empty one. If eBay could not be asked, the aspects are unknown and
-       * saying "nothing missing" would be inventing an answer — so it says so instead.
+       * saying "nothing missing" would be inventing an answer â€” so it says so instead.
        */
       if (!res.ok) missing.push({ key: 'aspects', label: `Could not check item specifics (${res.message})` });
       else {
@@ -1429,7 +1437,7 @@ export class EbayListingService {
         paymentPolicyId: input.paymentPolicyId ?? null,
         returnPolicyId: input.returnPolicyId ?? null,
         quantity: input.quantity ?? null,
-        /** As publish will send it — the stored value read through the same rule, NEW if unset. */
+        /** As publish will send it â€” the stored value read through the same rule, NEW if unset. */
         condition: input.condition,
       },
       overrides,
@@ -1453,7 +1461,7 @@ export class EbayListingService {
    * Reads the plan (what we published and recorded) and the eBay UK listings the last sync saw for
    * this product. Only eBay UK and listings whose market could not be told: eBaymag republishes each
    * UK listing to other markets under the same SKU, and those copies are not second listings to
-   * refuse over. An unresolved row is counted because it might BE the UK listing — it errs towards
+   * refuse over. An unresolved row is counted because it might BE the UK listing â€” it errs towards
    * refusing, which is the safe direction.
    */
   private async identityFor(productId: string, row: { id: string; marketplace: string | null }, mainSku: string) {
@@ -1464,8 +1472,8 @@ export class EbayListingService {
 
     /**
      * Found by SKU as well as by product link. A listing our own code published with its SKU
-     * stripped is exactly the kind of row the sync may not have linked — LAGA158WEA9EF sat unlinked
-     * on eBay UK and Italy — and a guard that only asked "which listings belong to this product"
+     * stripped is exactly the kind of row the sync may not have linked â€” LAGA158WEA9EF sat unlinked
+     * on eBay UK and Italy â€” and a guard that only asked "which listings belong to this product"
      * could not see the very case it was written for.
      */
     const aliases = await this.prisma.productSkuAlias.findMany({ where: { productId, deletedAt: null }, select: { skuValue: true } });
@@ -1484,7 +1492,7 @@ export class EbayListingService {
     /**
      * And eBay itself, for the one shape the database cannot be relied on for: a listing we published
      * stripped that no sync has pulled in yet. LE-83306 was on eBay as LE83306 and nowhere in the
-     * platform. Asked only when there is something to find — a product whose SKU has punctuation,
+     * platform. Asked only when there is something to find â€” a product whose SKU has punctuation,
      * with no listing of ours recorded.
      */
     let unknown: string | null = null;
@@ -1508,7 +1516,7 @@ export class EbayListingService {
       throw new BadRequestException(
         process.env.LISTING_LIVE_WRITES === 'false'
           ? 'Listing writes are disabled on this server by configuration. Nothing was sent to eBay.'
-          : 'Creating listings is switched off. Turn on "Create real marketplace listings" in Settings → General first. Nothing was sent to eBay.',
+          : 'Creating listings is switched off. Turn on "Create real marketplace listings" in Settings â†’ General first. Nothing was sent to eBay.',
       );
     }
     if (!args.confirm) throw new BadRequestException('Publishing a real listing needs an explicit confirmation.');
@@ -1543,7 +1551,7 @@ export class EbayListingService {
       if (!res.ok) throw new BadRequestException(`Could not check the category's item specifics: ${res.message}`);
       const resolved = resolveAspects(res.aspects, planned, facts);
       const gaps = missingAspects(resolved);
-      if (gaps.length) throw new BadRequestException(`Not ready to list — item specifics: ${gaps.join(', ')}`);
+      if (gaps.length) throw new BadRequestException(`Not ready to list â€” item specifics: ${gaps.join(', ')}`);
       input.extraAspects = { ...aspectsForPayload(resolved), ...(args.aspects ?? {}) };
     }
 
@@ -1555,7 +1563,7 @@ export class EbayListingService {
     if (!offer.ok) throw new BadRequestException(`eBay refused the offer: ${offer.message}`);
     /**
      * An offer eBay already held is brought up to date before it is published. Otherwise the publish
-     * sends what the first attempt stored — the old description, price and policies — however much
+     * sends what the first attempt stored â€” the old description, price and policies â€” however much
      * the product has been corrected since.
      */
     if (offer.reused) {
@@ -1566,7 +1574,7 @@ export class EbayListingService {
     // Everything above this line is private and deletable. Everything below is public.
     const published = await this.integrations.ebayPublishOffer(row.id, offer.offerId);
     if (!published.ok) {
-      // The offer survives a failed publish, so say so — otherwise a retry creates a second one.
+      // The offer survives a failed publish, so say so â€” otherwise a retry creates a second one.
       throw new BadRequestException(`eBay refused to publish offer ${offer.offerId}: ${published.message}`);
     }
 
@@ -1576,7 +1584,7 @@ export class EbayListingService {
      * Remember that it is listed, and as what.
      *
      * The listing id used to reach the browser in a toast and nowhere else. The product then reopened
-     * exactly as it looked before — the same checks, the same live Publish button — and nothing on
+     * exactly as it looked before â€” the same checks, the same live Publish button â€” and nothing on
      * screen said the listing existed until the next eBay sync happened to pull it in. Amazon's
      * listings have said "Submitted" for weeks from these same columns, which exist for exactly this
      * ("Set once the channel confirms the listing: ASIN, eBay ItemID, OnBuy OPC") and were simply
@@ -1584,7 +1592,7 @@ export class EbayListingService {
      *
      * LISTED rather than SUBMITTED, because eBay's publish is synchronous: an item id back means a
      * buyable listing, not a request still being considered. A failure to record it is logged and
-     * does not fail the publish — the listing is live either way, and a publish reported as failed
+     * does not fail the publish â€” the listing is live either way, and a publish reported as failed
      * would invite a second one.
      */
     try {
@@ -1612,7 +1620,7 @@ export class EbayListingService {
    * Find out WHICH part of an inventory item eBay is rejecting.
    *
    * eBay answers a malformed inventory item with "A system error has occurred. Core Inventory
-   * Service internal error" — the same message whatever the cause, naming no field. Guessing costs
+   * Service internal error" â€” the same message whatever the cause, naming no field. Guessing costs
    * a deploy and a round trip each time, so this tries a ladder of progressively plainer payloads
    * against a throwaway SKU and reports where the boundary is: the first rung that succeeds tells
    * you what the rung below it was carrying that eBay would not take.
@@ -1628,7 +1636,7 @@ export class EbayListingService {
     const { input } = await this.buildInput(productId, args);
     const full = buildInventoryItem(input) as any;
     // Always a throwaway SKU, so a failure says something about the PAYLOAD. It could once use the
-    // real SKU — which wrote that live SKU's quantity and then DELETED its inventory item.
+    // real SKU â€” which wrote that live SKU's quantity and then DELETED its inventory item.
     const DIAG_SKU = 'MASQDIAG' + input.sku;
 
     const strip = (obj: any, keys: string[]) => {
@@ -1660,12 +1668,12 @@ export class EbayListingService {
       diagnosticSku: DIAG_SKU,
       results,
       verdict: !firstOk
-        ? 'Even the plainest payload was refused — the problem is not a field in the product.'
+        ? 'Even the plainest payload was refused â€” the problem is not a field in the product.'
         : results.length === 1
           // The full payload went through under a throwaway SKU. Nothing is wrong with the fields,
-          // so what publish refused was the SKU itself — eBay will not let the Inventory API adopt
+          // so what publish refused was the SKU itself â€” eBay will not let the Inventory API adopt
           // a SKU already carried by a listing created outside it.
-          ? 'The full payload is fine under a different SKU. The rejection is about the SKU, not the content — most likely it already belongs to a listing created outside the Inventory API.'
+          ? 'The full payload is fine under a different SKU. The rejection is about the SKU, not the content â€” most likely it already belongs to a listing created outside the Inventory API.'
           : `eBay accepts "${firstOk.rung}". What the previous rung carried is what it refuses.`,
     };
   }
@@ -1683,8 +1691,8 @@ export class EbayListingService {
 /**
  * The plan's condition column is free text, and eBay accepts three values.
  *
- * Narrowed rather than cast: a row holding something else — typed by hand, or left over from a
- * channel with a different vocabulary — falls back to NEW instead of being sent and refused.
+ * Narrowed rather than cast: a row holding something else â€” typed by hand, or left over from a
+ * channel with a different vocabulary â€” falls back to NEW instead of being sent and refused.
  */
 function ebayCondition(value: string | null | undefined): 'NEW' | 'USED_EXCELLENT' | 'USED_GOOD' | null {
   const v = (value ?? '').trim().toUpperCase();
@@ -1695,9 +1703,9 @@ function ebayCondition(value: string | null | undefined): 'NEW' | 'USED_EXCELLEN
  * The evidence, flattened for the wire.
  *
  * `basis` and `heldBack` are derived here rather than stored, so a rule change applies to values
- * written before it existed — the whole reason the origins are kept instead of a trust stamp.
+ * written before it existed â€” the whole reason the origins are kept instead of a trust stamp.
  */
-/** Same page written twice — trailing slash, different case — is one page. */
+/** Same page written twice â€” trailing slash, different case â€” is one page. */
 function dedupeUrls(urls: readonly string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -1716,7 +1724,7 @@ function dedupeUrls(urls: readonly string[]): string[] {
  * The host, for labelling a finding with where it came from.
  *
  * A full URL is too long to sit beside a value and the host is what tells somebody whether to trust
- * it — `beurer.com` reads differently from a marketplace nobody recognises.
+ * it â€” `beurer.com` reads differently from a marketplace nobody recognises.
  */
 function safeHost(url: string): string {
   try {
@@ -1729,7 +1737,7 @@ function safeHost(url: string): string {
 /**
  * A numeric setting from the environment, with a default when it is unset or nonsense.
  *
- * `Number('')` is 0, which for a VAT rate or a fee would silently produce a confident wrong price —
+ * `Number('')` is 0, which for a VAT rate or a fee would silently produce a confident wrong price â€”
  * so anything that does not parse as a finite number falls back rather than being believed.
  */
 /**
