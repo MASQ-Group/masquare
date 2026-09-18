@@ -32,7 +32,7 @@ const num = (v, n = 6) => String(v ?? '').padStart(n);
 
   // ── the queue: what is owed, and for how long ────────────────────────────────────────────────
   const queued = await p.channelPushQueue.findMany({
-    select: { productId: true, enqueuedAt: true, attempts: true, lastError: true, reason: true },
+    select: { productId: true, enqueuedAt: true, attempts: true, lastError: true, reason: true, lastAttemptAt: true },
     orderBy: { enqueuedAt: 'asc' },
   });
 
@@ -46,6 +46,10 @@ const num = (v, n = 6) => String(v ?? '').padStart(n);
     console.log(`  oldest debt                          ${new Date(oldest).toISOString().slice(0, 16)}  (${days.toFixed(1)} days)`);
     const blocked = queued.filter((q) => (q.lastError ?? '').includes('Refused')).length;
     console.log(`  rows whose last attempt was refused  ${blocked}`);
+    // When the drain last actually wrote to these rows. If this is older than the last deploy,
+    // the drain started and never came back — a different problem from the rows failing again.
+    const attempts = queued.map((q) => q.lastAttemptAt).filter(Boolean).map((d) => new Date(d).getTime());
+    console.log(`  most recent attempt written          ${attempts.length ? new Date(Math.max(...attempts)).toISOString().slice(0, 19) : '(never)'}`);
     const reasons = {};
     for (const q of queued) reasons[q.reason ?? '—'] = (reasons[q.reason ?? '—'] ?? 0) + 1;
     console.log(`  why they were queued                 ${Object.entries(reasons).map(([k, v]) => `${k}=${v}`).join(', ')}`);
