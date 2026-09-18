@@ -19,6 +19,7 @@ export function PortalNewShipmentPage() {
   const [problems, setProblems] = useState<string[]>([]);
 
   const { data: home } = useQuery({ queryKey: ['portal', 'home'], queryFn: portalApi.home });
+  const { data: products } = useQuery({ queryKey: ['portal', 'products'], queryFn: portalApi.products });
 
   const file = useMutation({
     mutationFn: () => portalApi.file(toPayload(form)),
@@ -53,7 +54,7 @@ export function PortalNewShipmentPage() {
         </div>
       )}
 
-      <ShipmentFormFields form={form} setForm={setForm} batteryTypes={home?.batteryTypes ?? []} />
+      <ShipmentFormFields form={form} setForm={setForm} batteryTypes={home?.batteryTypes ?? []} products={products ?? []} />
 
       <div className="flex items-center gap-3">
         <button type="button" className="btn btn-primary" disabled={file.isPending} onClick={() => { setProblems([]); file.mutate(); }}>

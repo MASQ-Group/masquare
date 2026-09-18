@@ -4150,6 +4150,8 @@ model Customer {
   /// The people who sign in to the portal on their behalf.
   users          User[]
   shipments      CustomerShipment[]
+  /// Their own catalogue of goods, for filling a package in without retyping it.
+  products       CustomerProduct[]
 
   @@index([name])
   @@map("customer")
@@ -4376,4 +4378,49 @@ model CustomerShipmentDocument {
 
   @@index([shipmentId])
   @@map("customer_shipment_document")
+}
+
+/**
+ * A product a logistics customer ships often.
+ *
+ * Theirs, not ours: this is their catalogue of goods, kept so that filing a shipment is choosing a
+ * product rather than retyping its dimensions, weight and value every time. Nothing here is a
+ * product in OUR catalogue — we never own or price these, we only move them.
+ *
+ * A saved product fills the package in; it does not constrain it. Somebody shipping something they
+ * have never shipped before types it, and the fields stay editable after a product is chosen,
+ * because the box in front of them is the truth and the saved figures are a starting point.
+ */
+model CustomerProduct {
+  id         String @id @default(uuid()) @db.Uuid
+  customerId String @map("customer_id") @db.Uuid
+
+  /// What it is. Fills the package's goods description.
+  name String
+
+  lengthCm Decimal? @map("length_cm") @db.Decimal(10, 1)
+  widthCm  Decimal? @map("width_cm") @db.Decimal(10, 1)
+  heightCm Decimal? @map("height_cm") @db.Decimal(10, 1)
+  weightKg Decimal? @map("weight_kg") @db.Decimal(10, 3)
+
+  declaredValue Decimal? @map("declared_value") @db.Decimal(12, 2)
+  /// Always set — the service writes one whether or not the form sent one, so nothing downstream
+  /// has to decide what an amount with no currency means.
+  currency      String   @default("EUR")
+
+  /// Dangerous goods, and the packing instruction, so a battery product carries its own answer.
+  dangerousGoods Boolean @default(false) @map("dangerous_goods")
+  batteryType    String? @map("battery_type")
+
+  active Boolean @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, name])
+  @@map("customer_product")
 }

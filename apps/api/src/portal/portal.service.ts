@@ -6,6 +6,23 @@ import { LOGISTICS, hasType } from '../customers/customer-types';
 import { BATTERY_TYPES, insuranceAmount, problemsWith, totalDeclaredValue, type ShipmentForm } from './../customer-shipments/shipment-form';
 import { buildTrackingUrl } from '../carriers/tracking-url';
 
+export interface ProductInput {
+  name?: string;
+  lengthCm?: number | null;
+  widthCm?: number | null;
+  heightCm?: number | null;
+  weightKg?: number | null;
+  declaredValue?: number | null;
+  currency?: string | null;
+  dangerousGoods?: boolean | null;
+  batteryType?: string | null;
+  active?: boolean;
+}
+
+/** A number as the column takes it, or nothing. */
+const dec = (v: number | null | undefined) =>
+  v != null && Number.isFinite(Number(v)) ? new Prisma.Decimal(Number(v)) : null;
+
 /**
  * What a logistics customer's own people can see and do.
  *
@@ -40,6 +57,15 @@ export class PortalService {
       /** What a shipment they file next would be called, so the form can show it. */
       nextReference: null as string | null,
     };
+  }
+
+  /** Every country we hold, for the address picker. Reference data, no customer in it. */
+  async countries() {
+    return this.prisma.country.findMany({
+      where: { deletedAt: null },
+      select: { id: true, isoCode: true, name: true },
+      orderBy: { name: 'asc' },
+    });
   }
 
   /**
@@ -113,6 +139,66 @@ export class PortalService {
     await this.own(customerId, id);
     await this.shipments.customerAction(id, 'archive');
     return this.get(customerId, id);
+  }
+
+  // ── their own catalogue of goods ─────────────────────────────────────────────────────────────
+
+  async products(customerId: string) {
+    return this.prisma.customerProduct.findMany({
+      where: { customerId, deletedAt: null },
+      // Named field by field, like every other response here: whoever adds a column next has to
+      // decide it belongs in the portal rather than have it sent because it exists.
+      select: {
+        id: true, name: true,
+        lengthCm: true, widthCm: true, heightCm: true, weightKg: true,
+        declaredValue: true, currency: true,
+        dangerousGoods: true, batteryType: true, active: true,
+      },
+      orderBy: [{ active: 'desc' }, { name: 'asc' }],
+    });
+  }
+
+  async saveProduct(customerId: string, id: string | null, input: ProductInput, userId?: string) {
+    const name = (input.name ?? '').trim();
+    if (!name) throw new BadRequestException('A product needs a name.');
+
+    const data = {
+      name,
+      lengthCm: dec(input.lengthCm),
+      widthCm: dec(input.widthCm),
+      heightCm: dec(input.heightCm),
+      weightKg: dec(input.weightKg),
+      declaredValue: dec(input.declaredValue),
+      currency: (input.currency ?? 'EUR').toUpperCase(),
+      dangerousGoods: !!input.dangerousGoods,
+      // The battery type belongs to the dangerous answer; keeping it after a No would carry a
+      // packing instruction onto a product that no longer claims to need one.
+      batteryType: input.dangerousGoods ? (input.batteryType ?? null) : null,
+      ...(input.active !== undefined ? { active: !!input.active } : {}),
+    };
+
+    if (id) {
+      // Scoped to the customer, so an id from somewhere else changes nothing.
+      const existing = await this.prisma.customerProduct.findFirst({ where: { id, customerId, deletedAt: null }, select: { id: true } });
+      if (!existing) throw new NotFoundException('Product not found');
+      await this.prisma.customerProduct.update({ where: { id }, data });
+    } else {
+      await this.prisma.customerProduct.create({ data: { ...data, customerId, createdById: userId ?? null } });
+    }
+    return this.products(customerId);
+  }
+
+  /**
+   * Remove a product.
+   *
+   * Soft, because shipments already filed copied its values rather than pointing at it — but a
+   * product somebody has used should not vanish from their history of choices either.
+   */
+  async removeProduct(customerId: string, id: string) {
+    const existing = await this.prisma.customerProduct.findFirst({ where: { id, customerId, deletedAt: null }, select: { id: true } });
+    if (!existing) throw new NotFoundException('Product not found');
+    await this.prisma.customerProduct.update({ where: { id }, data: { deletedAt: new Date(), active: false } });
+    return this.products(customerId);
   }
 
   // ── internals ────────────────────────────────────────────────────────────────────────────────

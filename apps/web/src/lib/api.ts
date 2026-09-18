@@ -2739,12 +2739,36 @@ export interface PortalShipmentForm {
   currency?: string;
 }
 
+/**
+ * Something a customer ships often enough to describe once.
+ *
+ * Their own catalogue, not ours: it never meets a product of the platform's, and it exists so the
+ * package section can be filled from a name instead of typed out again every week.
+ */
+export interface CustomerProduct {
+  id: string;
+  name: string;
+  lengthCm: number | string | null;
+  widthCm: number | string | null;
+  heightCm: number | string | null;
+  weightKg: number | string | null;
+  declaredValue: number | string | null;
+  currency: string;
+  dangerousGoods: boolean;
+  batteryType: string | null;
+  active: boolean;
+}
+
+export type CustomerProductInput = Partial<Omit<CustomerProduct, 'id'>>;
+
 export const portalApi = {
   home: () => api.get<{
     customer: { name: string; referencePrefix: string | null };
     counts: { active: number; archived: number; needsInfo: number };
     batteryTypes: BatteryType[];
   }>('/portal/home').then((r) => r.data),
+  /** The portal's own copy of the countries table — external accounts are refused the platform's. */
+  countries: () => api.get<{ id: string; isoCode: string; name: string }[]>('/portal/countries').then((r) => r.data),
   list: (params: { view?: string; q?: string } = {}) => api.get<PortalShipment[]>('/portal/shipments', { params }).then((r) => r.data),
   get: (id: string) => api.get<PortalShipment>(`/portal/shipments/${id}`).then((r) => r.data),
   file: (form: PortalShipmentForm) => api.post<PortalShipment>('/portal/shipments', form).then((r) => r.data),
@@ -2752,6 +2776,13 @@ export const portalApi = {
     api.patch<PortalShipment>(`/portal/shipments/${id}`, form).then((r) => r.data),
   cancel: (id: string) => api.post<PortalShipment>(`/portal/shipments/${id}/cancel`).then((r) => r.data),
   archive: (id: string) => api.post<PortalShipment>(`/portal/shipments/${id}/archive`).then((r) => r.data),
+
+  // Their catalogue. Each write answers with the whole list, so the screen never has to guess
+  // where the new row sorts.
+  products: () => api.get<CustomerProduct[]>('/portal/products').then((r) => r.data),
+  createProduct: (body: CustomerProductInput) => api.post<CustomerProduct[]>('/portal/products', body).then((r) => r.data),
+  updateProduct: (id: string, body: CustomerProductInput) => api.patch<CustomerProduct[]>(`/portal/products/${id}`, body).then((r) => r.data),
+  removeProduct: (id: string) => api.delete<CustomerProduct[]>(`/portal/products/${id}`).then((r) => r.data),
 };
 
 // ---- Customers ----

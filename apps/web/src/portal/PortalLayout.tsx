@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Archive, PackagePlus, Truck } from 'lucide-react';
+import { Archive, PackagePlus, Package, Truck } from 'lucide-react';
 import { portalApi } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { RouteBoundary } from '../components/common/RouteBoundary';
@@ -49,6 +49,10 @@ export function PortalLayout() {
           </NavLink>
           <NavLink to="/portal/archived" className={({ isActive }) => `${tab} ${isActive ? active : idle}`}>
             <Archive size={15} /> Archived
+          </NavLink>
+          {/* Their own catalogue. Last, because nobody has to visit it — it only saves typing. */}
+          <NavLink to="/portal/products" className={({ isActive }) => `${tab} ${isActive ? active : idle}`}>
+            <Package size={15} /> Products
           </NavLink>
         </nav>
       </header>

@@ -1,9 +1,9 @@
-import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { PortalRoute } from '../access/access.decorators';
-import { PortalService } from './portal.service';
+import { PortalService, type ProductInput } from './portal.service';
 import { PortalGuard, PortalCustomer } from './portal.guard';
 import type { ShipmentForm } from '../customer-shipments/shipment-form';
 
@@ -30,6 +30,18 @@ export class PortalController {
   @Get('home')
   home(@PortalCustomer() customerId: string) {
     return this.portal.home(customerId);
+  }
+
+  /**
+   * The countries list, for the address picker.
+   *
+   * The portal cannot reach the platform's own countries route — external accounts are refused
+   * everywhere outside here, which is why the picker came up empty and its search found nothing —
+   * so it serves the same table itself. Reference data, with no customer of ours in it.
+   */
+  @Get('countries')
+  countries() {
+    return this.portal.countries();
   }
 
   @Get('shipments')
@@ -67,5 +79,27 @@ export class PortalController {
   @Post('shipments/:id/archive')
   archive(@PortalCustomer() customerId: string, @Param('id') id: string) {
     return this.portal.archive(customerId, id);
+  }
+
+  // ── their own catalogue of goods ─────────────────────────────────────────────────────────────
+
+  @Get('products')
+  products(@PortalCustomer() customerId: string) {
+    return this.portal.products(customerId);
+  }
+
+  @Post('products')
+  createProduct(@PortalCustomer() customerId: string, @CurrentUser() user: AuthUser, @Body() body: ProductInput) {
+    return this.portal.saveProduct(customerId, null, body ?? {}, user.sub);
+  }
+
+  @Patch('products/:id')
+  updateProduct(@PortalCustomer() customerId: string, @Param('id') id: string, @Body() body: ProductInput) {
+    return this.portal.saveProduct(customerId, id, body ?? {});
+  }
+
+  @Delete('products/:id')
+  removeProduct(@PortalCustomer() customerId: string, @Param('id') id: string) {
+    return this.portal.removeProduct(customerId, id);
   }
 }

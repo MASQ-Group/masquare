@@ -32,6 +32,7 @@ const PortalLayout = lazyPage(() => import('./portal/PortalLayout'), 'PortalLayo
 const PortalShipmentsPage = lazyPage(() => import('./portal/PortalShipmentsPage'), 'PortalShipmentsPage');
 const PortalNewShipmentPage = lazyPage(() => import('./portal/PortalNewShipmentPage'), 'PortalNewShipmentPage');
 const PortalShipmentPage = lazyPage(() => import('./portal/PortalShipmentPage'), 'PortalShipmentPage');
+const PortalProductsPage = lazyPage(() => import('./portal/PortalProductsPage'), 'PortalProductsPage');
 const SetPasswordPage = lazyPage(() => import('./pages/SetPasswordPage'), 'SetPasswordPage');
 const ShipmentsTrackingPage = lazyPage(() => import('./pages/ShipmentsTrackingPage'), 'ShipmentsTrackingPage');
 const WarehousesPage = lazyPage(() => import('./pages/WarehousesPage'), 'WarehousesPage');
@@ -146,6 +147,7 @@ export function App() {
         <Route index element={<PortalShipmentsPage view="active" />} />
         <Route path="new" element={<PortalNewShipmentPage />} />
         <Route path="archived" element={<PortalShipmentsPage view="archived" />} />
+        <Route path="products" element={<PortalProductsPage />} />
         <Route path=":id" element={<PortalShipmentPage />} />
       </Route>
       <Route
