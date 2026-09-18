@@ -50,14 +50,23 @@ export const insurancePreview = (declaredValue: number | string | null, insured:
 };
 
 /** The portal's own countries route — the platform's is shut to external accounts. */
-const COUNTRY_SOURCE = { key: 'portal', fetch: portalApi.countries };
+export const PORTAL_COUNTRIES = { key: 'portal', fetch: portalApi.countries };
 
-export function ShipmentFormFields({ form, setForm, batteryTypes, products = [] }: {
+export function ShipmentFormFields({ form, setForm, batteryTypes, products = [], countrySource }: {
   form: FormState;
   setForm: (next: FormState) => void;
   batteryTypes: BatteryType[];
   /** Their saved goods, offered behind the description field. */
   products?: CustomerProduct[];
+  /**
+   * Where the country list comes from.
+   *
+   * The portal passes its own route, because external accounts are refused the platform's. Our own
+   * screens pass nothing and get the platform's, which is the one their session can already read.
+   * The form is otherwise identical on both sides, deliberately — a shorter form for us would be a
+   * second set of rules about what a shipment needs, and the two would drift.
+   */
+  countrySource?: { key: string; fetch: () => Promise<{ id: string; isoCode: string; name: string }[]> };
 }) {
   const set = (patch: Partial<FormState>) => setForm({ ...form, ...patch });
   const setPackage = (i: number, patch: Partial<FormState['packages'][number]>) =>
@@ -187,7 +196,7 @@ export function ShipmentFormFields({ form, setForm, batteryTypes, products = [] 
             <CountrySelect
               value={form.address.countryIso || null}
               valueKind="code"
-              source={COUNTRY_SOURCE}
+              source={countrySource}
               onChange={(v) => { setTouched((t) => ({ ...t, country: true })); set({ address: { ...form.address, countryIso: v ?? '' } }); }}
             />
           </Field>

@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { portalApi, type PortalShipment } from '../lib/api';
 import { useConfirm } from '../components/ConfirmProvider';
-import { ShipmentFormFields, emptyForm, type FormState } from './ShipmentFormFields';
+import { PORTAL_COUNTRIES, ShipmentFormFields, emptyForm, type FormState } from './ShipmentFormFields';
 import { toPayload } from './PortalNewShipmentPage';
 import { portalStatus } from './PortalShipmentsPage';
 
@@ -96,7 +96,7 @@ export function PortalShipmentPage() {
 
       {editing ? (
         <>
-          <ShipmentFormFields form={editing} setForm={setEditing} batteryTypes={home?.batteryTypes ?? []} products={products ?? []} />
+          <ShipmentFormFields form={editing} setForm={setEditing} batteryTypes={home?.batteryTypes ?? []} products={products ?? []} countrySource={PORTAL_COUNTRIES} />
           <div className="flex flex-wrap items-center gap-3">
             <button type="button" className="btn btn-primary" disabled={save.isPending} onClick={() => save.mutate(s.status === 'NEEDS_INFO')}>
               {save.isPending ? 'Saving…' : s.status === 'NEEDS_INFO' ? 'Send back to maSquare' : 'Save changes'}

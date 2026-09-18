@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { portalApi, type PortalShipmentForm } from '../lib/api';
-import { ShipmentFormFields, emptyForm, type FormState } from './ShipmentFormFields';
+import { PORTAL_COUNTRIES, ShipmentFormFields, emptyForm, type FormState } from './ShipmentFormFields';
 
 /**
  * Filing a shipment.
@@ -54,7 +54,7 @@ export function PortalNewShipmentPage() {
         </div>
       )}
 
-      <ShipmentFormFields form={form} setForm={setForm} batteryTypes={home?.batteryTypes ?? []} products={products ?? []} />
+      <ShipmentFormFields form={form} setForm={setForm} batteryTypes={home?.batteryTypes ?? []} products={products ?? []} countrySource={PORTAL_COUNTRIES} />
 
       <div className="flex items-center gap-3">
         <button type="button" className="btn btn-primary" disabled={file.isPending} onClick={() => { setProblems([]); file.mutate(); }}>

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ExternalLink, MessageSquareWarning, RefreshCcw, Search, Trash2, Undo2 } from 'lucide-react';
+import { ExternalLink, MessageSquareWarning, PackagePlus, RefreshCcw, Search, Trash2, Undo2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Pagination, TableScroll } from '@masquare/ui';
 import { customerShipmentsApi, type CustomerShipment } from '../../lib/api';
 import { useConfirm } from '../ConfirmProvider';
@@ -125,6 +126,11 @@ export function CustomerShipmentsTab({ queue }: { queue: 'pending' | 'fulfilled'
         </div>
         <div className="flex-1" />
         <span className="text-[12px] text-n-500">{total.toLocaleString()} shipment{total === 1 ? '' : 's'}</span>
+        {/* For the customers who email their details instead of filing them. Beside the queue it
+            joins, rather than in the page header, where it would sit above the other tabs too. */}
+        <Link to="/shipments/customer/new" className="hbtn-primary">
+          <PackagePlus size={15} /> File for a customer
+        </Link>
       </div>
 
       <TableScroll>

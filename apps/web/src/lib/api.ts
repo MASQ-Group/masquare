@@ -2669,6 +2669,19 @@ export const customerShipmentsApi = {
     api.post<CustomerShipment>(`/customer-shipments/${id}/request-info`, { question }).then((r) => r.data),
   reopen: (id: string) => api.post<CustomerShipment>(`/customer-shipments/${id}/reopen`).then((r) => r.data),
   cancel: (id: string) => api.post<CustomerShipment>(`/customer-shipments/${id}/cancel`).then((r) => r.data),
+  /**
+   * What the form needs to be drawn for one customer: their saved goods, and the battery list.
+   *
+   * Their catalogue, not the platform's — a shipment we file for them offers exactly what they
+   * would have been offered filing it themselves.
+   */
+  formOptions: (customerId: string) =>
+    api.get<{ batteryTypes: BatteryType[]; products: CustomerProduct[]; customer: { id: string; name: string; active: boolean } | null }>(
+      '/customer-shipments/form-options', { params: { customerId } },
+    ).then((r) => r.data),
+  /** File one for a customer who telephoned or emailed. Same form, same rules as their own screen. */
+  fileForm: (customerId: string, form: PortalShipmentForm) =>
+    api.post<CustomerShipment>('/customer-shipments', { customerId, ...form }).then((r) => r.data),
   /** Remove one that should never have existed. Needs the delete capability. */
   remove: (id: string) => api.delete<{ removed: boolean; reference: string }>(`/customer-shipments/${id}`).then((r) => r.data),
   /** Ask the carrier where it is, now, rather than waiting for the two-hourly sweep. */

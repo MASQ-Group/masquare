@@ -11,6 +11,7 @@ import { LOGISTICS, NOT_LOGISTICS, hasType } from '../customers/customer-types';
 import {
   missingForFulfilment, planCustomerAction, planStaffAction, type CustomerAction, type ShipmentStatus, type StaffAction,
 } from './customer-shipment-state';
+import { BATTERY_TYPES, formToInput, problemsWith, type ShipmentForm } from './shipment-form';
 
 /**
  * Shipments filed by the companies we ship for.
@@ -151,6 +152,55 @@ export class CustomerShipmentsService {
 
     await this.announce(created.reference, created.customer.name, parcels.length, created.id, actorId);
     return created;
+  }
+
+  /**
+   * File one on a customer's behalf, from the form their own screen submits.
+   *
+   * The same rules, checked the same way, refused with the same words. Our team having a looser
+   * form than the customer would mean a shipment filed by telephone could reach the warehouse
+   * missing something a shipment filed through the portal never could.
+   */
+  async fileForm(customerId: string, form: ShipmentForm, actorId?: string) {
+    if (!customerId) throw new BadRequestException('Choose which customer this shipment is for.');
+
+    const problems = problemsWith(form ?? {});
+    if (problems.length) throw new BadRequestException(problems.join(' '));
+
+    return this.file(customerId, formToInput(form), actorId);
+  }
+
+  /**
+   * What the form needs to be drawn for one customer.
+   *
+   * Their catalogue, not ours. A shipment we file for them should offer exactly what they would
+   * have been offered filing it themselves.
+   */
+  async formOptions(customerId: string) {
+    if (!customerId) return { batteryTypes: BATTERY_TYPES, products: [], customer: null };
+
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: { id: true, name: true, types: true, active: true, referencePrefix: true },
+    });
+    if (!customer) throw new NotFoundException('Customer not found');
+    if (!hasType(customer, LOGISTICS) || !customer.referencePrefix) throw new ConflictException(NOT_LOGISTICS);
+
+    const products = await this.prisma.customerProduct.findMany({
+      where: { customerId, deletedAt: null, active: true },
+      select: {
+        id: true, name: true,
+        lengthCm: true, widthCm: true, heightCm: true, weightKg: true,
+        declaredValue: true, currency: true, dangerousGoods: true, batteryType: true, active: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    return {
+      batteryTypes: BATTERY_TYPES,
+      products,
+      customer: { id: customer.id, name: customer.name, active: customer.active },
+    };
   }
 
   // ── reading ──────────────────────────────────────────────────────────────────────────────────
