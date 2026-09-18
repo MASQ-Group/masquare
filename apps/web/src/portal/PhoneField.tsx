@@ -3,7 +3,7 @@ import { ChevronDown, Search } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Flag } from '../components/common/Flag';
 import { portalApi } from '../lib/api';
-import { DIAL_CODES, dialCodeFor, joinPhone, splitPhone } from './dialCodes';
+import { DIAL_CODES, dialCodeFor, joinPhone, phoneCountry, splitPhone } from './dialCodes';
 
 /**
  * A telephone number: country prefix on the left, the rest on the right.
@@ -12,6 +12,11 @@ import { DIAL_CODES, dialCodeFor, joinPhone, splitPhone } from './dialCodes';
  * The split is a matter of how it is asked for, not of how it is kept — which is why the prefix is
  * chosen from a list and the number typed beside it, rather than somebody being left to remember
  * whether we want 00357, +357 or neither.
+ *
+ * The chosen country is held here rather than read back out of the stored value, because an empty
+ * number has no prefix to read: the first build wrote the choice into the value, the value refused
+ * to hold a lone prefix — rightly, a prefix on its own is not a phone number — and so picking a
+ * country before typing appeared to do nothing at all.
  */
 export function PhoneField({ value, onChange, addressCountryIso, invalid }: {
   value: string | null | undefined;
@@ -23,16 +28,25 @@ export function PhoneField({ value, onChange, addressCountryIso, invalid }: {
   const { data: countries = [] } = useQuery({ queryKey: ['countries', 'portal'], queryFn: portalApi.countries });
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  const [picked, setPicked] = useState<string | null>(null);
   const localRef = useRef<HTMLInputElement>(null);
 
   const { dial, local } = splitPhone(value);
-  // Nothing chosen yet: offer the country the parcel is going to. A guess we show plainly and they
-  // can change beats an empty box in front of somebody who has to know our formatting.
-  const effective = dial ?? dialCodeFor(addressCountryIso);
-  const shownIso = useMemo(
-    () => countries.find((c) => DIAL_CODES[c.isoCode?.toUpperCase() ?? ''] === effective)?.isoCode ?? null,
-    [countries, effective],
+
+  /**
+   * Which country the field is showing.
+   *
+   * A prefix on the stored number wins — that is the number, and nothing on screen should disagree
+   * with it. Only when there is none does the choice made here, or failing that the country the
+   * parcel is going to, decide. The guess is shown plainly and can be changed; an empty box in
+   * front of somebody who has to know our formatting is the worse option.
+   */
+  const iso = useMemo(
+    () => phoneCountry({ valueDial: dial, picked, addressIso: addressCountryIso, isoCodes: countries.map((c) => c.isoCode) }),
+    [dial, picked, countries, addressCountryIso],
   );
+
+  const effective = iso ? (DIAL_CODES[iso] ?? null) : (dial ?? dialCodeFor(addressCountryIso));
 
   const options = useMemo(() => {
     const rows = countries
@@ -44,9 +58,12 @@ export function PhoneField({ value, onChange, addressCountryIso, invalid }: {
     return rows.filter((r) => r.name.toLowerCase().includes(query) || r.iso.toLowerCase().includes(query) || r.code!.startsWith(bare));
   }, [countries, q]);
 
-  const choose = (code: string) => {
+  const choose = (chosenIso: string, code: string) => {
     setOpen(false);
     setQ('');
+    // Remembered here whether or not it can be written into the value, so choosing a country with
+    // the number still empty sticks.
+    setPicked(chosenIso);
     onChange(joinPhone(code, local));
     localRef.current?.focus();
   };
@@ -60,7 +77,7 @@ export function PhoneField({ value, onChange, addressCountryIso, invalid }: {
           onClick={() => setOpen((v) => !v)}
           title="Country code"
         >
-          <Flag code={shownIso} />
+          <Flag code={iso} />
           <span className="mono">{effective ? `+${effective}` : '+—'}</span>
           <ChevronDown size={14} className="text-n-400" />
         </button>
@@ -95,8 +112,8 @@ export function PhoneField({ value, onChange, addressCountryIso, invalid }: {
               <button
                 key={o.iso}
                 type="button"
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-n-50 ${o.code === effective ? 'bg-teal-50 text-teal-700' : 'text-n-800'}`}
-                onClick={() => choose(o.code!)}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-n-50 ${o.iso === iso ? 'bg-teal-50 text-teal-700' : 'text-n-800'}`}
+                onClick={() => choose(o.iso, o.code!)}
               >
                 <Flag code={o.iso} />
                 <span className="flex-1 truncate">{o.name}</span>

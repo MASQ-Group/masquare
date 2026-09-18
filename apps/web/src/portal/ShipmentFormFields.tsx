@@ -67,7 +67,9 @@ export function ShipmentFormFields({ form, setForm, batteryTypes, products = [] 
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const leave = (key: string) => () => setTouched((t) => ({ ...t, [key]: true }));
   const problem = (key: string, kind: Parameters<typeof fieldProblem>[0], value: unknown) =>
-    (touched[key] ? fieldProblem(kind, value as string) : null);
+    // A phone number with no prefix of its own is read against the delivery country, which is what
+    // the API does with the same number.
+    (touched[key] ? fieldProblem(kind, value as string, form.address.countryIso) : null);
 
   const [folded, setFolded] = useState<Partial<Record<SectionKey, boolean>>>({});
   const complete = sectionComplete(form);

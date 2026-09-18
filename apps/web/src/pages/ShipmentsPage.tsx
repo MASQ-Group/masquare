@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BadgeCheck, CircleCheck,
 import { toast } from 'sonner';
 import { downloadSheet, Pagination, Select } from '@masquare/ui';
 import { CustomerShipmentsTab } from '../components/shipments/CustomerShipmentsTab';
+import { SHIPMENT_TABS, isCustomerTab, resolveTab, type ShipmentTab } from './shipmentsTabs';
 import { countriesApi, fbaShipmentsApi, salesChannelsApi, shipmentsApi, type FbaShipment, type PendingShipment, type Shipment, customerShipmentsApi } from '../lib/api';
 import { CountryTag } from '../components/common/Flag';
 import { ChannelChip, useChannelChips } from '../components/common/ChannelChip';
@@ -21,7 +22,7 @@ import { ShipmentActualCostModal } from '../components/shipments/ShipmentActualC
 import { ShipmentTrackingModal } from '../components/shipments/ShipmentTrackingModal';
 import { PageHeader } from '../components/common/PageHeader';
 
-type Tab = 'pending' | 'dispatched' | 'all' | 'fba' | 'customer-pending' | 'customer-fulfilled';
+type Tab = ShipmentTab;
 
 const eur = (v: number | null | undefined) => (v != null ? `€${v.toFixed(2)}` : '—');
 
@@ -72,10 +73,7 @@ export function ShipmentsPage() {
   // Where a link opened from, so the destination can offer a way back to exactly this view.
   const here = useLocation();
   const [storedTab, setTab] = usePersistentState<Tab>('shipments.tab', 'pending');
-  // 'despatched' was persisted by an earlier build under the old spelling. Restoring a key no
-  // branch matches renders an empty page with no tab selected, so an unknown value falls back
-  // rather than being trusted.
-  const tab: Tab = (['pending', 'dispatched', 'all', 'fba'] as const).includes(storedTab as any) ? storedTab : 'pending';
+  const tab: Tab = resolveTab(storedTab);
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
   const [filterChannel, setFilterChannel] = usePersistentState('shipments.filterChannel', '');
@@ -268,7 +266,17 @@ export function ShipmentsPage() {
    * carries the number the Google Sheets notification used to carry.
    */
   const customerPending = useQuery({ queryKey: ['customer-shipments', 'pending-count'], queryFn: customerShipmentsApi.pendingCount, refetchInterval: 60_000 });
-  const customerTab = tab === 'customer-pending' || tab === 'customer-fulfilled';
+  const customerTab = isCustomerTab(tab);
+
+  /** The badge on each tab. Typed by tab key, so a new tab has to say what its count is. */
+  const tabCounts: Record<Tab, number | undefined> = {
+    pending: pendingQ.data?.total,
+    dispatched: dispatchedQ.data?.total,
+    fba: fbaQ.data?.total,
+    'customer-pending': customerPending.data?.pending,
+    'customer-fulfilled': undefined,
+    all: undefined,
+  };
 
   return (
     <div className="w-full">
@@ -276,16 +284,9 @@ export function ShipmentsPage() {
         module="Logistics"
         title="Shipments"
         info="Record actual shipping cost and duty per transaction. Actuals replace the calculated shipping estimate and update profit."
-        tabs={[
-          { key: 'pending', label: 'Pending fulfilment', count: (pendingQ.data?.total ?? 0) > 0 ? pendingQ.data?.total : undefined, attention: true },
-          { key: 'dispatched', label: 'Dispatched elsewhere', count: (dispatchedQ.data?.total ?? 0) > 0 ? dispatchedQ.data?.total : undefined },
-          { key: 'fba', label: 'FBA shipments', count: (fbaQ.data?.total ?? 0) > 0 ? fbaQ.data?.total : undefined, attention: true },
-          // The queue that replaces the shared spreadsheet, with the badge that replaces its
-          // notification: what a customer has filed and nobody has acted on yet.
-          { key: 'customer-pending', label: 'Customer shipments', count: (customerPending.data?.pending ?? 0) > 0 ? customerPending.data?.pending : undefined, attention: true },
-          { key: 'customer-fulfilled', label: 'Customer fulfilled' },
-          { key: 'all', label: 'All shipments' },
-        ]}
+        // Built from the one list of tabs, so the header cannot offer a tab the guard above throws
+        // away. Every key needs a count here — undefined for the tabs that carry no badge.
+        tabs={SHIPMENT_TABS.map((t) => ({ ...t, count: tabCounts[t.key] || undefined }))}
         activeTab={tab}
         // Paging already resets via the effect on `tab`; this clears the selection, which did not.
         // The bulk actions differ per tab — accept-at-estimate on one, combine on another — so a

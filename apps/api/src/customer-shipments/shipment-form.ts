@@ -1,3 +1,4 @@
+import { phoneProblem } from './phone-number';
 /**
  * The shipment form a logistics customer fills in, as rules rather than as a screen.
  *
@@ -117,6 +118,12 @@ export function problemsWith(form: ShipmentForm): string[] {
 
   if (!text(r.contactName)) problems.push('The contact name and surname are needed.');
   if (!text(r.phone)) problems.push('A contact phone number is needed.');
+  else {
+    // Read against the delivery country when the number carries no prefix of its own — which is
+    // the right guess far more often than not, and the only one available here.
+    const bad = phoneProblem(r.phone, text(a.countryIso) || undefined);
+    if (bad) problems.push(`That contact phone number will not reach anybody. ${bad}`);
+  }
   if (!text(r.email)) problems.push('A contact email address is needed.');
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(r.email))) problems.push('That contact email address does not look like an address.');
 

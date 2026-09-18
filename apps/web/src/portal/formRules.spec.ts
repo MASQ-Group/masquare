@@ -18,11 +18,18 @@ describe('fieldProblem', () => {
     expect(fieldProblem('email', '')).toBe('This is needed.');
   });
 
-  it('accepts a phone number however it is spaced', () => {
+  it('accepts a real number however it is spaced, and refuses digits that are not one', () => {
     expect(fieldProblem('phone', '+357 99123456')).toBeNull();
-    expect(fieldProblem('phone', '(0) 20 7946 0000')).toBeNull();
+    expect(fieldProblem('phone', '+44 (0) 20 7946 0000')).toBeNull();
     expect(fieldProblem('phone', '12345')).not.toBeNull();
     expect(fieldProblem('phone', 'call me')).not.toBeNull();
+    // The right length, the right shape, and not a Cyprus number. The old shape check let it by.
+    expect(fieldProblem('phone', '+357 111111')).not.toBeNull();
+  });
+
+  it('reads a number with no prefix against the delivery country, and asks for one otherwise', () => {
+    expect(fieldProblem('phone', '99123456', 'CY')).toBeNull();
+    expect(fieldProblem('phone', '99123456')).toContain('+357 99123456');
   });
 
   it('wants a number above zero where it asks for one', () => {

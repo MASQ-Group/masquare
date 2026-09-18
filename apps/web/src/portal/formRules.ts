@@ -1,4 +1,5 @@
 import type { FormState } from './ShipmentFormFields';
+import { phoneProblem } from './phoneNumber';
 
 /**
  * What the shipment form checks as somebody types, and which sections are ready.
@@ -20,20 +21,24 @@ export type SectionKey = 'order' | 'customer' | 'address' | 'packages';
 export const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 /**
- * A phone number, prefix and all — the field stores one string, so that is what is checked.
+ * Phone numbers are checked against the country's real numbering plan, in phoneNumber.ts.
  *
- * Deliberately loose: an optional leading +, then digits, spaces, brackets and dashes, with six
- * digits or more somewhere in there. Numbering plans differ wildly and a strict pattern would
- * refuse real numbers, which is worse than accepting an odd one — our team can read it and
- * telephone. The digit count is counted rather than matched, because "+357 (0) 99-123456" has
- * plenty of digits and hardly any of them are adjacent.
+ * The first build matched a shape here — an optional +, then six digits or more. It accepted
+ * "+357 111111", which is not a Cyprus number and which no courier can dial. A parcel whose
+ * contact number does not ring gets left on a doorstep, so the shape check was not good enough.
  */
-export const PHONE_SHAPE = /^\+?[0-9\s()\-.]+$/;
-export const phoneLooksReal = (text: string): boolean =>
-  PHONE_SHAPE.test(text) && (text.match(/\d/g)?.length ?? 0) >= 6;
 
-/** What is wrong with one field, or nothing. */
-export function fieldProblem(kind: 'email' | 'phone' | 'required' | 'positive', value: string | number | null | undefined): string | null {
+/**
+ * What is wrong with one field, or nothing.
+ *
+ * `hintIso` is the country a phone number with no prefix of its own should be read against — the
+ * delivery country, which is what the API uses too.
+ */
+export function fieldProblem(
+  kind: 'email' | 'phone' | 'required' | 'positive',
+  value: string | number | null | undefined,
+  hintIso?: string | null,
+): string | null {
   const text = String(value ?? '').trim();
   switch (kind) {
     case 'required':
@@ -42,8 +47,7 @@ export function fieldProblem(kind: 'email' | 'phone' | 'required' | 'positive', 
       if (!text) return 'This is needed.';
       return EMAIL.test(text) ? null : 'An email address looks like name@company.com';
     case 'phone':
-      if (!text) return 'This is needed.';
-      return phoneLooksReal(text) ? null : 'A phone number is digits, with or without spaces — at least six of them.';
+      return phoneProblem(text, hintIso);
     case 'positive': {
       if (!text) return 'This is needed.';
       const n = Number(text.replace(',', '.'));
@@ -72,7 +76,9 @@ export function sectionComplete(form: FormState): Record<SectionKey, boolean> {
   return {
     // Nothing in the order section is required; it is complete by existing.
     order: true,
-    customer: filled(r.contactName) && !fieldProblem('phone', r.phone ?? '') && !fieldProblem('email', r.email ?? ''),
+    customer: filled(r.contactName)
+      && !fieldProblem('phone', r.phone ?? '', a.countryIso)
+      && !fieldProblem('email', r.email ?? ''),
     address: filled(a.countryIso) && filled(a.postalCode) && filled(a.city) && filled(a.line1),
     packages:
       form.packages.length > 0

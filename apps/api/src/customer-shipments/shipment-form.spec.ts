@@ -33,7 +33,7 @@ describe('a complete form', () => {
     const bare = form({
       orderReference: null,
       serialNumbers: [],
-      recipient: { contactName: 'A B', phone: '1', email: 'a@b.com' },
+      recipient: { contactName: 'A B', phone: '+357 99123456', email: 'a@b.com' },
       address: { countryIso: 'CY', postalCode: '1', city: 'X', line1: 'Y' },
     });
     expect(problemsWith(bare)).toEqual([]);
@@ -41,6 +41,18 @@ describe('a complete form', () => {
 });
 
 describe('who it is going to', () => {
+  it('refuses a phone number the courier could not dial, and says what a good one looks like', () => {
+    // Present, but not a number in the country the parcel is going to.
+    const problems = problemsWith(form({ recipient: { contactName: 'A B', phone: '12345', email: 'a@b.com' } }));
+    expect(problems.join(' ')).toContain('will not reach anybody');
+    expect(problems.join(' ')).toMatch(/looks like \d/);
+  });
+
+  it('accepts a local number read against the delivery country', () => {
+    // No prefix typed; the delivery country says which plan to read it against.
+    expect(problemsWith(form({ recipient: { contactName: 'A B', phone: '99123456', email: 'a@b.com' } }))).toEqual([]);
+  });
+
   it('insists on a name, a phone number and an email', () => {
     const missing = problemsWith(form({ recipient: {} }));
     expect(missing).toHaveLength(3);
@@ -48,7 +60,7 @@ describe('who it is going to', () => {
   });
 
   it('checks the email is an email', () => {
-    expect(complain(form({ recipient: { contactName: 'A', phone: '1', email: 'maria at example' } }))).toContain('does not look like an address');
+    expect(complain(form({ recipient: { contactName: 'A', phone: '+357 99123456', email: 'maria at example' } }))).toContain('does not look like an address');
   });
 });
 
