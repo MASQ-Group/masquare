@@ -328,7 +328,22 @@ export const carriersApi = {
     dutiesPaidBy: 'sender' | 'recipient';
     labelImageType?: 'PDF' | 'PNG' | 'ZPLII';
   }) =>
-    api.post<{ ok: boolean; status: number; message: string | null; request: unknown; response: unknown; customs: CustomsLane }>(
+    api.post<{
+      ok: boolean; status: number; message: string | null; request: unknown; response: unknown; customs: CustomsLane;
+      /**
+       * What the reply yielded, read by the same parser a real booking will use.
+       *
+       * `foundAt` is the point of the whole exercise: FedEx publishes no sample responses, so
+       * whether the label sits where their documentation says is not known until one arrives.
+       * The label's own bytes are not sent — only its size, which is enough to know one exists.
+       */
+      read: {
+        masterTrackingNumber: string | null;
+        serviceName: string | null;
+        note: string | null;
+        documents: Array<{ contentType: string | null; docType: string | null; foundAt: string; bytes: number | null; url: string | null }>;
+      } | null;
+    }>(
       `/carriers/accounts/${id}/test-book`, body,
     ).then((r) => r.data),
   rateQuote: (id: string, body: {

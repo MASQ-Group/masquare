@@ -2436,10 +2436,23 @@ model CarrierBooking {
 
   /// Which account was billed. Not derivable afterwards, and required to cancel.
   carrierAccountId String  @map("carrier_account_id") @db.Uuid
-  /// The order this was shipped for.
-  transactionId    String  @map("transaction_id") @db.Uuid
-  /// Our own shipment row, once one exists for it.
-  shipmentId       String? @map("shipment_id") @db.Uuid
+
+  /**
+   * What this label was bought for: one of our own orders, or a shipment a customer filed.
+   *
+   * Exactly one is set, enforced by a CHECK constraint rather than by whoever writes the row next.
+   * Two nullable columns rather than a second table because everything about a booking — the label,
+   * the tracking number, the quoted price, the cancellation — is identical whoever the parcel
+   * belongs to. A copy of this table would be a copy of all of that, and the copy is the one that
+   * quietly stops being maintained.
+   *
+   * `transactionId` was required until a customer's shipment needed booking too. There were no
+   * bookings at all when it was relaxed, so nothing had to be decided about existing rows.
+   */
+  transactionId      String? @map("transaction_id") @db.Uuid
+  customerShipmentId String? @map("customer_shipment_id") @db.Uuid
+  /// Our own shipment row, once one exists for it. Only ever set alongside a transaction.
+  shipmentId         String? @map("shipment_id") @db.Uuid
 
   /// 'sandbox' or 'production', copied from the account at booking time rather than read through it.
   ///
@@ -2495,7 +2508,8 @@ model CarrierBooking {
   deletedAt   DateTime? @map("deleted_at")
 
   account     CarrierAccount   @relation(fields: [carrierAccountId], references: [id], onDelete: Restrict)
-  transaction SalesTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  transaction      SalesTransaction? @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  customerShipment CustomerShipment? @relation(fields: [customerShipmentId], references: [id], onDelete: Cascade)
   shipment    Shipment?        @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
 
   @@index([transactionId])
@@ -4333,6 +4347,8 @@ model CustomerShipment {
   shippingService ShippingService?           @relation("CustomerShipmentService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
   parcels         CustomerShipmentParcel[]
   documents       CustomerShipmentDocument[]
+  /// Labels bought for this shipment. More than one only if a booking was cancelled and remade.
+  bookings        CarrierBooking[]
   /// What the carrier says about it, for the carriers we can ask. Shared with our own shipments.
   tracking        ShipmentTracking?
 
