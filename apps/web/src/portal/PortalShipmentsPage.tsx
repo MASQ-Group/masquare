@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, PackagePlus, Search } from 'lucide-react';
+import { ExternalLink, Search } from 'lucide-react';
 import { portalApi, type PortalShipment } from '../lib/api';
 
 /**
@@ -35,9 +35,6 @@ export function PortalShipmentsPage({ view = 'active' }: { view?: 'active' | 'ar
           />
         </div>
         <div className="flex-1" />
-        {view === 'active' && (
-          <Link to="/portal/new" className="hbtn-primary"><PackagePlus size={16} /> New shipment</Link>
-        )}
       </div>
 
       {isLoading ? (
@@ -51,11 +48,6 @@ export function PortalShipmentsPage({ view = 'active' }: { view?: 'active' | 'ar
                 ? 'Nothing archived yet. A shipment you have finished with can be archived from its page.'
                 : 'No shipments yet.'}
           </p>
-          {view === 'active' && !q && (
-            <Link to="/portal/new" className="btn btn-primary mt-4 inline-flex">
-              <PackagePlus size={16} /> File your first shipment
-            </Link>
-          )}
         </div>
       ) : (
         <div className="flex flex-col gap-2.5">
