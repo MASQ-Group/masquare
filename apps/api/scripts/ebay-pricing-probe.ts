@@ -49,16 +49,17 @@ async function main(): Promise<void> {
     console.log(`Cost        : ${p.costCents != null ? money(p.costCents) : 'not recorded'}\n`);
 
     const a = p.assumptions;
-    console.log('FEE RATE');
-    console.log(`  ${(a.feePct * 100).toFixed(2)}% + ${money(a.fixedFeeCents)} per order, VAT ${(a.vatRate * 100).toFixed(0)}%`);
-    console.log(`  source: ${a.feeSource}${a.feeSource === 'measured' ? ` from ${a.measuredFrom} settled orders` : ''}`);
+    console.log('PRICED ON');
+    if (a.basis) console.log(`  ${a.basis.channelName ?? 'sales channel'}: ${a.basis.feePct}% fee, VAT ${a.basis.vatPct}%, shipping by ${a.basis.shippingServiceName ?? '—'}`);
+    else console.log('  no sales channel linked');
+    if (a.measured) console.log(`  settled orders measure eBay at ${(a.measured.feePct * 100).toFixed(2)}% + ${money(a.measured.fixedFeeCents)} (${a.measured.sampleSize} orders)`);
     if (a.measuredWhyNot) console.log(`  not measured because: ${a.measuredWhyNot}`);
 
     console.log('\nSUGGESTION');
     if (p.suggestion.ok) {
       const o = p.suggestion.outcome;
-      console.log(`  ${money(o.priceCents)} → ${money(o.profitCents)} profit (${o.marginPct}% of net) at a ${p.suggestion.targetMarginPct}% target`);
-      console.log(`  ${money(o.priceCents)} − ${money(o.vatCents)} VAT − ${money(o.feesCents)} fees − ${money(o.costCents)} cost`);
+      console.log(`  ${money(o.priceCents)} → ${money(o.profitCents)} profit (${o.marginPct}% of the price) at a ${p.suggestion.targetMarginPct}% target`);
+      console.log(`  ${money(o.priceCents)} − ${money(o.vatCents)} VAT − ${money(o.feesCents)} fees − ${money(o.shippingCents)} shipping − ${money(o.costCents)} cost`);
     } else {
       console.log(`  none: ${p.suggestion.reason}`);
     }

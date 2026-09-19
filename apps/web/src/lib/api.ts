@@ -2471,7 +2471,8 @@ export interface EbayGatherResult {
 
 /** What an eBay listing should sell for, what others charge, and what a price would earn. */
 export interface EbayPriceOutcome {
-  priceCents: number; vatCents: number; feesCents: number; costCents: number;
+  priceCents: number; vatCents: number; feesCents: number; shippingCents: number; costCents: number;
+  /** marginPct is profit over the price the buyer pays, as on every other pricing screen. */
   profitCents: number; marginPct: number;
 }
 export interface EbayCompetitorOffer {
@@ -2486,18 +2487,17 @@ export interface EbayPricing {
   costCurrency: string;
   costCents: number | null;
   /**
-   * The rates a figure was worked out from, and where they came from. `measured` means fitted to
-   * this account's own settled orders; `published` means eBay's rate card, with `measuredWhyNot`
-   * saying why the orders could not support a measurement.
+   * What the figures were worked out from: the sales channel the connection feeds (its fee %, the VAT
+   * at the suggested price, the shipping service) — the same basis as OnBuy and Change price.
+   * `measured` is eBay's fee fitted to this account's own settled orders, shown for comparison only.
    */
   assumptions: {
-    vatRate: number; feePct: number; fixedFeeCents: number;
-    feeSource: 'measured' | 'published';
-    measuredFrom: number | null;
+    basis: { channelName: string | null; feePct: number; vatPct: number; shippingServiceName: string | null } | null;
+    measured: { feePct: number; fixedFeeCents: number; sampleSize: number } | null;
     measuredWhyNot: string | null;
   };
   targetMarginPct: number;
-  suggestion: { ok: true; outcome: EbayPriceOutcome; targetMarginPct: number } | { ok: false; reason: string };
+  suggestion: { ok: true; outcome: EbayPriceOutcome; targetMarginPct: number; problems?: string[] } | { ok: false; reason: string };
   /** The price being typed, priced. Null until one is asked about. */
   at: EbayPriceOutcome | null;
   current: EbayPriceOutcome | null;

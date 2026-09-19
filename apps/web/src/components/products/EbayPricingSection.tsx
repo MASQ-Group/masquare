@@ -87,7 +87,7 @@ export function EbayPricingSection({ productId }: { productId: string }) {
       {d.suggestion.ok ? (
         <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
           <span className="font-semibold text-n-800">Suggested {money(d.suggestion.outcome.priceCents)}</span>
-          <span className="text-n-500">at {d.suggestion.targetMarginPct}% profit</span>
+          <span className="text-n-500">for a {d.suggestion.targetMarginPct}% margin</span>
           <button
             type="button"
             className="hbtn"
@@ -102,6 +102,12 @@ export function EbayPricingSection({ productId }: { productId: string }) {
           <span>{d.suggestion.reason}</span>
         </div>
       )}
+      {d.suggestion.ok && d.suggestion.problems?.length ? (
+        <div className="flex items-start gap-2 text-[11.5px] text-warning">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+          <span>Worked out without: {d.suggestion.problems.join('; ')}.</span>
+        </div>
+      ) : null}
 
       {/* ── what we will charge ── */}
       <div className="flex flex-wrap items-end gap-3">
@@ -136,36 +142,40 @@ export function EbayPricingSection({ productId }: { productId: string }) {
       </div>
 
       {/*
-        * The breakdown, because "30% profit" means nothing without what was taken out of it. VAT and
-        * eBay's fee are shown as the assumptions they are — rates a server setting can change.
+        * The breakdown, because "30% profit" means nothing without what was taken out of it. Worked out
+        * on the sales channel's settings, exactly as OnBuy and Change price are, so the same product
+        * on two channels set up alike gets the same answer.
         */}
       {shown && (
         <div className="flex flex-col gap-0.5 rounded-md border border-n-200 bg-n-0 px-3 py-2 text-[12px]">
           <div className={shown.profitCents >= 0 ? 'text-n-800' : 'text-danger'}>
-            <b>{money(shown.profitCents)}</b> profit · {shown.marginPct}% of net revenue
+            <b>{money(shown.profitCents)}</b> profit · {shown.marginPct}% of the price
             {shown.profitCents < 0 && <span className="ml-1 font-semibold">— a loss on every unit</span>}
           </div>
           <div className="text-n-500">
             {money(shown.priceCents)} − {money(shown.vatCents)} VAT − {money(shown.feesCents)} eBay fees
-            − {money(shown.costCents)} cost
+            − {money(shown.shippingCents)} shipping − {money(shown.costCents)} cost
           </div>
           {/*
-            * Where the fee came from, not just what it is. A rate measured from this account's own
-            * settled orders is worth trusting; a published rate card is a guess that happens to be
-            * printed, and the difference changes how much weight to put on the margin above.
+            * What it was worked out from. The fee measured from this account's own settled orders is
+            * shown beside the channel's fee rather than used: when they disagree, the channel setting is
+            * what to correct, because every screen and every booked sale reads it.
             */}
-          <div className="text-[11px] text-n-400">
-            {Math.round(d.assumptions.vatRate * 100)}% VAT, and a{' '}
-            {(d.assumptions.feePct * 100).toFixed(1)}% eBay fee plus {money(d.assumptions.fixedFeeCents)} an order
-            {d.assumptions.feeSource === 'measured' ? (
-              <> — <span className="text-success">measured from your last {d.assumptions.measuredFrom} settled eBay orders</span>.</>
-            ) : (
-              <>
-                {' '}— eBay&apos;s published rate.
-                {d.assumptions.measuredWhyNot && <span className="block">Not measured from your own orders: {d.assumptions.measuredWhyNot}.</span>}
-              </>
-            )}
-          </div>
+          {d.assumptions.basis && (
+            <div className="text-[11px] text-n-400">
+              Priced on {d.assumptions.basis.channelName ?? 'the sales channel'}: {d.assumptions.basis.feePct}% fee,{' '}
+              {d.assumptions.basis.vatPct}% VAT at the suggested price
+              {d.assumptions.basis.shippingServiceName && <>, shipped by {d.assumptions.basis.shippingServiceName}</>}.
+              {d.assumptions.measured ? (
+                <span className="block">
+                  Your last {d.assumptions.measured.sampleSize} settled eBay orders measure eBay&apos;s fee at{' '}
+                  {(d.assumptions.measured.feePct * 100).toFixed(1)}% plus {money(d.assumptions.measured.fixedFeeCents)} an order.
+                </span>
+              ) : d.assumptions.measuredWhyNot ? (
+                <span className="block">eBay&apos;s fee not measured from your own orders: {d.assumptions.measuredWhyNot}.</span>
+              ) : null}
+            </div>
+          )}
         </div>
       )}
     </Wrap>
