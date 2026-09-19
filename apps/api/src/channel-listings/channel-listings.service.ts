@@ -411,7 +411,20 @@ export class ChannelListingsService implements OnApplicationBootstrap {
 
       for (const intg of ebayInts) {
         progress?.note(intg.name);
-        const res = await this.integrations.fetchEbayListingsBySku(intg.id, skus);
+        /**
+         * eBay is also asked under the SKU's punctuation-free form, and any SKU our eBay plan holds.
+         *
+         * Listings made before SKUs kept their punctuation live on eBay as "LE83306", and publishing
+         * adopts such a listing rather than making a second one — so the product's own SKUs alone
+         * never found it, and a product live on eBay UK stayed "not listed" here.
+         */
+        const ebayPlanSkus = await this.prisma.productChannelPlan.findMany({
+          where: { productId: product.id, integrationId: intg.id, deletedAt: null, channelSku: { not: null } },
+          select: { channelSku: true },
+        });
+        const stripped = (product.mainSku ?? '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 50);
+        const ebaySkus = [...new Set([...skus, stripped, ...ebayPlanSkus.map((pl) => pl.channelSku ?? '')].map((v) => v.trim()).filter(Boolean))];
+        const res = await this.integrations.fetchEbayListingsBySku(intg.id, ebaySkus);
         if (!res.ok) {
           results.push({ integrationId: intg.id, name: intg.name, marketplace: null, ok: false, listed: false, message: res.message });
           progress?.tick(false);
@@ -1264,6 +1277,8 @@ export class ChannelListingsService implements OnApplicationBootstrap {
         id: true, mainSku: true, title: true,
         brand: { select: { name: true } },
         availability: { select: { quantity: true, updatedAt: true } },
+        // The featured image — first by sortOrder, as the product page defines it — for the header.
+        media: { where: { deletedAt: null }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }], take: 1, select: { url: true } },
         channelListings: {
           where: companyIds ? { companyId: { in: companyIds } } : undefined,
           select: { integrationId: true, marketplace: true, channelSku: true, asin: true, externalListingId: true, listedPrice: true, currency: true, listedQuantity: true, fulfilmentChannel: true, listingStatus: true, lastPulledAt: true },
@@ -1353,6 +1368,7 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     });
     return {
       productId: p.id, sku: p.mainSku, title: p.title, brand: p.brand?.name ?? null,
+      imageUrl: p.media[0]?.url ?? null,
       masterStock: p.availability?.quantity ?? null,
       listedCount: p.channelListings.length,
       channelCount: channels.length,

@@ -255,7 +255,10 @@ export function ChannelListingDetailPage() {
       {/* Identity and stock at a glance. The title used to repeat here under the breadcrumb; it
           now lives in the header alone, so this card carries only what the header cannot. */}
       <div className="card flex flex-wrap items-start gap-5 p-5">
-        <div className="grid h-[84px] w-[84px] flex-none place-items-center rounded-xl border border-n-100 bg-n-50 text-n-300"><Package size={38} /></div>
+        {/* The featured image where there is one; the box only for a product with no image at all. */}
+        {data.imageUrl
+          ? <img src={data.imageUrl} alt="" className="h-[84px] w-[84px] flex-none rounded-xl border border-n-100 bg-n-0 object-contain p-1" />
+          : <div className="grid h-[84px] w-[84px] flex-none place-items-center rounded-xl border border-n-100 bg-n-50 text-n-300"><Package size={38} /></div>}
         <div className="min-w-[280px] flex-1">
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="code rounded-md px-2 py-0.5 text-[12.5px] text-teal-700" style={{ background: '#E8F4F2' }}>{data.sku}</span>
