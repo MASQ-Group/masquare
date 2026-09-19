@@ -1,3 +1,5 @@
+import { renderValue } from '../activity/diff';
+
 /**
  * Is this save about to write an old copy of a product over a newer one?
  *
@@ -23,4 +25,41 @@ export function isStaleWrite(storedUpdatedAt: Date | null | undefined, expectedU
    * are the same moment, and a string comparison would refuse a save onto an unchanged product.
    */
   return storedUpdatedAt.getTime() !== expected;
+}
+
+/**
+ * Which of the fields a stale save carries changed underneath it.
+ *
+ * A stale save used to be refused outright. The card only sends the fields a person edited, so when
+ * research wrote the eBay title and description while someone had the card open to fix the weight,
+ * the weight save was refused although it touched nothing the research did — close, reopen, redo.
+ *
+ * Now the card also sends what each edited field showed when it opened. A field whose stored value
+ * is still that is safe to write: nobody else changed it. A field that moved is a real conflict and
+ * is named. Compared by value, not by reading the history, so it holds whatever wrote the product —
+ * research, a colleague, a stock receipt — including writers that leave no history.
+ *
+ * `sent` and `expected` are in column form (the save's own mapping), so money and trimming compare
+ * the way they are stored. A field sent without an expected value, and the lists (`unverifiable`,
+ * e.g. aliases) that have no single stored value to compare, count as conflicts: not knowing is
+ * treated as changed.
+ *
+ * Returns the conflicting columns. Empty means the save can go through.
+ *
+ * PURE.
+ */
+export function fieldsChangedUnderneath(
+  stored: Record<string, unknown>,
+  sent: Record<string, unknown>,
+  expected: Record<string, unknown> | null,
+  unverifiable: string[] = [],
+): string[] {
+  const out = [...unverifiable];
+  for (const [column, value] of Object.entries(sent)) {
+    const now = renderValue(stored[column]);
+    // Already what this save writes — someone made the same change; nothing to lose.
+    if (now === renderValue(value)) continue;
+    if (!expected || !(column in expected) || now !== renderValue(expected[column])) out.push(column);
+  }
+  return out;
 }
