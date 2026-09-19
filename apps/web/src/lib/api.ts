@@ -2277,6 +2277,52 @@ export const listingApi = {
     api.delete<{ removed: boolean }>(`/listing/products/${productId}/channels/${integrationId}`, { params: { marketplace } }).then((r) => r.data),
 };
 
+/** A product in OnBuy's catalogue that could take our listing, found by barcode. */
+export interface OnbuyCandidate {
+  opc: string;
+  name: string;
+  url: string | null;
+  thumbnailUrl: string | null;
+  productCodes: string[];
+  matchedCode: string | null;
+}
+
+export interface OnbuyDeliveryTemplate { id: string; name: string; isDefault: boolean; summary: string[] }
+
+export interface OnbuyListingInput {
+  opc: string | null; sku: string | null; condition: string | null; price: number | null; stock: number | null;
+  deliveryTemplateId: string | null; handlingTimeDays: number | null; boostPct: number;
+}
+
+/** Listing on OnBuy UK against a product already in OnBuy's catalogue. */
+export const onbuyListingApi = {
+  candidates: (productId: string, integrationId: string) =>
+    api.get<{ codes: string[]; candidates: OnbuyCandidate[]; message: string | null; mode?: 'live' | 'test' }>(
+      `/listing/onbuy/products/${productId}/candidates`, { params: { integrationId } },
+    ).then((r) => r.data),
+  deliveryTemplates: (integrationId: string) =>
+    api.get<{ templates: OnbuyDeliveryTemplate[]; boostLevels: number[] }>('/listing/onbuy/delivery-templates', { params: { integrationId } }).then((r) => r.data),
+  pricing: (productId: string, integrationId: string) =>
+    api.get<{
+      suggestion: {
+        priceNative: number | null; currency: string; marginPct: number | null; profitEur: number | null; targetMarginPct: number;
+        inputs: { costEur: number; shippingEur: number; feePct: number; vatPct: number; shippingServiceName: string | null };
+      } | null;
+      problems: string[];
+    }>(`/listing/onbuy/products/${productId}/pricing`, { params: { integrationId } }).then((r) => r.data),
+  preview: (productId: string, integrationId: string) =>
+    api.get<{
+      input: OnbuyListingInput; missing: string[]; action: 'create' | 'listed' | 'refuse' | null;
+      refusal: string | null; listed: string | null; identityNote: string | null; liveWritesEnabled: boolean;
+      create: unknown; activate: unknown;
+    }>(`/listing/onbuy/products/${productId}/preview`, { params: { integrationId } }).then((r) => r.data),
+  publish: (productId: string, integrationId: string) =>
+    api.post<
+      | { ok: true; mode: 'live' | 'test'; sku: string; opc: string; listingId: string | null; activated: boolean; message: string | null; url: string }
+      | { ok: false; message: string; mode: 'live' | 'test' }
+    >(`/listing/onbuy/products/${productId}/publish`, { integrationId, confirm: true }).then((r) => r.data),
+};
+
 /**
  * Creating an eBay listing.
  *

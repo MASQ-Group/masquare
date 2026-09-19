@@ -6,6 +6,7 @@ import { Select } from '@masquare/ui';
 import { listingApi, type ProductChannelRow } from '../../lib/api';
 import { AmazonCandidates } from './AmazonCandidates';
 import { AmazonOfferPreview } from './AmazonOfferPreview';
+import { OnbuyCandidates, OnbuyDeliveryTemplateSelect, OnbuyListingPreview, OnbuyPriceSuggestion } from './OnbuyListing';
 import { CompetitorPrices } from './CompetitorPrices';
 import { LaunchPrice } from './LaunchPrice';
 import { currencyForMarketplace, isZeroDecimalCurrency, limitPriceInput } from '../../lib/currencies';
@@ -101,10 +102,14 @@ export function PlanEditor({
   const planDecimals = isZeroDecimalCurrency(planCurrency) ? 0 : 2;
   const [price, setPrice] = useState(plan?.offerPriceCents != null ? (plan.offerPriceCents / 100).toFixed(planDecimals) : '');
   const asin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin ?? null;
+  // The OnBuy catalogue product (OPC) the listing attaches to — OnBuy's equivalent of the ASIN.
+  const opc = ((plan?.aspects as Record<string, string> | null) ?? {}).opc ?? null;
 
   const isAmazon = row.channelType === 'amazon';
   const isEbay = row.channelType === 'ebay';
   const isOnBuy = row.channelType === 'onbuy';
+  // Amazon and OnBuy both attach to a catalogue product found by barcode, so both start with a match.
+  const hasMatchStep = isAmazon || isOnBuy;
 
   /**
    * Adopt a different seller SKU for this marketplace.
@@ -136,6 +141,20 @@ export function PlanEditor({
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save'),
   });
 
+  const matchOnbuy = useMutation({
+    mutationFn: (picked: { opc: string; name: string }) =>
+      listingApi.upsertPlan(productId, row.integrationId, {
+        aspects: { ...((plan?.aspects as Record<string, unknown>) ?? {}), opc: picked.opc },
+        categoryName: picked.name || null,
+      }),
+    onSuccess: (_r, picked) => {
+      if (picked.name) setCategoryName(picked.name);
+      toast.success(`Matched to OnBuy ${picked.opc}`);
+      onSaved();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save the match'),
+  });
+
   const match = useMutation({
     mutationFn: (picked: { asin: string; productType: string | null }) => {
       /**
@@ -165,11 +184,11 @@ export function PlanEditor({
     onError: (e: any) => toast.error(e?.response?.data?.message ?? e?.message ?? 'Could not save the match'),
   });
 
-  // What each step needs, in the order it is needed. Amazon attaches to a catalogue entry, so the
-  // match comes first; eBay and OnBuy have no equivalent and start at the terms.
+  // What each step needs, in the order it is needed. Amazon and OnBuy attach to a catalogue entry,
+  // so the match comes first; eBay has no equivalent and starts at the price.
   const priceSet = price.trim() !== '' && Number(price.replace(',', '.')) > 0;
   const termsSet = handling.trim() !== '' && (!isOnBuy || delivery.trim() !== '');
-  const matched = !isAmazon || !!asin;
+  const matched = isAmazon ? !!asin : isOnBuy ? !!opc : true;
 
   const done = { match: matched, price: priceSet, terms: termsSet };
   const firstOpen = !done.match ? 1 : !done.price ? 2 : !done.terms ? 3 : 4;
@@ -251,8 +270,26 @@ export function PlanEditor({
         </Step>
       )}
 
+      {isOnBuy && (
+        <Step
+          n={1}
+          title="Find it on OnBuy"
+          state={stateOf(1, done.match, true)}
+          summary={opc ? <span className="mono text-teal-700">{opc}{categoryName ? ` · ${categoryName}` : ''}</span> : 'Not matched yet'}
+          open={current === 1}
+          onOpen={() => setOpen(current === 1 ? -1 : 1)}
+        >
+          <OnbuyCandidates
+            productId={productId}
+            integrationId={row.integrationId}
+            selectedOpc={opc}
+            onSelect={(pickedOpc, name) => matchOnbuy.mutate({ opc: pickedOpc, name })}
+          />
+        </Step>
+      )}
+
       <Step
-        n={isAmazon ? 2 : 1}
+        n={hasMatchStep ? 2 : 1}
         title="Set the price"
         state={stateOf(2, done.price, done.match)}
         summary={priceSet ? `${price}` : 'No launch price yet'}
@@ -280,11 +317,14 @@ export function PlanEditor({
               <CompetitorPrices productId={productId} integrationId={row.integrationId} />
             </>
           )}
+          {isOnBuy && opc && (
+            <OnbuyPriceSuggestion productId={productId} integrationId={row.integrationId} onUse={setPrice} />
+          )}
         </div>
       </Step>
 
       <Step
-        n={isAmazon ? 3 : 2}
+        n={hasMatchStep ? 3 : 2}
         title="Stock and dispatch"
         state={stateOf(3, done.terms, done.price)}
         summary={termsSet ? `${row.quantity.value ?? 0} units · ${handling} day${handling === '1' ? '' : 's'}` : 'Handling time not set'}
@@ -329,7 +369,8 @@ export function PlanEditor({
             )}
           </label>
 
-          {!isAmazon && (
+          {/* OnBuy lists against a catalogue product, which already has its category. */}
+          {!isAmazon && !isOnBuy && (
             <label className="flex flex-col gap-1">
               <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">
                 {isEbay ? 'eBay category id' : 'Category'}
@@ -359,16 +400,23 @@ export function PlanEditor({
             <>
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Delivery template</span>
-                <input value={delivery} onChange={(e) => setDelivery(e.target.value)} placeholder="OnBuy template name" className="input h-8 text-[12.5px]" />
+                <OnbuyDeliveryTemplateSelect integrationId={row.integrationId} value={delivery} onChange={setDelivery} />
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Boost %</span>
-                <input value={boost} onChange={(e) => setBoost(e.target.value)} inputMode="decimal" className="input mono h-8 text-[12.5px]" />
+                {/* OnBuy accepts only these levels; a typed 7% would be refused at listing time. */}
+                <Select
+                  dense
+                  value={['0', '5', '10', '15', '20', '30'].includes(String(Number(boost || 0))) ? String(Number(boost || 0)) : '0'}
+                  onChange={setBoost}
+                  options={[0, 5, 10, 15, 20, 30].map((b) => ({ value: String(b), label: `${b}%` }))}
+                />
                 <span className="text-[11px] text-n-400">0% unless someone decides otherwise. OnBuy defaults this to 20%.</span>
               </label>
             </>
           )}
 
+          {!isOnBuy && (
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Category name</span>
             {isEbay ? (
@@ -379,14 +427,15 @@ export function PlanEditor({
               <input value={categoryName} onChange={(e) => setCategoryName(e.target.value)} placeholder="for people, not the API" className="input h-8 text-[12.5px]" />
             )}
           </label>
+          )}
         </div>
       </Step>
 
       <Step
-        n={isAmazon ? 4 : 3}
+        n={hasMatchStep ? 4 : 3}
         title="Check and list"
         state={stateOf(4, false, done.match && done.price && done.terms)}
-        summary={plan?.status === 'SUBMITTED' ? 'Submitted to the channel' : 'Not listed yet'}
+        summary={plan?.status === 'SUBMITTED' ? 'Submitted to the channel' : plan?.status === 'LISTED' ? 'Listed' : 'Not listed yet'}
         waitingFor={!done.price ? 'Set a price first' : 'Set a handling time first'}
         open={current === 4}
         onOpen={() => setOpen(current === 4 ? -1 : 4)}
@@ -400,6 +449,13 @@ export function PlanEditor({
             onListed={onSaved}
             savePlan={() => save.mutateAsync()}
             onUseSku={useSku}
+          />
+        ) : isOnBuy ? (
+          <OnbuyListingPreview
+            productId={productId}
+            integrationId={row.integrationId}
+            savePlan={() => save.mutateAsync()}
+            onListed={onSaved}
           />
         ) : (
           <div className="rounded-md border border-n-200 bg-n-0 px-3 py-2.5 text-[12px] text-n-500">
