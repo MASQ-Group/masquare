@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orderCustomsItems, originIso, suggestedParcelKg, type OrderLineForBooking } from './order-booking';
+import { orderCustomsItems, originIso, suggestedParcelKg, suggestedParcels, type OrderLineForBooking } from './order-booking';
 
 const names = new Map([['china', 'CN'], ['germany', 'DE']]);
 
@@ -60,5 +60,41 @@ describe('the first parcel suggested', () => {
   it('weighs what the lines weigh, so the two agree from the start', () => {
     expect(suggestedParcelKg([{ weightKg: 1.5 }, { weightKg: 0.25 }])).toBe(1.75);
     expect(suggestedParcelKg([{ weightKg: 0 }])).toBeNull();
+  });
+});
+
+describe('the parcels suggested from the catalogue', () => {
+  const boxed = (over: Partial<OrderLineForBooking> = {}) => line({
+    quantity: '1.000',
+    product: { ...line().product!, packageLengthCm: '30.00', packageWidthCm: '20.00', packageHeightCm: '10.00' },
+    ...over,
+  });
+
+  it('is the product’s own box, weight and dimensions, for a single unit', () => {
+    expect(suggestedParcels([boxed()])).toEqual([{ weightKg: 0.75, lengthCm: 30, widthCm: 20, heightCm: 10, sku: 'LE-83306' }]);
+  });
+
+  it('is one box per unit, each its own product’s, for several', () => {
+    const other = boxed({ sku: 'LAG-1', quantity: '2.000', product: { ...boxed().product!, packageWeightKg: '1.2', packageLengthCm: '40', packageWidthCm: '30', packageHeightCm: '25' } });
+    const parcels = suggestedParcels([boxed(), other]);
+    expect(parcels.map((p) => p.sku)).toEqual(['LE-83306', 'LAG-1', 'LAG-1']);
+    expect(parcels[1]).toEqual({ weightKg: 1.2, lengthCm: 40, widthCm: 30, heightCm: 25, sku: 'LAG-1' });
+  });
+
+  it('weighs the same in total as the customs lines, so the two agree from the start', () => {
+    const lines = [boxed({ quantity: '3.000' })];
+    const parcelsKg = suggestedParcels(lines).reduce((t, p) => t + (p.weightKg ?? 0), 0);
+    const itemsKg = orderCustomsItems(lines, 'EUR', names).reduce((t, i) => t + i.weightKg, 0);
+    expect(parcelsKg).toBeCloseTo(itemsKg, 6);
+  });
+
+  it('leaves a dimension empty where the catalogue has none, rather than inventing one', () => {
+    const [p] = suggestedParcels([boxed({ product: { ...boxed().product!, packageHeightCm: null } })]);
+    expect(p).toMatchObject({ lengthCm: 30, widthCm: 20, heightCm: null });
+  });
+
+  it('falls back to one combined parcel, weighed but not measured, for goods sold by length or too many units', () => {
+    expect(suggestedParcels([boxed({ quantity: '1.500' })])).toEqual([{ weightKg: 1.125, lengthCm: null, widthCm: null, heightCm: null, sku: null }]);
+    expect(suggestedParcels([boxed({ quantity: '11.000' })])).toHaveLength(1);
   });
 });

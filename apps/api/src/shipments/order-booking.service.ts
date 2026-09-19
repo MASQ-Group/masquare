@@ -5,7 +5,7 @@ import { CYPRUS_SERVICE_TYPES, SERVICE_LABELS, customsLane } from '../carriers/f
 import type { InvoiceSource } from '../carriers/fedex-customs';
 import type { ShipParcel } from '../carriers/fedex-ship';
 import { batteriesFor } from '../customer-shipments/booking-plan';
-import { orderCustomsItems, suggestedParcelKg } from './order-booking';
+import { orderCustomsItems, suggestedParcelKg, suggestedParcels } from './order-booking';
 
 /** One box as the booking screen sends it. */
 export interface OrderParcelInput {
@@ -74,6 +74,7 @@ export class OrderBookingService {
             product: {
               select: {
                 title: true, hsCode: true, countryOfOrigin: true, packageWeightKg: true, productWeightKg: true,
+                packageLengthCm: true, packageWidthCm: true, packageHeightCm: true,
                 batteryTypeRef: { select: { label: true } },
               },
             },
@@ -112,6 +113,8 @@ export class OrderBookingService {
       services: CYPRUS_SERVICE_TYPES.map((value) => ({ value, label: SERVICE_LABELS[value] ?? value })),
       items,
       suggestedParcelKg: suggestedParcelKg(items),
+      /** One per unit, from each product's package weight and dimensions — see suggestedParcels. */
+      suggestedParcels: suggestedParcels(tx.items),
       /**
        * The products on it the catalogue says carry batteries, so the screen can ask for the
        * declaration rather than letting a battery parcel go as ordinary freight.
