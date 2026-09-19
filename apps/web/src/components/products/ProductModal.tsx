@@ -214,9 +214,10 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
          * over it — the page had been open since before the stale-save guard shipped, so the guard
          * was never sent. A field this card did not touch is now simply not in the save.
          *
-         * `expectedUpdatedAt` stays as the second line: it refuses even an edited field if the
-         * product changed underneath, so two people editing the same text cannot silently clobber
-         * each other either.
+         * `expectedUpdatedAt` stays as the second line, now per field: with `expectedValues` — what
+         * each edited field showed when the card opened — a product changed underneath is refused only
+         * when one of THESE fields moved. Research writing the description no longer blocks a weight
+         * fix, and two people editing the same text still cannot silently clobber each other.
          */
         const changes = changedFields(opened.current!, body);
         if (Object.keys(changes).length === 0) {
@@ -224,7 +225,8 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
           onSaved();
           return;
         }
-        await productsApi.update(product.id, { ...changes, expectedUpdatedAt: product.updatedAt ?? undefined });
+        const expectedValues = Object.fromEntries(Object.keys(changes).map((k) => [k, (opened.current as Record<string, unknown>)[k]]));
+        await productsApi.update(product.id, { ...changes, expectedUpdatedAt: product.updatedAt ?? undefined, expectedValues });
       } else {
         await productsApi.create(body);
       }

@@ -3,6 +3,7 @@ import {
   IsArray,
   IsBoolean,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -102,6 +103,13 @@ export class UpdateProductDto extends CreateProductDto {
    * a save onto a product that has changed since is refused instead, and nothing is lost.
    */
   @IsOptional() @IsString() expectedUpdatedAt?: string;
+
+  /**
+   * What each field being saved showed when the card opened, keyed as in this DTO. With it, a save
+   * onto a product that changed since goes through when none of ITS fields moved — research writing the
+   * description no longer blocks a weight fix — and is refused, naming the field, when one did.
+   */
+  @IsOptional() @IsObject() expectedValues?: Record<string, unknown>;
 }
 
 export class ReorderMediaDto {

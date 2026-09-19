@@ -13,7 +13,14 @@ import type { ChannelListingsService } from '../channel-listings/channel-listing
 import { channelKey } from '../channel-listings/channel-key';
 import { deriveListingStatus } from '../channel-listings/listing-status';
 import { pickLiveListingsByKey } from '../channel-listings/pick-live-listing';
-import { isStaleWrite } from './stale-write';
+import { fieldsChangedUnderneath, isStaleWrite } from './stale-write';
+
+/** Names for a refused save's conflicts that are not product columns, or read better whole. */
+const STALE_FIELD_NAMES: Record<string, string> = {
+  aliases: 'SKU aliases', attributes: 'Attributes',
+  purchaseCostAmount: 'Purchase cost', purchaseCostCurrency: 'Purchase cost',
+  mapAmount: 'MAP', mapCurrency: 'MAP', msrpAmount: 'MSRP', msrpCurrency: 'MSRP',
+};
 
 export interface ProductQuery {
   q?: string;
@@ -544,11 +551,25 @@ export class ProductsService {
      * make an unchanged product look changed. Only callers that send the timestamp opt in — bulk edits
      * and imports send none and behave exactly as before.
      */
-    if (isStaleWrite(before?.updatedAt, dto.expectedUpdatedAt)) {
-      throw new ConflictException(
-        'This product was changed after you opened it — possibly by research through the maSquare connector. '
-        + 'Nothing was saved, so nothing was lost. Close the product and open it again to see the latest, then redo your change.',
+    if (before && isStaleWrite(before.updatedAt, dto.expectedUpdatedAt)) {
+      /**
+       * Changed since the card opened — but only a conflict if one of the fields being saved moved.
+       * The card sends just the edited fields, so writing the others cannot touch what changed.
+       */
+      const expected = dto.expectedValues ? this.partialScalarData(dto.expectedValues as unknown as UpdateProductDto) : null;
+      const conflicts = fieldsChangedUnderneath(
+        before as unknown as Record<string, unknown>,
+        this.partialScalarData(dto),
+        expected,
+        (['aliases', 'attributes'] as const).filter((k) => dto[k] !== undefined),
       );
+      if (conflicts.length) {
+        const names = [...new Set(conflicts.map((c) => STALE_FIELD_NAMES[c] ?? PRODUCT_FIELD_LABELS[c] ?? c))];
+        throw new ConflictException(
+          `${names.join(', ')} changed after you opened this product — possibly by research through the maSquare connector. `
+          + 'Nothing was saved, so nothing was lost. Close the product and open it again to see the latest, then redo your change.',
+        );
+      }
     }
     const skuValues = [dto.mainSku, ...(dto.aliases?.map((a) => a.skuValue) ?? [])].filter(Boolean) as string[];
     if (skuValues.length) await this.assertSkuNamespace(skuValues, id);
