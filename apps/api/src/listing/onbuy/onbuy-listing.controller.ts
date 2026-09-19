@@ -30,8 +30,15 @@ export class OnbuyListingController {
   }
 
   @Get('products/:productId/pricing')
-  pricing(@Param('productId') productId: string, @Query('integrationId') integrationId: string, @VisibleCompanies() companyIds: string[]) {
-    return this.svc.pricing(productId, integrationId, companyIds);
+  pricing(
+    @Param('productId') productId: string,
+    @Query('integrationId') integrationId: string,
+    @VisibleCompanies() companyIds: string[],
+    @Query('atPriceCents') atPriceCents?: string,
+  ) {
+    // A typed price, priced. Anything that is not a positive whole number of pence is ignored.
+    const at = atPriceCents != null && /^\d+$/.test(atPriceCents) && Number(atPriceCents) > 0 ? Number(atPriceCents) : undefined;
+    return this.svc.pricing(productId, integrationId, companyIds, at);
   }
 
   @Get('products/:productId/preview')

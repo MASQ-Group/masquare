@@ -2317,14 +2317,19 @@ export const onbuyListingApi = {
     ).then((r) => r.data),
   deliveryTemplates: (integrationId: string) =>
     api.get<{ templates: OnbuyDeliveryTemplate[]; boostLevels: number[] }>('/listing/onbuy/delivery-templates', { params: { integrationId } }).then((r) => r.data),
-  pricing: (productId: string, integrationId: string) =>
+  /** The launch-margin price, the breakeven, and — with `atPriceCents` — what a typed price earns. */
+  pricing: (productId: string, integrationId: string, atPriceCents?: number | null) =>
     api.get<{
       suggestion: {
         priceNative: number | null; currency: string; marginPct: number | null; profitEur: number | null; targetMarginPct: number;
         inputs: { costEur: number; shippingEur: number; feePct: number; vatPct: number; shippingServiceName: string | null };
       } | null;
+      breakevenNative: number | null;
+      at: { priceCents: number; profitCents: number; profitEurCents: number; marginPct: number; aboveBreakeven: boolean } | null;
       problems: string[];
-    }>(`/listing/onbuy/products/${productId}/pricing`, { params: { integrationId } }).then((r) => r.data),
+    }>(`/listing/onbuy/products/${productId}/pricing`, {
+      params: { integrationId, ...(atPriceCents != null ? { atPriceCents } : {}) },
+    }).then((r) => r.data),
   preview: (productId: string, integrationId: string) =>
     api.get<{
       input: OnbuyListingInput; missing: string[]; action: 'create' | 'activate' | 'listed' | 'refuse' | null;
