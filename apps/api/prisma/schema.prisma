@@ -2130,7 +2130,8 @@ model Country {
    *
    * A threshold rather than a yes/no because that is how the rules are written: the UK charges duty
    * above £135, below which the marketplace has already collected the VAT at checkout. Compared
-   * against the goods' value at the customs rate of the month, not the day's market rate.
+   * against the goods plus the shipping charged, excluding VAT — customs judge it on the CIF value —
+   * at the customs rate of the month, not the day's market rate.
    */
   importDutyMode      String?  @map("import_duty_mode")
   importDutyThreshold Decimal? @map("import_duty_threshold") @db.Decimal(12, 2)

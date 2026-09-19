@@ -228,7 +228,7 @@ function CountryModal({ country, services, onClose, onSaved }: { country: Countr
             <div><label className="label">Charged above</label><input className="input mono" inputMode="decimal" value={form.importDutyThreshold} onChange={(e) => set({ importDutyThreshold: e.target.value })} placeholder="135.00" /></div>
             <div><label className="label">Currency</label><input className="input mono uppercase" maxLength={3} value={form.importDutyCurrency} onChange={(e) => set({ importDutyCurrency: e.target.value.toUpperCase() })} placeholder="GBP" /></div>
             <p className="col-span-2 -mt-2 text-[11.5px] text-n-500">
-              The goods’ value, excluding VAT and shipping, is compared at the customs rate of the month. Zero means charged on everything.
+              The goods plus the shipping the buyer paid, excluding VAT, are compared at the customs rate of the month — customs judge it on the value including freight. Zero means charged on everything.
             </p>
           </>
         )}

@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { dutiesDue, firstMatchingRule, ruleProblems, type ShipmentFacts } from './duty-rules';
+import { customsValue, dutiesDue, firstMatchingRule, ruleProblems, type ShipmentFacts } from './duty-rules';
 
 export interface DutyRuleInput {
   name?: string;
@@ -26,7 +26,7 @@ const SELECT = {
  *
  * The rules themselves are pure, in duty-rules.ts. This is where they are stored, and where an
  * order's facts are gathered for them: the channel's home country, the destination and whether it is
- * in the EU, and whether duties will be due there on the value of the goods.
+ * in the EU, and whether duties will be due there on the goods and shipping together.
  */
 @Injectable()
 export class DutyRulesService {
@@ -117,7 +117,7 @@ export class DutyRulesService {
         salesChannel: { select: { name: true, nativeCountry: { select: { isoCode: true } } } },
         destinationCountry: { select: { isoCode: true } },
         deliveryAddress: { select: { countryIso: true } },
-        items: { where: { deletedAt: null }, select: { netSalesAmount: true } },
+        items: { where: { deletedAt: null }, select: { netSalesAmount: true, shippingAmount: true } },
       },
     });
     if (!tx) return null;
@@ -130,11 +130,13 @@ export class DutyRulesService {
       })
       : null;
 
-    // The goods, not the carriage: a threshold is on what was bought, excluding VAT and shipping.
-    const value = tx.items.reduce((t, i) => t + Number(i.netSalesAmount ?? 0), 0);
+    // Goods plus the shipping the buyer paid, excluding VAT — the CIF value customs judge a threshold
+    // on. Where no shipping was charged the goods are all we can state: our own FedEx charge is not
+    // known until the booking, which is after this answer is needed. See customsValue.
+    const value = customsValue(tx.items);
     const due = dutiesDue(
       country ? { mode: (country.importDutyMode as 'none' | 'threshold' | null) ?? null, threshold: country.importDutyThreshold == null ? null : Number(country.importDutyThreshold), currency: country.importDutyCurrency } : null,
-      { value: value > 0 ? Math.round(value * 100) / 100 : null, currency: tx.currency ?? 'EUR' },
+      { value: value.value, currency: tx.currency ?? 'EUR', label: value.label },
       await this.rateToEur(),
     );
 

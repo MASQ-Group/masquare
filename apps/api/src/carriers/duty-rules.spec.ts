@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dutiesDue, firstMatchingRule, ruleMatches, ruleProblems, type DutyRule, type ShipmentFacts } from './duty-rules';
+import { customsValue, dutiesDue, firstMatchingRule, ruleMatches, ruleProblems, type DutyRule, type ShipmentFacts } from './duty-rules';
 
 // Customs-style rates: one unit of the currency in euro.
 const rates: Record<string, number> = { EUR: 1, GBP: 1.18, USD: 0.92 };
@@ -94,5 +94,31 @@ describe('a rule as entered', () => {
     expect(ruleProblems({ name: ' ', dutiesPaidBy: 'x' })).toEqual(['A rule needs a name.', 'Choose who pays: DDP or DAP.']);
     expect(ruleProblems({ name: 'OK', dutiesPaidBy: 'sender', destinationRegion: 'mars' })).toEqual(['Unknown region condition.']);
     expect(ruleProblems({ name: 'OK', dutiesPaidBy: 'recipient' })).toEqual([]);
+  });
+});
+
+describe('the value compared with a threshold', () => {
+  const uk = { mode: 'threshold' as const, threshold: 135, currency: 'GBP' };
+
+  it('is goods and shipping together, as customs judge it — an order under on goods alone can be over with its shipping', () => {
+    // £125 of goods is within £135; with £15 of shipping it is £140, and duties are charged.
+    expect(dutiesDue(uk, { value: 125, currency: 'GBP', label: 'goods' }, rate).due).toBe(false);
+    const withShipping = dutiesDue(uk, { value: 140, currency: 'GBP', label: 'goods and shipping' }, rate);
+    expect(withShipping).toEqual({ due: true, reason: 'goods and shipping GBP 140.00 above the GBP 135.00 threshold' });
+  });
+});
+
+describe('the value customs judge a threshold on', () => {
+  it('adds the shipping the buyer paid to the goods, across every line', () => {
+    expect(customsValue([{ netSalesAmount: 100, shippingAmount: 10 }, { netSalesAmount: 25, shippingAmount: 5 }]))
+      .toEqual({ value: 140, label: 'goods and shipping' });
+  });
+
+  it('is the goods alone where no shipping was charged', () => {
+    expect(customsValue([{ netSalesAmount: 125, shippingAmount: null }])).toEqual({ value: 125, label: 'goods' });
+  });
+
+  it('is nothing where there is no value at all', () => {
+    expect(customsValue([{ netSalesAmount: null, shippingAmount: null }]).value).toBeNull();
   });
 });
