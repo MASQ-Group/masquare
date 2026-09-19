@@ -2312,7 +2312,9 @@ export const onbuyListingApi = {
     }>(`/listing/onbuy/products/${productId}/pricing`, { params: { integrationId } }).then((r) => r.data),
   preview: (productId: string, integrationId: string) =>
     api.get<{
-      input: OnbuyListingInput; missing: string[]; action: 'create' | 'listed' | 'refuse' | null;
+      input: OnbuyListingInput; missing: string[]; action: 'create' | 'activate' | 'listed' | 'refuse' | null;
+      /** Held on OnBuy at stock 0 for a price check: listing it sends only price and stock. */
+      staged?: boolean;
       refusal: string | null; listed: string | null; identityNote: string | null; liveWritesEnabled: boolean;
       create: unknown; activate: unknown;
     }>(`/listing/onbuy/products/${productId}/preview`, { params: { integrationId } }).then((r) => r.data),
@@ -2321,6 +2323,19 @@ export const onbuyListingApi = {
       | { ok: true; mode: 'live' | 'test'; sku: string; opc: string; listingId: string | null; activated: boolean; message: string | null; url: string }
       | { ok: false; message: string; mode: 'live' | 'test' }
     >(`/listing/onbuy/products/${productId}/publish`, { integrationId, confirm: true }).then((r) => r.data),
+
+  /** Whether our OnBuy listings for this product are winning, the price to beat, and the margin at each. */
+  competition: (productId: string, integrationId: string) =>
+    api.get<OnbuyCompetition>(`/listing/onbuy/products/${productId}/competition`, { params: { integrationId } }).then((r) => r.data),
+  setPrice: (productId: string, integrationId: string, sku: string, price: number) =>
+    api.post<{ ok: true; sku: string; price: number } | { ok: false; message: string }>(
+      `/listing/onbuy/products/${productId}/price`, { integrationId, sku, price, confirm: true },
+    ).then((r) => r.data),
+  /** Place the listing on OnBuy at stock 0 (not buyable) to see the price to beat before going live. */
+  priceCheck: (productId: string, integrationId: string) =>
+    api.post<{ ok: true; competition: OnbuyCompetition } | { ok: false; message: string }>(
+      `/listing/onbuy/products/${productId}/price-check`, { integrationId, confirm: true },
+    ).then((r) => r.data),
 
   // Creating a product OnBuy does not have yet.
   categories: (integrationId: string, q: string) =>
@@ -2343,6 +2358,23 @@ export const onbuyListingApi = {
 };
 
 export interface OnbuyCategory { id: string; name: string; tree: string; canListIn: boolean }
+
+type OnbuyEcon = { profitEur: number | null; marginPct: number | null } | null;
+export interface OnbuyCompetitionRow {
+  sku: string;
+  price: number | null; itemPrice: number | null; deliveryPrice: number | null;
+  leadPrice: number | null; leadItemPrice: number | null; leadDeliveryPrice: number | null;
+  winning: boolean | null;
+  beat: number | null; match: number | null; reason: string | null;
+  economics: { price: OnbuyEcon; beat: OnbuyEcon; match: OnbuyEcon };
+}
+export interface OnbuyCompetition {
+  rows: OnbuyCompetitionRow[];
+  staged: boolean;
+  message: string | null;
+  liveWritesEnabled: boolean;
+  noEconomics?: boolean;
+}
 
 /** A product submitted to OnBuy's queue, as the plan records it. */
 export interface OnbuyQueueState {

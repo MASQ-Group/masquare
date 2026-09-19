@@ -3,7 +3,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Check, ExternalLink, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { Select } from '@masquare/ui';
-import { onbuyListingApi } from '../../lib/api';
+import { onbuyListingApi, type OnbuyCompetition } from '../../lib/api';
+import { useConfirm } from '../ConfirmProvider';
 
 /**
  * The OnBuy pieces of a product's channel plan: find the product in OnBuy's catalogue, suggest a
@@ -260,6 +261,186 @@ export function OnbuyCreatePreview({ productId, integrationId, savePlan, onChang
   );
 }
 
+const gbp = (n: number | null | undefined) => (n == null ? '—' : `£${n.toFixed(2)}`);
+const earn = (e: { profitEur: number | null; marginPct: number | null } | null) =>
+  e && e.profitEur != null ? `profit €${e.profitEur.toFixed(2)} · ${e.marginPct?.toFixed(1)}%` : null;
+
+/**
+ * The price to beat on OnBuy, for our listings of this product.
+ *
+ * `live`: the listing is on sale, and choosing a price sends it to OnBuy after a confirmation.
+ * `plan`: the listing is held at stock 0 for a price check, and choosing a price only fills the
+ * plan's price — it is sent with the stock when the product is listed.
+ */
+export function OnbuyCompetitionView({ productId, integrationId, data, mode, onUse, onChanged }: {
+  productId: string;
+  integrationId: string;
+  data: OnbuyCompetition;
+  mode: 'live' | 'plan';
+  onUse?: (price: string) => void;
+  onChanged?: () => void;
+}) {
+  const confirm = useConfirm();
+  const setPrice = useMutation({
+    mutationFn: (v: { sku: string; price: number }) => onbuyListingApi.setPrice(productId, integrationId, v.sku, v.price),
+    onSuccess: (r) => {
+      if (r.ok) { toast.success(`OnBuy price set to £${r.price.toFixed(2)}`); onChanged?.(); } else toast.error(r.message, { duration: 12000 });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not set the price'),
+  });
+  const choose = async (sku: string, price: number, what: string, economics: string | null) => {
+    if (mode === 'plan') { onUse?.(price.toFixed(2)); toast.success(`Price set to £${price.toFixed(2)} — sent when you list`); return; }
+    const ok = await confirm({
+      title: `Set ${sku} to £${price.toFixed(2)} on OnBuy?`,
+      message: `${what}.${economics ? ` At this price: ${economics}.` : ''} The listing is live, so buyers see the new price straight away.`,
+      confirmLabel: 'Set the price',
+    });
+    if (ok) setPrice.mutate({ sku, price });
+  };
+
+  if (!data.rows.length) return <p className="text-[12px] text-n-500">{data.message}</p>;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {data.rows.map((r) => (
+        <div key={r.sku} className="rounded-md border border-n-100 px-2.5 py-2 text-[12px]">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="mono font-semibold text-n-800">{r.sku}</span>
+            {r.winning === true && <span className="tag bg-teal-50 text-teal-700">Winning</span>}
+            {r.winning === false && <span className="tag bg-orange-50 text-orange-800">Not winning</span>}
+            <span className="text-n-600">
+              ours {gbp(r.price)}{r.deliveryPrice ? ` + ${gbp(r.deliveryPrice)} delivery` : ''}
+              {earn(r.economics.price) && <span className="text-n-500"> · {earn(r.economics.price)}</span>}
+            </span>
+          </div>
+          <div className="mt-1 text-n-700">
+            {r.leadPrice != null
+              ? <>Winning price <span className="mono font-semibold">{gbp(r.leadPrice)}</span> including delivery{r.leadDeliveryPrice ? ` (item ${gbp(r.leadItemPrice)} + delivery ${gbp(r.leadDeliveryPrice)})` : ''}.</>
+              : <span className="text-n-500">{r.reason}</span>}
+          </div>
+          {(r.beat != null || r.match != null) && (
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              {r.beat != null && (
+                <button
+                  type="button"
+                  className="inline-flex h-7 items-center gap-1 rounded-md border border-teal-300 bg-teal-50 px-2.5 font-semibold text-teal-800 disabled:opacity-50"
+                  disabled={setPrice.isPending || (mode === 'live' && !data.liveWritesEnabled)}
+                  onClick={() => choose(r.sku, r.beat!, `A penny under the winning £${r.leadPrice!.toFixed(2)}`, earn(r.economics.beat))}
+                >
+                  Beat it: {gbp(r.beat)}
+                  {earn(r.economics.beat) && <span className="font-normal text-teal-700"> · {earn(r.economics.beat)}</span>}
+                </button>
+              )}
+              {r.match != null && (
+                <button
+                  type="button"
+                  className="inline-flex h-7 items-center gap-1 rounded-md border border-n-200 bg-n-0 px-2.5 font-semibold text-n-700 disabled:opacity-50"
+                  disabled={setPrice.isPending || (mode === 'live' && !data.liveWritesEnabled)}
+                  onClick={() => choose(r.sku, r.match!, `The same as the winning £${r.leadPrice!.toFixed(2)}`, earn(r.economics.match))}
+                >
+                  Match it: {gbp(r.match)}
+                  {earn(r.economics.match) && <span className="font-normal text-n-500"> · {earn(r.economics.match)}</span>}
+                </button>
+              )}
+            </div>
+          )}
+          {r.economics.beat?.profitEur != null && r.economics.beat.profitEur < 0 && (
+            <p className="mt-1 text-[11.5px] text-danger">Beating it loses money on this product.</p>
+          )}
+        </div>
+      ))}
+      {data.noEconomics && <p className="text-[11.5px] text-n-500">No margin shown: this OnBuy connection is not linked to a sales channel.</p>}
+    </div>
+  );
+}
+
+/** For a product already on sale on OnBuy: check the price to beat, and change ours. */
+export function OnbuyCompetition({ productId, integrationId, onChanged }: { productId: string; integrationId: string; onChanged?: () => void }) {
+  const check = useMutation({
+    mutationFn: () => onbuyListingApi.competition(productId, integrationId),
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not check OnBuy'),
+  });
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-n-200 bg-n-0 px-3 py-2.5 text-[12.5px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-n-600">The price to beat on OnBuy, and what we would earn at it.</span>
+        <div className="flex-1" />
+        <button
+          type="button"
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 font-semibold text-n-700 hover:border-teal-300 disabled:opacity-50"
+          disabled={check.isPending}
+          onClick={() => check.mutate()}
+        >
+          {check.isPending && <Loader2 size={13} className="animate-spin" />}
+          {check.data ? 'Check again' : 'Check the winning price'}
+        </button>
+      </div>
+      {check.data && (
+        <OnbuyCompetitionView productId={productId} integrationId={integrationId} data={check.data} mode="live" onChanged={() => { check.mutate(); onChanged?.(); }} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Before going live: place the listing on OnBuy at stock 0 — nobody can buy it — so OnBuy will say
+ * the price to beat. The chosen price fills the plan and is sent with the stock when it is listed.
+ */
+export function OnbuyPriceCheck({ productId, integrationId, savePlan, onUse, onChanged }: {
+  productId: string;
+  integrationId: string;
+  savePlan: () => Promise<unknown>;
+  onUse: (price: string) => void;
+  onChanged: () => void;
+}) {
+  const confirm = useConfirm();
+  const [data, setData] = useState<OnbuyCompetition | null>(null);
+  const stage = useMutation({
+    mutationFn: async () => { await savePlan(); return onbuyListingApi.priceCheck(productId, integrationId); },
+    onSuccess: (r) => {
+      if (r.ok) { setData(r.competition); onChanged(); } else toast.error(r.message, { duration: 12000 });
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not check the price on OnBuy', { duration: 12000 }),
+  });
+  const recheck = useMutation({
+    mutationFn: () => onbuyListingApi.competition(productId, integrationId),
+    onSuccess: setData,
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not check OnBuy'),
+  });
+
+  const start = async () => {
+    const ok = await confirm({
+      title: 'Place the listing on OnBuy at stock 0?',
+      message: 'OnBuy only says the price to beat for a listing we have. This places ours with the price and delivery template saved here and ZERO stock, so nobody can buy it. Every stock push leaves it alone; it goes on sale only when you list it in step 4.',
+      confirmLabel: 'Place it at stock 0',
+    });
+    if (ok) stage.mutate();
+  };
+
+  return (
+    <div className="rounded-md border border-n-200 bg-n-25 px-3 py-2.5 text-[12px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="flex-1 text-n-600">See OnBuy’s winning price before going live. Needs a provisional price and a delivery template saved.</span>
+        {data ? (
+          <button type="button" className="inline-flex h-7 items-center gap-1 rounded-md border border-n-200 bg-n-0 px-2.5 font-semibold text-n-700 disabled:opacity-50" disabled={recheck.isPending} onClick={() => recheck.mutate()}>
+            {recheck.isPending && <Loader2 size={12} className="animate-spin" />} Check again
+          </button>
+        ) : (
+          <button type="button" className="inline-flex h-7 items-center gap-1 rounded-md border border-teal-300 bg-n-0 px-2.5 font-semibold text-teal-700 disabled:opacity-50" disabled={stage.isPending} onClick={start}>
+            {stage.isPending && <Loader2 size={12} className="animate-spin" />} Check OnBuy’s winning price
+          </button>
+        )}
+      </div>
+      {data && (
+        <div className="mt-2">
+          <OnbuyCompetitionView productId={productId} integrationId={integrationId} data={data} mode="plan" onUse={onUse} />
+          <p className="mt-1 text-[11.5px] text-n-500">Held on OnBuy at stock 0. A new listing can take a few minutes before OnBuy reports on it — check again if nothing shows.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Step 2: the price at the platform's launch margin, from the same cost model as everywhere else. */
 export function OnbuyPriceSuggestion({ productId, integrationId, onUse }: {
   productId: string;
@@ -375,7 +556,7 @@ export function OnbuyListingPreview({ productId, integrationId, savePlan, onList
   });
 
   const p = preview.data;
-  const canList = !!p && p.missing.length === 0 && p.action === 'create' && p.liveWritesEnabled && !publish.isPending;
+  const canList = !!p && p.missing.length === 0 && (p.action === 'create' || p.action === 'activate') && p.liveWritesEnabled && !publish.isPending;
 
   return (
     <div className="flex flex-col gap-2 rounded-md border border-n-200 bg-n-0 px-3 py-2.5 text-[12.5px]">
@@ -396,6 +577,10 @@ export function OnbuyListingPreview({ productId, integrationId, savePlan, onList
       {p && (
         <>
           {p.listed && <p className="rounded-md border border-teal-200 bg-teal-50 px-2.5 py-1.5 text-teal-900">{p.listed}</p>}
+          {p.listed && <OnbuyCompetition productId={productId} integrationId={integrationId} onChanged={onListed} />}
+          {p.action === 'activate' && (
+            <p className="rounded-md border border-info-bd bg-info-bg px-2.5 py-1.5 text-info">Held on OnBuy at stock 0 from the price check. Listing it sends the price and stock below.</p>
+          )}
           {p.refusal && <p className="rounded-md border border-danger-bd bg-danger-bg px-2.5 py-1.5 text-danger">{p.refusal}</p>}
           {p.identityNote && <p className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-900">{p.identityNote}</p>}
           {p.missing.length > 0 && (
@@ -416,7 +601,7 @@ export function OnbuyListingPreview({ productId, integrationId, savePlan, onList
           {canList && (
             confirming ? (
               <div className="flex flex-wrap items-center gap-2 rounded-md border border-orange-200 bg-orange-50 px-2.5 py-2">
-                <span className="flex-1 text-orange-900">This creates a live, buyable listing on OnBuy UK at GBP {p.input.price?.toFixed(2)} with {p.input.stock} in stock.</span>
+                <span className="flex-1 text-orange-900">This {p.action === 'activate' ? 'puts the held listing on sale' : 'creates a live, buyable listing'} on OnBuy UK at GBP {p.input.price?.toFixed(2)} with {p.input.stock} in stock.</span>
                 <button type="button" className="btn btn-ghost" onClick={() => setConfirming(false)}>Cancel</button>
                 <button type="button" className="btn btn-primary" disabled={publish.isPending} onClick={() => publish.mutate()}>
                   {publish.isPending ? 'Listing…' : 'List it'}

@@ -694,8 +694,31 @@ export class ChannelListingsService implements OnApplicationBootstrap {
       };
     }
 
+    /**
+     * OnBuy listings held at stock 0 for a price check. They exist on OnBuy only so its Check Winning
+     * can name the price to beat; sending them stock would put them on sale at a provisional price
+     * nobody chose. They go live from the product's OnBuy step, never from a push.
+     */
+    const heldOnbuy = new Set(
+      (await this.prisma.productChannelPlan.findMany({
+        where: { deletedAt: null, status: { not: 'LISTED' }, channelSku: { not: null }, integration: { channelType: 'onbuy' } },
+        select: { integrationId: true, channelSku: true, aspects: true },
+      }))
+        .filter((p) => !!((p.aspects as Record<string, unknown> | null) ?? {}).onbuyStaged)
+        .map((p) => `${p.integrationId}|${p.channelSku}`),
+    );
+
     const results: any[] = [];
     for (const l of listings) {
+      if (l.integration.channelType === 'onbuy' && heldOnbuy.has(`${l.integrationId}|${l.channelSku}`)) {
+        results.push({
+          productId: l.productId, channelKey: channelKeyOf(l), channel: l.integration.name, channelType: l.integration.channelType,
+          marketplace: l.marketplace, countryIso: isoOf(l), channelSku: l.channelSku,
+          currentQty: l.listedQuantity, targetQty: null, ok: false, skipped: true,
+          message: 'Held at stock 0 for an OnBuy price check — list it from the product’s OnBuy step',
+        });
+        continue;
+      }
       // An eBay listing whose marketplace couldn't be resolved maps to no real sales channel — skip
       // it rather than surface a generic "eBay" push target. A re-sync resolves most (by currency /
       // item URL) into their proper per-market channel.
