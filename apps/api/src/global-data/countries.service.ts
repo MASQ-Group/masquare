@@ -22,6 +22,9 @@ export class CountriesService {
       vatRate: Number(c.vatRate),
       defaultShippingServiceId: c.defaultShippingServiceId,
       defaultShippingService: c.defaultShippingService ?? null,
+      importDutyMode: c.importDutyMode ?? null,
+      importDutyThreshold: c.importDutyThreshold == null ? null : Number(c.importDutyThreshold),
+      importDutyCurrency: c.importDutyCurrency ?? null,
       shippingZones: (c.shippingZoneMappings ?? []).map((m: any) => ({
         shippingServiceId: m.shippingServiceId,
         zoneId: m.zoneId,
@@ -73,6 +76,15 @@ export class CountriesService {
         euVatZone: dto.euVatZone,
         vatRate: dto.vatRate,
         defaultShippingServiceId: dto.defaultShippingServiceId,
+        // A threshold belongs to the 'threshold' mode; any other answer clears it, so a country
+        // switched to 'none' cannot keep an amount that still reads as a rule.
+        ...(dto.importDutyMode !== undefined
+          ? {
+            importDutyMode: dto.importDutyMode,
+            importDutyThreshold: dto.importDutyMode === 'threshold' ? dto.importDutyThreshold ?? 0 : null,
+            importDutyCurrency: dto.importDutyMode === 'threshold' ? (dto.importDutyCurrency ?? 'EUR').toUpperCase() : null,
+          }
+          : {}),
         updatedById: actorId,
       },
     });

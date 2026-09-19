@@ -3,6 +3,8 @@ import { CarriersService } from './carriers.service';
 import { CarriersController } from './carriers.controller';
 import { CryptoModule } from '../crypto/crypto.module';
 import { TrackingSweepService } from './tracking-sweep.service';
+import { DutyRulesService } from './duty-rules.service';
+import { DutyRulesController } from './duty-rules.controller';
 
 /**
  * Carrier accounts and, in time, everything that runs on them — rating, labels, pickups, tracking.
@@ -12,8 +14,8 @@ import { TrackingSweepService } from './tracking-sweep.service';
  */
 @Module({
   imports: [CryptoModule],
-  controllers: [CarriersController],
-  providers: [CarriersService, TrackingSweepService],
-  exports: [CarriersService],
+  controllers: [CarriersController, DutyRulesController],
+  providers: [CarriersService, TrackingSweepService, DutyRulesService],
+  exports: [CarriersService, DutyRulesService],
 })
 export class CarriersModule {}
