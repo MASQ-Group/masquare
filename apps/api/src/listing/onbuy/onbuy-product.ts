@@ -10,9 +10,10 @@ import { ONBUY_BOOST_LEVELS, onbuyCondition } from './onbuy-listing';
  * so a price and stock update by SKU follows once the queue succeeds. All of this is OnBuy's own
  * documented process (docs.api.onbuy.com, "Creating a Product").
  *
- * Only the buyer-facing marketplace content is sent: the marketplace title, description and key
- * features written for listing. Our internal product name is never used — on OnBuy the first seller's
- * content becomes the product page, and is locked once others list against it.
+ * Only the OnBuy content is sent — the title, description and summary points written for OnBuy on the
+ * product's OnBuy content tab, with the category's features and technical details researched there.
+ * Our internal product name is never used: on OnBuy the first seller's content becomes the product
+ * page, and is locked once others list against it.
  *
  * PURE.
  */
@@ -39,18 +40,6 @@ export function parseOnbuyCategories(json: any): OnbuyCategory[] {
     .filter((c) => c.id && c.canListIn);
 }
 
-/**
- * The features a category insists on, by name.
- *
- * We have no way to fill OnBuy's category features — they are OnBuy's own option lists — so a
- * category that requires one cannot take a product from here. Said before anything is sent.
- */
-export function requiredOnbuyFeatures(categoryJson: any): string[] {
-  const r = categoryJson?.results ?? categoryJson;
-  const features: any[] = Array.isArray(r?.features) ? r.features : [];
-  return features.filter((f) => f?.required === true || f?.required === 1 || f?.required === '1').map((f) => String(f?.name ?? 'a feature'));
-}
-
 /** What a new OnBuy product is made of, resolved from the product and its plan. */
 export interface OnbuyProductInput {
   categoryId: string | null;
@@ -64,6 +53,16 @@ export interface OnbuyProductInput {
   images: string[];
   /** Our own reference, echoed back by OnBuy's queue. */
   uid: string;
+  /** OnBuy option ids for the category's features, and its technical details. */
+  features: { option_id: number }[];
+  technical: { detail_id: number; value: string; unit: string }[];
+  /** The free specification table. */
+  productData: { label: string; value: string; group?: string }[];
+  /** GPSR text, already in OnBuy's field names, and safety documents. */
+  safety: Record<string, string> | null;
+  safetyDocuments: { label: string; url: string; language: string }[];
+  /** The model that wrote the content, when Claude did — sent as OnBuy's AI-content flag. */
+  aiModel: string | null;
 }
 
 /** OnBuy's summary points are short bullets; more than five crowd the page. */
@@ -72,12 +71,12 @@ export const ONBUY_MAX_SUMMARY_POINTS = 5;
 export const ONBUY_MAX_ADDITIONAL_IMAGES = 9;
 
 /** What still stops the product being created, in words. Empty means it may be sent. */
-export function missingForOnbuyProduct(p: OnbuyProductInput, listing: OnbuyListingInput, extra: { requiredFeatures: string[] }): string[] {
+export function missingForOnbuyProduct(p: OnbuyProductInput, listing: OnbuyListingInput, extra: { contentGaps: string[] }): string[] {
   const gaps: string[] = [];
   if (!p.categoryId || !/^\d+$/.test(p.categoryId)) gaps.push('an OnBuy category (step 1)');
-  if (extra.requiredFeatures.length) gaps.push(`a category that does not require OnBuy features (this one requires ${extra.requiredFeatures.join(', ')})`);
-  if (!p.name) gaps.push('the marketplace title — write the listing content first');
-  if (!p.description) gaps.push('the marketplace description — write the listing content first');
+  if (!p.name) gaps.push('the OnBuy title — write it on the OnBuy content tab');
+  if (!p.description) gaps.push('the OnBuy description — write it on the OnBuy content tab');
+  gaps.push(...extra.contentGaps);
   if (!p.brandName) gaps.push('a brand on the product');
   if (!p.productCode) gaps.push('an EAN or UPC');
   if (!p.images.length) gaps.push('at least one image OnBuy can use');
@@ -105,6 +104,13 @@ export function buildOnbuyProductBody(p: OnbuyProductInput, l: OnbuyListingInput
     ...(p.summaryPoints.length ? { summary_points: p.summaryPoints.slice(0, ONBUY_MAX_SUMMARY_POINTS) } : {}),
     default_image: defaultImage,
     ...(rest.length ? { additional_images: rest.slice(0, ONBUY_MAX_ADDITIONAL_IMAGES) } : {}),
+    ...(p.features.length ? { features: p.features } : {}),
+    ...(p.technical.length ? { technical_detail: p.technical } : {}),
+    ...(p.productData.length ? { product_data: p.productData } : {}),
+    ...(p.safety ? { safety_content: p.safety } : {}),
+    ...(p.safetyDocuments.length ? { safety_documents: p.safetyDocuments } : {}),
+    // OnBuy's own AI-content flag, set whenever Claude wrote the words.
+    ...(p.aiModel ? { ai_content_marked: true, ai_content_model_used: p.aiModel } : {}),
     listings: {
       new: {
         sku: l.sku,

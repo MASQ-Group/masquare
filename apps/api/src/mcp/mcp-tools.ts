@@ -5,6 +5,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 import type { CompanyScopeService } from '../common/company-scope';
 import type { AuthUser } from '../common/current-user.decorator';
 import type { EbayListingService } from '../listing/ebay/ebay-listing.service';
+import type { OnbuyContentService } from '../listing/onbuy/onbuy-content.service';
 
 /**
  * The maSquare connector: what Claude can see and do when a person points it at this platform.
@@ -30,6 +31,8 @@ import type { EbayListingService } from '../listing/ebay/ebay-listing.service';
 
 export interface McpDeps {
   listing: EbayListingService;
+  /** OnBuy content: the same research rules, OnBuy's fields and words. */
+  onbuy: OnbuyContentService;
   scope: CompanyScopeService;
   prisma: PrismaService;
 }
@@ -100,6 +103,20 @@ export const INSTRUCTIONS = [
   '- Skip Brand, MPN and Model — maSquare takes those from the product itself.',
   '- Skip fields already answered by a person or by the manufacturer (see "current" in the brief).',
   '',
+  'ONBUY CONTENT (used when maSquare creates a product on OnBuy; same rules as above):',
+  '1. get_product_for_gather with channel "onbuy" — the OnBuy category\'s fields: FEATURES (OnBuy\'s own',
+  '   option lists; report exactly one of acceptedValues) and TECHNICAL DETAILS (measurements; report the',
+  '   number with one of the listed units exactly as the page prints it). It also lists pagesAlreadyAccepted',
+  '   for this product\'s eBay research: read those first — they are known to be this exact model — and search',
+  '   again only for what they do not answer. factsAlreadyVerified become OnBuy\'s specification table as they',
+  '   are; do not re-report them unless an OnBuy field needs them.',
+  '2. submit_gather_findings with channel "onbuy", citing every page used (pagesAlreadyAccepted included).',
+  '3. submit_onbuy_content — the OnBuy title (at most 150 characters, about 70 is best; Brand Model What-it-is,',
+  '   then the facts buyers filter on), two or three plain-prose paragraphs, up to 5 summary points, and the',
+  '   safety text a manufacturer page or manual states (warnings, usage instructions, ingredients). Never HTML.',
+  '   Written for OnBuy, not copied from the eBay title. Pass your model name as "model": OnBuy is told the',
+  '   content was written by AI. Every fact must come from the pages, as for eBay.',
+  '',
   'WHAT YOU CANNOT DO: confirm held-back values, overwrite anything a person entered, or publish',
   'listings. Those are done by a person in maSquare.',
 ].join('\n');
@@ -148,18 +165,22 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
         + 'its eBay category; every field that category uses, named exactly as it must be reported, with the '
         + 'values eBay accepts where it restricts them and the values its buyer filters use where it does not; '
         + 'and what is already answered. If the product is not '
-        + 'ready, "refusal" says why. Read-only.',
+        + 'ready, "refusal" says why. With channel "onbuy": the OnBuy category\'s features and technical details '
+        + 'instead, the pages already accepted for this product, and its current OnBuy words. Read-only.',
       inputSchema: {
         sku: z.string().min(1).max(100).describe('The product SKU, exactly.'),
+        channel: z.enum(['ebay', 'onbuy']).optional().describe('Whose fields to research. eBay unless "onbuy".'),
         company: z.string().max(200).optional()
           .describe('Company name, only needed when the user has more than one company selling on eBay.'),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ sku, company }) => run(async () => {
-      const companyId = await resolveCompany(deps, actor, company);
+    async ({ sku, company, channel }) => run(async () => {
+      const companyId = await resolveCompany(deps, actor, company, channel ?? 'ebay');
       const productId = await requireProduct(deps, sku);
-      return deps.listing.researchBrief(productId, [companyId]);
+      return channel === 'onbuy'
+        ? deps.onbuy.brief(productId, [companyId])
+        : deps.listing.researchBrief(productId, [companyId]);
     }),
   );
 
@@ -187,20 +208,22 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
           value: z.string().max(300).describe('The value exactly as printed on the page, with its units.'),
           sourceUrl: z.string().max(2000).describe('The page that stated this value. It must be listed in sources.'),
         })).max(300).describe('Every value found. Report conflicting values from different pages separately.'),
+        channel: z.enum(['ebay', 'onbuy']).optional().describe('Whose fields these are. eBay unless "onbuy".'),
         company: z.string().max(200).optional()
           .describe('Company name, only needed when the user has more than one company selling on eBay.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ sku, sources, findings, company }) => run(async () => {
-      const companyId = await resolveCompany(deps, actor, company);
+    async ({ sku, sources, findings, company, channel }) => run(async () => {
+      const companyId = await resolveCompany(deps, actor, company, channel ?? 'ebay');
       const productId = await requireProduct(deps, sku);
-      return deps.listing.submitResearch(productId, {
+      const args = {
         companyIds: [companyId],
         userId: actor.sub,
         sources: sources.map((s) => ({ url: s.url, pageBrand: s.pageBrand ?? null, pagePartNumber: s.pagePartNumber ?? null })),
         findings,
-      });
+      };
+      return channel === 'onbuy' ? deps.onbuy.submitResearch(productId, args) : deps.listing.submitResearch(productId, args);
     }),
   );
 
@@ -260,6 +283,82 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
         extras: { series, inTheBox, care, faq, glance, specGroups },
         replaceExisting,
       });
+    }),
+  );
+
+  addTool<OnbuyContentArgs>(server,
+    'submit_onbuy_content',
+    {
+      title: 'Write the OnBuy title and description',
+      description:
+        'Write the OnBuy words for a product maSquare will create on OnBuy: the title, two or three paragraphs and '
+        + 'up to 5 summary points, as PLAIN PROSE, plus any safety text a manufacturer page or manual states. Never '
+        + 'HTML — maSquare formats the description. No internal SKU, email address, phone number or web address. '
+        + 'Pass your model name: OnBuy is told the content was written by AI. Existing words are never replaced '
+        + 'unless replaceExisting is true.',
+      inputSchema: {
+        sku: z.string().min(1).max(100).describe('The product SKU, exactly.'),
+        title: z.string().max(150).nullish()
+          .describe('The OnBuy title: at most 150 characters, about 70 is best. Brand and model first, then what it is and the facts buyers filter on.'),
+        intro: z.string().max(3000).nullish()
+          .describe('Two or three short paragraphs about what the product is and who it suits. Blank lines separate paragraphs.'),
+        summaryPoints: z.array(z.string().max(240)).max(5).optional()
+          .describe('Up to 5 short selling points, one per line.'),
+        warnings: z.string().max(3000).nullish().describe('Safety warnings, only as a manufacturer page or manual states them.'),
+        usageInstructions: z.string().max(3000).nullish().describe('Usage instructions, only as a manufacturer page or manual states them.'),
+        ingredients: z.string().max(3000).nullish().describe('Ingredients or materials list, only where a page gives one (cosmetics, food, similar).'),
+        model: z.string().max(80).optional().describe('Your model name, e.g. "Claude Opus 5". Sent to OnBuy with its AI-content flag.'),
+        replaceExisting: z.boolean().optional()
+          .describe('Only true when the user has asked for existing words to be rewritten.'),
+        company: z.string().max(200).optional()
+          .describe('Company name, only needed when the user has more than one company selling on OnBuy.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (a) => run(async () => {
+      const companyId = await resolveCompany(deps, actor, a.company, 'onbuy');
+      const productId = await requireProduct(deps, a.sku);
+      return deps.onbuy.submitContent(productId, {
+        companyIds: [companyId],
+        userId: actor.sub,
+        title: a.title ?? null,
+        intro: a.intro ?? null,
+        summaryPoints: a.summaryPoints,
+        safety: { warnings: a.warnings ?? null, usageInstructions: a.usageInstructions ?? null, ingredients: a.ingredients ?? null },
+        model: a.model ?? null,
+        replaceExisting: a.replaceExisting,
+      });
+    }),
+  );
+
+  addPrompt<{ skus: string }>(server,
+    'write_onbuy_content',
+    {
+      title: 'Research OnBuy product data and write the OnBuy content',
+      description: 'Research the OnBuy category fields and write the OnBuy title, description, summary points and safety text for one or more maSquare products.',
+      argsSchema: {
+        skus: z.string().describe('One or more SKUs, separated by commas or spaces.'),
+      },
+    },
+    ({ skus }) => ({
+      messages: [{
+        role: 'user' as const,
+        content: {
+          type: 'text' as const,
+          text: [
+            `Research OnBuy product data and write the OnBuy content for these maSquare products: ${skus}`,
+            '',
+            'For each product: call get_product_for_gather with channel "onbuy". If it is not ready, note why and',
+            'move on. Read pagesAlreadyAccepted first, search the web only for what they leave unanswered, then call',
+            'submit_gather_findings with channel "onbuy" once with every page and value. Then call',
+            'submit_onbuy_content with the OnBuy title, the paragraphs, up to 5 summary points, any safety text a',
+            'page states, and your model name.',
+            '',
+            'When all are done, give me a short table: SKU, usable, held back, still missing, cannot send, and',
+            'whether the title, description, summary points and safety text were written or skipped (and why).',
+          ].join('\n'),
+        },
+      }],
     }),
   );
 
@@ -351,7 +450,18 @@ function addPrompt<A>(
  */
 interface CompanyArg { company?: string }
 interface ListArgs extends CompanyArg { skus?: string[]; search?: string; onlyReady?: boolean; limit?: number }
-interface BriefArgs extends CompanyArg { sku: string }
+interface BriefArgs extends CompanyArg { sku: string; channel?: 'ebay' | 'onbuy' }
+interface OnbuyContentArgs extends CompanyArg {
+  sku: string;
+  title?: string | null;
+  intro?: string | null;
+  summaryPoints?: string[];
+  warnings?: string | null;
+  usageInstructions?: string | null;
+  ingredients?: string | null;
+  model?: string;
+  replaceExisting?: boolean;
+}
 interface ContentArgs extends CompanyArg {
   sku: string;
   title?: string | null;
@@ -367,6 +477,7 @@ interface ContentArgs extends CompanyArg {
 }
 interface SubmitArgs extends CompanyArg {
   sku: string;
+  channel?: 'ebay' | 'onbuy';
   sources: Array<{ url: string; pageBrand?: string | null; pagePartNumber?: string | null }>;
   findings: Array<{ field: string; value: string; sourceUrl: string }>;
 }
@@ -379,7 +490,7 @@ interface SubmitArgs extends CompanyArg {
  * the wrong one is invisible to the other — so where it is ambiguous, the call fails and says which
  * names to choose from, rather than guessing.
  */
-async function resolveCompany(deps: McpDeps, actor: AuthUser, requested?: string): Promise<string> {
+async function resolveCompany(deps: McpDeps, actor: AuthUser, requested?: string, channel: 'ebay' | 'onbuy' = 'ebay'): Promise<string> {
   const allowed = await deps.scope.allowedIds(actor);
   if (allowed.length === 0) throw new UserFacing('The connector user has access to no companies.');
 
@@ -395,16 +506,17 @@ async function resolveCompany(deps: McpDeps, actor: AuthUser, requested?: string
     throw new UserFacing(`No company called "${requested}". Choose one of: ${companies.map((c) => c.officialName).join(', ')}.`);
   }
 
-  const withEbay = await deps.prisma.channelIntegration.findMany({
-    where: { deletedAt: null, channelType: 'ebay', status: 'active', targetCompanyId: { in: allowed } },
+  const label = channel === 'onbuy' ? 'OnBuy' : 'eBay';
+  const withChannel = await deps.prisma.channelIntegration.findMany({
+    where: { deletedAt: null, channelType: channel, status: 'active', targetCompanyId: { in: allowed } },
     select: { targetCompanyId: true },
   });
-  const ids = [...new Set(withEbay.map((r) => r.targetCompanyId).filter((x): x is string => !!x))];
+  const ids = [...new Set(withChannel.map((r) => r.targetCompanyId).filter((x): x is string => !!x))];
   if (ids.length === 1) return ids[0];
-  if (ids.length === 0) throw new UserFacing('None of your companies has an active eBay integration.');
+  if (ids.length === 0) throw new UserFacing(`None of your companies has an active ${label} integration.`);
 
   const names = companies.filter((c) => ids.includes(c.id)).map((c) => c.officialName);
-  throw new UserFacing(`More than one of your companies sells on eBay (${names.join(', ')}). Ask the user which, then pass it as "company".`);
+  throw new UserFacing(`More than one of your companies sells on ${label} (${names.join(', ')}). Ask the user which, then pass it as "company".`);
 }
 
 async function requireProduct(deps: McpDeps, sku: string): Promise<string> {

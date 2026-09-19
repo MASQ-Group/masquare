@@ -5,7 +5,8 @@ import { AdminGuard } from '../../auth/admin.guard';
 import { CurrentUser, type AuthUser } from '../../common/current-user.decorator';
 import { VisibleCompanies, WriteCompany } from '../../common/active-company.decorator';
 import { AccessArea, RequireCapability } from '../../access/access.decorators';
-import { OnbuyListingService } from './onbuy-listing.service';
+import { OnbuyListingService } from './onbuy-listing.service';
+import { OnbuyContentService } from './onbuy-content.service';
 
 /**
  * Listing on OnBuy UK. Same guards as the eBay listing routes: admin, and the marketplace-write
@@ -17,7 +18,35 @@ import { OnbuyListingService } from './onbuy-listing.service';
 @Controller('listing/onbuy')
 @AccessArea('channel_listings')
 export class OnbuyListingController {
-  constructor(private readonly svc: OnbuyListingService) {}
+  constructor(private readonly svc: OnbuyListingService, private readonly content: OnbuyContentService) {}
+
+  /** The OnBuy content tab: category fields with their answers and evidence, safety text, spec table. */
+  @Get('products/:productId/content')
+  contentView(@Param('productId') productId: string, @Query('integrationId') integrationId: string | undefined, @VisibleCompanies() companyIds: string[]) {
+    return this.content.view(productId, integrationId || undefined, companyIds);
+  }
+
+  /** A person's edits to the answers and the safety text. Writes to maSquare only, never to OnBuy. */
+  @Post('products/:productId/content')
+  contentSave(
+    @Param('productId') productId: string,
+    @Body() body: { integrationId?: string; edits?: Record<string, string | null>; safety?: { warnings?: string | null; usageInstructions?: string | null; ingredients?: string | null } },
+    @CurrentUser() user: AuthUser,
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    return this.content.save(productId, body?.integrationId || undefined, { edits: body?.edits, safety: body?.safety as any }, user.sub, companyIds);
+  }
+
+  /** "I checked this": the one way a held-back answer is sent. */
+  @Post('products/:productId/content/confirm')
+  contentConfirm(
+    @Param('productId') productId: string,
+    @Body() body: { integrationId?: string; name?: string },
+    @CurrentUser() user: AuthUser,
+    @VisibleCompanies() companyIds: string[],
+  ) {
+    return this.content.confirm(productId, body?.integrationId || undefined, String(body?.name ?? ''), user.sub, companyIds);
+  }
 
   @Get('products/:productId/candidates')
   candidates(@Param('productId') productId: string, @Query('integrationId') integrationId: string, @VisibleCompanies() companyIds: string[]) {

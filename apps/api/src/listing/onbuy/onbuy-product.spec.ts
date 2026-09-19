@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildOnbuyProductBody, missingForOnbuyProduct, parseOnbuyCategories, readOnbuyProductSubmit, readOnbuyQueue,
-  requiredOnbuyFeatures, suggestOnbuyCategory, type OnbuyProductInput,
+  suggestOnbuyCategory, type OnbuyProductInput,
 } from './onbuy-product';
 import type { OnbuyListingInput } from './onbuy-listing';
 
@@ -9,6 +9,7 @@ const product: OnbuyProductInput = {
   categoryId: '3428', name: 'Beurer MG 21 Handheld Massager, Infrared Heat', description: '<p>A handheld massager.</p>',
   summaryPoints: ['One', 'Two', 'Three', 'Four', 'Five', 'Six'], brandName: 'Beurer', productCode: '4211125646076', mpn: 'MG21',
   images: ['https://cdn/a.jpg', 'https://cdn/b.jpg'], uid: 'LE-83306',
+  features: [], technical: [], productData: [], safety: null, safetyDocuments: [], aiModel: null,
 };
 const listing: OnbuyListingInput = {
   opc: null, sku: 'LE-83306', condition: 'NEW', price: 24.99, stock: 5, deliveryTemplateId: '245', handlingTimeDays: 1, boostPct: 0,
@@ -22,29 +23,25 @@ describe('OnBuy categories', () => {
     ] });
     expect(c).toEqual([{ id: '3428', name: "Men's Sweatshirts", tree: 'Clothing > Men', canListIn: true }]);
   });
-
-  it('names the features a category requires, which we cannot fill', () => {
-    expect(requiredOnbuyFeatures({ results: { features: [{ name: 'Colour', required: false }, { name: 'Size', required: true }] } })).toEqual(['Size']);
-    expect(requiredOnbuyFeatures({ results: {} })).toEqual([]);
-  });
 });
 
 describe('what a new product still needs', () => {
   it('needs nothing when every piece is there', () => {
-    expect(missingForOnbuyProduct(product, listing, { requiredFeatures: [] })).toEqual([]);
+    expect(missingForOnbuyProduct(product, listing, { contentGaps: [] })).toEqual([]);
   });
 
-  it('refuses without the marketplace content — never the internal name', () => {
-    const gaps = missingForOnbuyProduct({ ...product, name: null, description: null }, listing, { requiredFeatures: [] });
-    expect(gaps).toEqual(['the marketplace title — write the listing content first', 'the marketplace description — write the listing content first']);
+  it('refuses without the OnBuy content — never the internal name', () => {
+    const gaps = missingForOnbuyProduct({ ...product, name: null, description: null }, listing, { contentGaps: [] });
+    expect(gaps).toEqual(['the OnBuy title — write it on the OnBuy content tab', 'the OnBuy description — write it on the OnBuy content tab']);
   });
 
-  it('refuses a category that requires features, naming them', () => {
-    expect(missingForOnbuyProduct(product, listing, { requiredFeatures: ['Size'] })[0]).toContain('requires Size');
+  it('passes on what the OnBuy content still lacks, such as a required feature', () => {
+    expect(missingForOnbuyProduct(product, listing, { contentGaps: ['OnBuy field "Size" — answer it on the OnBuy content tab'] }))
+      .toEqual(['OnBuy field "Size" — answer it on the OnBuy content tab']);
   });
 
   it('needs the listing terms too, since the listing goes with the product', () => {
-    const gaps = missingForOnbuyProduct(product, { ...listing, price: null, deliveryTemplateId: null }, { requiredFeatures: [] });
+    const gaps = missingForOnbuyProduct(product, { ...listing, price: null, deliveryTemplateId: null }, { contentGaps: [] });
     expect(gaps).toEqual(['a price', 'an OnBuy delivery template']);
   });
 });
@@ -60,6 +57,31 @@ describe('the product request', () => {
       listings: { new: { sku: 'LE-83306', price: 24.99, stock: 5, delivery_template_id: 245, handling_time: 1, boost_marketing_commission: 0 } },
     });
     expect((body.summary_points as string[]).length).toBe(5);
+    // Nothing researched, nothing written by AI: none of the optional parts are sent.
+    for (const key of ['features', 'technical_detail', 'product_data', 'safety_content', 'safety_documents', 'ai_content_marked']) {
+      expect(body).not.toHaveProperty(key);
+    }
+  });
+
+  it('sends the researched fields, the spec table, safety data and the AI flag when there are some', () => {
+    const body = buildOnbuyProductBody({
+      ...product,
+      features: [{ option_id: 11 }],
+      technical: [{ detail_id: 4, value: '52', unit: 'cm' }],
+      productData: [{ label: 'Colour', value: 'Black' }],
+      safety: { warnings: 'Not for children.' },
+      safetyDocuments: [{ label: 'Manual', url: 'https://cdn/manual.pdf', language: 'en' }],
+      aiModel: 'Claude Opus 5',
+    }, listing);
+    expect(body).toMatchObject({
+      features: [{ option_id: 11 }],
+      technical_detail: [{ detail_id: 4, value: '52', unit: 'cm' }],
+      product_data: [{ label: 'Colour', value: 'Black' }],
+      safety_content: { warnings: 'Not for children.' },
+      safety_documents: [{ label: 'Manual', url: 'https://cdn/manual.pdf', language: 'en' }],
+      ai_content_marked: true,
+      ai_content_model_used: 'Claude Opus 5',
+    });
   });
 });
 

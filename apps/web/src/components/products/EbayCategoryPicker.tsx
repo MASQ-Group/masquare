@@ -408,17 +408,19 @@ function FreeTextSuggestions({ suggestions, total, current, offList, onPick }: {
  * only when something is wrong teaches people that no badge means "fine", which is exactly the
  * assumption that lets a wrong value sit unchallenged for a year.
  */
-function Provenance({ prov, onConfirm, confirming }: {
+export function Provenance({ prov, onConfirm, confirming, indent = true }: {
   prov: EbayAspectProvenance;
   onConfirm: () => void;
   confirming: boolean;
+  /** Lined up under the value column of the eBay form; off where the field sits on its own row. */
+  indent?: boolean;
 }) {
   const tone = prov.heldBack
     ? (prov.basis === 'conflict' ? 'border-danger-bd bg-danger-bg text-danger' : 'border-warning-bd bg-warning-bg text-warning')
     : 'border-success-bd bg-success-bg text-success';
 
   return (
-    <div className="ml-[168px] flex flex-wrap items-center gap-x-2 gap-y-1 max-[560px]:ml-0">
+    <div className={`${indent ? 'ml-[168px] max-[560px]:ml-0' : ''} flex flex-wrap items-center gap-x-2 gap-y-1`}>
       <span className={`tag whitespace-nowrap border ${tone}`}>{LABEL[prov.basis]}</span>
 
       {/*
@@ -474,6 +476,7 @@ const SOURCE: Record<EbayAspectProvenance['origins'][number]['kind'], string> = 
   manufacturer: 'manufacturer',
   amazon: 'Amazon',
   ebay: 'eBay',
+  web: 'web page',
 };
 
 function Bad({ children }: { children: React.ReactNode }) {
