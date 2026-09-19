@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { AlertTriangle, Ban, Check, ExternalLink, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { amazonListingApi, type AmazonCandidate } from '../../lib/api';
+import { ProductImage } from './ProductImage';
 
 /**
  * Find the Amazon listing this product should attach to.
@@ -115,7 +116,7 @@ function CandidateRow({
         : 'border-n-200 bg-n-0'
     }`}>
       <div className="flex items-start gap-2.5">
-        {c.imageUrl && <img src={c.imageUrl} alt="" className="h-10 w-10 shrink-0 rounded border border-n-200 object-contain" />}
+        {c.imageUrl && <ProductImage src={c.imageUrl} className="w-10 rounded border border-n-200" />}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-2">
             <span className="mono text-[12px] font-semibold text-n-800">{c.asin}</span>

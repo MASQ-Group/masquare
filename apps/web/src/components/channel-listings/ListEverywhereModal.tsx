@@ -9,6 +9,7 @@ import { isZeroDecimalCurrency, limitPriceInput } from '../../lib/currencies';
 import { sortByChannelCanonical } from '../../lib/channelGroups';
 import { useConfirm } from '../ConfirmProvider';
 import { useJobProgress } from '../../lib/useJobProgress';
+import { ProductImage } from '../products/ProductImage';
 
 const SYMBOL: Record<string, string> = { EUR: '€', GBP: '£', USD: '$', CAD: 'CA$', AUD: 'A$', JPY: '¥', SEK: 'kr', PLN: 'zł', AED: 'AED ', SAR: 'SAR ', MXN: 'MX$', TRY: '₺', SGD: 'S$' };
 const money = (cents: number, ccy: string) =>
@@ -433,12 +434,7 @@ function MatchRow({ productId, row, boundAsin, onChanged }: { productId: string;
               {/* The image is the fastest way to tell a match from a near-miss. Absent for rows
                   checked before it was stored — their next availability check fills it in. */}
               {c.imageUrl ? (
-                <img
-                  src={c.imageUrl}
-                  alt=""
-                  className="h-14 w-14 shrink-0 rounded-md border border-n-100 bg-n-0 object-contain"
-                  loading="lazy"
-                />
+                <ProductImage src={c.imageUrl} className="w-14 rounded-md border border-n-100" />
               ) : (
                 <div className="grid h-14 w-14 shrink-0 place-items-center rounded-md border border-dashed border-n-200 text-[10px] text-n-300">
                   no image

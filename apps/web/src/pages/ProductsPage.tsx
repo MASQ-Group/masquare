@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Columns3, ChevronsUpDown, Download, Filter, Grid, List, Package, Pencil, Plus, Search, SlidersHorizontal, Store, Trash2, Upload, X } from 'lucide-react';
+import { Columns3, ChevronsUpDown, Download, Filter, Grid, List, Pencil, Plus, Search, SlidersHorizontal, Store, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadTemplate, Pagination } from '@masquare/ui';
 import {
@@ -22,6 +22,7 @@ import { EXPORT_COLUMNS } from '../components/products/columns';
 import { ListedChip } from '../components/products/ListedChip';
 import { PageHeader } from '../components/common/PageHeader';
 import { AnchoredPanel } from '../components/common/AnchoredPanel';
+import { ProductImage } from '../components/products/ProductImage';
 import { useIsMobile } from '../lib/useIsMobile';
 
 const SEARCH_FIELDS = [
@@ -449,9 +450,7 @@ function ListView({ items, loading, cols, channels, selected, allSelected, onTog
                   <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={selected.has(p.id)} onChange={() => onToggleOne(p.id)} />
                 </td>
                 <td className="border-b border-n-100 px-4 py-2.5">
-                  <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-md bg-n-100 text-n-400">
-                    {p.featuredImage ? <img src={p.featuredImage} alt="" className="h-full w-full object-cover" /> : <Package size={18} />}
-                  </div>
+                  <ProductImage src={p.featuredImage} className="w-10 rounded-md border border-n-100" />
                 </td>
                 <td className="border-b border-n-100 px-4 py-2.5"><div className="code font-medium text-n-800">{p.mainSku}</div></td>
                 <td className="border-b border-n-100 px-4 py-2.5">
@@ -533,11 +532,14 @@ function GridView({ items, loading, channels, selected, onToggleOne, onEdit, ran
           <div
             key={p.id}
             onClick={() => onEdit(p)}
-            className={`cursor-pointer overflow-hidden rounded-lg border bg-n-0 transition-shadow hover:shadow-md ${selected.has(p.id) ? 'border-teal-300 ring-1 ring-teal-200' : 'border-n-200'}`}
+            className={`flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-n-0 transition-shadow hover:shadow-md ${selected.has(p.id) ? 'border-teal-300 ring-1 ring-teal-200' : 'border-n-200'}`}
           >
-            {/* Image, with the select box and fulfilment badge overlaid on it. */}
-            <div className="relative grid aspect-[5/3] place-items-center border-b border-n-100 bg-n-50 text-n-300">
-              {p.featuredImage ? <img src={p.featuredImage} alt="" className="h-full w-full object-cover" /> : <Package size={30} strokeWidth={1.5} />}
+            {/*
+              * Image, with the select box and fulfilment badge overlaid on it. Always square, whatever
+              * shape was uploaded, so the image can no longer set the card's height.
+              */}
+            <div className="relative border-b border-n-100">
+              <ProductImage src={p.featuredImage} className="w-full" iconSize={30} />
               <div className="absolute left-2.5 top-2.5" onClick={(e) => e.stopPropagation()}>
                 <input
                   type="checkbox"
@@ -561,7 +563,8 @@ function GridView({ items, loading, channels, selected, onToggleOne, onEdit, ran
               </div>
             </div>
 
-            <div className="p-3">
+            {/* Pinned to the bottom, so the text sits on the same line in every card of a row. */}
+            <div className="mt-auto p-3">
               <div className="code truncate text-[11.5px] text-teal-700">{p.mainSku}</div>
               {/* Fixed two-line title so every card in a row lines up. */}
               <div className="mt-1 line-clamp-2 min-h-[2.25rem] text-[13px] font-medium leading-[1.15rem] text-n-800">{p.title}</div>

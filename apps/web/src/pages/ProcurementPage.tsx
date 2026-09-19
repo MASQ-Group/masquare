@@ -9,6 +9,7 @@ import { usePersistentState } from '../lib/usePersistentState';
 import { formatDate } from '../lib/format';
 import { GenerateOrdersModal } from '../components/procurement/GenerateOrdersModal';
 import { salesChannelAsChannel, sortByChannelCanonical } from '../lib/channelGroups';
+import { ProductImage } from '../components/products/ProductImage';
 
 const STATUS_FILTER = [
   { value: 'all', label: 'All demand' },
@@ -141,9 +142,7 @@ export function ProcurementPage() {
                   </td>
                   <td className={TD}>
                     <div className="flex items-center gap-2.5">
-                      {r.imageUrl
-                        ? <img src={r.imageUrl} alt="" className="h-8 w-8 shrink-0 rounded border border-n-200 object-cover" />
-                        : <span className="grid h-8 w-8 shrink-0 place-items-center rounded border border-n-200 bg-n-50 text-n-300"><Package size={14} /></span>}
+                      <ProductImage src={r.imageUrl} className="w-8 rounded border border-n-200" iconSize={14} />
                       <div className="min-w-0">
                         <div className="code text-[12.5px] font-semibold text-n-800">{r.sku}</div>
                         <div className="max-w-[260px] truncate text-[11.5px] text-n-400" title={r.productName}>{r.productName}</div>
