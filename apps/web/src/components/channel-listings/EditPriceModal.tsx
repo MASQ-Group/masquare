@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Calculator, Lock, TrendingDown, TrendingUp, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ModalShell } from '@masquare/ui';
-import { amazonListingApi } from '../../lib/api';
+import { amazonListingApi, listingPriceApi } from '../../lib/api';
 import { eurAside } from '../../lib/format';
 import { isZeroDecimalCurrency, limitPriceInput } from '../../lib/currencies';
 import { useConfirm } from '../ConfirmProvider';
@@ -24,14 +24,28 @@ const money = (cents: number, ccy: string) =>
  * else — a second calculation would be a second answer to the question the card just asked.
  */
 export function EditPriceModal({
-  productId, integrationId, channelName, onClose, onSaved,
+  productId, integrationId, channelName, channelType = 'amazon', sku, countryIso, onClose, onSaved,
 }: {
   productId: string;
   integrationId: string;
   channelName: string;
+  /**
+   * Which channel's price call to use. Amazon quotes against its own live fees; eBay and OnBuy are
+   * costed by the platform's model for the channel. Same answers, same window.
+   */
+  channelType?: string | null;
+  /** The listing's SKU and market — eBay needs both, since one account lists in many markets. */
+  sku?: string | null;
+  countryIso?: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const isAmazon = (channelType ?? 'amazon') === 'amazon';
+  const target = { productId, integrationId, sku, countryIso };
+  const priceCheck = (at?: number | null) =>
+    isAmazon ? amazonListingApi.priceCheck(productId, integrationId, at ?? undefined) : listingPriceApi.check({ ...target, atPriceCents: at ?? null });
+  const priceUpdate = (cents: number) =>
+    isAmazon ? amazonListingApi.updatePrice(productId, integrationId, cents, true) : listingPriceApi.update({ ...target, priceCents: cents, confirm: true });
   const confirm = useConfirm();
   const [price, setPrice] = useState('');
   /** The price the profit on screen was actually computed for. */
@@ -41,18 +55,18 @@ export function EditPriceModal({
 
   // The listing as it stands: current price, what it earns, and what we would suggest instead.
   const initial = useQuery({
-    queryKey: ['price-check', productId, integrationId],
-    queryFn: () => amazonListingApi.priceCheck(productId, integrationId),
+    queryKey: ['price-check', productId, integrationId, sku ?? null, countryIso ?? null],
+    queryFn: () => priceCheck(),
   });
 
   const check = useMutation({
-    mutationFn: (cents: number) => amazonListingApi.priceCheck(productId, integrationId, cents),
+    mutationFn: (cents: number) => priceCheck(cents),
     onSuccess: (_r, cents) => setPricedAt(cents),
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not price that'),
   });
 
   const save = useMutation({
-    mutationFn: (cents: number) => amazonListingApi.updatePrice(productId, integrationId, cents, true),
+    mutationFn: (cents: number) => priceUpdate(cents),
     onSuccess: (r) => {
       if (!r.ok) { toast.error(r.message || 'The channel rejected the price'); return; }
       toast.success(r.dryRun ? `Validated — ${money(r.priceCents, r.currency)} was NOT sent` : `Price changed to ${money(r.priceCents, r.currency)}`);
@@ -62,6 +76,7 @@ export function EditPriceModal({
   });
 
   const data = check.data ?? initial.data;
+  const note = data && 'note' in data && typeof data.note === 'string' ? data.note : null;
   const ok = data?.ok ? data : null;
   const currency = ok?.currency ?? 'EUR';
 
@@ -184,7 +199,9 @@ export function EditPriceModal({
             needs are one call away. Read-only and no Match button, deliberately: none of Amazon's
             reference prices knows our costs, and matching one blind is how a listing sells at a
             loss all month. */}
-        <CompetitorPrices productId={productId} integrationId={integrationId} />
+        {isAmazon && <CompetitorPrices productId={productId} integrationId={integrationId} />}
+        {/* eBaymag's markets, and anything the costing could not see, said before the price is sent. */}
+        {note && <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">{note}</p>}
 
         {/* Said before the button is pressed, not after. A price that looks sent and was not is
             worse than a refusal, because the card then disagrees with the marketplace. */}

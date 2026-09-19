@@ -6,6 +6,7 @@ import { Select } from '@masquare/ui';
 import { listingApi, type ProductChannelRow } from '../../lib/api';
 import { AmazonCandidates } from './AmazonCandidates';
 import { AmazonOfferPreview } from './AmazonOfferPreview';
+import { EditPriceModal } from '../channel-listings/EditPriceModal';
 import { OnbuyCandidates, OnbuyCompetition, OnbuyCreateCategory, OnbuyCreatePreview, OnbuyDeliveryTemplateSelect, OnbuyListingPreview, OnbuyPriceCheck, OnbuyPriceSuggestion } from './OnbuyListing';
 import { CompetitorPrices } from './CompetitorPrices';
 import { LaunchPrice } from './LaunchPrice';
@@ -107,6 +108,7 @@ export function PlanEditor({
   // 'create' when OnBuy has no product with our barcode and we are making one.
   const onbuyMode = ((plan?.aspects as Record<string, string> | null) ?? {}).onbuyMode ?? null;
   const [showCreate, setShowCreate] = useState(onbuyMode === 'create');
+  const [editingPrice, setEditingPrice] = useState(false);
   // Held on OnBuy at stock 0 for a price check: it exists there, but it is not on sale yet.
   const onbuyHeld = row.channelType === 'onbuy' && !!((plan?.aspects as Record<string, unknown> | null) ?? {}).onbuyStaged && plan?.status !== 'LISTED';
 
@@ -233,16 +235,38 @@ export function PlanEditor({
   // Already selling here: the sequence is over, and what matters is the live listing's state. A
   // listing held at stock 0 for a price check is on OnBuy but not for sale, so its steps stay open.
   if (row.listing && !onbuyHeld) {
+    const listing = row.listing;
     return (
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2.5 text-[12.5px] text-teal-900">
           <PackageCheck size={15} className="shrink-0 text-teal-600" />
           <span className="font-semibold">Already listed here</span>
-          <span className="mono">{row.listing.channelSku}</span>
-          {row.listing.asin && <span className="mono text-teal-700">{row.listing.asin}</span>}
-          {row.listing.price != null && <span>{row.listing.currency} {row.listing.price}</span>}
-          <span>qty {row.listing.quantity ?? '—'}</span>
+          <span className="mono">{listing.channelSku}</span>
+          {listing.asin && <span className="mono text-teal-700">{listing.asin}</span>}
+          {listing.price != null && <span>{listing.currency} {listing.price}</span>}
+          <span>qty {listing.quantity ?? '—'}</span>
+          <div className="flex-1" />
+          {/* The price of a live listing, changed here — the same window on every channel. */}
+          <button
+            type="button"
+            className="inline-flex h-7 items-center rounded-md border border-teal-300 bg-n-0 px-2.5 text-[12px] font-semibold text-teal-700 hover:bg-teal-50"
+            onClick={() => setEditingPrice(true)}
+          >
+            Change price
+          </button>
         </div>
+        {editingPrice && (
+          <EditPriceModal
+            productId={productId}
+            integrationId={row.integrationId}
+            channelName={row.name}
+            channelType={row.channelType}
+            sku={listing.channelSku}
+            countryIso={row.marketplace}
+            onClose={() => setEditingPrice(false)}
+            onSaved={() => { setEditingPrice(false); onSaved(); }}
+          />
+        )}
         {isAmazon && (
           <AmazonOfferPreview
             productId={productId}
