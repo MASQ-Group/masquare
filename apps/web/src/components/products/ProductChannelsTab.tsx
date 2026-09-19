@@ -36,6 +36,9 @@ const CONDITIONS = [
  * reads as a to-do. Eligibility is whether the product may be sold there at all — a 230V appliance
  * on a 120V market is not incomplete, it is forbidden — so it refuses rather than warns.
  */
+/** The eBay UK panel's key in the one open-row state, so opening it closes a row and vice versa. */
+const EBAY_UK_PANEL = 'ebay-uk-listing';
+
 export function ProductChannelsTab({ productId }: { productId: string }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState<string | null>(null);
@@ -168,17 +171,45 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
             * other eBay groups by itself. Putting it in its own slab above the groups said the
             * same thing while implying eBay had two places to look.
             */}
-          {key === ebayHomeGroup && (
-            <div className="border-b border-n-100 p-3">
-              <EbayListingPanel productId={productId} />
-              {/* The live eBay UK listing's price, changed on its own — without re-sending the whole
-                  listing the way "Update the eBay UK listing" does. */}
-              {(() => {
-                const uk = rows.find((r) => r.channelType === 'ebay' && isoOf(r.marketplace) === 'GB' && r.listing);
-                return uk ? <EbayUkPrice row={uk} productId={productId} onSaved={() => qc.invalidateQueries({ queryKey: ['listing', 'product-channels', productId] })} /> : null;
-              })()}
-            </div>
-          )}
+          {key === ebayHomeGroup && (() => {
+            const uk = rows.find((r) => r.channelType === 'ebay' && isoOf(r.marketplace) === 'GB');
+            const expanded = open === EBAY_UK_PANEL;
+            /*
+              * Collapsed until opened, like every row: the tab opens with everything closed and the
+              * person opens the channel they came for. The header still says whether it is listed.
+              */
+            return (
+              <div className={`border-b border-n-100 ${expanded ? 'border-l-2 border-l-teal-400 bg-n-25' : ''}`}>
+                <button
+                  type="button"
+                  onClick={() => setOpen(expanded ? null : EBAY_UK_PANEL)}
+                  aria-expanded={expanded}
+                  className={`flex w-full flex-wrap items-center gap-2.5 px-3.5 py-2.5 text-left ${expanded ? 'bg-n-100' : 'hover:bg-n-25'}`}
+                >
+                  {expanded ? <ChevronDown size={14} className="shrink-0 text-n-400" /> : <ChevronRight size={14} className="shrink-0 text-n-400" />}
+                  <Flag code="GB" title="eBay UK" />
+                  <span className="text-[13px] font-medium text-n-800">eBay UK listing</span>
+                  <span className="text-[12px] text-n-400">republished to the other eBay markets</span>
+                  <div className="flex-1" />
+                  {uk?.listing ? (
+                    <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-teal-700">
+                      <PackageCheck size={13} /> Listed{uk.listing.price != null ? ` · ${uk.listing.currency ?? ''} ${uk.listing.price}` : ''}
+                    </span>
+                  ) : (
+                    <span className="text-[12px] text-n-500">Not listed</span>
+                  )}
+                </button>
+                {expanded && (
+                  <div className="px-3 pb-3 pt-1">
+                    <EbayListingPanel productId={productId} />
+                    {/* The live eBay UK listing's price, changed on its own — without re-sending the whole
+                        listing the way "Update the eBay UK listing" does. */}
+                    {uk?.listing && <EbayUkPrice row={uk} productId={productId} onSaved={() => qc.invalidateQueries({ queryKey: ['listing', 'product-channels', productId] })} />}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {rows
             /*
               * The eBay UK row is not drawn under the panel that IS eBay UK.
