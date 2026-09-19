@@ -82,6 +82,184 @@ export function OnbuyCandidates({ productId, integrationId, selectedOpc, onSelec
   );
 }
 
+/**
+ * Step 1, when OnBuy does not have the product: choose the OnBuy category to create it in.
+ *
+ * Search, then remember: once a category is chosen for one product, it is suggested for the others
+ * in the same internal category, so the rest are one click.
+ */
+export function OnbuyCreateCategory({ productId, integrationId, chosen, onChoose }: {
+  productId: string;
+  integrationId: string;
+  chosen: { id: string | null; tree: string | null };
+  onChoose: (id: string, tree: string) => void;
+}) {
+  const [q, setQ] = useState('');
+  const { data: suggestion } = useQuery({
+    queryKey: ['onbuy', 'category-suggestion', productId, integrationId],
+    queryFn: () => onbuyListingApi.categorySuggestion(productId, integrationId),
+  });
+  const search = useMutation({
+    mutationFn: () => onbuyListingApi.categories(integrationId, q),
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not search OnBuy categories'),
+  });
+  const s = suggestion?.suggestion;
+
+  return (
+    <div className="mt-2 flex flex-col gap-2 rounded-md border border-n-200 bg-n-25 px-3 py-2.5 text-[12.5px]">
+      <div className="font-semibold text-n-800">Create it on OnBuy</div>
+      <p className="text-[12px] text-n-600">
+        OnBuy has no product with this barcode, so it can be created from our marketplace content. Choose the OnBuy category it belongs in.
+      </p>
+      {chosen.id && (
+        <div className="flex items-center gap-1.5 text-[12px] text-teal-800">
+          <Check size={13} /> <span className="mono">{chosen.id}</span> · {chosen.tree}
+        </div>
+      )}
+      {s && s.id !== chosen.id && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-2.5 py-1.5 text-[12px] text-teal-900">
+          <span className="flex-1">Suggested — used for {s.uses} product{s.uses === 1 ? '' : 's'} in the same category: {s.tree}</span>
+          <button type="button" className="inline-flex h-7 items-center rounded-md border border-teal-300 bg-n-0 px-2.5 font-semibold text-teal-700" onClick={() => onChoose(s.id, s.tree)}>
+            Use it
+          </button>
+        </div>
+      )}
+      <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (q.trim().length >= 2) search.mutate(); }}>
+        <input className="input h-8 flex-1 text-[12.5px]" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search OnBuy categories, e.g. massager" />
+        <button type="submit" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 font-semibold text-n-700 hover:border-teal-300 disabled:opacity-50" disabled={search.isPending || q.trim().length < 2}>
+          {search.isPending ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />} Search
+        </button>
+      </form>
+      {search.data && (
+        <div className="flex max-h-[220px] flex-col gap-1 overflow-y-auto">
+          {search.data.categories.length === 0 && <span className="text-[12px] text-n-500">No OnBuy category that takes products matches that.</span>}
+          {search.data.categories.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={`rounded-md border px-2.5 py-1.5 text-left text-[12px] ${c.id === chosen.id ? 'border-teal-300 bg-teal-50' : 'border-n-100 bg-n-0 hover:bg-n-50'}`}
+              onClick={() => onChoose(c.id, c.tree || c.name)}
+            >
+              <span className="font-medium text-n-800">{c.name}</span>
+              {c.tree && c.tree !== c.name && <span className="block text-[11px] text-n-500">{c.tree}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Step 4 for a new product: what would be created, the send, and its progress through OnBuy's queue. */
+export function OnbuyCreatePreview({ productId, integrationId, savePlan, onChanged }: {
+  productId: string;
+  integrationId: string;
+  savePlan: () => Promise<unknown>;
+  onChanged: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const preview = useQuery({
+    queryKey: ['onbuy', 'create-preview', productId, integrationId],
+    queryFn: () => onbuyListingApi.createPreview(productId, integrationId),
+  });
+  const recheck = async () => { await savePlan(); await preview.refetch(); };
+  const create = useMutation({
+    mutationFn: () => onbuyListingApi.create(productId, integrationId),
+    onSuccess: (r) => {
+      setConfirming(false);
+      if (r.ok) toast.success('Sent to OnBuy — it usually takes under 30 minutes');
+      else toast.error(r.message, { duration: 12000 });
+      for (const p of r.imageProblems) toast.warning(p, { duration: 10000 });
+      preview.refetch();
+      onChanged();
+    },
+    onError: (e: any) => { setConfirming(false); toast.error(e?.response?.data?.message ?? 'Could not send to OnBuy', { duration: 12000 }); },
+  });
+  const progress = useMutation({
+    mutationFn: () => onbuyListingApi.checkProgress(productId, integrationId),
+    onSuccess: (r) => {
+      if (r.status === 'LISTED') toast.success(r.message ?? 'Listed on OnBuy');
+      else if (r.status === 'READY') toast.error(r.message ?? 'OnBuy could not create it', { duration: 12000 });
+      else toast.info(r.message ?? 'Still waiting');
+      preview.refetch();
+      onChanged();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not ask OnBuy'),
+  });
+
+  const p = preview.data;
+  if (preview.isLoading) return <p className="text-[12px] text-n-500">Loading…</p>;
+  if (!p) return null;
+  const waiting = p.queue.status === 'SUBMITTED';
+  const canCreate = !waiting && !p.existing && p.missing.length === 0 && p.liveWritesEnabled && !create.isPending;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-n-200 bg-n-0 px-3 py-2.5 text-[12.5px]">
+      {waiting ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-info-bd bg-info-bg px-2.5 py-2 text-info">
+          <span className="flex-1">
+            In OnBuy’s queue since {p.queue.submittedAt ? new Date(p.queue.submittedAt).toLocaleString() : '—'}. Checked automatically every 15 minutes.
+            {p.queue.activationError && <span className="block text-orange-800">Created, but its price and stock have not been set yet: {p.queue.activationError}</span>}
+          </span>
+          <button type="button" className="btn btn-ghost" disabled={progress.isPending} onClick={() => progress.mutate()}>
+            {progress.isPending ? 'Asking…' : 'Check progress'}
+          </button>
+        </div>
+      ) : p.queue.status === 'LISTED' ? (
+        <p className="rounded-md border border-teal-200 bg-teal-50 px-2.5 py-1.5 text-teal-900">
+          Created and listed on OnBuy.{p.queue.productUrl && <> <a className="underline" href={p.queue.productUrl} target="_blank" rel="noreferrer">View it</a></>}
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-n-600">Creates a new OnBuy product from our marketplace content, with our listing on it. Nothing is sent until you confirm.</span>
+          <div className="flex-1" />
+          <button type="button" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 font-semibold text-n-700 hover:border-teal-300 disabled:opacity-50" disabled={preview.isFetching} onClick={recheck}>
+            {preview.isFetching && <Loader2 size={13} className="animate-spin" />} Check again
+          </button>
+        </div>
+      )}
+
+      {p.queue.error && !waiting && <p className="rounded-md border border-danger-bd bg-danger-bg px-2.5 py-1.5 text-danger">Last attempt refused by OnBuy: {p.queue.error}</p>}
+      {p.existing && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-900">
+          OnBuy now has this product ({p.existing.opc}). Choose it in step 1 and list against it instead.
+        </p>
+      )}
+      {p.note && <p className="text-[12px] text-amber-800">{p.note}</p>}
+      {p.missing.length > 0 && !waiting && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-900">Still needed: {p.missing.join(', ')}.</p>
+      )}
+      {!p.liveWritesEnabled && <p className="text-[12px] text-n-500">Live listing is switched off on this platform, so this can be checked but not sent.</p>}
+
+      <dl className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-0.5 text-[12px]">
+        <dt className="text-n-500">Name</dt><dd className="text-n-800">{p.product.name ?? '—'}</dd>
+        <dt className="text-n-500">Brand · barcode</dt><dd className="text-n-800">{p.product.brandName ?? '—'} · <span className="mono">{p.product.productCode ?? '—'}</span>{p.product.mpn ? <> · MPN <span className="mono">{p.product.mpn}</span></> : null}</dd>
+        <dt className="text-n-500">Category</dt><dd className="mono text-n-800">{p.product.categoryId ?? '—'}</dd>
+        <dt className="text-n-500">Description</dt><dd className="text-n-800">{p.product.description ? `${p.product.description.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140)}…` : '—'}</dd>
+        <dt className="text-n-500">Key features</dt><dd className="text-n-800">{p.product.summaryPoints.length ? `${Math.min(5, p.product.summaryPoints.length)} sent` : '—'}</dd>
+        <dt className="text-n-500">Images</dt><dd className="text-n-800">{p.product.imageCount ? `${p.product.imageCount}, converted to OnBuy-sized JPEGs when sent` : '—'}</dd>
+        <dt className="text-n-500">Listing</dt><dd className="text-n-800"><span className="mono">{p.listing.sku ?? '—'}</span> · GBP {p.listing.price?.toFixed(2) ?? '—'} · stock {p.listing.stock ?? 0} · template <span className="mono">{p.listing.deliveryTemplateId ?? '—'}</span></dd>
+      </dl>
+
+      {canCreate && (
+        confirming ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-orange-200 bg-orange-50 px-2.5 py-2">
+            <span className="flex-1 text-orange-900">
+              This creates a public OnBuy product page from our content — the first seller’s content is what OnBuy shows, and it locks once others list on it — with our listing at GBP {p.listing.price?.toFixed(2)}.
+            </span>
+            <button type="button" className="btn btn-ghost" onClick={() => setConfirming(false)}>Cancel</button>
+            <button type="button" className="btn btn-primary" disabled={create.isPending} onClick={() => create.mutate()}>
+              {create.isPending ? 'Sending…' : 'Create it'}
+            </button>
+          </div>
+        ) : (
+          <div><button type="button" className="btn btn-primary" onClick={() => setConfirming(true)}>Create on OnBuy</button></div>
+        )
+      )}
+    </div>
+  );
+}
+
 /** Step 2: the price at the platform's launch margin, from the same cost model as everywhere else. */
 export function OnbuyPriceSuggestion({ productId, integrationId, onUse }: {
   productId: string;

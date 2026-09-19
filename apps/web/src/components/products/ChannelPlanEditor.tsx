@@ -6,7 +6,7 @@ import { Select } from '@masquare/ui';
 import { listingApi, type ProductChannelRow } from '../../lib/api';
 import { AmazonCandidates } from './AmazonCandidates';
 import { AmazonOfferPreview } from './AmazonOfferPreview';
-import { OnbuyCandidates, OnbuyDeliveryTemplateSelect, OnbuyListingPreview, OnbuyPriceSuggestion } from './OnbuyListing';
+import { OnbuyCandidates, OnbuyCreateCategory, OnbuyCreatePreview, OnbuyDeliveryTemplateSelect, OnbuyListingPreview, OnbuyPriceSuggestion } from './OnbuyListing';
 import { CompetitorPrices } from './CompetitorPrices';
 import { LaunchPrice } from './LaunchPrice';
 import { currencyForMarketplace, isZeroDecimalCurrency, limitPriceInput } from '../../lib/currencies';
@@ -104,6 +104,9 @@ export function PlanEditor({
   const asin = ((plan?.aspects as Record<string, string> | null) ?? {}).asin ?? null;
   // The OnBuy catalogue product (OPC) the listing attaches to — OnBuy's equivalent of the ASIN.
   const opc = ((plan?.aspects as Record<string, string> | null) ?? {}).opc ?? null;
+  // 'create' when OnBuy has no product with our barcode and we are making one.
+  const onbuyMode = ((plan?.aspects as Record<string, string> | null) ?? {}).onbuyMode ?? null;
+  const [showCreate, setShowCreate] = useState(onbuyMode === 'create');
 
   const isAmazon = row.channelType === 'amazon';
   const isEbay = row.channelType === 'ebay';
@@ -144,7 +147,7 @@ export function PlanEditor({
   const matchOnbuy = useMutation({
     mutationFn: (picked: { opc: string; name: string }) =>
       listingApi.upsertPlan(productId, row.integrationId, {
-        aspects: { ...((plan?.aspects as Record<string, unknown>) ?? {}), opc: picked.opc },
+        aspects: { ...((plan?.aspects as Record<string, unknown>) ?? {}), opc: picked.opc, onbuyMode: 'match' },
         categoryName: picked.name || null,
       }),
     onSuccess: (_r, picked) => {
@@ -153,6 +156,23 @@ export function PlanEditor({
       onSaved();
     },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save the match'),
+  });
+
+  /** Creating instead: the OnBuy category is the whole of the choice, and any earlier match is dropped. */
+  const chooseCreate = useMutation({
+    mutationFn: (picked: { id: string; tree: string }) =>
+      listingApi.upsertPlan(productId, row.integrationId, {
+        aspects: { ...((plan?.aspects as Record<string, unknown>) ?? {}), opc: null, onbuyMode: 'create' },
+        categoryRef: picked.id,
+        categoryName: picked.tree || null,
+      }),
+    onSuccess: (_r, picked) => {
+      setCategoryRef(picked.id);
+      setCategoryName(picked.tree);
+      toast.success('OnBuy category chosen');
+      onSaved();
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not save the category'),
   });
 
   const match = useMutation({
@@ -188,7 +208,7 @@ export function PlanEditor({
   // so the match comes first; eBay has no equivalent and starts at the price.
   const priceSet = price.trim() !== '' && Number(price.replace(',', '.')) > 0;
   const termsSet = handling.trim() !== '' && (!isOnBuy || delivery.trim() !== '');
-  const matched = isAmazon ? !!asin : isOnBuy ? !!opc : true;
+  const matched = isAmazon ? !!asin : isOnBuy ? !!opc || (onbuyMode === 'create' && !!categoryRef) : true;
 
   const done = { match: matched, price: priceSet, terms: termsSet };
   const firstOpen = !done.match ? 1 : !done.price ? 2 : !done.terms ? 3 : 4;
@@ -275,7 +295,11 @@ export function PlanEditor({
           n={1}
           title="Find it on OnBuy"
           state={stateOf(1, done.match, true)}
-          summary={opc ? <span className="mono text-teal-700">{opc}{categoryName ? ` · ${categoryName}` : ''}</span> : 'Not matched yet'}
+          summary={opc
+            ? <span className="mono text-teal-700">{opc}{categoryName ? ` · ${categoryName}` : ''}</span>
+            : onbuyMode === 'create' && categoryRef
+              ? <span className="text-teal-700">New OnBuy product · {categoryName || categoryRef}</span>
+              : 'Not matched yet'}
           open={current === 1}
           onOpen={() => setOpen(current === 1 ? -1 : 1)}
         >
@@ -285,6 +309,18 @@ export function PlanEditor({
             selectedOpc={opc}
             onSelect={(pickedOpc, name) => matchOnbuy.mutate({ opc: pickedOpc, name })}
           />
+          {showCreate ? (
+            <OnbuyCreateCategory
+              productId={productId}
+              integrationId={row.integrationId}
+              chosen={{ id: onbuyMode === 'create' ? categoryRef || null : null, tree: categoryName || null }}
+              onChoose={(id, tree) => chooseCreate.mutate({ id, tree })}
+            />
+          ) : (
+            <button type="button" className="mt-1.5 text-[12px] font-semibold text-teal-700 hover:underline" onClick={() => setShowCreate(true)}>
+              OnBuy doesn’t have it? Create it on OnBuy instead
+            </button>
+          )}
         </Step>
       )}
 
@@ -449,6 +485,13 @@ export function PlanEditor({
             onListed={onSaved}
             savePlan={() => save.mutateAsync()}
             onUseSku={useSku}
+          />
+        ) : isOnBuy && onbuyMode === 'create' && !opc ? (
+          <OnbuyCreatePreview
+            productId={productId}
+            integrationId={row.integrationId}
+            savePlan={() => save.mutateAsync()}
+            onChanged={onSaved}
           />
         ) : isOnBuy ? (
           <OnbuyListingPreview
