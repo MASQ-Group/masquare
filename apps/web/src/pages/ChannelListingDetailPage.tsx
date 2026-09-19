@@ -129,7 +129,7 @@ export function ChannelListingDetailPage() {
 
   const [listing, setListing] = useState<{ integrationId: string; name: string } | null>(null);
   /** The channel whose price is being edited. A card showing a loss should be able to fix it. */
-  const [pricing, setPricing] = useState<{ integrationId: string; name: string } | null>(null);
+  const [pricing, setPricing] = useState<{ integrationId: string; name: string; channelType: string | null; sku: string | null; countryIso: string | null } | null>(null);
 
   // Real performance, from booked sales. Keyed by SKU because that is what a sale records.
   // Empty means the default twelve months, which is what makes a stale import legible rather than
@@ -302,6 +302,9 @@ export function ChannelListingDetailPage() {
           productId={productId as string}
           integrationId={pricing.integrationId}
           channelName={pricing.name}
+          channelType={pricing.channelType}
+          sku={pricing.sku}
+          countryIso={pricing.countryIso}
           onClose={() => setPricing(null)}
           onSaved={() => {
             setPricing(null);
@@ -434,10 +437,10 @@ export function ChannelListingDetailPage() {
                       {/* The number the card just called a loss is the number this changes. Going
                           through the full listing flow to edit it is six steps about a listing
                           that already exists. */}
-                      {c.integrationId && c.channelType === 'amazon' && (
+                      {c.integrationId && c.listed && ['amazon', 'ebay', 'onbuy'].includes(c.channelType ?? '') && (
                         <button
                           type="button"
-                          onClick={() => setPricing({ integrationId: c.integrationId, name: c.name })}
+                          onClick={() => setPricing({ integrationId: c.integrationId, name: c.name, channelType: c.channelType, sku: c.channelSku, countryIso: c.countryIso })}
                           title={`Change this product's price on ${c.name}`}
                           className="inline-flex h-[34px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-teal-300 hover:text-teal-700"
                         >

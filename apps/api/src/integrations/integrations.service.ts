@@ -2235,24 +2235,47 @@ export class IntegrationsService implements OnModuleInit {
    *  token must carry the sell.inventory scope; a read-only connection returns an auth error here
    *  (reconnect the eBay integration to grant write access). dryRun does not call eBay. */
   async pushEbayQuantity(integrationId: string, channelSku: string, marketplace: string | null, quantity: number, dryRun = false, externalItemId?: string | null): Promise<{ ok: boolean; message: string }> {
+    const qty = Math.max(0, Math.trunc(quantity));
+    return this.reviseEbayInventoryStatus(integrationId, channelSku, marketplace, { quantity: qty }, dryRun, externalItemId);
+  }
+
+  /**
+   * Change a live eBay listing's price through the same Trading-API call the quantity push uses —
+   * ReviseInventoryStatus takes a StartPrice beside the Quantity. For listings made on eBay or by
+   * eBaymag; one this platform published through the Inventory API is changed with
+   * ebayUpdateOfferPrice instead, because eBay refuses a Trading-API revision of those.
+   */
+  async pushEbayPrice(integrationId: string, channelSku: string, marketplace: string | null, price: number, dryRun = false, externalItemId?: string | null): Promise<{ ok: boolean; message: string }> {
+    return this.reviseEbayInventoryStatus(integrationId, channelSku, marketplace, { price: Math.round(price * 100) / 100 }, dryRun, externalItemId);
+  }
+
+  /** One ReviseInventoryStatus call: quantity, price, or both, for one listing. */
+  private async reviseEbayInventoryStatus(
+    integrationId: string,
+    channelSku: string,
+    marketplace: string | null,
+    fields: { quantity?: number; price?: number },
+    dryRun: boolean,
+    externalItemId?: string | null,
+  ): Promise<{ ok: boolean; message: string }> {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null } });
     if (!row) return { ok: false, message: 'Integration not found' };
     const config = (row.config ?? {}) as Record<string, string>;
-    const qty = Math.max(0, Math.trunc(quantity));
     const iso = (marketplace || '').toUpperCase();
     const siteId = IntegrationsService.EBAY_ISO_SITEID[iso] ?? (config.ebaySiteIds || '3').split(',')[0].trim();
-    // Prefer the stored ItemID (or the EBAY-<id> SKU fallback). Classic eBay listings track
-    // inventory by ItemID and REJECT the seller SKU as an identifier ("Invalid SKU number"), so
-    // revising by ItemID is the only reliable path; SKU is a last resort for SKU-tracked listings.
+    // Target the listing by eBay ItemID when we know it (reliable for manual/non-SKU listings);
+    // otherwise by SKU. Our pull encodes SKU-less listings as `EBAY-<itemId>`.
     const itemId = (externalItemId && /^\d+$/.test(externalItemId.trim()) ? externalItemId.trim() : null)
       ?? /^EBAY-(\d+)$/i.exec(channelSku.trim())?.[1] ?? null;
     const targetXml = itemId ? `<ItemID>${itemId}</ItemID>` : `<SKU>${IntegrationsService.xmlEscape(channelSku)}</SKU>`;
-    if (dryRun) return { ok: true, message: `validated (revise ${itemId ? 'item ' + itemId : 'SKU ' + channelSku} on site ${siteId})` };
+    const what = [fields.quantity != null ? `quantity ${fields.quantity}` : null, fields.price != null ? `price ${fields.price.toFixed(2)}` : null].filter(Boolean).join(', ');
+    if (dryRun) return { ok: true, message: `validated (revise ${itemId ? 'item ' + itemId : 'SKU ' + channelSku} on site ${siteId}: ${what})` };
 
     const secrets = await this.decryptedSecrets(row.id);
     const token = await this.ebayAccessToken(config, secrets);
     const base = config.env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com';
-    const body = `<?xml version="1.0" encoding="utf-8"?>\n<ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents"><InventoryStatus>${targetXml}<Quantity>${qty}</Quantity></InventoryStatus></ReviseInventoryStatusRequest>`;
+    const inner = `${targetXml}${fields.price != null ? `<StartPrice>${fields.price.toFixed(2)}</StartPrice>` : ''}${fields.quantity != null ? `<Quantity>${fields.quantity}</Quantity>` : ''}`;
+    const body = `<?xml version="1.0" encoding="utf-8"?>\n<ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents"><InventoryStatus>${inner}</InventoryStatus></ReviseInventoryStatusRequest>`;
     const res = await fetch(`${base}/ws/api.dll`, {
       method: 'POST',
       headers: {
@@ -2268,9 +2291,28 @@ export class IntegrationsService implements OnModuleInit {
     const xml = await res.text();
     if (!res.ok) return { ok: false, message: `eBay ${res.status}` };
     const ack = /<Ack>([^<]+)<\/Ack>/.exec(xml)?.[1] ?? '';
-    if (/Success|Warning/i.test(ack)) return { ok: true, message: `revised → ${qty}` };
+    if (/Success|Warning/i.test(ack)) return { ok: true, message: fields.quantity != null && fields.price == null ? `revised → ${fields.quantity}` : `revised → ${what}` };
     const err = /<(?:ShortMessage|LongMessage)>([\s\S]*?)<\/(?:ShortMessage|LongMessage)>/.exec(xml)?.[1] ?? 'unknown error';
     return { ok: false, message: (this.decodeXmlEntities(err) ?? 'error').slice(0, 200) };
+  }
+
+  /**
+   * Change the price of a listing this platform published through eBay's Inventory API — price only,
+   * nothing else about the offer is sent. eBay's bulk price-and-quantity call, for one offer.
+   */
+  async ebayUpdateOfferPrice(integrationId: string, sku: string, offerId: string, price: number, currency: string): Promise<{ ok: boolean; message: string }> {
+    const { base, headers } = await this.ebayCtx(integrationId);
+    const res = await fetch(`${base}/sell/inventory/v1/bulk_update_price_quantity`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ requests: [{ sku, offers: [{ offerId, price: { value: (Math.round(price * 100) / 100).toFixed(2), currency } }] }] }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, message: IntegrationsService.ebayErr(json) || `eBay ${res.status}` };
+    const r0 = (json?.responses ?? [])[0];
+    if (r0 && Number(r0.statusCode) >= 400) return { ok: false, message: IntegrationsService.ebayErr(r0) || `eBay ${r0.statusCode}` };
+    return { ok: true, message: `price set to ${price.toFixed(2)} ${currency}` };
   }
 
   private static amzErr(json: any): string {

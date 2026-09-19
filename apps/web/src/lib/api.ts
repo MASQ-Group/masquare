@@ -2020,6 +2020,19 @@ export type AmazonPriceCheck =
       fx: { currency: string; eurPerUnit: number };
     };
 
+/** An eBay or OnBuy listing's price check: Amazon's shape, plus a note and any costing problems. */
+export type ListingPriceCheck = AmazonPriceCheck & { note?: string | null; problems?: string[] };
+
+/** Changing the price of a live eBay or OnBuy listing. Amazon's goes through amazonListingApi. */
+export const listingPriceApi = {
+  check: (p: { productId: string; integrationId: string; sku?: string | null; countryIso?: string | null; atPriceCents?: number | null }) =>
+    api.get<ListingPriceCheck>('/listing/price/check', {
+      params: { productId: p.productId, integrationId: p.integrationId, sku: p.sku ?? undefined, countryIso: p.countryIso ?? undefined, atPriceCents: p.atPriceCents ?? undefined },
+    }).then((r) => r.data),
+  update: (p: { productId: string; integrationId: string; sku?: string | null; countryIso?: string | null; priceCents: number; confirm: boolean }) =>
+    api.post<AmazonPriceUpdate>('/listing/price/update', p).then((r) => r.data),
+};
+
 export interface AmazonPriceUpdate {
   ok: boolean;
   /** True when nothing was sent — the gate is off, or confirm was not given. */

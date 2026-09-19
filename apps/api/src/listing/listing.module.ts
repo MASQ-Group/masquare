@@ -10,6 +10,8 @@ import { EbayListingService } from './ebay/ebay-listing.service';
 import { OnbuyListingController } from './onbuy/onbuy-listing.controller';
 import { OnbuyListingService } from './onbuy/onbuy-listing.service';
 import { OnbuyImagesService } from './onbuy/onbuy-images.service';
+import { ListingPriceController } from './price/listing-price.controller';
+import { ListingPriceService } from './price/listing-price.service';
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { AmazonRepricingModule } from '../amazon-repricing/amazon-repricing.module';
 import { GatherModule } from '../gather/gather.module';
@@ -18,8 +20,8 @@ import { PricingModule } from '../pricing/pricing.module';
 @Module({
   // PricingModule for its FX rates: an eBay UK listing prices in GBP from a cost recorded in EUR.
   imports: [IntegrationsModule, AmazonRepricingModule, GatherModule, PricingModule],
-  controllers: [ListingController, AmazonListingController, EbayListingController, OnbuyListingController, AvailabilitySweepController],
-  providers: [ListingService, AmazonListingService, EbayListingService, OnbuyListingService, OnbuyImagesService, AvailabilitySweepService],
+  controllers: [ListingController, AmazonListingController, EbayListingController, OnbuyListingController, ListingPriceController, AvailabilitySweepController],
+  providers: [ListingService, AmazonListingService, EbayListingService, OnbuyListingService, OnbuyImagesService, ListingPriceService, AvailabilitySweepService],
   // EbayListingService is exported for the maSquare connector (McpModule), which runs research
   // through the same gather rules rather than keeping a second copy of them.
   exports: [ListingService, AvailabilitySweepService, EbayListingService],

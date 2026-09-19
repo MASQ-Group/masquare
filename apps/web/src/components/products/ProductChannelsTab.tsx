@@ -7,6 +7,7 @@ import { amazonListingApi, listingApi, type AmazonSweep, type ProductChannelRow 
 import { ChannelGroup, SweepResult } from './ChannelGroup';
 import { EbayListingPanel } from './EbayListingPanel';
 import { PlanEditor } from './ChannelPlanEditor';
+import { EditPriceModal } from '../channel-listings/EditPriceModal';
 import { useJobProgress } from '../../lib/useJobProgress';
 import { CHANNEL_GROUPS, channelGroupOf } from '../../lib/channelGroups';
 import { Flag } from '../common/Flag';
@@ -167,7 +168,17 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
             * other eBay groups by itself. Putting it in its own slab above the groups said the
             * same thing while implying eBay had two places to look.
             */}
-          {key === ebayHomeGroup && <div className="border-b border-n-100 p-3"><EbayListingPanel productId={productId} /></div>}
+          {key === ebayHomeGroup && (
+            <div className="border-b border-n-100 p-3">
+              <EbayListingPanel productId={productId} />
+              {/* The live eBay UK listing's price, changed on its own — without re-sending the whole
+                  listing the way "Update the eBay UK listing" does. */}
+              {(() => {
+                const uk = rows.find((r) => r.channelType === 'ebay' && isoOf(r.marketplace) === 'GB' && r.listing);
+                return uk ? <EbayUkPrice row={uk} productId={productId} onSaved={() => qc.invalidateQueries({ queryKey: ['listing', 'product-channels', productId] })} /> : null;
+              })()}
+            </div>
+          )}
           {rows
             /*
               * The eBay UK row is not drawn under the panel that IS eBay UK.
@@ -193,6 +204,37 @@ export function ProductChannelsTab({ productId }: { productId: string }) {
           ))}
         </ChannelGroup>
       ))}
+    </div>
+  );
+}
+
+/** "Change price" for the live eBay UK listing, beneath the panel that stands in for its row. */
+function EbayUkPrice({ row, productId, onSaved }: { row: ProductChannelRow; productId: string; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-[12.5px]">
+      <span className="text-n-600">
+        Live on eBay UK at <span className="mono font-semibold text-n-800">{row.listing?.currency} {row.listing?.price ?? '—'}</span>
+      </span>
+      <button
+        type="button"
+        className="inline-flex h-7 items-center rounded-md border border-teal-300 bg-n-0 px-2.5 text-[12px] font-semibold text-teal-700 hover:bg-teal-50"
+        onClick={() => setOpen(true)}
+      >
+        Change price
+      </button>
+      {open && row.listing && (
+        <EditPriceModal
+          productId={productId}
+          integrationId={row.integrationId}
+          channelName={row.name}
+          channelType="ebay"
+          sku={row.listing.channelSku}
+          countryIso="GB"
+          onClose={() => setOpen(false)}
+          onSaved={() => { setOpen(false); onSaved(); }}
+        />
+      )}
     </div>
   );
 }
