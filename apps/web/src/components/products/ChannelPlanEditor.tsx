@@ -381,8 +381,9 @@ export function PlanEditor({
               <CompetitorPrices productId={productId} integrationId={row.integrationId} />
             </>
           )}
-          {isOnBuy && opc && (
-            <OnbuyPriceSuggestion productId={productId} integrationId={row.integrationId} onUse={setPrice} />
+          {/* Pricing needs no OnBuy product, so a new one being created is priced the same way. */}
+          {isOnBuy && (opc || onbuyMode === 'create') && (
+            <OnbuyPriceSuggestion productId={productId} integrationId={row.integrationId} price={price} onUse={setPrice} />
           )}
           {/*
             * Listing against an existing OnBuy product: other sellers may be on it, so see their price.

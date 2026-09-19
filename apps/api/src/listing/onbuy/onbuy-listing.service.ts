@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { PricingService } from '../../pricing/pricing.service';
+import { profitEntry, type ProfitEntry } from '../price/listing-price';
 import { OnbuyImagesService } from './onbuy-images.service';
 import { parseOnbuyWinning, priceToBeat } from './onbuy-winning';
 import {
@@ -126,20 +127,30 @@ export class OnbuyListingService {
   }
 
   /**
-   * Step 2: the price that earns the platform's launch margin on OnBuy UK.
+   * Step 2: the price that earns the platform's launch margin on OnBuy UK — and, when a price is
+   * typed, what that price earns, with the breakeven beside it, as the Amazon and eBay steps show.
    *
    * Costed against the OnBuy sales channel the connection feeds — its currency, its VAT rules, its
    * own fee %. A suggestion: a person accepts it or types another, and the plan keeps what they chose.
    */
-  async pricing(productId: string, integrationId: string, companyIds?: string[]) {
+  async pricing(productId: string, integrationId: string, companyIds?: string[], atPriceCents?: number) {
     const integration = await this.onbuyIntegration(integrationId, companyIds);
-    if (!integration.targetSalesChannelId) {
-      return { suggestion: null, problems: ['This OnBuy connection is not linked to a sales channel, so there is no fee or currency to price with. Link one in Setup → Integrations.'] };
+    const channelId = integration.targetSalesChannelId;
+    if (!channelId) {
+      return { suggestion: null, breakevenNative: null, at: null, problems: ['This OnBuy connection is not linked to a sales channel, so there is no fee or currency to price with. Link one in Setup → Integrations.'] };
     }
     const settings = await this.prisma.platformSettings.findFirst({ select: { launchMarginPct: true } });
     const target = settings?.launchMarginPct != null ? Number(settings.launchMarginPct) : 20;
-    const r = await this.prices.priceForMargin(productId, integration.targetSalesChannelId, target);
-    return { suggestion: { ...r, targetMarginPct: target }, problems: r.problems };
+    const [r, breakeven] = await Promise.all([
+      this.prices.priceForMargin(productId, channelId, target),
+      this.prices.priceForMargin(productId, channelId, 0),
+    ]);
+    let at: ProfitEntry | null = null;
+    if (atPriceCents != null) {
+      const econ = await this.prices.listingEconomics([{ key: 'at', productId, salesChannelId: channelId, grossNative: atPriceCents / 100, currency: r.currency }]);
+      at = profitEntry(atPriceCents, econ.get('at'));
+    }
+    return { suggestion: { ...r, targetMarginPct: target }, breakevenNative: breakeven.priceNative, at, problems: r.problems };
   }
 
   /** Everything a listing needs, resolved once, so preview and publish cannot build different requests. */

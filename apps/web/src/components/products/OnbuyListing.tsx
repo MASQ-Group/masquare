@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Check, ExternalLink, Loader2, Search } from 'lucide-react';
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
+import { AlertTriangle, Ban, Calculator, Check, ExternalLink, Loader2, Search, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { Select } from '@masquare/ui';
 import { onbuyListingApi, type OnbuyCompetition } from '../../lib/api';
+import { eurAside } from '../../lib/format';
 import { useConfirm } from '../ConfirmProvider';
 import { ProductImage } from './ProductImage';
 
@@ -442,19 +443,35 @@ export function OnbuyPriceCheck({ productId, integrationId, savePlan, onUse, onC
   );
 }
 
-/** Step 2: the price at the platform's launch margin, from the same cost model as everywhere else. */
-export function OnbuyPriceSuggestion({ productId, integrationId, onUse }: {
+/**
+ * Step 2: the price at the platform's launch margin, from the same cost model as everywhere else —
+ * and what the price in the box earns, on request, as the Amazon and eBay steps show it.
+ */
+export function OnbuyPriceSuggestion({ productId, integrationId, price, onUse }: {
   productId: string;
   integrationId: string;
+  /** The value in the plan's price box, as typed. */
+  price: string;
   onUse: (price: string) => void;
 }) {
-  const { data, isLoading } = useQuery({
-    queryKey: ['onbuy', 'pricing', productId, integrationId],
-    queryFn: () => onbuyListingApi.pricing(productId, integrationId),
+  /** The price last asked about. Priced on "Recalculate profit", not per keystroke. */
+  const [evaluated, setEvaluated] = useState<number | null>(null);
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['onbuy', 'pricing', productId, integrationId, evaluated],
+    queryFn: () => onbuyListingApi.pricing(productId, integrationId, evaluated),
+    // Keep the suggestion on screen while a typed price is being priced.
+    placeholderData: keepPreviousData,
   });
   if (isLoading) return <p className="text-[12px] text-n-500">Working out a price…</p>;
   if (!data) return null;
   const s = data.suggestion;
+  const typed = price.trim() === '' ? NaN : Number(price.replace(',', '.'));
+  const typedCents = Number.isFinite(typed) && typed > 0 ? Math.round(typed * 100) : null;
+  const ccy = s?.currency ?? 'GBP';
+  const money = (cents: number) => `${ccy} ${(cents / 100).toFixed(2)}`;
+  const at = data.at;
+  // At or below breakeven is a loss on every unit, so it is called that rather than "low margin".
+  const belowBreakeven = typedCents != null && data.breakevenNative != null && typedCents <= Math.round(data.breakevenNative * 100);
 
   return (
     <div className="rounded-md border border-n-200 bg-n-25 px-3 py-2.5 text-[12px]">
@@ -475,6 +492,42 @@ export function OnbuyPriceSuggestion({ productId, integrationId, onUse }: {
         </div>
       ) : (
         <span className="text-n-600">No price could be suggested.</span>
+      )}
+      {data.breakevenNative != null && (
+        <div className="mt-0.5 text-[11.5px] text-n-400">breakeven {ccy} {data.breakevenNative.toFixed(2)}</div>
+      )}
+
+      {/* What the price in the box earns. */}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setEvaluated(typedCents)}
+          disabled={typedCents == null || isFetching}
+          title={typedCents == null ? 'Enter a price first' : undefined}
+          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-2.5 text-[12px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50"
+        >
+          <Calculator size={13} /> {isFetching && evaluated != null ? 'Recalculating…' : 'Recalculate profit'}
+        </button>
+        {/* Only for the price actually priced — a figure that lags the box looks current and is not. */}
+        {at && typedCents === at.priceCents && !isFetching && (
+          <span className={`inline-flex items-center gap-1.5 text-[12px] font-semibold ${at.aboveBreakeven ? 'text-teal-700' : 'text-danger'}`}>
+            <TrendingUp size={13} />
+            {money(at.profitCents)} profit · {at.marginPct}%
+            {eurAside(at.profitEurCents, ccy) && <span className="font-normal text-n-500">= {eurAside(at.profitEurCents, ccy)}</span>}
+          </span>
+        )}
+        {at && typedCents !== at.priceCents && (
+          <span className="text-[11.5px] text-n-400">Price changed since the last calculation.</span>
+        )}
+        {evaluated != null && !at && !isFetching && (
+          <span className="text-[11.5px] text-n-500">No profit could be worked out for that price.</span>
+        )}
+      </div>
+      {belowBreakeven && (
+        <div className="mt-1.5 flex items-start gap-1.5 rounded-md border border-danger-bd bg-danger-bg px-2.5 py-1.5 text-[12px] text-danger">
+          <Ban size={12} className="mt-0.5 shrink-0" />
+          <span>At or below breakeven ({ccy} {data.breakevenNative!.toFixed(2)}): every sale would lose money.</span>
+        </div>
       )}
       {s && (
         <div className="mt-1 text-[11.5px] text-n-500">
