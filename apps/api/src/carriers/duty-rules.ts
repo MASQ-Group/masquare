@@ -5,7 +5,9 @@
  *
  *  1. Will duties and taxes be charged on arrival? A fact about the destination: each country says
  *     whether it charges nothing, or charges above a value threshold in its own currency. Compared
- *     here against the goods' value, both in euro at the customs rate of the month.
+ *     here against the value customs judge it on — the goods plus the shipping, excluding VAT, as
+ *     outside the EU the threshold is applied to the CIF value — both in euro at the customs rate
+ *     of the month.
  *  2. Given that, who should pay? A business decision, written as an ordered list of rules. The first
  *     active rule whose every condition holds wins.
  *
@@ -40,7 +42,7 @@ export interface CountryDuty {
  */
 export function dutiesDue(
   country: CountryDuty | null,
-  goods: { value: number | null; currency: string | null },
+  goods: { value: number | null; currency: string | null; label?: string },
   rateToEur: (currency: string) => number | null,
 ): { due: boolean | null; reason: string } {
   if (!country || !country.mode) return { due: null, reason: 'the destination has no import threshold set' };
@@ -62,8 +64,25 @@ export function dutiesDue(
   const over = valueEur > thresholdEur;
   return {
     due: over,
-    reason: `goods ${goods.currency.toUpperCase()} ${goods.value.toFixed(2)} ${over ? 'above' : 'within'} the ${thresholdCurrency} ${threshold.toFixed(2)} threshold`,
+    reason: `${goods.label ?? 'goods'} ${goods.currency.toUpperCase()} ${goods.value.toFixed(2)} ${over ? 'above' : 'within'} the ${thresholdCurrency} ${threshold.toFixed(2)} threshold`,
   };
+}
+
+/**
+ * The value a threshold is judged on: the goods plus the shipping the buyer paid, excluding VAT.
+ *
+ * Outside the EU customs apply a threshold to the CIF value — cost, insurance and freight — so an
+ * order under it on the goods alone is still charged once its shipping is added. Null where there is
+ * nothing to compare.
+ */
+export function customsValue(lines: ReadonlyArray<{ netSalesAmount: number | null; shippingAmount: number | null }>): {
+  value: number | null;
+  label: 'goods' | 'goods and shipping';
+} {
+  const goods = lines.reduce((t, l) => t + (Number(l.netSalesAmount) || 0), 0);
+  const shipping = lines.reduce((t, l) => t + (Number(l.shippingAmount) || 0), 0);
+  const total = Math.round((goods + shipping) * 100) / 100;
+  return { value: total > 0 ? total : null, label: shipping > 0 ? 'goods and shipping' : 'goods' };
 }
 
 /** What is known about one shipment, for the rules to test. */
