@@ -360,9 +360,15 @@ export function PlanEditor({
           {isOnBuy && opc && (
             <OnbuyPriceSuggestion productId={productId} integrationId={row.integrationId} onUse={setPrice} />
           )}
-          {/* Listing against an existing OnBuy product: other sellers may be on it, so see their price. */}
+          {/*
+            * Listing against an existing OnBuy product: other sellers may be on it, so see their price.
+            * Once ours is listed, that is the live check on our listing — never the stock-0 placement,
+            * which is only for a product not on OnBuy from us yet.
+            */}
           {isOnBuy && opc && onbuyMode !== 'create' && (
-            <OnbuyPriceCheck productId={productId} integrationId={row.integrationId} savePlan={() => save.mutateAsync()} onUse={setPrice} onChanged={onSaved} />
+            plan?.status === 'LISTED'
+              ? <OnbuyCompetition productId={productId} integrationId={row.integrationId} onChanged={onSaved} />
+              : <OnbuyPriceCheck productId={productId} integrationId={row.integrationId} savePlan={() => save.mutateAsync()} onUse={setPrice} onChanged={onSaved} />
           )}
         </div>
       </Step>
