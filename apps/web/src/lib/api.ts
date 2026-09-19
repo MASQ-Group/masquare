@@ -643,6 +643,8 @@ export interface StoredAvailability {
 }
 export interface ChannelListingDetail {
   productId: string; sku: string; title: string; brand: string | null;
+  /** The product's featured image, or null where it has none. */
+  imageUrl?: string | null;
   masterStock: number | null; listedCount: number; channelCount: number; unitsLive: number; lastSyncedAt: string | null;
   channels: ChannelListingDetailChannel[];
 }
