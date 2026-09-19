@@ -64,6 +64,28 @@ export class OnbuyListingService {
     });
   }
 
+  /**
+   * Put a listing that has just gone live onto the channel's own list, so the listing cards — which
+   * read only what the channel sync has pulled — know it straight away and offer Edit price. The
+   * sync overwrites it with OnBuy's own figures when it next runs. Never fails the listing.
+   */
+  private async recordChannelListing(integrationId: string, productId: string, l: { sku: string; opc: string; price: number | null; stock: number | null }) {
+    try {
+      const integration = await this.prisma.channelIntegration.findUnique({ where: { id: integrationId }, select: { targetCompanyId: true } });
+      const data = {
+        productId, externalListingId: l.opc, listedPrice: l.price, listedQuantity: l.stock, currency: 'GBP',
+        listingStatus: 'ACTIVE', lastPushedAt: new Date(),
+      };
+      await this.prisma.channelListing.upsert({
+        where: { integrationId_channelSku_marketplace: { integrationId, channelSku: l.sku, marketplace: '' } },
+        create: { integrationId, companyId: integration?.targetCompanyId ?? null, channelSku: l.sku, marketplace: '', ...data },
+        update: data,
+      });
+    } catch (e: any) {
+      this.logger.warn(`OnBuy listing ${l.sku} is live but could not be added to the channel listings: ${e?.message ?? e}`);
+    }
+  }
+
   /** Placed on OnBuy at stock 0 to see the price to beat, and not yet listed for sale. */
   private static stagedOf(plan: { aspects: unknown; status?: string } | null): boolean {
     const staged = ((plan?.aspects as Record<string, unknown> | null) ?? {}).onbuyStaged;
@@ -234,6 +256,7 @@ export class OnbuyListingService {
         data: { status: 'LISTED', externalListingId: input.opc, channelSku: input.sku, listedAt: new Date(), updatedById: actorId ?? null },
       });
       if (plan && staged) await this.mergeAspects(plan.id, { onbuyStaged: undefined });
+      await this.recordChannelListing(integration.id, productId, { sku: input.sku!, opc: input.opc!, price: input.price, stock: input.stock });
     } catch (e: any) {
       this.logger.error(`OnBuy listing ${input.sku} created but the plan could not be updated: ${e?.message ?? e}`);
     }
@@ -595,6 +618,7 @@ export class OnbuyListingService {
       return { status: 'SUBMITTED', queue: { ...queue, activationError: why }, message: `The product was created (${opc}), but setting its price and stock failed: ${why}. It is tried again on the next check.` };
     }
     await this.mergeAspects(plan.id, { onbuyQueueId: undefined, onbuyActivationError: undefined }, { status: 'LISTED', externalListingId: opc, listedAt: new Date() });
+    if (input.sku && opc) await this.recordChannelListing(integration.id, plan.productId, { sku: input.sku, opc, price: input.price, stock: input.stock });
     this.logger.log(`OnBuy product created and listed: plan ${plan.id} as ${opc}`);
     return { status: 'LISTED', queue: { ...queue, queueId: null }, opc, message: `Created on OnBuy as ${opc} and listed.` };
   }
