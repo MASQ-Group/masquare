@@ -89,6 +89,15 @@ export function ProductsPage() {
   const [selectingAll, setSelectingAll] = useState(false);
   const [cols, setCols] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<Product | null | undefined>(undefined);
+  /**
+   * Open a product's card from the LATEST copy, not the row the list loaded. The card reads a product
+   * once, when it opens, and the list can be minutes old: research through the maSquare connector
+   * writes the eBay and OnBuy words while the page sits open, and the card then showed them empty.
+   * Falls back to the list's copy if the fetch fails, so a card always opens.
+   */
+  const openCard = (p: Product) => {
+    productsApi.get(p.id).then((fresh) => setEditing(fresh)).catch(() => setEditing(p));
+  };
   const [importOpen, setImportOpen] = useState(false);
   const [bulkEdit, setBulkEdit] = useState(false);
   const [exportProducts, setExportProducts] = useState<Product[] | null>(null);
@@ -363,7 +372,7 @@ export function ProductsPage() {
       )}
 
       {!effectiveGrid ? (
-        <ListView items={items} loading={isLoading} cols={cols} channels={channels.data ?? []} selected={selected} allSelected={allSelected} onToggleAll={toggleAll} onToggleOne={toggleOne} onEdit={setEditing} onDelete={(p) => setPendingDelete({ kind: 'single', product: p })} />
+        <ListView items={items} loading={isLoading} cols={cols} channels={channels.data ?? []} selected={selected} allSelected={allSelected} onToggleAll={toggleAll} onToggleOne={toggleOne} onEdit={openCard} onDelete={(p) => setPendingDelete({ kind: 'single', product: p })} />
       ) : (
         <GridView
           items={items}
@@ -371,7 +380,7 @@ export function ProductsPage() {
           channels={channels.data ?? []}
           selected={selected}
           onToggleOne={toggleOne}
-          onEdit={setEditing}
+          onEdit={openCard}
           rangeStart={(page - 1) * pageSize + 1}
           total={total}
         />

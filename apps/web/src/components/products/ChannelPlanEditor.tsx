@@ -107,7 +107,14 @@ export function PlanEditor({
   const opc = ((plan?.aspects as Record<string, string> | null) ?? {}).opc ?? null;
   // 'create' when OnBuy has no product with our barcode and we are making one.
   const onbuyMode = ((plan?.aspects as Record<string, string> | null) ?? {}).onbuyMode ?? null;
-  const [showCreate, setShowCreate] = useState(onbuyMode === 'create');
+  /**
+   * Creating on OnBuy: chosen here with "Create it on OnBuy", or implied by an OnBuy category picked on
+   * the OnBuy content tab while no OnBuy product is matched. That tab stores only the category — asking
+   * for it again here was the same choice twice.
+   */
+  const onbuyCreating = row.channelType === 'onbuy' && !opc
+    && (onbuyMode === 'create' || (!!plan?.categoryRef && onbuyMode !== 'match'));
+  const [showCreate, setShowCreate] = useState(onbuyCreating);
   const [editingPrice, setEditingPrice] = useState(false);
   // Held on OnBuy at stock 0 for a price check: it exists there, but it is not on sale yet.
   const onbuyHeld = row.channelType === 'onbuy' && !!((plan?.aspects as Record<string, unknown> | null) ?? {}).onbuyStaged && plan?.status !== 'LISTED';
@@ -212,7 +219,7 @@ export function PlanEditor({
   // so the match comes first; eBay has no equivalent and starts at the price.
   const priceSet = price.trim() !== '' && Number(price.replace(',', '.')) > 0;
   const termsSet = handling.trim() !== '' && (!isOnBuy || delivery.trim() !== '');
-  const matched = isAmazon ? !!asin : isOnBuy ? !!opc || (onbuyMode === 'create' && !!categoryRef) : true;
+  const matched = isAmazon ? !!asin : isOnBuy ? !!opc || (onbuyCreating && !!categoryRef) : true;
 
   const done = { match: matched, price: priceSet, terms: termsSet };
   const firstOpen = !done.match ? 1 : !done.price ? 2 : !done.terms ? 3 : 4;
@@ -325,7 +332,7 @@ export function PlanEditor({
           state={stateOf(1, done.match, true)}
           summary={opc
             ? <span className="mono text-teal-700">{opc}{categoryName ? ` · ${categoryName}` : ''}</span>
-            : onbuyMode === 'create' && categoryRef
+            : onbuyCreating && categoryRef
               ? <span className="text-teal-700">New OnBuy product · {categoryName || categoryRef}</span>
               : 'Not matched yet'}
           open={current === 1}
@@ -341,7 +348,7 @@ export function PlanEditor({
             <OnbuyCreateCategory
               productId={productId}
               integrationId={row.integrationId}
-              chosen={{ id: onbuyMode === 'create' ? categoryRef || null : null, tree: categoryName || null }}
+              chosen={{ id: onbuyCreating ? categoryRef || null : null, tree: categoryName || null }}
               onChoose={(id, tree) => chooseCreate.mutate({ id, tree })}
             />
           ) : (
@@ -382,7 +389,7 @@ export function PlanEditor({
             </>
           )}
           {/* Pricing needs no OnBuy product, so a new one being created is priced the same way. */}
-          {isOnBuy && (opc || onbuyMode === 'create') && (
+          {isOnBuy && (opc || onbuyCreating) && (
             <OnbuyPriceSuggestion productId={productId} integrationId={row.integrationId} price={price} onUse={setPrice} />
           )}
           {/*
@@ -525,7 +532,7 @@ export function PlanEditor({
             savePlan={() => save.mutateAsync()}
             onUseSku={useSku}
           />
-        ) : isOnBuy && onbuyMode === 'create' && !opc ? (
+        ) : isOnBuy && onbuyCreating ? (
           <OnbuyCreatePreview
             productId={productId}
             integrationId={row.integrationId}
