@@ -12,6 +12,7 @@ import { addressFromEbayOrder, addressFromOnBuyOrder } from '../sales-transactio
 import type { ProgressSink } from '../jobs/jobs.service';
 import { configFieldKeys, getConnector, getMarketplace, listConnectors, secretFieldKeys, type ConnectorDef } from './connectors';
 import { CreateIntegrationDto, UpdateIntegrationDto } from './dto/integration.dto';
+import { request as httpsRequest } from 'node:https';
 
 /**
  * Where a human goes to read the page an Amazon finding came from.
@@ -2123,7 +2124,18 @@ export class IntegrationsService implements OnModuleInit {
     const qs = query.toString();
     // The site on a write comes from the connection too, never from the caller.
     const body = opts.body && typeof opts.body === 'object' ? { ...(opts.body as Record<string, unknown>), site_id: siteId } : opts.body;
-    const res = await fetch(`${base}${path}${qs ? `?${qs}` : ''}`, {
+    const url = `${base}${path}${qs ? `?${qs}` : ''}`;
+    /**
+     * A GET with a JSON body — OnBuy's Check Winning takes its SKUs that way. `fetch` refuses a body
+     * on a GET outright, so this one call goes through Node's own https client, which does not.
+     */
+    if (method === 'GET' && body !== undefined) {
+      const r = await IntegrationsService.getWithBody(url, { Authorization: token, 'Content-Type': 'application/json' }, JSON.stringify(body), 20000);
+      let json: any = null;
+      try { json = JSON.parse(r.text); } catch { /* left null */ }
+      return { ok: r.status >= 200 && r.status < 300, status: r.status, json, mode, siteId };
+    }
+    const res = await fetch(url, {
       method,
       headers: { Authorization: token, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -2131,6 +2143,30 @@ export class IntegrationsService implements OnModuleInit {
     });
     const json: any = await res.json().catch(() => null);
     return { ok: res.ok, status: res.status, json, mode, siteId };
+  }
+
+  /** A GET carrying a request body, which `fetch` will not send. */
+  private static getWithBody(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<{ status: number; text: string }> {
+    return new Promise((resolve, reject) => {
+      const req = httpsRequest(url, { method: 'GET', headers: { ...headers, 'Content-Length': Buffer.byteLength(body) } }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
+      });
+      req.setTimeout(timeoutMs, () => req.destroy(new Error('OnBuy did not answer in time')));
+      req.on('error', reject);
+      req.end(body);
+    });
+  }
+
+  /**
+   * Whether our listings are winning on OnBuy, and the price they are up against.
+   *
+   * Only for SKUs we list: OnBuy has no call that shows other sellers' prices on a product we do
+   * not list. Up to 1,000 SKUs a request, per OnBuy.
+   */
+  async onbuyCheckWinning(integrationId: string, skus: string[]) {
+    return this.onbuyCall(integrationId, 'GET', '/listings/check-winning', { body: { skus: skus.filter(Boolean).slice(0, 1000) } });
   }
 
   /** OnBuy catalogue products carrying these barcodes. Up to 50 per call, per OnBuy. */

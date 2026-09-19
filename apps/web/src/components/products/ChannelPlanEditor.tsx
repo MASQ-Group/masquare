@@ -6,7 +6,7 @@ import { Select } from '@masquare/ui';
 import { listingApi, type ProductChannelRow } from '../../lib/api';
 import { AmazonCandidates } from './AmazonCandidates';
 import { AmazonOfferPreview } from './AmazonOfferPreview';
-import { OnbuyCandidates, OnbuyCreateCategory, OnbuyCreatePreview, OnbuyDeliveryTemplateSelect, OnbuyListingPreview, OnbuyPriceSuggestion } from './OnbuyListing';
+import { OnbuyCandidates, OnbuyCompetition, OnbuyCreateCategory, OnbuyCreatePreview, OnbuyDeliveryTemplateSelect, OnbuyListingPreview, OnbuyPriceCheck, OnbuyPriceSuggestion } from './OnbuyListing';
 import { CompetitorPrices } from './CompetitorPrices';
 import { LaunchPrice } from './LaunchPrice';
 import { currencyForMarketplace, isZeroDecimalCurrency, limitPriceInput } from '../../lib/currencies';
@@ -107,6 +107,8 @@ export function PlanEditor({
   // 'create' when OnBuy has no product with our barcode and we are making one.
   const onbuyMode = ((plan?.aspects as Record<string, string> | null) ?? {}).onbuyMode ?? null;
   const [showCreate, setShowCreate] = useState(onbuyMode === 'create');
+  // Held on OnBuy at stock 0 for a price check: it exists there, but it is not on sale yet.
+  const onbuyHeld = row.channelType === 'onbuy' && !!((plan?.aspects as Record<string, unknown> | null) ?? {}).onbuyStaged && plan?.status !== 'LISTED';
 
   const isAmazon = row.channelType === 'amazon';
   const isEbay = row.channelType === 'ebay';
@@ -228,8 +230,9 @@ export function PlanEditor({
   const stateOf = (n: number, isDone: boolean, unlocked: boolean): StepState =>
     isDone && current !== n ? 'done' : unlocked ? 'current' : 'locked';
 
-  // Already selling here: the sequence is over, and what matters is the live listing's state.
-  if (row.listing) {
+  // Already selling here: the sequence is over, and what matters is the live listing's state. A
+  // listing held at stock 0 for a price check is on OnBuy but not for sale, so its steps stay open.
+  if (row.listing && !onbuyHeld) {
     return (
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2.5 text-[12.5px] text-teal-900">
@@ -251,6 +254,7 @@ export function PlanEditor({
             onUseSku={useSku}
           />
         )}
+        {isOnBuy && <OnbuyCompetition productId={productId} integrationId={row.integrationId} onChanged={onSaved} />}
       </div>
     );
   }
@@ -355,6 +359,10 @@ export function PlanEditor({
           )}
           {isOnBuy && opc && (
             <OnbuyPriceSuggestion productId={productId} integrationId={row.integrationId} onUse={setPrice} />
+          )}
+          {/* Listing against an existing OnBuy product: other sellers may be on it, so see their price. */}
+          {isOnBuy && opc && onbuyMode !== 'create' && (
+            <OnbuyPriceCheck productId={productId} integrationId={row.integrationId} savePlan={() => save.mutateAsync()} onUse={setPrice} onChanged={onSaved} />
           )}
         </div>
       </Step>

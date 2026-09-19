@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { PricingService } from '../../pricing/pricing.service';
 import { OnbuyImagesService } from './onbuy-images.service';
+import { parseOnbuyWinning, priceToBeat } from './onbuy-winning';
 import {
   buildOnbuyProductBody, missingForOnbuyProduct, parseOnbuyCategories, readOnbuyProductSubmit, readOnbuyQueue,
   requiredOnbuyFeatures, suggestOnbuyCategory, type OnbuyProductInput,
@@ -61,6 +62,12 @@ export class OnbuyListingService {
     return this.prisma.productChannelPlan.findFirst({
       where: { productId, integrationId: integration.id, marketplace: integration.marketplace ?? '', deletedAt: null },
     });
+  }
+
+  /** Placed on OnBuy at stock 0 to see the price to beat, and not yet listed for sale. */
+  private static stagedOf(plan: { aspects: unknown; status?: string } | null): boolean {
+    const staged = ((plan?.aspects as Record<string, unknown> | null) ?? {}).onbuyStaged;
+    return !!staged && plan?.status !== 'LISTED';
   }
 
   private static opcOf(plan: { aspects: unknown } | null): string | null {
@@ -152,12 +159,16 @@ export class OnbuyListingService {
       }
     }
 
+    // Held at stock 0 for the price check: the listing exists, and listing it means sending price and stock.
+    const staged = OnbuyListingService.stagedOf(plan);
+    const action = staged && identity?.action === 'listed' ? 'activate' : identity?.action ?? null;
     return {
       input,
       missing,
-      action: identity?.action ?? null,
+      action,
+      staged,
       refusal: identity?.action === 'refuse' ? identity.reason : null,
-      listed: identity?.action === 'listed' ? identity.reason : plan?.status === 'LISTED' ? 'This plan is recorded as listed on OnBuy.' : null,
+      listed: action === 'listed' ? identity!.reason : plan?.status === 'LISTED' ? 'This plan is recorded as listed on OnBuy.' : null,
       identityNote,
       liveWritesEnabled: await this.liveWritesEnabled(),
       create: missing.length ? null : buildOnbuyCreateBody(input),
@@ -198,9 +209,13 @@ export class OnbuyListingService {
       existing: (Array.isArray(existing.json?.results) ? existing.json.results : []).map((l: any) => ({ sku: String(l?.sku ?? ''), opc: l?.opc ? String(l.opc) : null })),
     });
     if (identity.action === 'refuse') throw new ConflictException(identity.reason);
-    if (identity.action === 'listed') throw new ConflictException(identity.reason);
+    const staged = OnbuyListingService.stagedOf(plan);
+    if (identity.action === 'listed' && !staged) throw new ConflictException(identity.reason);
 
-    const created = await this.integrations.onbuyCreateListings(integration.id, buildOnbuyCreateBody(input));
+    // Held at stock 0 for the price check: it already exists, so only its price and stock are sent.
+    const created = staged && identity.action === 'listed'
+      ? { ok: true, status: 200, json: { results: [{ success: true, sku: input.sku, opc: input.opc }] }, mode: existing.mode, siteId: existing.siteId }
+      : await this.integrations.onbuyCreateListings(integration.id, buildOnbuyCreateBody(input));
     const result = created.ok ? readOnbuyCreateResult(created.json, input.sku!) : null;
     if (!created.ok || !result?.ok) {
       const why = created.ok ? result?.message : onbuyErrorMessage(created.json, created.status);
@@ -218,6 +233,7 @@ export class OnbuyListingService {
         where: { productId, integrationId: integration.id, marketplace: integration.marketplace ?? '', deletedAt: null },
         data: { status: 'LISTED', externalListingId: input.opc, channelSku: input.sku, listedAt: new Date(), updatedById: actorId ?? null },
       });
+      if (plan && staged) await this.mergeAspects(plan.id, { onbuyStaged: undefined });
     } catch (e: any) {
       this.logger.error(`OnBuy listing ${input.sku} created but the plan could not be updated: ${e?.message ?? e}`);
     }
@@ -234,6 +250,134 @@ export class OnbuyListingService {
       url: `https://www.onbuy.com/gb/search/?query=${encodeURIComponent(input.opc!)}`,
     };
   }
+
+  // ------------------------------------------------------------------ the price to beat
+
+  /** Our SKUs for this product on this OnBuy connection: the plan's, and any the channel sync found. */
+  private async ourSkus(productId: string, integration: { id: string; marketplace: string | null }) {
+    const [plan, listings] = await Promise.all([
+      this.plan(productId, integration),
+      this.prisma.channelListing.findMany({ where: { productId, integrationId: integration.id }, select: { channelSku: true } }),
+    ]);
+    const skus = new Set(listings.map((l) => l.channelSku).filter(Boolean));
+    if (plan?.channelSku && (plan.status === 'LISTED' || OnbuyListingService.stagedOf(plan))) skus.add(plan.channelSku);
+    return { plan, skus: [...skus] };
+  }
+
+  /**
+   * Whether our OnBuy listings for this product are winning, the price to beat, and what we would earn
+   * at each price — so the decision is made with the margin in view, not just the number.
+   */
+  async competition(productId: string, integrationId: string, companyIds?: string[]) {
+    const integration = await this.onbuyIntegration(integrationId, companyIds);
+    const { plan, skus } = await this.ourSkus(productId, integration);
+    if (!skus.length) return { rows: [], staged: false, message: 'This product has no listing on OnBuy yet, so there is nothing to compare.', liveWritesEnabled: await this.liveWritesEnabled() };
+
+    const r = await this.integrations.onbuyCheckWinning(integration.id, skus);
+    if (!r.ok) throw new BadRequestException(`OnBuy refused the price check: ${onbuyErrorMessage(r.json, r.status)}`);
+    const winning = parseOnbuyWinning(r.json);
+
+    // What each candidate price earns, from the same economics as everywhere else.
+    const cells: Array<{ key: string; productId: string; salesChannelId: string; grossNative: number | null; currency: string }> = [];
+    for (const w of winning) {
+      const t = priceToBeat(w);
+      for (const [k, v] of [['price', w.price], ['beat', t.beat], ['match', t.match]] as const) {
+        if (integration.targetSalesChannelId && v != null) {
+          cells.push({ key: `${w.sku}|${k}`, productId, salesChannelId: integration.targetSalesChannelId, grossNative: v, currency: 'GBP' });
+        }
+      }
+    }
+    const econ = cells.length ? await this.prices.listingEconomics(cells) : new Map();
+    const at = (sku: string, k: string) => {
+      const e = econ.get(`${sku}|${k}`);
+      return e ? { profitEur: e.profitEur, marginPct: e.marginPct } : null;
+    };
+
+    return {
+      rows: winning.map((w) => {
+        const t = priceToBeat(w);
+        return { ...w, beat: t.beat, match: t.match, reason: t.reason, economics: { price: at(w.sku, 'price'), beat: at(w.sku, 'beat'), match: at(w.sku, 'match') } };
+      }),
+      staged: OnbuyListingService.stagedOf(plan),
+      message: winning.length ? null : 'OnBuy returned nothing for these SKUs yet — a new listing can take a few minutes to appear.',
+      liveWritesEnabled: await this.liveWritesEnabled(),
+      noEconomics: !integration.targetSalesChannelId,
+    };
+  }
+
+  /** Send a new price for one of our OnBuy listings of this product. Stock is left as it is. */
+  async setPrice(productId: string, integrationId: string, opts: { sku?: string; price?: number; confirm?: boolean }, actorId?: string, companyIds?: string[]) {
+    if (!(await this.liveWritesEnabled())) throw new ConflictException('Live listing is switched off on this platform.');
+    if (opts.confirm !== true) throw new BadRequestException('Confirm the new price to send it to OnBuy.');
+    const price = Math.round(Number(opts.price) * 100) / 100;
+    if (!(price > 0)) throw new BadRequestException('A price above zero is needed.');
+
+    const integration = await this.onbuyIntegration(integrationId, companyIds);
+    const { plan, skus } = await this.ourSkus(productId, integration);
+    if (!opts.sku || !skus.includes(opts.sku)) throw new BadRequestException('That SKU is not one of this product’s OnBuy listings.');
+
+    const r = await this.integrations.onbuyUpdateBySku(integration.id, { listings: [{ sku: opts.sku, price }] });
+    const row = (Array.isArray(r.json?.results) ? r.json.results : [])[0];
+    if (!r.ok || row?.success === false) {
+      return { ok: false as const, message: `OnBuy refused the price: ${r.ok ? String(row?.message ?? 'no reason given') : onbuyErrorMessage(r.json, r.status)}` };
+    }
+    if (plan && plan.channelSku === opts.sku) {
+      await this.prisma.productChannelPlan.update({ where: { id: plan.id }, data: { offerPriceCents: Math.round(price * 100), updatedById: actorId ?? null } });
+    }
+    await this.prisma.channelListing.updateMany({ where: { productId, integrationId: integration.id, channelSku: opts.sku }, data: { listedPrice: price } });
+    this.logger.log(`OnBuy price set: ${opts.sku} → GBP ${price.toFixed(2)}`);
+    return { ok: true as const, sku: opts.sku, price };
+  }
+
+  /**
+   * Place our listing on OnBuy at stock 0 — inactive, nobody can buy it — so Check Winning can say
+   * what price to beat before we go live.
+   *
+   * OnBuy has no call that shows other sellers' prices on a product we do not list, so the listing
+   * has to exist first. It is marked as held on the plan: every stock push skips it, and "List on
+   * OnBuy" sends only its final price and stock rather than creating it again.
+   */
+  async stageForPriceCheck(productId: string, integrationId: string, opts: { confirm?: boolean }, actorId?: string, companyIds?: string[]) {
+    if (!(await this.liveWritesEnabled())) throw new ConflictException('Live listing is switched off on this platform.');
+    if (opts.confirm !== true) throw new BadRequestException('Confirm to place the listing on OnBuy at stock 0.');
+
+    const integration = await this.onbuyIntegration(integrationId, companyIds);
+    const { product, plan, input } = await this.buildInput(productId, integration);
+    if (!plan) throw new BadRequestException('Save the OnBuy plan first.');
+    // Everything a listing needs except stock — held at zero on purpose.
+    const missing = missingForOnbuyListing({ ...input, stock: 1 });
+    if (missing.length) throw new BadRequestException(`Cannot check the price yet — still needed: ${missing.join(', ')}. A provisional price is enough; it is changed before going live.`);
+
+    const codes = [product.ean, product.upc].map((c) => (c ?? '').trim()).filter(Boolean);
+    const search = await this.integrations.onbuySearchByCodes(integration.id, codes);
+    if (!search.ok || !parseOnbuySearch(search.json, codes).some((c) => c.opc === input.opc)) {
+      throw new ConflictException(`Could not confirm OnBuy product ${input.opc} still carries this product's barcode. Find it on OnBuy again (step 1).`);
+    }
+
+    const existing = await this.integrations.onbuyListingsBySku(integration.id, [input.sku!]);
+    if (!existing.ok) throw new BadRequestException(`Could not check whether SKU ${input.sku} is in use on OnBuy: ${onbuyErrorMessage(existing.json, existing.status)}`);
+    const identity = onbuyIdentity({
+      sku: input.sku!, opc: input.opc!, planStatus: plan.status,
+      existing: (Array.isArray(existing.json?.results) ? existing.json.results : []).map((l: any) => ({ sku: String(l?.sku ?? ''), opc: l?.opc ? String(l.opc) : null })),
+    });
+    if (identity.action === 'refuse') throw new ConflictException(identity.reason);
+    if (plan.status === 'LISTED') throw new ConflictException('This product is already listed on OnBuy — check the winning price on the listing instead.');
+
+    if (identity.action === 'create') {
+      const created = await this.integrations.onbuyCreateListings(integration.id, buildOnbuyCreateBody({ ...input, stock: 0 }));
+      const result = created.ok ? readOnbuyCreateResult(created.json, input.sku!) : null;
+      if (!created.ok || !result?.ok) {
+        return { ok: false as const, message: `OnBuy refused the listing: ${created.ok ? result?.message : onbuyErrorMessage(created.json, created.status)}` };
+      }
+      // Zero again by SKU, in case OnBuy applied the stock sent with the create.
+      await this.integrations.onbuyUpdateBySku(integration.id, { listings: [{ sku: input.sku, stock: 0 }] });
+    }
+    await this.mergeAspects(plan.id, { onbuyStaged: new Date().toISOString() }, { channelSku: input.sku, updatedById: actorId ?? null });
+    this.logger.log(`OnBuy listing held at stock 0 for a price check: ${input.sku} on ${input.opc}`);
+
+    return { ok: true as const, competition: await this.competition(productId, integrationId, companyIds) };
+  }
+
 
   // ------------------------------------------------------------------ creating a new OnBuy product
 

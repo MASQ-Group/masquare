@@ -79,6 +79,36 @@ export class OnbuyListingController {
     return this.svc.checkProgress(productId, body?.integrationId ?? '', [companyId]);
   }
 
+  /** Whether our OnBuy listings for this product are winning, and the price to beat. Reads only. */
+  @Get('products/:productId/competition')
+  competition(@Param('productId') productId: string, @Query('integrationId') integrationId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.competition(productId, integrationId, companyIds);
+  }
+
+  /** Send a new price for one of our OnBuy listings. */
+  @Post('products/:productId/price')
+  @RequireCapability('marketplace_write')
+  setPrice(
+    @Param('productId') productId: string,
+    @Body() body: { integrationId?: string; sku?: string; price?: number; confirm?: boolean },
+    @CurrentUser() user: AuthUser,
+    @WriteCompany() companyId: string,
+  ) {
+    return this.svc.setPrice(productId, body?.integrationId ?? '', { sku: body?.sku, price: body?.price, confirm: body?.confirm }, user.sub, [companyId]);
+  }
+
+  /** Place the listing on OnBuy at stock 0 — not buyable — to see the price to beat before going live. */
+  @Post('products/:productId/price-check')
+  @RequireCapability('marketplace_write')
+  priceCheck(
+    @Param('productId') productId: string,
+    @Body() body: { integrationId?: string; confirm?: boolean },
+    @CurrentUser() user: AuthUser,
+    @WriteCompany() companyId: string,
+  ) {
+    return this.svc.stageForPriceCheck(productId, body?.integrationId ?? '', { confirm: body?.confirm }, user.sub, [companyId]);
+  }
+
   @Post('products/:productId/publish')
   @RequireCapability('marketplace_write')
   publish(
