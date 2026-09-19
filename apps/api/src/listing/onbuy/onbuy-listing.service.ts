@@ -344,8 +344,9 @@ export class OnbuyListingService {
     const integration = await this.onbuyIntegration(integrationId, companyIds);
     const { product, plan, input } = await this.buildInput(productId, integration);
     if (!plan) throw new BadRequestException('Save the OnBuy plan first.');
-    // Everything a listing needs except stock — held at zero on purpose.
-    const missing = missingForOnbuyListing({ ...input, stock: 1 });
+    // Everything a listing needs except stock (held at zero on purpose) and the delivery template
+    // (OnBuy uses the account default until the one chosen in step 3 is sent at listing).
+    const missing = missingForOnbuyListing(input, { forPriceCheck: true });
     if (missing.length) throw new BadRequestException(`Cannot check the price yet — still needed: ${missing.join(', ')}. A provisional price is enough; it is changed before going live.`);
 
     const codes = [product.ean, product.upc].map((c) => (c ?? '').trim()).filter(Boolean);
