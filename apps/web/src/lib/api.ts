@@ -3482,6 +3482,8 @@ export interface OrderFedexOptions {
   services: Array<{ value: string; label: string }>;
   items: OrderCustomsItem[];
   suggestedParcelKg: number | null;
+  /** One per unit, from each product's package weight and dimensions; null where the catalogue has none. */
+  suggestedParcels: Array<{ weightKg: number | null; lengthCm: number | null; widthCm: number | null; heightCm: number | null; sku: string | null }>;
   batteryProducts: Array<{ sku: string; battery: string }>;
   bookings: CustomerShipmentBooking[];
 }

@@ -30,8 +30,25 @@ export interface OrderLineForBooking {
     countryOfOrigin: string | null;
     packageWeightKg: number | string | { toString(): string } | null;
     productWeightKg: number | string | { toString(): string } | null;
+    /** The product's own shipping package, as the catalogue holds it. Optional: older callers omit it. */
+    packageLengthCm?: number | string | { toString(): string } | null;
+    packageWidthCm?: number | string | { toString(): string } | null;
+    packageHeightCm?: number | string | { toString(): string } | null;
   } | null;
 }
+
+/** A parcel as the booking screen starts it: weight in kg, sides in cm, null where unknown. */
+export interface SuggestedParcel {
+  weightKg: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  /** Whose package this is, so the screen can say which box is which. */
+  sku: string | null;
+}
+
+/** Beyond this many units, one box per unit is a list nobody wants to scroll; one combined parcel instead. */
+export const MAX_SUGGESTED_PARCELS = 10;
 
 const num = (v: unknown): number | null => {
   if (v == null || v === '') return null;
@@ -76,6 +93,38 @@ export function orderCustomsItems(
       hsCode: normaliseHsCode(l.product?.hsCode) ?? (l.product?.hsCode?.trim() || null),
     };
   });
+}
+
+/**
+ * The parcels to start from, from the catalogue's package data.
+ *
+ * A product's package weight and dimensions describe the box it ships in, so the honest first
+ * suggestion is one parcel per unit, each with its own product's box. One unit is simply that box.
+ * The weights are the same per-unit figures the customs lines are built from, so the two totals
+ * agree from the start — FedEx refuses an export where they do not.
+ *
+ * One combined parcel, weighed but not measured, where one-per-unit cannot be offered: a fractional
+ * quantity (goods sold by length or weight are not boxes) or more units than MAX_SUGGESTED_PARCELS.
+ * Whoever packs it replaces the guess either way; the screen can also merge the boxes into one.
+ */
+export function suggestedParcels(lines: readonly OrderLineForBooking[]): SuggestedParcel[] {
+  const units = lines.map((l) => num(l.quantity) ?? 1);
+  const whole = units.every((q) => Number.isInteger(q) && q >= 1);
+  const count = units.reduce((t, q) => t + q, 0);
+  const unitKg = (l: OrderLineForBooking) => num(l.product?.packageWeightKg) ?? num(l.product?.productWeightKg);
+
+  if (!whole || count > MAX_SUGGESTED_PARCELS || count === 0) {
+    const kg = round3(lines.reduce((t, l, i) => t + (unitKg(l) ?? 0) * units[i], 0));
+    return [{ weightKg: kg > 0 ? kg : null, lengthCm: null, widthCm: null, heightCm: null, sku: null }];
+  }
+
+  return lines.flatMap((l, i) => Array.from({ length: units[i] }, () => ({
+    weightKg: unitKg(l),
+    lengthCm: num(l.product?.packageLengthCm),
+    widthCm: num(l.product?.packageWidthCm),
+    heightCm: num(l.product?.packageHeightCm),
+    sku: l.sku,
+  })));
 }
 
 /**

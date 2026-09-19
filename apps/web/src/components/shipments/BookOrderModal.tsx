@@ -25,7 +25,7 @@ import { BookingDocuments } from './BookingDocuments';
  */
 
 interface Line { sku?: string; description: string; quantity: string; value: string; currency: string; weightKg: string; countryOfOrigin: string; hsCode: string; weightKnown?: boolean }
-interface Parcel { weightKg: string; lengthCm: string; widthCm: string; heightCm: string; batteryType: string }
+interface Parcel { weightKg: string; lengthCm: string; widthCm: string; heightCm: string; batteryType: string; sku?: string | null }
 
 /** The battery cases the platform can declare — Section II, packed in or with equipment. */
 const BATTERY_OPTIONS = [
@@ -84,7 +84,11 @@ export function BookOrderModal({ transactionId, transactionRef, contextLine, onC
       })));
     }
     if (!parcels) {
-      setParcels([{ weightKg: options.suggestedParcelKg != null ? String(options.suggestedParcelKg) : '', lengthCm: '', widthCm: '', heightCm: '', batteryType: '' }]);
+      // The catalogue's own boxes: weight AND dimensions, one per unit. Empty where it has none.
+      const str = (v: number | null) => (v != null ? String(v) : '');
+      setParcels(options.suggestedParcels.map((p) => ({
+        weightKg: str(p.weightKg), lengthCm: str(p.lengthCm), widthCm: str(p.widthCm), heightCm: str(p.heightCm), batteryType: '', sku: p.sku,
+      })));
     }
   }, [options]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -309,7 +313,9 @@ export function BookOrderModal({ transactionId, transactionRef, contextLine, onC
                   <div className="flex flex-col gap-2">
                     {ps.map((p, i) => (
                       <div key={i} className="grid grid-cols-12 items-center gap-2">
-                        <span className="col-span-12 text-[12px] font-semibold text-n-700 sm:col-span-1">#{i + 1}</span>
+                        <span className="col-span-12 truncate text-[12px] font-semibold text-n-700 sm:col-span-1" title={p.sku ? `${p.sku}’s package, from the catalogue` : undefined}>
+                          #{i + 1}{p.sku && <span className="mono block truncate text-[10.5px] font-normal text-n-500">{p.sku}</span>}
+                        </span>
                         <input className={`${field} mono col-span-3 sm:col-span-2`} value={p.weightKg} inputMode="decimal" placeholder="kg" onChange={(e) => setParcel(i, { weightKg: e.target.value })} />
                         <input className={`${field} mono col-span-3 sm:col-span-1`} value={p.lengthCm} inputMode="decimal" placeholder="L" onChange={(e) => setParcel(i, { lengthCm: e.target.value })} />
                         <input className={`${field} mono col-span-3 sm:col-span-1`} value={p.widthCm} inputMode="decimal" placeholder="W" onChange={(e) => setParcel(i, { widthCm: e.target.value })} />
@@ -336,6 +342,27 @@ export function BookOrderModal({ transactionId, transactionRef, contextLine, onC
                   >
                     <Plus size={14} /> Add parcel
                   </button>
+                  {/* Several products in one carton: their weights add up, but the carton's size is not
+                      anything the catalogue knows, so the sides are left for whoever packed it. */}
+                  {ps.length > 1 && (
+                    <button
+                      type="button"
+                      className="ml-2 mt-2 inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 px-3 text-[12.5px] font-semibold text-n-700 hover:bg-n-50"
+                      title="Merge these parcels into one box: weights added, dimensions to type"
+                      onClick={() => {
+                        setParcels([{
+                          weightKg: String(r3(parcelsKg)), lengthCm: '', widthCm: '', heightCm: '',
+                          batteryType: ps.find((p) => p.batteryType)?.batteryType ?? '', sku: null,
+                        }]);
+                        setChosenQuote(null);
+                      }}
+                    >
+                      Pack into one box
+                    </button>
+                  )}
+                  {ps.some((p) => !p.lengthCm || !p.widthCm || !p.heightCm) && (
+                    <p className="mt-1.5 text-[11.5px] text-n-500">A parcel without its size is rated on weight alone; FedEx may re-bill it by size after it is measured.</p>
+                  )}
                   {options.batteryProducts.length > 0 && !hasBatteries && (
                     <p className="mt-2 text-[12px] text-warning">
                       The catalogue says {options.batteryProducts.map((b) => `${b.sku} (${b.battery})`).join(', ')} carries batteries. Declare them on the parcel they are in.
