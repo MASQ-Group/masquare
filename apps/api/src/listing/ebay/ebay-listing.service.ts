@@ -21,9 +21,9 @@ import {
   descriptionStore, groupSpecs, normaliseExtras, resolveGlance, withDescriptionStore,
   type DescriptionExtras, type EbayDescriptionStore,
 } from './description-extras';
-import { profitAt, suggestPrice } from './ebay-pricing';
+import { PricingService } from '../../pricing/pricing.service';
+import { toEbayOutcome, type EbayPriceOutcome, type EbayPriceSuggestion } from './ebay-pricing';
 import { fitFeeModel, type FeeModel, type SettledOrder } from './ebay-fee-model';
-import { PricingFxService } from '../../pricing/fx.service';
 import { ActivityService } from '../../activity/activity.service';
 import { diffRecords } from '../../activity/diff';
 import { PRODUCT_FIELD_LABELS } from '../../activity/product-fields';
@@ -52,7 +52,7 @@ export class EbayListingService {
     private readonly integrations: IntegrationsService,
     private readonly manufacturer: ManufacturerSourceService,
     private readonly web: WebResearchService,
-    private readonly fx: PricingFxService,
+    private readonly prices: PricingService,
     private readonly activity: ActivityService,
   ) {}
 
@@ -854,7 +854,6 @@ export class EbayListingService {
       where: { id: productId, deletedAt: null },
       select: {
         id: true, mainSku: true, title: true, ebayTitle: true, manufacturerSku: true,
-        purchaseCostAmount: true, purchaseCostCurrency: true,
         brand: { select: { name: true } },
       },
     });
@@ -866,64 +865,60 @@ export class EbayListingService {
     });
 
     /**
-     * The fee rate, measured from settled orders where the evidence allows and falling back to
-     * eBay's published rates where it does not. Returned with the answer, with its provenance, so
-     * the screen shows what a figure was worked out from rather than presenting it as fact.
-     *
-     * An explicit env override wins over both: a server told the rate is not asked to guess it.
+     * Priced exactly as every other listing screen prices: the platform's economics on the sales
+     * channel this connection feeds — its fee, its VAT rules (the UK £135 line), the product's cost and
+     * the shipping into its country. eBay had its own model here (published fee, VAT always taken, no
+     * shipping, margin on net), and suggested £155 for IT33248 where OnBuy, set up identically,
+     * suggested another figure entirely. One model, one answer.
      */
-    const measured = await this.measuredFeeModel(row);
-    const overridePct = process.env.EBAY_FEE_PCT?.trim();
-    const overrideFixed = process.env.EBAY_FIXED_FEE_PENCE?.trim();
-    const useMeasured = measured?.ok === true && !overridePct && !overrideFixed;
-
-    const assumptions = {
-      vatRate: numberFromEnv('EBAY_VAT_RATE', 0.2),
-      feePct: useMeasured && measured.ok ? measured.feePct : numberFromEnv('EBAY_FEE_PCT', 0.128),
-      fixedFeeCents: useMeasured && measured.ok
-        ? measured.fixedFeeCents
-        : Math.round(numberFromEnv('EBAY_FIXED_FEE_PENCE', 30)),
-      /** Where those two numbers came from, so the screen never implies a rate card is a fact. */
-      feeSource: useMeasured ? ('measured' as const) : ('published' as const),
-      /** Orders behind a measured rate, or the reason there is no measurement. */
-      measuredFrom: useMeasured && measured.ok ? measured.sampleSize : null,
-      measuredWhyNot: measured && !measured.ok ? measured.reason : null,
-    };
-    const targetMarginPct = args.targetMarginPct ?? 20;
+    const settings = await this.prisma.platformSettings.findFirst({ select: { launchMarginPct: true } });
+    const targetMarginPct = args.targetMarginPct ?? (settings?.launchMarginPct != null ? Number(settings.launchMarginPct) : 20);
+    const channelId = row.targetSalesChannelId;
 
     /**
-     * The listing sells in the marketplace's currency, and the cost is recorded in whatever we
-     * bought in. Pricing a EUR cost into a GBP listing without converting produces a confident
-     * number in no currency at all â€” roughly 15% wrong here, in the direction of underpricing.
+     * eBay's fee measured from this account's settled orders, shown BESIDE the channel's fee rather
+     * than used: the channel's fee is what every other screen and every booked sale uses, and a
+     * measurement that disagrees with it is a reason to correct the channel, not to price differently.
      */
-    const listingCurrency = EBAY_CURRENCY[(row.marketplace ?? 'GB').toUpperCase()] ?? 'GBP';
-    const costCurrency = product.purchaseCostCurrency ?? 'EUR';
-    const rawCostCents = product.purchaseCostAmount != null ? Math.round(Number(product.purchaseCostAmount) * 100) : null;
+    const measured = await this.measuredFeeModel(row);
 
-    let costCents = rawCostCents;
-    let costProblem: string | null = null;
-    if (rawCostCents != null && costCurrency.toUpperCase() !== listingCurrency) {
-      const rate = await this.fx.toEur(listingCurrency); // EUR per unit of the listing currency
-      const costToEur = await this.fx.toEur(costCurrency);
-      if (rate && costToEur) costCents = Math.round((rawCostCents * costToEur) / rate);
-      else {
-        costCents = null;
-        costProblem = `The cost is in ${costCurrency} and this listing sells in ${listingCurrency}, and today's exchange rate could not be fetched.`;
-      }
+    let currency = 'GBP';
+    let costCents: number | null = null;
+    let suggestion: EbayPriceSuggestion;
+    let at: EbayPriceOutcome | null = null;
+    let current: EbayPriceOutcome | null = null;
+    let basis: { channelName: string | null; feePct: number; vatPct: number; shippingServiceName: string | null } | null = null;
+
+    if (!channelId) {
+      suggestion = { ok: false, reason: 'This eBay connection is not linked to a sales channel, so there is no fee or VAT rule to price with. Link one in Setup → Integrations.' };
+    } else {
+      const r = await this.prices.priceForMargin(productId, channelId, targetMarginPct);
+      currency = r.currency;
+      const wanted = [r.priceNative != null ? Math.round(r.priceNative * 100) : null, args.atPriceCents ?? null, plan?.offerPriceCents ?? null];
+      const econ = await this.prices.listingEconomics(
+        [...new Set(wanted.filter((c): c is number => c != null && c > 0))]
+          .map((cents) => ({ key: String(cents), productId, salesChannelId: channelId, grossNative: cents / 100, currency })),
+      );
+      const outcome = (cents: number | null): EbayPriceOutcome | null => (cents != null ? toEbayOutcome(cents, econ.get(String(cents))) : null);
+      const suggested = outcome(wanted[0]);
+      suggestion = suggested
+        ? { ok: true, outcome: suggested, targetMarginPct }
+        : { ok: false, reason: r.problems.length ? `Cannot suggest a price: ${r.problems.join('; ')}.` : 'No price reaches that margin once fees and tax are taken.' };
+      at = outcome(wanted[1]);
+      current = outcome(wanted[2]);
+      const shown = suggested ?? at ?? current;
+      costCents = shown?.costCents ?? null;
+      const channel = await this.prisma.salesChannel.findFirst({ where: { id: channelId }, select: { name: true } });
+      basis = { channelName: channel?.name ?? null, feePct: r.inputs.feePct, vatPct: r.inputs.vatPct, shippingServiceName: r.inputs.shippingServiceName };
+      if (r.problems.length && suggested) suggestion = { ...suggestion, problems: r.problems } as EbayPriceSuggestion;
     }
 
-    const inputs = { ...assumptions, costCents: costCents ?? 0 };
-
-    const suggestion = costCents == null
-      ? {
-        ok: false as const,
-        reason: costProblem ?? 'This product has no purchase cost recorded, so there is nothing to work a margin out from.',
-      }
-      : suggestPrice(inputs, targetMarginPct);
-
-    /** Only meaningful once a cost is known; otherwise the "profit" would just be the price. */
-    const at = args.atPriceCents != null && costCents != null ? profitAt(args.atPriceCents, inputs) : null;
-    const current = plan?.offerPriceCents != null && costCents != null ? profitAt(plan.offerPriceCents, inputs) : null;
+    const assumptions = {
+      basis,
+      /** eBay's fee as fitted to this account's own settled orders, for comparison with the channel's. */
+      measured: measured?.ok ? { feePct: measured.feePct, fixedFeeCents: measured.fixedFeeCents, sampleSize: measured.sampleSize } : null,
+      measuredWhyNot: measured && !measured.ok ? measured.reason : null,
+    };
 
     /** Words, because the probe showed eBay's catalogue does not carry these barcodes. */
     const query = [product.brand?.name, product.manufacturerSku].filter(Boolean).join(' ').trim();
@@ -947,9 +942,9 @@ export class EbayListingService {
       title: product.ebayTitle ?? product.title,
       manufacturerSku: product.manufacturerSku,
       /** The currency the LISTING sells in â€” every figure below is in it. */
-      currency: listingCurrency,
-      /** What the cost was recorded in, so a converted figure does not look like the original. */
-      costCurrency,
+      currency,
+      /** The platform costs in EUR, so the cost below is converted into the listing's currency. */
+      costCurrency: 'EUR',
       costCents,
       assumptions,
       targetMarginPct,

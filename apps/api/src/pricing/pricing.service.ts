@@ -3,9 +3,12 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingFxService } from './fx.service';
 import { BulkPricingDto, IndividualPricingDto } from './dto/pricing.dto';
+import { lowestPriceForMargin, type ThresholdSolve } from './threshold-price';
 
 const ACTIVE = { deletedAt: null };
 const round = (v: number, dp = 2) => Number(v.toFixed(dp));
+/** Up to `dp` places, ignoring float dust — 162.01 must not become 162.02. */
+const ceilTo = (v: number, dp = 2) => Math.ceil(v * 10 ** dp - 1e-6) / 10 ** dp;
 /** The platform's volumetric divisor, matching the sales-transaction shipping estimate. */
 const VOLUMETRIC_DIVISOR = 5000;
 
@@ -122,6 +125,27 @@ export class PricingService {
       profitEur: round(profit),
       // Margin against what the buyer pays, matching the transaction module's base.
       marginPct: grossEur > 0 ? round((profit / grossEur) * 100) : 0,
+    };
+  }
+
+  /**
+   * The pieces `lowestPriceForMargin` needs for one channel: the rates either side of its VAT line,
+   * which applies at a price, and the first price over the line. `withVat` builds the cost inputs at
+   * a given rate, so Individual, Bulk and the listing screens all solve the same way.
+   */
+  private thresholdSolve(channel: any, rate: number, target: number, withVat: (vatPct: number) => CostInputs): ThresholdSolve {
+    const vatAt = (grossEur: number) => this.resolveTax(channel, grossEur / rate).vatPct;
+    let firstAboveEur: number | null = null;
+    if (channel?.vatThresholdEnabled && channel.vatThresholdAmount != null) {
+      const below = channel.vatBelowThresholdPct != null ? Number(channel.vatBelowThresholdPct) : 0;
+      // The line is on the net price; the first gross over it is one minor unit above line × (1 + VAT).
+      firstAboveEur = (ceilTo(Number(channel.vatThresholdAmount) * (1 + below / 100)) + 0.01) * rate;
+    }
+    return {
+      rates: [vatAt(0.01), vatAt(1e12)],
+      vatAt,
+      solveAt: (vatPct) => this.solveGrossEur(target, withVat(vatPct)),
+      firstAboveEur,
     };
   }
 
@@ -669,10 +693,10 @@ export class PricingService {
    * The price that earns a target margin on one sales channel, in the channel's own currency.
    *
    * The same cost, shipping, fee and tax resolution as listingEconomics — the fee is the channel's own
-   * `generalSalesFeePct` — solved the other way round. Solved twice because the VAT rule can depend on
-   * the price itself (the UK £135 consignment threshold): the first answer decides which side of the
-   * threshold the price sits, and the second is costed with that side's rate. Where the two sides
-   * disagree the higher price is taken, so the suggestion never lands under the target margin.
+   * `generalSalesFeePct` — solved the other way round. The VAT rule can depend on the price itself
+   * (the UK £135 consignment threshold), so each side's rate is solved and only an answer that lands on
+   * its own side counts; see `threshold-price`. Every listing screen prices through here, so eBay UK
+   * and OnBuy UK set up alike suggest the same price.
    *
    * Says what it could not resolve rather than quoting a price built on a zero it assumed.
    */
@@ -720,17 +744,16 @@ export class PricingService {
     };
     if (rate == null) return { priceNative: null, currency, marginPct: null, profitEur: null, inputs: { ...empty, costEur, feePct }, problems };
 
-    // Solve at a nominal low price, then again at the answer's own side of any threshold.
-    const first = this.solveGrossEur(targetMarginPct, inputsAt(1));
-    if (first == null) return { priceNative: null, currency, marginPct: null, profitEur: null, inputs: { ...empty, costEur, feePct }, problems: [...problems, 'no price reaches that margin once fees and tax are taken'] };
-    const atFirst = inputsAt(first / rate);
-    const second = this.solveGrossEur(targetMarginPct, atFirst) ?? first;
-    const grossEur = Math.max(first, second);
-    const final = inputsAt(grossEur / rate);
+    const solvedEur = lowestPriceForMargin(this.thresholdSolve(channel, rate, targetMarginPct, (vatPct) => ({ ...inputsAt(1), vatPct })));
+    if (solvedEur == null) return { priceNative: null, currency, marginPct: null, profitEur: null, inputs: { ...empty, costEur, feePct }, problems: [...problems, 'no price reaches that margin once fees and tax are taken'] };
+    // Rounded UP to the listing's smallest unit: rounding down would land a hair under the target.
+    const priceNative = ceilTo(solvedEur / rate, currency === 'JPY' ? 0 : 2);
+    const grossEur = priceNative * rate;
+    const final = inputsAt(priceNative);
     const econ = this.economics(grossEur, final);
 
     return {
-      priceNative: round(grossEur / rate, currency === 'JPY' ? 0 : 2),
+      priceNative,
       currency,
       marginPct: econ.marginPct,
       profitEur: econ.profitEur,
@@ -791,28 +814,23 @@ export class PricingService {
           shippingEur: dto.shippingCostEur ?? ship.costEur ?? 0,
           importPct: dto.importPct ?? 0,
           feePct,
-          // Threshold channels need a price to resolve VAT, and the price is what we are
-          // solving for. Solve at the below-threshold rate, then re-solve if that answer
-          // turns out to sit above the threshold. JP/AU carry their verified effective rates.
+          // The under-the-line rate for now; a threshold channel is re-costed at the side the
+          // solved price lands on below. JP/AU carry their verified effective rates.
           vatPct: tax.vatPct,
           pointsPct: tax.pointsPct,
           taxType: tax.taxType,
         };
 
-        let gross = this.solveGrossEur(dto.targetMarginPct, inputs);
-        if (gross != null && channel.vatThresholdEnabled && channel.vatThresholdAmount != null) {
-          const netNative = (gross / (1 + inputs.vatPct / 100)) * rate;
-          if (netNative > Number(channel.vatThresholdAmount)) {
-            const above = channel.vatAboveThresholdPct != null ? Number(channel.vatAboveThresholdPct) : 0;
-            gross = this.solveGrossEur(dto.targetMarginPct, { ...inputs, vatPct: above });
-            inputs.vatPct = above;
-          }
-        }
-        if (gross == null) return { priceNative: null, profitEur: null, marginPct: null, reason: 'Margin unreachable after tax and fees' };
+        // Each side of a VAT line solved at its own rate, keeping only an answer on its own side.
+        const solved = lowestPriceForMargin(this.thresholdSolve(channel, rate, dto.targetMarginPct, (vatPct) => ({ ...inputs, vatPct })));
+        if (solved == null) return { priceNative: null, profitEur: null, marginPct: null, reason: 'Margin unreachable after tax and fees' };
+        const priceNative = ceilTo(solved / rate, ccy === 'JPY' ? 0 : 2);
+        const gross = priceNative * rate;
+        inputs.vatPct = this.resolveTax(channel, priceNative).vatPct;
 
         const econ = this.economics(gross, inputs);
         return {
-          priceNative: round(gross / rate, ccy === 'JPY' ? 0 : 2),
+          priceNative,
           profitEur: econ.profitEur,
           marginPct: econ.marginPct,
           reason: null as string | null,

@@ -1,94 +1,46 @@
 /**
- * What an eBay listing should sell for, and what it earns at any price.
+ * A listing price's economics in the shape the eBay pricing panel reads, in the listing's currency.
  *
- * eBay's arithmetic differs from Amazon's in two ways that matter, which is why this is its own
- * module rather than a parameter to the repricing engine:
+ * The economics come from PricingService — the calculation every listing screen, Individual Pricing
+ * and a booked sale share: the sales channel's own fee, its VAT rules (the UK £135 line), the cost and
+ * the shipping. eBay used to carry its own model here, and suggested a different price from OnBuy for
+ * the same product on two channels set up alike. This only turns the euro figures into the listing's
+ * currency, at the rate the economics used — the price in euro over the price in the listing's
+ * currency — so the lines add up to the price shown.
  *
- *   - eBay's final value fee is charged on the WHOLE amount the buyer pays, and there is a fixed fee
- *     per order on top. A percentage-only model quietly overstates profit on cheap items, which is
- *     exactly where the margin is thinnest.
- *   - A UK price is what the buyer pays, VAT included. Profit is earned on the net, so a margin
- *     worked out against the sticker price flatters itself by a fifth.
+ * Margin is profit over the price the buyer pays, as everywhere else on the platform.
  *
- * Margin here means profit as a share of NET revenue — what is left after VAT, fees and cost, over
- * what we actually keep. Quoted that way because it is the number the business runs on; a markup on
- * cost would read higher for the same money.
- *
- * PURE. Every rate is supplied — nothing is assumed about a marketplace here.
+ * PURE.
  */
+import type { ListingEconomics } from '../../pricing/pricing.service';
 
-export interface EbayCostInputs {
-  /** What the unit costs us, excluding VAT, in minor units. */
-  costCents: number;
-  /** 0.2 for the UK's 20%. */
-  vatRate: number;
-  /** eBay's final value fee as a fraction of the buyer's total — 0.128 for 12.8%. */
-  feePct: number;
-  /** The per-order fixed fee, in minor units. */
-  fixedFeeCents: number;
-}
-
-export interface PriceOutcome {
+export interface EbayPriceOutcome {
   priceCents: number;
-  /** VAT owed on that price. */
+  /** VAT taken from that price — none over the UK £135 line. */
   vatCents: number;
   feesCents: number;
+  shippingCents: number;
   costCents: number;
   profitCents: number;
-  /** Profit as a percentage of net revenue. Negative when the price does not cover the costs. */
+  /** Profit as a percentage of the price. Negative when the price does not cover the costs. */
   marginPct: number;
 }
 
-/** What one price actually earns, once VAT, eBay and the cost of the unit are taken out. */
-export function profitAt(priceCents: number, inputs: EbayCostInputs): PriceOutcome {
-  const price = Math.max(0, Math.round(priceCents));
-  const netCents = Math.round(price / (1 + inputs.vatRate));
-  const vatCents = price - netCents;
-  const feesCents = Math.round(price * inputs.feePct) + inputs.fixedFeeCents;
-  const profitCents = netCents - feesCents - inputs.costCents;
-  return {
-    priceCents: price,
-    vatCents,
-    feesCents,
-    costCents: inputs.costCents,
-    profitCents,
-    // Against net revenue, so the percentage means what the business means by it.
-    marginPct: netCents > 0 ? Math.round((profitCents / netCents) * 1000) / 10 : 0,
-  };
-}
-
-export type PriceSuggestion =
-  | { ok: true; outcome: PriceOutcome; targetMarginPct: number }
+export type EbayPriceSuggestion =
+  | { ok: true; outcome: EbayPriceOutcome; targetMarginPct: number; problems?: string[] }
   | { ok: false; reason: string };
 
-/**
- * The price that earns `targetMarginPct` of net revenue.
- *
- * Solving rather than guessing-and-checking, because the fee depends on the price it is helping to
- * choose. With `P` the price, `v` VAT, `f` the fee rate, `F` the fixed fee, `c` the cost and `m` the
- * target margin:
- *
- *     P/(1+v) − (P·f + F) − c  =  m · P/(1+v)
- *     P · [ (1−m)/(1+v) − f ]  =  F + c
- *
- * The bracket is what one pound of price contributes after VAT, fees and the margin are taken out.
- * At a high enough fee or margin it reaches zero or turns negative — no price satisfies it, and the
- * honest answer is to say so rather than return an enormous number.
- */
-export function suggestPrice(inputs: EbayCostInputs, targetMarginPct: number): PriceSuggestion {
-  const m = targetMarginPct / 100;
-  if (!(m < 1)) return { ok: false, reason: 'a margin of 100% or more cannot be reached at any price' };
-  if (inputs.costCents < 0) return { ok: false, reason: 'the cost is not known' };
-
-  const contribution = (1 - m) / (1 + inputs.vatRate) - inputs.feePct;
-  if (contribution <= 0) {
-    return {
-      ok: false,
-      reason: `eBay's fees and VAT leave nothing towards a ${targetMarginPct}% margin — no price reaches it`,
-    };
-  }
-
-  // Rounded UP: rounding down would land a penny under the margin that was asked for.
-  const priceCents = Math.ceil((inputs.fixedFeeCents + inputs.costCents) / contribution);
-  return { ok: true, outcome: profitAt(priceCents, inputs), targetMarginPct };
+export function toEbayOutcome(priceCents: number, e: ListingEconomics | undefined): EbayPriceOutcome | null {
+  if (!e || e.profitEur == null || e.marginPct == null || !e.priceEur || !(priceCents > 0)) return null;
+  const eurPerUnit = e.priceEur / (priceCents / 100);
+  const cents = (eur: number | undefined) => Math.round(((eur ?? 0) / eurPerUnit) * 100);
+  return {
+    priceCents,
+    vatCents: cents(e.vatEur),
+    feesCents: cents(e.feeEur),
+    shippingCents: cents(e.shippingEur),
+    costCents: cents(e.costEur),
+    profitCents: cents(e.profitEur),
+    marginPct: e.marginPct,
+  };
 }
