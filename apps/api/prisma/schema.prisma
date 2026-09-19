@@ -927,6 +927,18 @@ model Product {
   keyFeatures      String[] @map("key_features")
   searchKeywords   String?  @map("search_keywords")
 
+  /**
+   * OnBuy's own buyer-facing words, used when the platform CREATES a product on OnBuy (the first
+   * seller's content becomes OnBuy's product page). Written through the maSquare connector like the
+   * eBay content, and kept apart from it: OnBuy takes a 150-character title and up to five summary
+   * points, and its description is sent as basic HTML.
+   */
+  onbuyTitle         String?  @map("onbuy_title")
+  onbuyDescriptionHtml String? @map("onbuy_description_html")
+  onbuySummaryPoints String[] @default([]) @map("onbuy_summary_points")
+  /// The model that wrote the OnBuy content, when Claude did — sent to OnBuy as its AI-content flag.
+  onbuyAiModel       String?  @map("onbuy_ai_model")
+
   // ---- Technical facts (drive channel eligibility) ------------------------
   // Chosen from a controlled vocabulary, never typed. A rule cannot reliably read "220-240V ~50Hz"
   // out of free text, and a compliance answer that varies by who typed it is not an answer. Every
@@ -1233,6 +1245,15 @@ model ProductChannelPlan {
   /// The eBay description's per-product parts: series, at-a-glance picks, In the box, Care, FAQ and
   /// the group for each item specific. See listing/ebay/description-extras.ts.
   descriptionExtras Json? @map("description_extras")
+
+  /**
+   * OnBuy: researched answers to the category's features and technical details, as
+   * Record<fieldName, AspectRecord> — the same evidence shape eBay keeps in `aspects`. A column of
+   * its own because OnBuy's `aspects` already holds its listing state (opc, queue).
+   */
+  specifics         Json?
+  /// OnBuy product safety (GPSR) text: { warnings, usageInstructions, ingredients }.
+  safetyContent     Json? @map("safety_content")
 
   merchantLocationKey String? @map("merchant_location_key")
   fulfillmentPolicyId String? @map("fulfillment_policy_id")

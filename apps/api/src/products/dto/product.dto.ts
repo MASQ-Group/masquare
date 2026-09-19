@@ -59,13 +59,17 @@ export class CreateProductDto {
   @IsOptional() @IsNumber() packageHeightCm?: number | null;
 
   // ---- Listing content --------------------------------------------------
-  // Only eBay and Shopify ever show any of this; Amazon and OnBuy display their own catalogue copy.
+  // eBay and Shopify show this; Amazon displays its own catalogue copy. OnBuy has its own fields below,
+  // used only when the platform creates a product on OnBuy.
   @IsOptional() @IsString() ebayTitle?: string | null;
   /** One or two sentences for a buyer deciding in seconds — shown above the full description. */
   @IsOptional() @IsString() shortDescription?: string | null;
   @IsOptional() @IsString() descriptionHtml?: string | null;
   @IsOptional() @IsArray() @IsString({ each: true }) keyFeatures?: string[];
   @IsOptional() @IsString() searchKeywords?: string | null;
+  @IsOptional() @IsString() onbuyTitle?: string | null;
+  @IsOptional() @IsString() onbuyDescriptionHtml?: string | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) onbuySummaryPoints?: string[];
 
   // ---- Technical facts --------------------------------------------------
   // References into the compliance vocabulary, never free text: these are compared by machine, and

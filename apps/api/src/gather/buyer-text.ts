@@ -43,15 +43,20 @@ export const TEXT_LIMITS = { intro: 3000, feature: 240, features: 12, title: 80 
 export function checkBuyerText(
   content: { title?: string | null; intro?: string | null; features?: readonly string[] },
   forbiddenCodes: readonly string[],
+  /** The marketplace the words are for: its name in the messages, and its title limit. eBay by default. */
+  opts: { marketplace?: string; titleMax?: number; maxFeatures?: number } = {},
 ): BuyerTextProblem[] {
   const problems: BuyerTextProblem[] = [];
+  const market = opts.marketplace ?? 'eBay';
+  const titleMax = opts.titleMax ?? TEXT_LIMITS.title;
+  const maxFeatures = opts.maxFeatures ?? TEXT_LIMITS.features;
 
   const check = (where: string, text: string) => {
     if (TAG.test(text)) problems.push({ where, problem: 'contains HTML — write plain prose, the platform does the formatting' });
-    if (TOP_RATED.test(text)) problems.push({ where, problem: 'calls the seller "top rated", which eBay refuses — it shows its own badge' });
-    if (EMAIL.test(text)) problems.push({ where, problem: 'contains an email address, which eBay does not allow in a description' });
-    if (URL_LIKE.test(text)) problems.push({ where, problem: 'contains a web address, which eBay does not allow in a description' });
-    if (PHONE.test(text)) problems.push({ where, problem: 'contains what looks like a phone number, which eBay does not allow in a description' });
+    if (TOP_RATED.test(text)) problems.push({ where, problem: `calls the seller "top rated", which ${market} refuses — it shows its own badge` });
+    if (EMAIL.test(text)) problems.push({ where, problem: `contains an email address, which ${market} does not allow in a description` });
+    if (URL_LIKE.test(text)) problems.push({ where, problem: `contains a web address, which ${market} does not allow in a description` });
+    if (PHONE.test(text)) problems.push({ where, problem: `contains what looks like a phone number, which ${market} does not allow in a description` });
 
     for (const code of forbiddenCodes) {
       const wanted = code.trim();
@@ -65,7 +70,7 @@ export function checkBuyerText(
 
   const title = content.title?.trim() ?? '';
   if (title) {
-    if (title.length > TEXT_LIMITS.title) problems.push({ where: 'title', problem: `is ${title.length} characters; eBay refuses more than ${TEXT_LIMITS.title}` });
+    if (title.length > titleMax) problems.push({ where: 'title', problem: `is ${title.length} characters; ${market} refuses more than ${titleMax}` });
     check('title', title);
   }
 
@@ -76,8 +81,8 @@ export function checkBuyerText(
   }
 
   const features = content.features ?? [];
-  if (features.length > TEXT_LIMITS.features) {
-    problems.push({ where: 'features', problem: `has more than ${TEXT_LIMITS.features} lines; keep the ones that sell the product` });
+  if (features.length > maxFeatures) {
+    problems.push({ where: 'features', problem: `has more than ${maxFeatures} lines; keep the ones that sell the product` });
   }
   features.forEach((f, i) => {
     const line = f?.trim() ?? '';

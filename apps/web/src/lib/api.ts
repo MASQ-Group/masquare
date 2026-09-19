@@ -972,6 +972,12 @@ export interface Product {
   descriptionHtml: string | null;
   keyFeatures: string[];
   searchKeywords: string | null;
+  /** OnBuy's own content, used when the platform creates the product on OnBuy. */
+  onbuyTitle: string | null;
+  onbuyDescriptionHtml: string | null;
+  onbuySummaryPoints: string[];
+  /** Set when Claude wrote the OnBuy content; sent to OnBuy as its AI-content flag. */
+  onbuyAiModel: string | null;
 
   // Technical facts, chosen from the compliance vocabulary rather than typed. The id is what the
   // form binds to; the resolved option rides along so a label can be shown without a second call.
@@ -2406,15 +2412,49 @@ export interface OnbuyQueueState {
   status: string | null;
 }
 
+/** One field of the product's OnBuy category, with its stored answer and where that came from. */
+export type OnbuyContentField =
+  | { kind: 'feature'; name: string; featureId: string; required: boolean; options: { id: string; name: string }[]; current: EbayAspectProvenance | null }
+  | { kind: 'technical'; name: string; detailId: string; group: string; units: string[]; current: EbayAspectProvenance | null };
+
+export interface OnbuySafety { warnings: string | null; usageInstructions: string | null; ingredients: string | null }
+
+/** The OnBuy content tab. */
+export interface OnbuyContentView {
+  integrationId: string;
+  category: { id: string; name: string | null } | null;
+  fields: OnbuyContentField[];
+  fieldsProblem: string | null;
+  /** Required features with no usable answer. */
+  missing: string[];
+  rejected: { name: string; value: string; why: string }[];
+  safety: OnbuySafety;
+  /** The specification table OnBuy gets, from the specifics verified for eBay. */
+  productData: { label: string; value: string; group?: string }[];
+  /** Pages already accepted for this product's eBay research, which Claude reads first. */
+  reusablePages: number;
+}
+
+export const onbuyContentApi = {
+  view: (productId: string, integrationId?: string) =>
+    api.get<OnbuyContentView>(`/listing/onbuy/products/${productId}/content`, { params: integrationId ? { integrationId } : {} }).then((r) => r.data),
+  save: (productId: string, body: { integrationId: string; edits?: Record<string, string | null>; safety?: Partial<OnbuySafety> }) =>
+    api.post<OnbuyContentView>(`/listing/onbuy/products/${productId}/content`, body).then((r) => r.data),
+  confirm: (productId: string, integrationId: string, name: string) =>
+    api.post<OnbuyContentView>(`/listing/onbuy/products/${productId}/content/confirm`, { integrationId, name }).then((r) => r.data),
+};
+
 export interface OnbuyCreatePreview {
   product: {
     categoryId: string | null; name: string | null; description: string | null; summaryPoints: string[];
     brandName: string | null; productCode: string | null; mpn: string | null; uid: string; imageCount: number;
+    featureCount: number; technicalCount: number; productDataCount: number; safetyDocumentCount: number;
+    safety: Record<string, string> | null; aiModel: string | null;
   };
   listing: OnbuyListingInput;
   missing: string[];
-  requiredFeatures: string[];
-  note: string | null;
+  /** Researched answers OnBuy cannot take — off its option list, or in a unit it does not use. Not sent. */
+  cannotSend: { name: string; value: string; why: string }[];
   existing: OnbuyCandidate | null;
   queue: OnbuyQueueState;
   liveWritesEnabled: boolean;
@@ -2447,7 +2487,7 @@ export interface EbayAspectProvenance {
   value: string;
   heldBack: boolean;
   verifiedAt: string | null;
-  origins: { kind: 'user' | 'manufacturer' | 'amazon' | 'ebay'; value: string; url: string | null; label: string | null; at: string | null }[];
+  origins: { kind: 'user' | 'manufacturer' | 'amazon' | 'ebay' | 'web'; value: string; url: string | null; label: string | null; at: string | null }[];
 }
 
 /**

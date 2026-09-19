@@ -214,7 +214,7 @@ export function OnbuyCreatePreview({ productId, integrationId, savePlan, onChang
         </p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-n-600">Creates a new OnBuy product from our marketplace content, with our listing on it. Nothing is sent until you confirm.</span>
+          <span className="text-n-600">Creates a new OnBuy product from the product’s OnBuy content, with our listing on it. Nothing is sent until you confirm.</span>
           <div className="flex-1" />
           <button type="button" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 font-semibold text-n-700 hover:border-teal-300 disabled:opacity-50" disabled={preview.isFetching} onClick={recheck}>
             {preview.isFetching && <Loader2 size={13} className="animate-spin" />} Check again
@@ -228,7 +228,11 @@ export function OnbuyCreatePreview({ productId, integrationId, savePlan, onChang
           OnBuy now has this product ({p.existing.opc}). Choose it in step 1 and list against it instead.
         </p>
       )}
-      {p.note && <p className="text-[12px] text-amber-800">{p.note}</p>}
+      {p.cannotSend.length > 0 && !waiting && (
+        <p className="text-[12px] text-amber-800">
+          Not sent — OnBuy would not take these answers: {p.cannotSend.map((r) => `${r.name} “${r.value}” (${r.why})`).join('; ')}. Fix them on the OnBuy content tab.
+        </p>
+      )}
       {p.missing.length > 0 && !waiting && (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-900">Still needed: {p.missing.join(', ')}.</p>
       )}
@@ -239,7 +243,11 @@ export function OnbuyCreatePreview({ productId, integrationId, savePlan, onChang
         <dt className="text-n-500">Brand · barcode</dt><dd className="text-n-800">{p.product.brandName ?? '—'} · <span className="mono">{p.product.productCode ?? '—'}</span>{p.product.mpn ? <> · MPN <span className="mono">{p.product.mpn}</span></> : null}</dd>
         <dt className="text-n-500">Category</dt><dd className="mono text-n-800">{p.product.categoryId ?? '—'}</dd>
         <dt className="text-n-500">Description</dt><dd className="text-n-800">{p.product.description ? `${p.product.description.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140)}…` : '—'}</dd>
-        <dt className="text-n-500">Key features</dt><dd className="text-n-800">{p.product.summaryPoints.length ? `${Math.min(5, p.product.summaryPoints.length)} sent` : '—'}</dd>
+        <dt className="text-n-500">Summary points</dt><dd className="text-n-800">{p.product.summaryPoints.length ? `${Math.min(5, p.product.summaryPoints.length)} sent` : '—'}</dd>
+        <dt className="text-n-500">Category fields</dt><dd className="text-n-800">{p.product.featureCount} features · {p.product.technicalCount} technical details</dd>
+        <dt className="text-n-500">Spec table</dt><dd className="text-n-800">{p.product.productDataCount ? `${p.product.productDataCount} rows, from the specifics verified for eBay` : '—'}</dd>
+        <dt className="text-n-500">Safety</dt><dd className="text-n-800">{[p.product.safety ? Object.keys(p.product.safety).length + ' text parts' : null, p.product.safetyDocumentCount ? `${p.product.safetyDocumentCount} documents` : null].filter(Boolean).join(' · ') || '—'}</dd>
+        <dt className="text-n-500">AI content</dt><dd className="text-n-800">{p.product.aiModel ? `marked as AI-written (${p.product.aiModel})` : 'not marked — written by a person'}</dd>
         <dt className="text-n-500">Images</dt><dd className="text-n-800">{p.product.imageCount ? `${p.product.imageCount}, converted to OnBuy-sized JPEGs when sent` : '—'}</dd>
         <dt className="text-n-500">Listing</dt><dd className="text-n-800"><span className="mono">{p.listing.sku ?? '—'}</span> · GBP {p.listing.price?.toFixed(2) ?? '—'} · stock {p.listing.stock ?? 0} · template <span className="mono">{p.listing.deliveryTemplateId ?? '—'}</span></dd>
       </dl>

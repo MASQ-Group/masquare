@@ -4,11 +4,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { PricingService } from '../../pricing/pricing.service';
 import { profitEntry, type ProfitEntry } from '../price/listing-price';
-import { OnbuyImagesService } from './onbuy-images.service';
+import { OnbuyImagesService } from './onbuy-images.service';
+import { OnbuyContentService } from './onbuy-content.service';
 import { parseOnbuyWinning, priceToBeat } from './onbuy-winning';
 import {
   buildOnbuyProductBody, missingForOnbuyProduct, parseOnbuyCategories, readOnbuyProductSubmit, readOnbuyQueue,
-  requiredOnbuyFeatures, suggestOnbuyCategory, type OnbuyProductInput,
+  suggestOnbuyCategory, type OnbuyProductInput,
 } from './onbuy-product';
 import {
   ONBUY_BOOST_LEVELS, buildOnbuyActivateBody, buildOnbuyCreateBody, missingForOnbuyListing, onbuyErrorMessage, onbuyIdentity,
@@ -38,6 +39,7 @@ export class OnbuyListingService {
     private readonly integrations: IntegrationsService,
     private readonly prices: PricingService,
     private readonly images: OnbuyImagesService,
+    private readonly content: OnbuyContentService,
   ) {}
 
   /** Same gate as eBay and Amazon: the environment overrules the setting. */
@@ -425,14 +427,6 @@ export class OnbuyListingService {
     return { categories: parseOnbuyCategories(r.json) };
   }
 
-  /** What a category asks for that we cannot supply — its required features. */
-  private async requiredFeatures(integrationId: string, categoryId: string | null): Promise<{ features: string[]; note: string | null }> {
-    if (!categoryId || !/^\d+$/.test(categoryId)) return { features: [], note: null };
-    const r = await this.integrations.onbuyCategory(integrationId, categoryId);
-    if (!r.ok) return { features: [], note: `Could not read OnBuy category ${categoryId}: ${onbuyErrorMessage(r.json, r.status)}` };
-    return { features: requiredOnbuyFeatures(r.json), note: null };
-  }
-
   /** The OnBuy category most used by products in the same internal category — "search, then remember". */
   async categorySuggestion(productId: string, integrationId: string, companyIds?: string[]) {
     const integration = await this.onbuyIntegration(integrationId, companyIds);
@@ -449,13 +443,16 @@ export class OnbuyListingService {
     return { suggestion: suggestOnbuyCategory(used) };
   }
 
-  /** The new product, from the marketplace content and the plan. Images are counted, not converted. */
-  private async buildProductInput(productId: string, plan: { categoryRef: string | null } | null) {
+  /**
+   * The new product, from its OnBuy content and the plan. Images are counted, not converted.
+   * `contentGaps` is what the OnBuy content still lacks — a required feature with no usable answer.
+   */
+  private async buildProductInput(productId: string, integration: { id: string; marketplace: string | null }, plan: { categoryRef: string | null } | null) {
+    const content = await this.content.createParts(productId, integration, plan?.categoryRef ?? null);
     const p = await this.prisma.product.findFirst({
       where: { id: productId, deletedAt: null },
       select: {
         mainSku: true, ean: true, upc: true, manufacturerSku: true,
-        ebayTitle: true, descriptionHtml: true, keyFeatures: true,
         brand: { select: { name: true } },
         media: { where: { deletedAt: null }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }], select: { id: true, url: true } },
       },
@@ -464,17 +461,26 @@ export class OnbuyListingService {
     const text = (v: string | null | undefined) => (v ?? '').trim() || null;
     const input: OnbuyProductInput = {
       categoryId: text(plan?.categoryRef),
-      name: text(p.ebayTitle),
-      description: text(p.descriptionHtml),
-      summaryPoints: (p.keyFeatures ?? []).map((f) => f.trim()).filter(Boolean),
+      name: content.name,
+      description: content.description,
+      summaryPoints: content.summaryPoints,
       brandName: text(p.brand?.name),
       productCode: text(p.ean) ?? text(p.upc),
       mpn: text(p.manufacturerSku),
       // Placeholders until submit converts them: a count is enough to say whether any exist.
       images: p.media.map((m) => m.url),
       uid: p.mainSku,
+      features: content.features,
+      technical: content.technical,
+      productData: content.productData,
+      safety: content.safety,
+      safetyDocuments: content.safetyDocuments,
+      aiModel: content.aiModel,
     };
-    return { input, media: p.media, codes: [p.ean, p.upc].map((c) => (c ?? '').trim()).filter(Boolean) };
+    return {
+      input, media: p.media, codes: [p.ean, p.upc].map((c) => (c ?? '').trim()).filter(Boolean),
+      contentGaps: content.missing, cannotSend: content.rejected,
+    };
   }
 
   /** Whether OnBuy has since gained a product with our barcode — then it is a listing, not a creation. */
@@ -488,17 +494,21 @@ export class OnbuyListingService {
   async createPreview(productId: string, integrationId: string, companyIds?: string[]) {
     const integration = await this.onbuyIntegration(integrationId, companyIds);
     const { plan, input: listing } = await this.buildInput(productId, integration);
-    const { input, codes } = await this.buildProductInput(productId, plan);
-    const required = await this.requiredFeatures(integration.id, input.categoryId);
-    const missing = missingForOnbuyProduct(input, listing, { requiredFeatures: required.features });
+    const { input, codes, contentGaps, cannotSend } = await this.buildProductInput(productId, integration, plan);
+    const missing = missingForOnbuyProduct(input, listing, { contentGaps });
     const existing = await this.existingOnbuyProduct(integration.id, codes);
     const queue = OnbuyListingService.queueOf(plan);
     return {
-      product: { ...input, images: undefined, imageCount: input.images.length },
+      product: {
+        ...input, images: undefined, imageCount: input.images.length,
+        features: undefined, technical: undefined, productData: undefined, safetyDocuments: undefined,
+        featureCount: input.features.length, technicalCount: input.technical.length,
+        productDataCount: input.productData.length, safetyDocumentCount: input.safetyDocuments.length,
+      },
       listing,
       missing,
-      requiredFeatures: required.features,
-      note: required.note,
+      /** Researched answers OnBuy cannot take (off its option list, or a unit it does not use). Not sent. */
+      cannotSend,
       // OnBuy now has it: listing against it is the right move, and creating would be refused anyway.
       existing,
       queue,
@@ -543,9 +553,8 @@ export class OnbuyListingService {
     const queue = OnbuyListingService.queueOf(plan);
     if (plan.status === 'SUBMITTED' && queue.queueId) throw new ConflictException('This product is already in OnBuy’s queue. Check its progress instead.');
 
-    const { input, media, codes } = await this.buildProductInput(productId, plan);
-    const required = await this.requiredFeatures(integration.id, input.categoryId);
-    const missing = missingForOnbuyProduct(input, listing, { requiredFeatures: required.features });
+    const { input, media, codes, contentGaps } = await this.buildProductInput(productId, integration, plan);
+    const missing = missingForOnbuyProduct(input, listing, { contentGaps });
     if (missing.length) throw new BadRequestException(`Cannot create on OnBuy yet — still needed: ${missing.join(', ')}.`);
 
     const existing = await this.existingOnbuyProduct(integration.id, codes);

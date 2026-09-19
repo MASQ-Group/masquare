@@ -2205,6 +2205,33 @@ export class IntegrationsService implements OnModuleInit {
     return this.onbuyCall(integrationId, 'GET', `/categories/${encodeURIComponent(categoryId)}`);
   }
 
+  /**
+   * A category's features — OnBuy's own option lists (Colour, Size…), each with its options and
+   * whether the category requires it. Paged at OnBuy's maximum of 100 until a short page.
+   */
+  async onbuyCategoryFeatures(integrationId: string, categoryId: string) {
+    return this.onbuyPaged(integrationId, `/categories/${encodeURIComponent(categoryId)}/features`);
+  }
+
+  /** A category's technical details: groups of measurements, each detail with its allowed units. */
+  async onbuyCategoryTechnicalDetails(integrationId: string, categoryId: string) {
+    return this.onbuyPaged(integrationId, `/categories/${encodeURIComponent(categoryId)}/technical-details`);
+  }
+
+  /** Every row of a paged OnBuy list. Ten pages at most — a thousand rows is no category's shape. */
+  private async onbuyPaged(integrationId: string, path: string): Promise<{ ok: boolean; status: number; rows: any[]; json: any }> {
+    const rows: any[] = [];
+    for (let page = 0; page < 10; page++) {
+      const query = new URLSearchParams({ limit: '100', offset: String(page * 100) });
+      const r = await this.onbuyCall(integrationId, 'GET', path, { query });
+      if (!r.ok) return { ok: false, status: r.status, rows, json: r.json };
+      const batch: any[] = Array.isArray(r.json?.results) ? r.json.results : [];
+      rows.push(...batch);
+      if (batch.length < 100) break;
+    }
+    return { ok: true, status: 200, rows, json: null };
+  }
+
   /** Queue a new catalogue product, with our listing inside it. Answered with a queue id. */
   async onbuyCreateProduct(integrationId: string, product: Record<string, unknown>) {
     return this.onbuyCall(integrationId, 'POST', '/products', { body: product });

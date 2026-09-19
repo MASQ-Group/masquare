@@ -174,6 +174,10 @@ export class ProductsService {
       shortDescription: p.shortDescription ?? null,
       descriptionHtml: p.descriptionHtml ?? null,
       keyFeatures: p.keyFeatures ?? [],
+      onbuyTitle: p.onbuyTitle ?? null,
+      onbuyDescriptionHtml: p.onbuyDescriptionHtml ?? null,
+      onbuySummaryPoints: p.onbuySummaryPoints ?? [],
+      onbuyAiModel: p.onbuyAiModel ?? null,
       /** Pages a person nominated as describing this product; were stored but never sent. */
       manufacturerUrls: p.manufacturerUrls ?? [],
       /**
@@ -486,6 +490,9 @@ export class ProductsService {
       shortDescription: dto.shortDescription ?? null,
       descriptionHtml: dto.descriptionHtml ?? null,
       keyFeatures: dto.keyFeatures ?? [],
+      onbuyTitle: dto.onbuyTitle ?? null,
+      onbuyDescriptionHtml: dto.onbuyDescriptionHtml ?? null,
+      onbuySummaryPoints: dto.onbuySummaryPoints ?? [],
       searchKeywords: dto.searchKeywords ?? null,
       voltageRatingId: dto.voltageRatingId ?? null,
       frequencyId: dto.frequencyId ?? null,

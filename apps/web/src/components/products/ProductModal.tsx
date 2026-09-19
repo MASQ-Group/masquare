@@ -9,7 +9,8 @@ import { ProductChannelIdentifiers } from './ProductChannelIdentifiers';
 import { ProductChannelsTab } from './ProductChannelsTab';
 import { EntityHistory } from '../common/EntityHistory';
 import { ProductDocuments } from './ProductDocuments';
-import { EbayContentTab } from './EbayContentTab';
+import { EbayContentTab } from './EbayContentTab';
+import { OnbuyContentTab } from './OnbuyContentTab';
 import { RichTextEditor } from '../common/RichTextEditor';
 import { FeatureList } from './FeatureList';
 import { FileDrop, ModalShell, Select } from '@masquare/ui';
@@ -60,7 +61,8 @@ const CHANNELS_TAB = { key: 'channels', label: 'Channels' };
  * nothing to belong to — and an orders-only company cannot list, so the tab would be a dead end
  * rather than a to-do.
  */
-const EBAY_TAB = { key: 'ebay', label: 'eBay content' };
+const EBAY_TAB = { key: 'ebay', label: 'eBay content' };
+const ONBUY_TAB = { key: 'onbuy', label: 'OnBuy content' };
 const HISTORY_TAB = { key: 'history', label: 'History' };
 
 const numOrNull = (s: string) => (s.trim() === '' ? null : Number(s));
@@ -117,8 +119,8 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   const [media, setMedia] = useState<ProductMediaItem[]>(product?.media ?? []);
   const [documents, setDocuments] = useState<ProductDocumentItem[]>(product?.documents ?? []);
 
-  // Listing copy. Amazon and OnBuy never display any of it — they carry our offer against their
-  // own catalogue entry — so this is eBay and Shopify only.
+  // Listing copy for eBay and Shopify. Amazon carries our offer against its own catalogue entry; OnBuy
+  // does too, unless we create the product there — and then it uses its own words, kept below.
   const [content, setContent] = useState({
     ebayTitle: product?.ebayTitle ?? '',
     shortDescription: product?.shortDescription ?? '',
@@ -127,7 +129,13 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
   });
   // One row per feature rather than a textarea: bullets are an ordered list, and a list edited as
   // prose loses its order the moment anyone reflows it.
-  const [features, setFeatures] = useState<string[]>(product?.keyFeatures ?? []);
+  const [features, setFeatures] = useState<string[]>(product?.keyFeatures ?? []);
+  // OnBuy's own words, used when the platform creates the product on OnBuy. Saved with the card, like eBay's.
+  const [onbuy, setOnbuy] = useState({
+    title: product?.onbuyTitle ?? '',
+    descriptionHtml: product?.onbuyDescriptionHtml ?? '',
+    summaryPoints: product?.onbuySummaryPoints ?? [],
+  });
 
   // Typed rather than free text: the channel-eligibility rules have to read these without parsing
   // prose, and "220-240V ~50Hz" sitting in a text attribute is not readable.
@@ -181,7 +189,10 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
     shortDescription: content.shortDescription.trim() || null,
     descriptionHtml: content.descriptionHtml.trim() || null,
     keyFeatures: features.map((f) => f.trim()).filter(Boolean),
-    searchKeywords: content.searchKeywords.trim() || null,
+    searchKeywords: content.searchKeywords.trim() || null,
+    onbuyTitle: onbuy.title.trim() || null,
+    onbuyDescriptionHtml: onbuy.descriptionHtml.trim() || null,
+    onbuySummaryPoints: onbuy.summaryPoints.map((f) => f.trim()).filter(Boolean),
     voltageRatingId: tech.voltageRatingId || null,
     frequencyId: tech.frequencyId || null,
     plugTypeId: tech.plugTypeId || null,
@@ -298,7 +309,7 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
       open title={product ? 'Edit product' : 'New product'} subtitle={product?.mainSku}
       tabs={product
         /* eBay content directly after Content: the two are filled in one after the other. */
-        ? [...TABS, ...(canListOnChannels ? [EBAY_TAB] : []), COMPLIANCE_TAB, STOCK_TAB,
+        ? [...TABS, ...(canListOnChannels ? [EBAY_TAB, ONBUY_TAB] : []), COMPLIANCE_TAB, STOCK_TAB,
            ...(canListOnChannels ? [CHANNELS_TAB] : []), HISTORY_TAB]
         : [...TABS, COMPLIANCE_TAB]} activeTab={tab} onTabChange={setTab} dirty={dirty}
       primaryLabel={product ? 'Save changes' : 'Create product'} onPrimary={save} primaryDisabled={!canSave} busy={busy} onClose={onClose}
@@ -627,6 +638,24 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
           onDescriptionChange={(v) => { setContent((s) => ({ ...s, descriptionHtml: v })); touch(); }}
           features={features}
           onFeaturesChange={(next) => { setFeatures(next); touch(); }}
+        />
+      )}
+
+      {tab === 'onbuy' && product && (
+        <OnbuyContentTab
+          productId={product.id}
+          sku={product.mainSku}
+          productTitle={title}
+          manufacturerSku={ident.manufacturerSku}
+          ean={ident.ean}
+          upc={ident.upc}
+          onbuyTitle={onbuy.title}
+          onTitleChange={(v) => { setOnbuy((s) => ({ ...s, title: v })); touch(); }}
+          descriptionHtml={onbuy.descriptionHtml}
+          onDescriptionChange={(v) => { setOnbuy((s) => ({ ...s, descriptionHtml: v })); touch(); }}
+          summaryPoints={onbuy.summaryPoints}
+          onSummaryPointsChange={(next) => { setOnbuy((s) => ({ ...s, summaryPoints: next })); touch(); }}
+          aiModel={product.onbuyAiModel ?? null}
         />
       )}
 
