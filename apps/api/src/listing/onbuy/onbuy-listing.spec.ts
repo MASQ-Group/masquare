@@ -87,8 +87,34 @@ describe('the requests', () => {
     expect(buildOnbuyCreateBody({ ...ready, handlingTimeDays: null }).listings[0]).not.toHaveProperty('handling_time');
   });
 
-  it('activates with the same price and stock by SKU', () => {
-    expect(buildOnbuyActivateBody(ready)).toEqual({ listings: [{ sku: 'LE-83306', price: 24.99, stock: 5 }] });
+  it('activates with price, stock and the chosen terms by SKU', () => {
+    expect(buildOnbuyActivateBody(ready)).toEqual({ listings: [{ sku: 'LE-83306', price: 24.99, stock: 5, delivery_template_id: 245, boost_marketing_commission: 0 }] });
+  });
+
+  it('leaves the template out when none is chosen, so OnBuy uses the account default', () => {
+    expect(buildOnbuyCreateBody({ ...ready, deliveryTemplateId: null, stock: 0 }).listings[0]).not.toHaveProperty('delivery_template_id');
+    expect(buildOnbuyActivateBody({ ...ready, deliveryTemplateId: null }).listings[0]).not.toHaveProperty('delivery_template_id');
+  });
+});
+
+describe('what the price check needs', () => {
+  it('needs neither stock nor a template — only what places a listing', () => {
+    expect(missingForOnbuyListing({ ...ready, stock: 0, deliveryTemplateId: null }, { forPriceCheck: true })).toEqual([]);
+  });
+
+  it('still needs the product, SKU and a provisional price', () => {
+    expect(missingForOnbuyListing({ ...ready, opc: null, price: null, deliveryTemplateId: null }, { forPriceCheck: true }))
+      .toEqual(['the product found on OnBuy (step 1)', 'a price']);
+  });
+
+  it('still refuses a template typed as free text', () => {
+    expect(missingForOnbuyListing({ ...ready, deliveryTemplateId: 'Default' }, { forPriceCheck: true })[0]).toContain('delivery template');
+  });
+
+  it('is unchanged for the real listing, which needs both', () => {
+    expect(missingForOnbuyListing({ ...ready, stock: 0, deliveryTemplateId: null })).toEqual([
+      'stock above zero on the Availability page', 'an OnBuy delivery template',
+    ]);
   });
 });
 

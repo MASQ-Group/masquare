@@ -109,14 +109,22 @@ export interface OnbuyListingInput {
 }
 
 /** What still stops this listing, in words. Empty means it may be sent. */
-export function missingForOnbuyListing(i: OnbuyListingInput): string[] {
+export function missingForOnbuyListing(
+  i: OnbuyListingInput,
+  /**
+   * The price check places a listing at stock 0 before the terms are settled, so it needs neither
+   * stock nor a template: OnBuy uses the account's default template when none is named.
+   */
+  opts: { forPriceCheck?: boolean } = {},
+): string[] {
   const gaps: string[] = [];
   if (!i.opc) gaps.push('the product found on OnBuy (step 1)');
   if (!i.sku) gaps.push('a SKU');
   if (!onbuyCondition(i.condition)) gaps.push('condition New — OnBuy refurbished grades are not listed from here');
   if (!(i.price != null && i.price > 0)) gaps.push('a price');
-  if (!(i.stock != null && i.stock > 0)) gaps.push('stock above zero on the Availability page');
-  if (!i.deliveryTemplateId || !/^\d+$/.test(i.deliveryTemplateId)) gaps.push('an OnBuy delivery template');
+  if (!opts.forPriceCheck && !(i.stock != null && i.stock > 0)) gaps.push('stock above zero on the Availability page');
+  if (!opts.forPriceCheck && (!i.deliveryTemplateId || !/^\d+$/.test(i.deliveryTemplateId))) gaps.push('an OnBuy delivery template');
+  if (opts.forPriceCheck && i.deliveryTemplateId && !/^\d+$/.test(i.deliveryTemplateId)) gaps.push('an OnBuy delivery template chosen from the list (step 3), or none');
   if (i.handlingTimeDays != null && !(Number.isInteger(i.handlingTimeDays) && i.handlingTimeDays >= 0)) gaps.push('a handling time in whole days');
   if (!(ONBUY_BOOST_LEVELS as readonly number[]).includes(i.boostPct)) gaps.push(`a boost of ${ONBUY_BOOST_LEVELS.join(', ')}%`);
   return gaps;
@@ -133,7 +141,8 @@ export function buildOnbuyCreateBody(i: OnbuyListingInput): { listings: Array<Re
       condition: onbuyCondition(i.condition),
       price: money(i.price ?? 0),
       stock: Math.max(0, Math.trunc(i.stock ?? 0)),
-      delivery_template_id: Number(i.deliveryTemplateId),
+      // Left out when none is chosen yet (the price check): OnBuy then uses the account's default.
+      ...(i.deliveryTemplateId && /^\d+$/.test(i.deliveryTemplateId) ? { delivery_template_id: Number(i.deliveryTemplateId) } : {}),
       ...(i.handlingTimeDays != null ? { handling_time: i.handlingTimeDays } : {}),
       boost_marketing_commission: i.boostPct,
     }],
@@ -147,7 +156,17 @@ export function buildOnbuyCreateBody(i: OnbuyListingInput): { listings: Array<Re
  * update by SKU, and a create that carried them is not guaranteed to. Sending it twice costs one call.
  */
 export function buildOnbuyActivateBody(i: OnbuyListingInput): { listings: Array<Record<string, unknown>> } {
-  return { listings: [{ sku: i.sku, price: money(i.price ?? 0), stock: Math.max(0, Math.trunc(i.stock ?? 0)) }] };
+  return {
+    listings: [{
+      sku: i.sku,
+      price: money(i.price ?? 0),
+      stock: Math.max(0, Math.trunc(i.stock ?? 0)),
+      // The terms settled since the listing was placed — a price-check listing went up on the
+      // account's default template, and must go live on the one chosen in step 3.
+      ...(i.deliveryTemplateId && /^\d+$/.test(i.deliveryTemplateId) ? { delivery_template_id: Number(i.deliveryTemplateId) } : {}),
+      boost_marketing_commission: i.boostPct,
+    }],
+  };
 }
 
 /** OnBuy's own words for a refusal, from whichever shape it used. */

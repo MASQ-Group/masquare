@@ -411,7 +411,7 @@ export function OnbuyPriceCheck({ productId, integrationId, savePlan, onUse, onC
   const start = async () => {
     const ok = await confirm({
       title: 'Place the listing on OnBuy at stock 0?',
-      message: 'OnBuy only says the price to beat for a listing we have. This places ours with the price and delivery template saved here and ZERO stock, so nobody can buy it. Every stock push leaves it alone; it goes on sale only when you list it in step 4.',
+      message: 'OnBuy only says the price to beat for a listing we have. This places ours with the price saved here and ZERO stock, so nobody can buy it — on your default OnBuy delivery template until you choose one in step 3. Every stock push leaves it alone; it goes on sale only when you list it in step 4.',
       confirmLabel: 'Place it at stock 0',
     });
     if (ok) stage.mutate();
@@ -420,7 +420,7 @@ export function OnbuyPriceCheck({ productId, integrationId, savePlan, onUse, onC
   return (
     <div className="rounded-md border border-n-200 bg-n-25 px-3 py-2.5 text-[12px]">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="flex-1 text-n-600">See OnBuy’s winning price before going live. Needs a provisional price and a delivery template saved.</span>
+        <span className="flex-1 text-n-600">See OnBuy’s winning price before going live. Needs a provisional price; until you choose a delivery template in step 3, OnBuy uses your account’s default.</span>
         {data ? (
           <button type="button" className="inline-flex h-7 items-center gap-1 rounded-md border border-n-200 bg-n-0 px-2.5 font-semibold text-n-700 disabled:opacity-50" disabled={recheck.isPending} onClick={() => recheck.mutate()}>
             {recheck.isPending && <Loader2 size={12} className="animate-spin" />} Check again
