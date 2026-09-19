@@ -2093,6 +2093,76 @@ export class IntegrationsService implements OnModuleInit {
     return { ok: true, message: `stock set to ${qty}` };
   }
 
+  // --- OnBuy listing creation --------------------------------------------------------------------
+  //
+  // The calls a listing needs, and nothing that interprets them: what is sent and what came back are
+  // shaped in listing/onbuy/onbuy-listing.ts, which is pure and tested. Every call is scoped to one
+  // integration so a request can only ever act through the seller account it names.
+
+  /**
+   * One authenticated OnBuy call. Returns the status and the parsed body rather than throwing on a
+   * refusal, because OnBuy's own words are the useful part of a refusal and a caller that shows them
+   * beats one that says "failed".
+   */
+  private async onbuyCall(
+    integrationId: string,
+    method: 'GET' | 'POST' | 'PUT',
+    path: string,
+    opts: { query?: URLSearchParams; body?: unknown } = {},
+  ): Promise<{ ok: boolean; status: number; json: any; mode: 'live' | 'test'; siteId: number }> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'onbuy' } });
+    if (!row) throw new NotFoundException('OnBuy integration not found');
+    const config = (row.config ?? {}) as Record<string, string>;
+    const secrets = await this.decryptedSecrets(row.id);
+    const { token, base, mode } = await this.onbuyAccessToken(config, secrets);
+    // OnBuy UK. The first release lists on UK only; the site is still read from the connection so a
+    // second one pointed elsewhere cannot silently list in the wrong currency.
+    const siteId = Number((config.siteIds || '').match(/\d+/)?.[0] ?? '2000');
+    const query = opts.query ?? new URLSearchParams();
+    if (method === 'GET' && !query.has('site_id')) query.set('site_id', String(siteId));
+    const qs = query.toString();
+    // The site on a write comes from the connection too, never from the caller.
+    const body = opts.body && typeof opts.body === 'object' ? { ...(opts.body as Record<string, unknown>), site_id: siteId } : opts.body;
+    const res = await fetch(`${base}${path}${qs ? `?${qs}` : ''}`, {
+      method,
+      headers: { Authorization: token, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(20000),
+    });
+    const json: any = await res.json().catch(() => null);
+    return { ok: res.ok, status: res.status, json, mode, siteId };
+  }
+
+  /** OnBuy catalogue products carrying these barcodes. Up to 50 per call, per OnBuy. */
+  async onbuySearchByCodes(integrationId: string, codes: string[]) {
+    const clean = [...new Set(codes.map((c) => c.trim()).filter(Boolean))].slice(0, 50);
+    if (!clean.length) return { ok: true, status: 200, json: { results: [] }, mode: 'live' as const, siteId: 2000 };
+    const query = new URLSearchParams({ 'filter[field]': 'product_code', 'filter[query]': clean.join(','), limit: '50' });
+    return this.onbuyCall(integrationId, 'GET', '/products', { query });
+  }
+
+  /** The seller's delivery templates. One row per template and region; the caller groups them. */
+  async onbuyDeliveryRows(integrationId: string) {
+    return this.onbuyCall(integrationId, 'GET', '/sellers/deliveries', { query: new URLSearchParams({ limit: '1000' }) });
+  }
+
+  /** Our own OnBuy listings with these SKUs — how we tell whether a SKU is already in use. */
+  async onbuyListingsBySku(integrationId: string, skus: string[]) {
+    const query = new URLSearchParams();
+    for (const s of skus.filter(Boolean).slice(0, 50)) query.append('filter[sku]', s);
+    return this.onbuyCall(integrationId, 'GET', '/listings', { query });
+  }
+
+  /** Create listings against catalogue products. The body is built by buildOnbuyCreateBody. */
+  async onbuyCreateListings(integrationId: string, body: Record<string, unknown>) {
+    return this.onbuyCall(integrationId, 'POST', '/listings', { body });
+  }
+
+  /** Price and stock by SKU — what makes a new listing live, and the lighter call for later changes. */
+  async onbuyUpdateBySku(integrationId: string, body: Record<string, unknown>) {
+    return this.onbuyCall(integrationId, 'PUT', '/listings/by-sku', { body });
+  }
+
   /** eBay Trading-API site id (X-EBAY-API-SITEID) keyed by our stored marketplace ISO. */
   private static readonly EBAY_ISO_SITEID: Record<string, string> = {
     US: '0', CA: '2', GB: '3', AU: '15', AT: '16', BE: '23', FR: '71', DE: '77', IT: '101',

@@ -665,6 +665,80 @@ export class PricingService {
     return out;
   }
 
+  /**
+   * The price that earns a target margin on one sales channel, in the channel's own currency.
+   *
+   * The same cost, shipping, fee and tax resolution as listingEconomics — the fee is the channel's own
+   * `generalSalesFeePct` — solved the other way round. Solved twice because the VAT rule can depend on
+   * the price itself (the UK £135 consignment threshold): the first answer decides which side of the
+   * threshold the price sits, and the second is costed with that side's rate. Where the two sides
+   * disagree the higher price is taken, so the suggestion never lands under the target margin.
+   *
+   * Says what it could not resolve rather than quoting a price built on a zero it assumed.
+   */
+  async priceForMargin(productId: string, salesChannelId: string, targetMarginPct: number): Promise<{
+    priceNative: number | null;
+    currency: string;
+    marginPct: number | null;
+    profitEur: number | null;
+    inputs: { costEur: number; shippingEur: number; feePct: number; vatPct: number; shippingServiceName: string | null };
+    problems: string[];
+  }> {
+    const [product, [channel]] = await Promise.all([
+      this.prisma.product.findFirst({ where: { id: productId, ...ACTIVE } }),
+      this.loadChannels([salesChannelId]),
+    ]);
+    const currency = (channel?.nativeCurrency ?? 'EUR').toUpperCase();
+    const empty = { costEur: 0, shippingEur: 0, feePct: 0, vatPct: 0, shippingServiceName: null };
+    if (!product || !channel) {
+      return { priceNative: null, currency, marginPct: null, profitEur: null, inputs: empty, problems: [!product ? 'Product not found' : 'Sales channel not found'] };
+    }
+
+    const problems: string[] = [];
+    const rate = currency === 'EUR' ? 1 : (await this.fx.ratesFor([currency])).get(currency) ?? null;
+    const costEur = await this.productCostEur(product);
+    const service = await this.resolveService(null, channel.nativeCountryId);
+    const weight = this.unitWeightKg(product, service?.calcMethod ?? null);
+    const ship = this.lookupShipping(service, channel.nativeCountryId, weight);
+    if (!(costEur > 0)) problems.push('no purchase cost recorded for this product');
+    if (ship.costEur == null) problems.push(`no shipping cost could be worked out${service?.name ? ` for ${service.name}` : ''} — check the product weight and the channel country's default service`);
+    if (rate == null) problems.push(`no exchange rate for ${currency}`);
+    const feePct = channel.generalSalesFeePct != null ? Number(channel.generalSalesFeePct) : 0;
+    if (channel.generalSalesFeePct == null) problems.push(`no sales fee % is set on ${channel.name} — the price ignores the channel’s commission`);
+
+    const inputsAt = (grossNative: number): CostInputs => {
+      const tax = this.resolveTax(channel, grossNative);
+      return {
+        costEur,
+        shippingEur: ship.costEur ?? 0,
+        importPct: 0,
+        feePct,
+        vatPct: tax.vatPct,
+        pointsPct: tax.pointsPct,
+        taxType: tax.taxType,
+      };
+    };
+    if (rate == null) return { priceNative: null, currency, marginPct: null, profitEur: null, inputs: { ...empty, costEur, feePct }, problems };
+
+    // Solve at a nominal low price, then again at the answer's own side of any threshold.
+    const first = this.solveGrossEur(targetMarginPct, inputsAt(1));
+    if (first == null) return { priceNative: null, currency, marginPct: null, profitEur: null, inputs: { ...empty, costEur, feePct }, problems: [...problems, 'no price reaches that margin once fees and tax are taken'] };
+    const atFirst = inputsAt(first / rate);
+    const second = this.solveGrossEur(targetMarginPct, atFirst) ?? first;
+    const grossEur = Math.max(first, second);
+    const final = inputsAt(grossEur / rate);
+    const econ = this.economics(grossEur, final);
+
+    return {
+      priceNative: round(grossEur / rate, currency === 'JPY' ? 0 : 2),
+      currency,
+      marginPct: econ.marginPct,
+      profitEur: econ.profitEur,
+      inputs: { costEur: round(costEur), shippingEur: round(final.shippingEur), feePct, vatPct: final.vatPct, shippingServiceName: service?.name ?? null },
+      problems,
+    };
+  }
+
   // ---------------------------------------------------------------- bulk
 
   async bulk(dto: BulkPricingDto, companyIds?: string[]) {
