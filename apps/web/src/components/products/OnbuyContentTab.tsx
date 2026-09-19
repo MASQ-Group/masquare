@@ -49,6 +49,8 @@ export function OnbuyContentTab({
     queryKey: ['onbuy', 'content', productId],
     queryFn: () => onbuyContentApi.view(productId),
     retry: false,
+    // Always the latest on opening the tab: Claude writes these answers while the card may be open.
+    refetchOnMount: 'always',
   });
   const setView = (v: OnbuyContentView) => qc.setQueryData(['onbuy', 'content', productId], v);
 
