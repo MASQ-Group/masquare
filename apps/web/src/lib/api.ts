@@ -2321,7 +2321,52 @@ export const onbuyListingApi = {
       | { ok: true; mode: 'live' | 'test'; sku: string; opc: string; listingId: string | null; activated: boolean; message: string | null; url: string }
       | { ok: false; message: string; mode: 'live' | 'test' }
     >(`/listing/onbuy/products/${productId}/publish`, { integrationId, confirm: true }).then((r) => r.data),
+
+  // Creating a product OnBuy does not have yet.
+  categories: (integrationId: string, q: string) =>
+    api.get<{ categories: OnbuyCategory[] }>('/listing/onbuy/categories', { params: { integrationId, q } }).then((r) => r.data),
+  categorySuggestion: (productId: string, integrationId: string) =>
+    api.get<{ suggestion: { id: string; tree: string; uses: number } | null }>(
+      `/listing/onbuy/products/${productId}/category-suggestion`, { params: { integrationId } },
+    ).then((r) => r.data),
+  createPreview: (productId: string, integrationId: string) =>
+    api.get<OnbuyCreatePreview>(`/listing/onbuy/products/${productId}/create-preview`, { params: { integrationId } }).then((r) => r.data),
+  create: (productId: string, integrationId: string) =>
+    api.post<
+      | { ok: true; queueId: string; imageProblems: string[]; mode: 'live' | 'test' }
+      | { ok: false; message: string; imageProblems: string[]; mode: 'live' | 'test' }
+    >(`/listing/onbuy/products/${productId}/create`, { integrationId, confirm: true }).then((r) => r.data),
+  checkProgress: (productId: string, integrationId: string) =>
+    api.post<{ status: string; message: string | null; opc?: string }>(
+      `/listing/onbuy/products/${productId}/check-progress`, { integrationId },
+    ).then((r) => r.data),
 };
+
+export interface OnbuyCategory { id: string; name: string; tree: string; canListIn: boolean }
+
+/** A product submitted to OnBuy's queue, as the plan records it. */
+export interface OnbuyQueueState {
+  queueId: string | null;
+  submittedAt: string | null;
+  error: string | null;
+  activationError: string | null;
+  productUrl: string | null;
+  status: string | null;
+}
+
+export interface OnbuyCreatePreview {
+  product: {
+    categoryId: string | null; name: string | null; description: string | null; summaryPoints: string[];
+    brandName: string | null; productCode: string | null; mpn: string | null; uid: string; imageCount: number;
+  };
+  listing: OnbuyListingInput;
+  missing: string[];
+  requiredFeatures: string[];
+  note: string | null;
+  existing: OnbuyCandidate | null;
+  queue: OnbuyQueueState;
+  liveWritesEnabled: boolean;
+}
 
 /**
  * Creating an eBay listing.

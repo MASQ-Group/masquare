@@ -2158,6 +2158,27 @@ export class IntegrationsService implements OnModuleInit {
     return this.onbuyCall(integrationId, 'POST', '/listings', { body });
   }
 
+  /** OnBuy categories matching a name or part of a category tree, that can take products. */
+  async onbuySearchCategories(integrationId: string, search: string) {
+    const query = new URLSearchParams({ 'filter[search]': search.trim(), 'filter[can_list_in]': '1', limit: '40' });
+    return this.onbuyCall(integrationId, 'GET', '/categories', { query });
+  }
+
+  /** One OnBuy category, with the features it asks for. */
+  async onbuyCategory(integrationId: string, categoryId: string) {
+    return this.onbuyCall(integrationId, 'GET', `/categories/${encodeURIComponent(categoryId)}`);
+  }
+
+  /** Queue a new catalogue product, with our listing inside it. Answered with a queue id. */
+  async onbuyCreateProduct(integrationId: string, product: Record<string, unknown>) {
+    return this.onbuyCall(integrationId, 'POST', '/products', { body: product });
+  }
+
+  /** Where a queued product creation has got to. */
+  async onbuyQueue(integrationId: string, queueId: string) {
+    return this.onbuyCall(integrationId, 'GET', `/queues/${encodeURIComponent(queueId)}`);
+  }
+
   /** Price and stock by SKU — what makes a new listing live, and the lighter call for later changes. */
   async onbuyUpdateBySku(integrationId: string, body: Record<string, unknown>) {
     return this.onbuyCall(integrationId, 'PUT', '/listings/by-sku', { body });

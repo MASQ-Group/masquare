@@ -39,6 +39,46 @@ export class OnbuyListingController {
     return this.svc.preview(productId, integrationId, companyIds);
   }
 
+  /** OnBuy categories a new product could go in. */
+  @Get('categories')
+  categories(@Query('integrationId') integrationId: string, @Query('q') q: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.searchCategories(integrationId, q ?? '', companyIds);
+  }
+
+  /** The category other products in the same internal category went in. */
+  @Get('products/:productId/category-suggestion')
+  categorySuggestion(@Param('productId') productId: string, @Query('integrationId') integrationId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.categorySuggestion(productId, integrationId, companyIds);
+  }
+
+  /** What a new OnBuy product would be made of, and what still stops it. Sends nothing. */
+  @Get('products/:productId/create-preview')
+  createPreview(@Param('productId') productId: string, @Query('integrationId') integrationId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.createPreview(productId, integrationId, companyIds);
+  }
+
+  /** Send a new product to OnBuy's queue, with our listing inside it. */
+  @Post('products/:productId/create')
+  @RequireCapability('marketplace_write')
+  create(
+    @Param('productId') productId: string,
+    @Body() body: { integrationId?: string; confirm?: boolean },
+    @CurrentUser() user: AuthUser,
+    @WriteCompany() companyId: string,
+  ) {
+    return this.svc.createSubmit(productId, body?.integrationId ?? '', { confirm: body?.confirm }, user.sub, [companyId]);
+  }
+
+  /**
+   * Ask OnBuy where a submitted product has got to, and take the next step. Behind the write
+   * capability because success is followed by the price and stock update that makes it live.
+   */
+  @Post('products/:productId/check-progress')
+  @RequireCapability('marketplace_write')
+  checkProgress(@Param('productId') productId: string, @Body() body: { integrationId?: string }, @WriteCompany() companyId: string) {
+    return this.svc.checkProgress(productId, body?.integrationId ?? '', [companyId]);
+  }
+
   @Post('products/:productId/publish')
   @RequireCapability('marketplace_write')
   publish(
