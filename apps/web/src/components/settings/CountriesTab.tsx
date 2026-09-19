@@ -167,6 +167,9 @@ function CountryModal({ country, services, onClose, onSaved }: { country: Countr
     euVatZone: country?.euVatZone ?? false,
     vatRate: country?.vatRate?.toString() ?? '0',
     defaultShippingServiceId: country?.defaultShippingServiceId ?? '',
+    importDutyMode: (country?.importDutyMode ?? '') as '' | 'none' | 'threshold',
+    importDutyThreshold: country?.importDutyThreshold != null ? String(country.importDutyThreshold) : '',
+    importDutyCurrency: country?.importDutyCurrency ?? 'EUR',
   });
   const set = (patch: Partial<typeof form>) => { setForm((f) => ({ ...f, ...patch })); touch(); };
   const canSave = form.name.trim() && form.isoCode.trim() && form.continent.trim();
@@ -175,7 +178,12 @@ function CountryModal({ country, services, onClose, onSaved }: { country: Countr
     if (!canSave) { toast.error('Name, ISO code, and continent are required'); return; }
     setBusy(true);
     try {
-      const body = { name: form.name, isoCode: form.isoCode, continent: form.continent, euVatZone: form.euVatZone, vatRate: Number(form.vatRate || 0), defaultShippingServiceId: form.defaultShippingServiceId || null };
+      const body = {
+        name: form.name, isoCode: form.isoCode, continent: form.continent, euVatZone: form.euVatZone, vatRate: Number(form.vatRate || 0), defaultShippingServiceId: form.defaultShippingServiceId || null,
+        importDutyMode: form.importDutyMode || null,
+        importDutyThreshold: form.importDutyMode === 'threshold' ? Number(form.importDutyThreshold || 0) : null,
+        importDutyCurrency: form.importDutyMode === 'threshold' ? (form.importDutyCurrency || 'EUR').toUpperCase() : null,
+      };
       if (country) await countriesApi.update(country.id, body); else await countriesApi.create(body);
       toast.success('Saved');
       onSaved();
@@ -202,6 +210,28 @@ function CountryModal({ country, services, onClose, onSaved }: { country: Countr
             options={[{ value: '', label: '—' }, ...services.map((s) => ({ value: s.id, label: s.name }))]}
           />
         </div>
+
+        {/* Read by the FedEx rules: whether a parcel arriving here is charged duties and taxes. */}
+        <div className="col-span-2"><label className="label">Import duties and taxes on arrival</label>
+          <Select
+            value={form.importDutyMode}
+            onChange={(v) => set({ importDutyMode: v as '' | 'none' | 'threshold' })}
+            options={[
+              { value: '', label: 'Not set' },
+              { value: 'none', label: 'Never charged' },
+              { value: 'threshold', label: 'Charged above a value' },
+            ]}
+          />
+        </div>
+        {form.importDutyMode === 'threshold' && (
+          <>
+            <div><label className="label">Charged above</label><input className="input mono" inputMode="decimal" value={form.importDutyThreshold} onChange={(e) => set({ importDutyThreshold: e.target.value })} placeholder="135.00" /></div>
+            <div><label className="label">Currency</label><input className="input mono uppercase" maxLength={3} value={form.importDutyCurrency} onChange={(e) => set({ importDutyCurrency: e.target.value.toUpperCase() })} placeholder="GBP" /></div>
+            <p className="col-span-2 -mt-2 text-[11.5px] text-n-500">
+              The goods’ value, excluding VAT and shipping, is compared at the customs rate of the month. Zero means charged on everything.
+            </p>
+          </>
+        )}
       </div>
     </ModalShell>
   );

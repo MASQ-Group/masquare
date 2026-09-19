@@ -76,8 +76,8 @@ describe('access declarations', () => {
     // missing entirely — a floor cannot notice an omission above it. If this number moves, a
     // controller was added or removed and somebody should say which.
     const classes = FILES.reduce((n, f) => n + declarations(readFileSync(f, 'utf8')).length, 0);
-    // 66 since PortalController (18 Sep 2026) — the customer portal.
-    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(66);
+    // 67 since DutyRulesController (21 Sep 2026) — the FedEx duty rules, under Global settings.
+    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(67);
   });
 
   it('declares an area, an explicit exemption, or the portal on every controller', () => {

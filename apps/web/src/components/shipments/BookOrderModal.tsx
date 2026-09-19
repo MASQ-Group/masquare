@@ -37,6 +37,15 @@ const BATTERY_OPTIONS = [
 ];
 
 const today = () => new Date().toLocaleDateString('en-CA');
+
+/** The facts the FedEx rules were tested against, in one line. */
+function dutiesFacts(f: NonNullable<import('../../lib/api').OrderFedexOptions['duties']>['facts']): string {
+  const where = f.destinationIso
+    ? `${f.destinationIso}${f.destinationInEu == null ? '' : f.destinationInEu ? ', in the EU' : ', outside the EU'}`
+    : 'no destination';
+  const home = f.channelHomeIso ? (f.destinationIso === f.channelHomeIso ? 'the channel’s own country' : `channel home ${f.channelHomeIso}`) : 'channel has no home country set';
+  return `${where} · ${home} · ${f.dutiesReason}`;
+}
 const n = (v: string) => { const x = Number(String(v).trim().replace(',', '.')); return Number.isFinite(x) ? x : 0; };
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 const opt = (v: string) => (v.trim() === '' ? null : n(v) || null);
@@ -77,6 +86,8 @@ export function BookOrderModal({ transactionId, transactionRef, contextLine, onC
   useEffect(() => {
     if (!options) return;
     if (!accountId && options.accounts.length) setAccountId((options.accounts.find((a) => a.environment === 'production') ?? options.accounts[0]).id);
+    // The FedEx rules' answer, pre-filled once. A person can still change it.
+    if (!dutiesPaidBy && options.duties?.dutiesPaidBy) setDutiesPaidBy(options.duties.dutiesPaidBy);
     if (!lines) {
       setLines(options.items.map((i) => ({
         sku: i.sku, description: i.description, quantity: String(i.quantity), value: String(i.value), currency: i.currency,
@@ -293,6 +304,19 @@ export function BookOrderModal({ transactionId, transactionRef, contextLine, onC
                         { value: 'sender', label: 'Us — duty paid (DDP)' },
                       ]}
                     />
+                    {/* Where the pre-fill came from, and what decided it — or why there is none. */}
+                    {options.duties && (
+                      <span className="mt-1 block text-[11.5px] text-n-500" title={dutiesFacts(options.duties.facts)}>
+                        {options.duties.rule
+                          ? <>
+                              {dutiesPaidBy && dutiesPaidBy !== options.duties.dutiesPaidBy
+                                ? <span className="text-orange-800">Changed from {options.duties.dutiesPaidBy === 'sender' ? 'DDP' : 'DAP'}, set by rule “{options.duties.rule.name}”.</span>
+                                : <>Pre-filled by rule “{options.duties.rule.name}”.</>}
+                              {' '}{dutiesFacts(options.duties.facts)}.
+                            </>
+                          : <>No FedEx rule applies — {dutiesFacts(options.duties.facts)}.</>}
+                      </span>
+                    )}
                   </label>
                   <label className="block">
                     <span className={label}>Label format</span>

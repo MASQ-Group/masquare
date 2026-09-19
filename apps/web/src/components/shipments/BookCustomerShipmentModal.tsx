@@ -73,6 +73,10 @@ export function BookCustomerShipmentModal({ shipment, onClose }: { shipment: Cus
       setAccountId((options.accounts.find((a) => a.environment === 'production') ?? options.accounts[0]).id);
     }
   }, [options, accountId]);
+  // The customer's standing answer on duties, pre-filled once when the options arrive.
+  useEffect(() => {
+    if (options?.dutiesPaidBy) setDutiesPaidBy((cur) => cur || options.dutiesPaidBy!);
+  }, [options]);
   // Our FedEx carrier, which is what gives the customer a working tracking link.
   useEffect(() => {
     if (!shippingServiceId && services.length) {
@@ -264,6 +268,13 @@ export function BookCustomerShipmentModal({ shipment, onClose }: { shipment: Cus
                         { value: 'sender', label: 'Us — duty paid (DDP)' },
                       ]}
                     />
+                    {options.dutiesPaidBy && (
+                      <span className={`mt-1 block text-[11.5px] ${dutiesPaidBy && dutiesPaidBy !== options.dutiesPaidBy ? 'text-orange-800' : 'text-n-500'}`}>
+                        {dutiesPaidBy && dutiesPaidBy !== options.dutiesPaidBy
+                          ? `Changed from ${options.dutiesPaidBy === 'sender' ? 'DDP' : 'DAP'}, the customer’s setting.`
+                          : 'Pre-filled from the customer’s setting.'}
+                      </span>
+                    )}
                   </label>
                   <label className="block">
                     <span className={label}>Label format</span>

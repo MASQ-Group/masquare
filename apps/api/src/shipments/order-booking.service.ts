@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CarriersService, type CustomsItemInput } from '../carriers/carriers.service';
+import { DutyRulesService } from '../carriers/duty-rules.service';
 import { CYPRUS_SERVICE_TYPES, SERVICE_LABELS, customsLane } from '../carriers/fedex-rate';
 import type { InvoiceSource } from '../carriers/fedex-customs';
 import type { ShipParcel } from '../carriers/fedex-ship';
@@ -58,7 +59,11 @@ const BOOKING_SELECT = {
  */
 @Injectable()
 export class OrderBookingService {
-  constructor(private readonly prisma: PrismaService, private readonly carriers: CarriersService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly carriers: CarriersService,
+    private readonly dutyRules: DutyRulesService,
+  ) {}
 
   private async order(transactionId: string, companyIds?: string[]) {
     const tx = await this.prisma.salesTransaction.findFirst({
@@ -99,11 +104,12 @@ export class OrderBookingService {
   /** What the booking screen starts from. */
   async options(transactionId: string, companyIds?: string[]) {
     const tx = await this.order(transactionId, companyIds);
-    const [accounts, eu, names, bookings] = await Promise.all([
+    const [accounts, eu, names, bookings, duties] = await Promise.all([
       this.carriers.accountsForBooking(tx.companyId ?? null),
       this.euCountries(),
       this.isoByName(),
       this.bookings(transactionId),
+      this.dutyRules.suggestForOrder(transactionId),
     ]);
     const destination = tx.deliveryAddress?.countryIso ?? tx.destinationCountry?.isoCode ?? null;
     const items = orderCustomsItems(tx.items, tx.currency, names);
@@ -123,6 +129,8 @@ export class OrderBookingService {
         .filter((l) => l.product?.batteryTypeRef)
         .map((l) => ({ sku: l.sku, battery: l.product!.batteryTypeRef!.label })),
       bookings,
+      /** The duty rules' pre-fill, and the facts that decided it. A person can change it. */
+      duties,
     };
   }
 

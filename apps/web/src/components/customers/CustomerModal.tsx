@@ -48,6 +48,7 @@ export function CustomerModal({ customer, types, onClose }: { customer: Customer
     active: customer?.active ?? true,
     types: customer?.types ?? [],
     referencePrefix: customer?.referencePrefix ?? '',
+    fedexDutiesPaidBy: customer?.fedexDutiesPaidBy ?? '',
   });
   const set = (patch: Partial<typeof form>) => { setForm((f) => ({ ...f, ...patch })); setDirty(true); };
 
@@ -94,6 +95,7 @@ export function CustomerModal({ customer, types, onClose }: { customer: Customer
         companyId: form.companyId || null,
         addressCountryIso: form.addressCountryIso || null,
         referencePrefix: isLogistics ? form.referencePrefix : null,
+        fedexDutiesPaidBy: (form.fedexDutiesPaidBy || null) as 'sender' | 'recipient' | null,
       };
       return editing ? customersApi.update(customer!.id, body) : customersApi.create(body);
     },
@@ -230,6 +232,19 @@ export function CustomerModal({ customer, types, onClose }: { customer: Customer
                         ? `Fixed: ${issued} reference${issued === 1 ? '' : 's'} already issued as ${customer!.referencePrefix}-…`
                         : 'Two letters. The year and month of filing follow, then the number — AB-2026-09-0001.'}
                     </p>
+
+                    {/* Their standing answer, pre-filled on every FedEx booking of theirs. */}
+                    <label className="label mt-4">FedEx duties and taxes</label>
+                    <Select
+                      value={form.fedexDutiesPaidBy}
+                      onChange={(v) => set({ fedexDutiesPaidBy: v })}
+                      options={[
+                        { value: '', label: 'Ask each time' },
+                        { value: 'sender', label: 'DDP — duties paid by us' },
+                        { value: 'recipient', label: 'DAP — duties paid by the recipient' },
+                      ]}
+                    />
+                    <p className="mt-1.5 text-[12px] text-n-500">Pre-fills who pays duties when their shipments are booked with FedEx. It can still be changed on the booking.</p>
 
                     {/*
                       Where the numbering stands, and the way to start it again.

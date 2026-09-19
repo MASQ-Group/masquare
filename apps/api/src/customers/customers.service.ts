@@ -33,6 +33,8 @@ export interface CustomerInput {
   companyId?: string | null;
   active?: boolean;
   notes?: string | null;
+  /** Logistics: who pays duties on their FedEx shipments — 'sender' (DDP), 'recipient' (DAP), or null. */
+  fedexDutiesPaidBy?: string | null;
 }
 
 export interface ContactInput {
@@ -294,6 +296,10 @@ export class CustomersService {
       ...(dto.notes !== undefined ? { notes: text(dto.notes) } : {}),
       ...(dto.active !== undefined ? { active: dto.active } : {}),
       ...(dto.companyId !== undefined ? { companyId: dto.companyId || null } : {}),
+      // Anything but the two answers is no answer, so a stray value cannot pre-fill a booking.
+      ...(dto.fedexDutiesPaidBy !== undefined
+        ? { fedexDutiesPaidBy: dto.fedexDutiesPaidBy === 'sender' || dto.fedexDutiesPaidBy === 'recipient' ? dto.fedexDutiesPaidBy : null }
+        : {}),
     };
   }
 }

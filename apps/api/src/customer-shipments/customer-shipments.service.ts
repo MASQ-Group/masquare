@@ -508,7 +508,7 @@ export class CustomerShipmentsService {
     const shipment = await this.get(id);
     const customer = await this.prisma.customer.findFirst({
       where: { id: shipment.customerId },
-      select: { name: true, legalName: true, companyId: true },
+      select: { name: true, legalName: true, companyId: true, fedexDutiesPaidBy: true },
     });
     const [accounts, eu] = await Promise.all([
       this.carriers.accountsForBooking(customer?.companyId ?? null),
@@ -524,6 +524,8 @@ export class CustomerShipmentsService {
       services: CYPRUS_SERVICE_TYPES.map((value) => ({ value, label: SERVICE_LABELS[value] ?? value })),
       invoiceIssuer: customer ? invoiceIssuer(customer) : null,
       collection: !!collected,
+      /** The customer's standing answer on who pays duties — a pre-fill a person can change. */
+      dutiesPaidBy: customer?.fedexDutiesPaidBy === 'sender' || customer?.fedexDutiesPaidBy === 'recipient' ? customer.fedexDutiesPaidBy : null,
     };
   }
 

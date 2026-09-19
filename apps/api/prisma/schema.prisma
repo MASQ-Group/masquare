@@ -2120,6 +2120,22 @@ model Country {
   vatRate                  Decimal @default(0) @map("vat_rate") @db.Decimal(5, 2)
   defaultShippingServiceId String? @map("default_shipping_service_id") @db.Uuid
 
+  /**
+   * Whether a parcel arriving here is charged import duties and taxes, and from what value.
+   *
+   *   null        nobody has said — a FedEx rule that asks cannot answer, and does not match.
+   *   'none'      nothing is charged on arrival, whatever the value.
+   *   'threshold' charged when the goods are worth MORE than the amount below, in its currency.
+   *               Zero means charged on everything.
+   *
+   * A threshold rather than a yes/no because that is how the rules are written: the UK charges duty
+   * above £135, below which the marketplace has already collected the VAT at checkout. Compared
+   * against the goods' value at the customs rate of the month, not the day's market rate.
+   */
+  importDutyMode      String?  @map("import_duty_mode")
+  importDutyThreshold Decimal? @map("import_duty_threshold") @db.Decimal(12, 2)
+  importDutyCurrency  String?  @map("import_duty_currency")
+
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
   createdById String?   @map("created_by") @db.Uuid
@@ -2292,6 +2308,7 @@ model SalesChannel {
   company           Company?                   @relation(fields: [companyId], references: [id], onDelete: SetNull)
   nativeCountry     Country?                   @relation(fields: [nativeCountryId], references: [id], onDelete: SetNull)
   salesTransactions SalesTransaction[]
+  fedexDutyRules    FedexDutyRule[]
   fbaShipments      FbaShipment[]
   fbaPools          FbaFulfilmentPoolChannel[]
 
@@ -4215,6 +4232,13 @@ model Customer {
   /// Which of our companies serves them, and bills them.
   companyId String? @map("company_id") @db.Uuid
 
+  /**
+   * Logistics: who pays duties and taxes on their FedEx shipments — 'sender' (DDP, billed to us and
+   * on to them) or 'recipient' (DAP, billed to whoever receives it). Null means no standing answer:
+   * the booking asks each time. Pre-fills the booking, which a person can still change.
+   */
+  fedexDutiesPaidBy String? @map("fedex_duties_paid_by")
+
   /// Whether they may still file shipments. Their history stays whatever this says.
   active Boolean @default(true)
   notes  String?
@@ -4525,4 +4549,46 @@ model CustomerProduct {
 
   @@index([customerId, name])
   @@map("customer_product")
+}
+
+/**
+ * A rule that pre-fills who pays duties and taxes when one of our orders is booked with FedEx.
+ *
+ * An ordered list, first match wins, with a handful of fixed conditions rather than a general rule
+ * language: the questions are always the same ones — which channel sold it, is the destination that
+ * channel's home market, is it outside the EU, will duties be charged on arrival — and a rule builder
+ * that can express anything is one nobody can read back a month later. Every condition has an "any".
+ *
+ * A pre-fill, never a decision: the booking screen says which rule set the field, and a person can
+ * change it. Logistics customers are not covered here — their answer is on the customer.
+ */
+model FedexDutyRule {
+  id        String  @id @default(uuid()) @db.Uuid
+  name      String
+  /// Lower first. The first active rule whose every condition holds is the one applied.
+  sortOrder Int     @default(0) @map("sort_order")
+  active    Boolean @default(true)
+
+  /// Only orders from this channel. Null means any channel.
+  salesChannelId      String? @map("sales_channel_id") @db.Uuid
+  /// 'any' | 'channel_home' (delivered in the channel's own country) | 'not_channel_home'.
+  destinationRelation String  @default("any") @map("destination_relation")
+  /// 'any' | 'eu' | 'non_eu'.
+  destinationRegion   String  @default("any") @map("destination_region")
+  /// 'any' | 'yes' | 'no' — from the destination's import threshold against the goods' value.
+  dutiesDue           String  @default("any") @map("duties_due")
+
+  /// The pre-fill: 'sender' (DDP) or 'recipient' (DAP).
+  dutiesPaidBy String @map("duties_paid_by")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdById String?   @map("created_by") @db.Uuid
+  updatedById String?   @map("updated_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at")
+
+  salesChannel SalesChannel? @relation(fields: [salesChannelId], references: [id], onDelete: SetNull)
+
+  @@index([sortOrder])
+  @@map("fedex_duty_rule")
 }

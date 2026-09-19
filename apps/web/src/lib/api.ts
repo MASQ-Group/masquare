@@ -1138,7 +1138,35 @@ export interface Country {
   defaultShippingServiceId: string | null;
   defaultShippingService: { id: string; name: string } | null;
   shippingZones: CountryZoneMapping[];
+  /** Import duties on arrival: 'none', 'threshold' (above the amount; 0 = on everything), or null for not set. */
+  importDutyMode?: 'none' | 'threshold' | null;
+  importDutyThreshold?: number | null;
+  importDutyCurrency?: string | null;
 }
+
+/** A rule that pre-fills who pays duties when one of our orders is booked with FedEx. */
+export interface DutyRule {
+  id: string;
+  name: string;
+  sortOrder: number;
+  active: boolean;
+  salesChannelId: string | null;
+  salesChannel: { id: string; name: string } | null;
+  destinationRelation: 'any' | 'channel_home' | 'not_channel_home';
+  destinationRegion: 'any' | 'eu' | 'non_eu';
+  dutiesDue: 'any' | 'yes' | 'no';
+  dutiesPaidBy: 'sender' | 'recipient';
+  updatedAt: string;
+}
+
+export type DutyRuleInput = Partial<Omit<DutyRule, 'id' | 'salesChannel' | 'updatedAt'>>;
+
+export const dutyRulesApi = {
+  list: () => api.get<DutyRule[]>('/fedex-duty-rules').then((r) => r.data),
+  create: (body: DutyRuleInput) => api.post<DutyRule[]>('/fedex-duty-rules', body).then((r) => r.data),
+  update: (id: string, body: DutyRuleInput) => api.patch<DutyRule[]>(`/fedex-duty-rules/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete<DutyRule[]>(`/fedex-duty-rules/${id}`).then((r) => r.data),
+};
 export interface ShippingRate { id?: string; fromWeightKg: number; toWeightKg: number; chargeEur: number }
 export interface ShippingZone {
   id?: string;
@@ -2787,6 +2815,8 @@ export const customerShipmentsApi = {
       invoiceIssuer: string | null;
       /** Whether the goods are collected from an address rather than our warehouse. */
       collection: boolean;
+      /** The customer's standing answer on who pays duties, or null. */
+      dutiesPaidBy: 'sender' | 'recipient' | null;
     }>(`/customer-shipments/${id}/booking-options`).then((r) => r.data),
   /** What FedEx would charge us, per service. Nothing is booked. */
   quote: (id: string, accountId: string) =>
@@ -3016,6 +3046,8 @@ export interface Customer {
   addressCountryIso: string | null;
   /** Logistics: two letters. Every shipment they file is numbered from it. Null for anybody else. */
   referencePrefix: string | null;
+  /** Logistics: who pays duties on their FedEx shipments — pre-fills the booking. */
+  fedexDutiesPaidBy: 'sender' | 'recipient' | null;
   referenceSeq: number;
   /** Which year that counter belongs to. The number restarts each January. */
   referenceYear: number | null;
@@ -3486,6 +3518,20 @@ export interface OrderFedexOptions {
   suggestedParcels: Array<{ weightKg: number | null; lengthCm: number | null; widthCm: number | null; heightCm: number | null; sku: string | null }>;
   batteryProducts: Array<{ sku: string; battery: string }>;
   bookings: CustomerShipmentBooking[];
+  /** The duty rules' pre-fill and the facts that decided it. */
+  duties: {
+    dutiesPaidBy: 'sender' | 'recipient' | null;
+    rule: { id: string; name: string } | null;
+    facts: {
+      salesChannelId: string | null;
+      channelName: string | null;
+      channelHomeIso: string | null;
+      destinationIso: string | null;
+      destinationInEu: boolean | null;
+      dutiesDue: boolean | null;
+      dutiesReason: string;
+    };
+  } | null;
 }
 
 export interface OrderBookResult {

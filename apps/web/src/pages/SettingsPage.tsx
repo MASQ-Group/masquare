@@ -8,6 +8,7 @@ import { ShippingServicesTab } from '../components/settings/ShippingServicesTab'
 import { ProfitTiersTab } from '../components/settings/ProfitTiersTab';
 import { CustomsFxTab } from '../components/settings/CustomsFxTab';
 import { EmailTab } from '../components/settings/EmailTab';
+import { FedexRulesTab } from '../components/settings/FedexRulesTab';
 import { VendorsSection } from '../components/settings/VendorsSection';
 import { BrandsSection, ProductTypesSection, FulfilmentTypesSection } from '../components/settings/SimpleSections';
 import { CategoriesSection } from '../components/settings/CategoriesSection';
@@ -17,7 +18,7 @@ import { VatClassesSection } from '../components/settings/VatClassesSection';
 import { ProductClassesSection } from '../components/settings/ProductClassesSection';
 import { ComplianceSection } from '../components/settings/ComplianceSection';
 
-type TopTab = 'general' | 'countries' | 'products' | 'sales-channels' | 'shipping-services' | 'profit-tiers' | 'customs-fx' | 'email';
+type TopTab = 'general' | 'countries' | 'products' | 'sales-channels' | 'shipping-services' | 'fedex-rules' | 'profit-tiers' | 'customs-fx' | 'email';
 
 const TOP_TABS: [TopTab, string][] = [
   ['general', 'General'],
@@ -25,6 +26,7 @@ const TOP_TABS: [TopTab, string][] = [
   ['products', 'Products'],
   ['sales-channels', 'Sales Channels'],
   ['shipping-services', 'Shipping Services'],
+  ['fedex-rules', 'FedEx Rules'],
   ['profit-tiers', 'Profit Tiers'],
   ['customs-fx', 'Customs FX (CY)'],
   ['email', 'Email'],
@@ -91,6 +93,7 @@ export function SettingsPage() {
       {top === 'countries' && <CountriesTab />}
       {top === 'sales-channels' && <SalesChannelsTab />}
       {top === 'shipping-services' && <ShippingServicesTab />}
+      {top === 'fedex-rules' && <FedexRulesTab />}
       {top === 'profit-tiers' && <ProfitTiersTab />}
       {top === 'customs-fx' && <CustomsFxTab />}
       {top === 'email' && <EmailTab />}
