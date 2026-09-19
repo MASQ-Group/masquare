@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ImagePlus, Plus, Star, Trash2, X, Store } from 'lucide-react';
+import { ProductImage } from './ProductImage';
 import { toast } from 'sonner';
 import { CostHistory } from './CostHistory';
 import { ProductStockSection } from './ProductStockSection';
@@ -265,10 +266,31 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
     setMedia(updated.media);
   };
   const makeFeatured = async (mediaId: string) => {
-    if (!product) return;
-    const ordered = [mediaId, ...media.filter((m) => m.id !== mediaId).map((m) => m.id)];
-    const updated = await productsApi.reorderMedia(product.id, ordered);
-    setMedia(updated.media);
+    const from = media.findIndex((m) => m.id === mediaId);
+    if (from > 0) await moveMedia(from, 0);
+  };
+
+  /**
+   * Drag an image onto another's place to change the order — image 3 dropped on image 2 becomes 2.
+   * Shown in its new place at once and saved straight away, like upload and remove; put back as it
+   * was if the save fails, so the card never shows an order the product does not have.
+   */
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
+  const moveMedia = async (from: number, to: number) => {
+    if (!product || from === to || from < 0 || to < 0) return;
+    const before = media;
+    const next = [...media];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setMedia(next);
+    try {
+      const updated = await productsApi.reorderMedia(product.id, next.map((m) => m.id));
+      setMedia(updated.media);
+    } catch (e: any) {
+      setMedia(before);
+      toast.error(e?.response?.data?.message ?? 'Could not change the image order');
+    }
   };
 
   return (
@@ -285,13 +307,27 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
         <div className="flex flex-col gap-4">
           {/* Media */}
           <div>
-            <label className="label">Images <span className="font-normal text-n-400">(up to 8, first is featured)</span></label>
+            <label className="label">Images <span className="font-normal text-n-400">(up to 8, first is featured — drag to reorder)</span></label>
             {product ? (
               <div className="flex flex-wrap gap-2">
                 {media.map((m, i) => (
-                  <div key={m.id} className="group relative h-20 w-20 overflow-hidden rounded-md border border-n-200">
-                    <img src={m.url} alt="" className="h-full w-full object-cover" />
+                  <div
+                    key={m.id}
+                    draggable
+                    onDragStart={(e) => { setDragFrom(i); e.dataTransfer.effectAllowed = 'move'; }}
+                    onDragOver={(e) => { if (dragFrom == null) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOver(i); }}
+                    onDragLeave={() => setDragOver((o) => (o === i ? null : o))}
+                    onDrop={(e) => { e.preventDefault(); if (dragFrom != null) void moveMedia(dragFrom, i); setDragFrom(null); setDragOver(null); }}
+                    onDragEnd={() => { setDragFrom(null); setDragOver(null); }}
+                    title="Drag to change the order"
+                    className={`group relative w-20 cursor-grab overflow-hidden rounded-md border active:cursor-grabbing ${
+                      dragOver === i && dragFrom !== i ? 'border-teal-500 ring-2 ring-teal-300' : 'border-n-200'
+                    } ${dragFrom === i ? 'opacity-40' : ''}`}
+                  >
+                    <ProductImage src={m.url} className="w-full" />
                     {i === 0 && <span className="absolute left-1 top-1 rounded bg-teal-600 px-1 text-[9px] font-semibold text-white">Featured</span>}
+                    {/* Its place in the order, so "move 3 to 2" can be read off the card. */}
+                    <span className="mono absolute bottom-1 right-1 rounded bg-n-900/60 px-1 text-[9px] font-semibold text-white">{i + 1}</span>
                     <div className="absolute inset-0 hidden items-center justify-center gap-1 bg-black/40 group-hover:flex">
                       {i !== 0 && <button className="grid h-7 w-7 place-items-center rounded bg-white/90 text-n-700" title="Make featured" onClick={() => makeFeatured(m.id)}><Star size={14} /></button>}
                       <button className="grid h-7 w-7 place-items-center rounded bg-white/90 text-danger" title="Remove" onClick={() => removeMedia(m.id)}><Trash2 size={14} /></button>

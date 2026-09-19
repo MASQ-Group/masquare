@@ -5,6 +5,7 @@ import { Check, Copy, Download, FileText, Package } from 'lucide-react';
 import { toast } from 'sonner';
 import { productsApi } from '../lib/api';
 import { PriceCard } from '../components/store/PriceCard';
+import { ProductImage } from '../components/products/ProductImage';
 
 /**
  * The B2B webstore's product page, rendered inside the platform.
@@ -74,18 +75,16 @@ export function StoreProductPreviewPage() {
           <div className="flex flex-col gap-3">
             {data.images.length > 0 ? (
               <>
-                <div className="aspect-square overflow-hidden rounded-lg border border-n-200 bg-n-0">
-                  <img src={data.images[active]} alt={data.title} className="h-full w-full object-contain" />
-                </div>
+                <ProductImage src={data.images[active]} alt={data.title} className="w-full rounded-lg border border-n-200" />
                 {data.images.length > 1 && (
                   <div className="grid grid-cols-5 gap-2.5">
                     {data.images.map((src, i) => (
                       <button
                         key={src}
                         onClick={() => setActive(i)}
-                        className={`aspect-square overflow-hidden rounded-md bg-n-0 ${i === active ? 'border-2 border-teal-500' : 'border border-n-200'}`}
+                        className={`overflow-hidden rounded-md ${i === active ? 'ring-2 ring-teal-500' : ''}`}
                       >
-                        <img src={src} alt="" className="h-full w-full object-contain" />
+                        <ProductImage src={src} className="w-full rounded-md border border-n-200" />
                       </button>
                     ))}
                   </div>

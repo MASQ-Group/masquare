@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Select } from '@masquare/ui';
 import { onbuyListingApi, type OnbuyCompetition } from '../../lib/api';
 import { useConfirm } from '../ConfirmProvider';
+import { ProductImage } from './ProductImage';
 
 /**
  * The OnBuy pieces of a product's channel plan: find the product in OnBuy's catalogue, suggest a
@@ -51,7 +52,7 @@ export function OnbuyCandidates({ productId, integrationId, selectedOpc, onSelec
             const picked = c.opc === selectedOpc;
             return (
               <div key={c.opc} className={`flex items-center gap-2.5 rounded-md border px-2.5 py-2 ${picked ? 'border-teal-300 bg-teal-50' : 'border-n-100'}`}>
-                {c.thumbnailUrl && <img src={c.thumbnailUrl} alt="" className="h-10 w-10 shrink-0 rounded object-contain" />}
+                {c.thumbnailUrl && <ProductImage src={c.thumbnailUrl} className="w-10 rounded border border-n-100" />}
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[12.5px] font-medium text-n-800">{c.name || c.opc}</div>
                   <div className="text-[11.5px] text-n-500">

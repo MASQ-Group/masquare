@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Edit3, ExternalLink, Package, RefreshCw, Rocket, Search, RotateCw, Tag } from 'lucide-react';
+import { AlertTriangle, Edit3, ExternalLink, RefreshCw, Rocket, Search, RotateCw, Tag } from 'lucide-react';
 import { amazonListingApi, listingApi, salesTransactionsApi, type AmazonSweep, type AmazonSweepRow, type ChannelListingDetailChannel, type ProductListingSyncResult, channelListingsApi } from '../lib/api';
 import { DateRangePicker, ProgressButton, type DateRangeValue } from '@masquare/ui';
 import { formatAmount } from '../lib/format';
@@ -16,6 +16,7 @@ import { PageHeader } from '../components/common/PageHeader';
 import { withReturn } from '../lib/useBackLink';
 import { EditPriceModal } from '../components/channel-listings/EditPriceModal';
 import { ListEverywhereModal } from '../components/channel-listings/ListEverywhereModal';
+import { ProductImage } from '../components/products/ProductImage';
 
 const STATUS: Record<string, { label: string; color: string; bg: string }> = {
   live: { label: 'Live', color: '#0E7A73', bg: '#E1F3F1' },
@@ -256,9 +257,7 @@ export function ChannelListingDetailPage() {
           now lives in the header alone, so this card carries only what the header cannot. */}
       <div className="card flex flex-wrap items-start gap-5 p-5">
         {/* The featured image where there is one; the box only for a product with no image at all. */}
-        {data.imageUrl
-          ? <img src={data.imageUrl} alt="" className="h-[84px] w-[84px] flex-none rounded-xl border border-n-100 bg-n-0 object-contain p-1" />
-          : <div className="grid h-[84px] w-[84px] flex-none place-items-center rounded-xl border border-n-100 bg-n-50 text-n-300"><Package size={38} /></div>}
+        <ProductImage src={data.imageUrl} className="w-[84px] rounded-xl border border-n-100" iconSize={38} />
         <div className="min-w-[280px] flex-1">
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="code rounded-md px-2 py-0.5 text-[12.5px] text-teal-700" style={{ background: '#E8F4F2' }}>{data.sku}</span>
