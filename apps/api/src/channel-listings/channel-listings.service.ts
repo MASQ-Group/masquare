@@ -321,9 +321,10 @@ export class ChannelListingsService implements OnApplicationBootstrap {
       select: { id: true, name: true, marketplace: true, targetCompanyId: true },
       orderBy: { name: 'asc' },
     });
+    // eBay and OnBuy are asked too when every channel is, so the bar counts them.
     const ebayCount = opts.allChannels
       ? await this.prisma.channelIntegration.count({
-          where: { ...ACTIVE, status: 'active', channelType: 'ebay', ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}) },
+          where: { ...ACTIVE, status: 'active', channelType: { in: ['ebay', 'onbuy'] }, ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}) },
         })
       : 0;
     progress?.setTotal(ints.length + ebayCount);
@@ -447,12 +448,40 @@ export class ChannelListingsService implements OnApplicationBootstrap {
         progress?.tick(true);
       }
 
-      // OnBuy has no per-SKU lookup in its API, so there is nothing honest to report per product.
-      // Said out loud rather than left as a silent gap in a button called "all channels".
-      const onbuy = await this.prisma.channelIntegration.count({
+      /**
+       * OnBuy, by SKU. Its listings call takes filter[sku] — this used to say OnBuy had no per-product
+       * lookup, which left a product listed on OnBuy from here showing "not listed" until the next
+       * account-wide sync.
+       */
+      const onbuyInts = await this.prisma.channelIntegration.findMany({
         where: { ...ACTIVE, status: 'active', channelType: 'onbuy', ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}) },
+        select: { id: true, name: true, targetCompanyId: true },
       });
-      if (onbuy) skipped.push('OnBuy has no per-product lookup — use the channel sync for it');
+      for (const intg of onbuyInts) {
+        progress?.note(intg.name);
+        const res = await this.integrations.onbuyListingsBySku(intg.id, skus).catch((e: any) => ({ ok: false, status: 0, json: { message: e?.message } }) as any);
+        if (!res.ok) {
+          results.push({ integrationId: intg.id, name: intg.name, marketplace: null, ok: false, listed: false, message: `OnBuy ${res.status || ''} ${res.json?.message ?? ''}`.trim() });
+          progress?.tick(false);
+          continue;
+        }
+        const found: any[] = (Array.isArray(res.json?.results) ? res.json.results : []).filter((l: any) => skus.includes(String(l?.sku ?? '')));
+        for (const l of found) {
+          const data = {
+            productId: product.id, externalListingId: l.opc ? String(l.opc) : null, title: l.name ?? null,
+            listedQuantity: l.stock != null ? Number(l.stock) : null, listedPrice: l.price != null ? Number(l.price) : null,
+            currency: 'GBP', listingStatus: l.condition ?? null, lastPulledAt: now,
+          };
+          await this.prisma.channelListing.upsert({
+            where: { integrationId_channelSku_marketplace: { integrationId: intg.id, channelSku: String(l.sku), marketplace: '' } },
+            create: { integrationId: intg.id, companyId: intg.targetCompanyId, channelSku: String(l.sku), marketplace: '', asin: null, fulfilmentChannel: null, ...data },
+            update: data,
+          });
+        }
+        if (found.length) listedCount++;
+        results.push({ integrationId: intg.id, name: intg.name, marketplace: null, ok: true, listed: found.length > 0, status: null });
+        progress?.tick(true);
+      }
     }
 
     return {

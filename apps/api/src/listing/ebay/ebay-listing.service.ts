@@ -1605,6 +1605,31 @@ export class EbayListingService {
       this.logger.error(`eBay listing ${published.listingId} is live but could not be recorded on the plan: ${e?.message ?? e}`);
     }
 
+    /**
+     * And on the channel's own list, so the listing cards know it at once.
+     *
+     * Those cards read only what the channel sync has pulled, so a listing made here showed "not
+     * listed" — with no Edit price — until the next sync. Written as the sync would write it; the
+     * sync overwrites it with eBay's own figures when it next runs.
+     */
+    try {
+      const integration = await this.prisma.channelIntegration.findUnique({ where: { id: row.id }, select: { targetCompanyId: true } });
+      await this.prisma.channelListing.upsert({
+        where: { integrationId_channelSku_marketplace: { integrationId: row.id, channelSku: input.sku, marketplace: 'GB' } },
+        create: {
+          integrationId: row.id, companyId: integration?.targetCompanyId ?? null, channelSku: input.sku, marketplace: 'GB',
+          productId, externalListingId: published.listingId ?? null, listedPrice: input.priceValue ?? null,
+          listedQuantity: input.quantity ?? null, currency: input.currency ?? 'GBP', listingStatus: 'ACTIVE', lastPushedAt: new Date(),
+        },
+        update: {
+          productId, externalListingId: published.listingId ?? null, listedPrice: input.priceValue ?? null,
+          listedQuantity: input.quantity ?? null, currency: input.currency ?? 'GBP', listingStatus: 'ACTIVE', lastPushedAt: new Date(),
+        },
+      });
+    } catch (e: any) {
+      this.logger.warn(`eBay listing ${published.listingId} is live but could not be added to the channel listings: ${e?.message ?? e}`);
+    }
+
     return {
       ok: true,
       productSku,

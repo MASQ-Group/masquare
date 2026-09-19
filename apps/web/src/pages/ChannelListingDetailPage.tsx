@@ -440,7 +440,9 @@ export function ChannelListingDetailPage() {
                       {c.integrationId && c.listed && ['amazon', 'ebay', 'onbuy'].includes(c.channelType ?? '') && (
                         <button
                           type="button"
-                          onClick={() => setPricing({ integrationId: c.integrationId, name: c.name, channelType: c.channelType, sku: c.channelSku, countryIso: c.countryIso })}
+                          // An eBay card is keyed "<integration>:<market>" — one eBay account serves many
+                          // markets — so the integration is the part before the colon.
+                          onClick={() => setPricing({ integrationId: c.integrationId.split(':')[0], name: c.name, channelType: c.channelType, sku: c.channelSku, countryIso: c.countryIso })}
                           title={`Change this product's price on ${c.name}`}
                           className="inline-flex h-[34px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-teal-300 hover:text-teal-700"
                         >
