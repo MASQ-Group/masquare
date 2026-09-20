@@ -1213,6 +1213,8 @@ export interface SalesChannel {
   nativeCurrency: string | null;
   generalSalesFeePct: number | null;
   feeChargedInNativeCurrency: boolean;
+  /** The channel performs the delivery and charges the buyer, so our carrier rate is not its cost. */
+  shippingByChannel: boolean;
   feeCurrency: string | null;
   vatThresholdEnabled: boolean;
   pricesIncludeTax: boolean;
@@ -2328,7 +2330,7 @@ export const onbuyListingApi = {
     api.get<{
       suggestion: {
         priceNative: number | null; currency: string; marginPct: number | null; profitEur: number | null; targetMarginPct: number;
-        inputs: { costEur: number; shippingEur: number; feePct: number; vatPct: number; shippingServiceName: string | null };
+        inputs: { costEur: number; shippingEur: number; feePct: number; vatPct: number; shippingServiceName: string | null; shippingByChannel?: boolean };
       } | null;
       breakevenNative: number | null;
       at: { priceCents: number; profitCents: number; profitEurCents: number; marginPct: number; aboveBreakeven: boolean } | null;
@@ -4985,6 +4987,8 @@ export interface BulkPricingResult {
   columns: {
     channelId: string; channelName: string; currency: string; countryIso: string | null;
     shippingServiceId: string | null; shippingServiceName: string | null; unavailable: boolean;
+    /** The channel delivers and charges for it, so no shipping is taken off these prices. */
+    shippingByChannel?: boolean;
   }[];
   rows: { productId: string; sku: string; title: string; costEur: number; cells: BulkPricingCell[] }[];
   productCount: number; channelCount: number;

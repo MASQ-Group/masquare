@@ -138,6 +138,7 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
     nativeCurrency: channel?.nativeCurrency ?? null as string | null,
     generalSalesFeePct: channel?.generalSalesFeePct?.toString() ?? '',
     feeChargedInNativeCurrency: channel?.feeChargedInNativeCurrency ?? true,
+    shippingByChannel: channel?.shippingByChannel ?? false,
     feeCurrency: channel?.feeCurrency ?? null as string | null,
     showTransactionTotal: channel?.showTransactionTotal ?? false,
     chipBgColor: channel?.chipBgColor ?? '#F1F3F5',
@@ -215,6 +216,7 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
         description: form.description || undefined,
         generalSalesFeePct: form.generalSalesFeePct.trim() === '' ? null : Number(form.generalSalesFeePct),
         feeChargedInNativeCurrency: form.feeChargedInNativeCurrency,
+        shippingByChannel: form.shippingByChannel,
         feeCurrency: form.feeChargedInNativeCurrency ? null : form.feeCurrency,
         pricesIncludeTax: form.pricesIncludeTax,
         fxSpreadPct: form.fxSpreadPct.trim() === '' ? null : Number(form.fxSpreadPct),
@@ -297,6 +299,22 @@ function SalesChannelModal({ channel, onClose, onSaved }: { channel: SalesChanne
               <CurrencySelect value={form.feeCurrency} onChange={(v) => set({ feeCurrency: v })} />
             </div>
           )}
+        </div>
+        {/*
+          * Who delivers. On a marketplace that ships the order itself and charges the buyer for it,
+          * our carrier rate is not a cost of that sale — deducting it reports a margin the business
+          * never loses. Off everywhere until someone says otherwise, because we usually ship.
+          */}
+        <div className="col-span-2 flex flex-col gap-1 rounded-md border border-n-200 bg-n-25 p-3">
+          <label className="flex cursor-pointer items-center gap-2.5">
+            <input type="checkbox" className="h-4 w-4 accent-[var(--teal-500)]" checked={form.shippingByChannel} onChange={(e) => set({ shippingByChannel: e.target.checked })} />
+            <span className="text-[13.5px] text-n-700">The channel delivers the order and charges the buyer for it</span>
+          </label>
+          <p className="pl-6 text-[12px] text-n-500">
+            Then our shipping rate is left out of profit and margin — on the listing screens, in Individual
+            and Bulk pricing, and on a sale booked here. Leave it off where we post the parcel ourselves,
+            whether or not the buyer pays for postage.
+          </p>
         </div>
         <div className="col-span-2 flex flex-col gap-2 rounded-md border border-n-200 bg-n-25 p-3">
           <span className="text-[13.5px] font-medium text-n-800">Chip colours</span>

@@ -57,7 +57,7 @@ export interface TxQuery {
 const include = {
   // kind drives the local-sale branches below (pricing, shipping and alerts all differ);
   // showTransactionTotal decides whether a transaction Total is meaningful for this channel.
-  salesChannel: { select: { id: true, name: true, kind: true, showTransactionTotal: true, nativeCountry: { select: { isoCode: true } } } },
+  salesChannel: { select: { id: true, name: true, kind: true, showTransactionTotal: true, shippingByChannel: true, nativeCountry: { select: { isoCode: true } } } },
   destinationCountry: { select: { id: true, name: true, isoCode: true, vatRate: true, euVatZone: true, defaultShippingServiceId: true } },
   shippingService: { select: { id: true, name: true, calcMethod: true } },
   items: {
@@ -345,7 +345,15 @@ export class SalesTransactionsService {
     // "shipping was free". Null once an estimate is produced.
     let shippingGap: 'no_zone' | 'no_rates' | null = null;
     const svc = t.shippingServiceId ? serviceMap.get(t.shippingServiceId) : null;
-    if (isLocal) {
+    /**
+     * A channel that performs and charges delivery itself (Jinius) costs us no postage: the buyer
+     * pays the marketplace, the marketplace ships it. Estimating our own carrier rate here would
+     * take money off a profit that never lost it. An actual outbound shipment we paid for still
+     * counts below — that is a real cost, whoever was meant to ship.
+     */
+    if (!isLocal && t.salesChannel?.shippingByChannel) {
+      estimatedShippingCost = 0;
+    } else if (isLocal) {
       // We delivered it ourselves (or the buyer collected): the cost is whatever was entered,
       // and a pickup with nothing entered genuinely costs us nothing.
       estimatedShippingCost = n(t.localShippingCostEur);

@@ -2283,6 +2283,13 @@ model SalesChannel {
   nativeCountryId            String?   @map("native_country_id") @db.Uuid
   nativeCurrency             String?   @map("native_currency") // ISO 4217 3-letter
   generalSalesFeePct         Float?    @map("general_sales_fee_pct") // % fee charged per sale
+  /**
+   * The channel performs the delivery and charges the buyer for it (Jinius does; so does any
+   * marketplace-fulfilled channel). Our own carrier rate is then not a cost of the sale, so it is
+   * left out of profit and margin everywhere — the listing screens, Individual and Bulk pricing, and
+   * a booked sale's estimate. False (we ship it) for every channel until somebody says otherwise.
+   */
+  shippingByChannel          Boolean   @default(false) @map("shipping_by_channel")
   // Whether the sales fees are charged in the channel's native currency; if not,
   // feeCurrency holds the explicit currency the fees are charged in.
   feeChargedInNativeCurrency Boolean   @default(true) @map("fee_charged_in_native_currency")
