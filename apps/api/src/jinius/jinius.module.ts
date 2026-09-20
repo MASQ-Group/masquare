@@ -11,7 +11,9 @@ import { JiniusOrdersService } from './jinius-orders.service';
 @Module({
   imports: [IntegrationsModule, SalesTransactionsModule],
   controllers: [JiniusOrdersController],
-  providers: [JiniusOrdersService],
-  exports: [JiniusOrdersService],
+  // Under a token as well, so IntegrationsService can reach it lazily: Jinius imports Integrations,
+  // and a direct injection the other way would be a cycle.
+  providers: [JiniusOrdersService, { provide: 'JINIUS_ORDERS_SERVICE', useExisting: JiniusOrdersService }],
+  exports: [JiniusOrdersService, 'JINIUS_ORDERS_SERVICE'],
 })
 export class JiniusModule {}

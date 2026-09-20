@@ -362,11 +362,16 @@ export class JiniusOrdersService {
 
   // ---------------------------------------------------------------- the local invoice
 
-  /** The orders of a selection, with their lines and each product's local VAT rate. */
+  /**
+   * The orders a selection names, however it names them.
+   *
+   * The Sales Transactions page selects TRANSACTIONS — that is where a Jinius sale is seen — so an id
+   * may be either an order of ours or the transaction reporting it. Both resolve to the same orders.
+   */
   private async selection(orderIds: string[], companyIds?: string[]) {
     const orders = await this.prisma.jiniusOrder.findMany({
       where: {
-        id: { in: orderIds }, deletedAt: null,
+        OR: [{ id: { in: orderIds } }, { salesTransactionId: { in: orderIds } }], deletedAt: null,
         ...(companyIds ? { integration: { targetCompanyId: { in: companyIds } } } : {}),
       },
       include: { lines: { orderBy: { createdAt: 'asc' } }, linkedTransaction: { select: { id: true, transactionRef: true } } },
@@ -492,6 +497,116 @@ export class JiniusOrdersService {
     });
     await this.setSuperseded(orders.map((o) => o.id), tx.transactionRef);
     return { ok: true as const, linked: orders.length, transactionRef: tx.transactionRef };
+  }
+
+  /**
+   * Unlinked Jinius sales, for the Jinius Order ID box on a local sale.
+   *
+   * Each comes back with its lines already priced the way the local invoice prices them — the money
+   * that actually arrived, split into a unit net price and the product's VAT rate — so choosing one
+   * fills the form with figures that match what creating the invoice here would have produced.
+   */
+  async unlinkedForPicker(args: { q?: string; limit?: number; companyIds?: string[] }) {
+    const orders = await this.prisma.jiniusOrder.findMany({
+      where: {
+        deletedAt: null, linkedTransactionId: null,
+        ...(args.companyIds ? { integration: { targetCompanyId: { in: args.companyIds } } } : {}),
+        ...(args.q?.trim()
+          ? {
+            OR: [
+              { orderId: { contains: args.q.trim(), mode: 'insensitive' as const } },
+              { commercialId: { contains: args.q.trim(), mode: 'insensitive' as const } },
+              { lines: { some: { offerSku: { contains: args.q.trim(), mode: 'insensitive' as const } } } },
+            ],
+          }
+          : {}),
+      },
+      orderBy: { orderedAt: 'desc' },
+      take: Math.min(args.limit ?? 20, 50),
+      select: { id: true },
+    });
+    if (!orders.length) return { orders: [] };
+
+    const { orders: rows, lines, orderedAt } = await this.selection(orders.map((o) => o.id), args.companyIds);
+    const draft = buildLocalSaleDraft(lines, orderedAt);
+    const byOrder = new Map(rows.map((o) => [o.orderId, o]));
+    return {
+      orders: rows.map((o) => {
+        const mine = draft.lines.filter((l) => l.orderId === o.orderId);
+        return {
+          id: o.id,
+          ref: o.commercialId || o.orderId,
+          orderId: o.orderId,
+          orderedAt: o.orderedAt,
+          state: o.state,
+          /** What the local invoice would carry for the whole order. */
+          grossTotal: round2(mine.reduce((t, l) => t + l.grossAmount, 0)),
+          lines: mine.map((l) => ({
+            sku: l.sku,
+            productId: l.productId,
+            title: l.title,
+            quantity: l.quantity,
+            /** Per unit and net of VAT, which is what a local line is entered as. */
+            unitNetPrice: l.quantity > 0 ? round2(l.netSalesAmount / l.quantity) : l.netSalesAmount,
+            vatPct: l.vatPct,
+            grossAmount: l.grossAmount,
+          })),
+          /** Said plainly rather than hidden: a line the invoice cannot carry is a thing to fix first. */
+          problems: draft.problems.filter((p) => p.includes(o.orderId)),
+        };
+      }).filter((o) => byOrder.has(o.orderId)),
+    };
+  }
+
+  /**
+   * Attach orders to a local transaction somebody entered by hand, naming them on its lines.
+   *
+   * The same effect as linking from the list: the orders are covered, their own Jinius transactions
+   * stop counting, and this transaction moves no stock because they already did.
+   */
+  async attachOrders(orderIds: string[], transactionId: string, actorId?: string) {
+    const ids = [...new Set(orderIds.filter(Boolean))];
+    if (!ids.length) return { attached: 0 };
+    const orders = await this.prisma.jiniusOrder.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      select: { id: true, orderId: true, linkedTransactionId: true },
+    });
+    const taken = orders.filter((o) => o.linkedTransactionId && o.linkedTransactionId !== transactionId);
+    if (taken.length) throw new BadRequestException(`Already on another transaction: ${taken.map((o) => o.orderId).join(', ')}.`);
+
+    const tx = await this.prisma.salesTransaction.findFirst({ where: { id: transactionId, deletedAt: null }, select: { transactionRef: true } });
+    await this.prisma.$transaction([
+      this.prisma.jiniusOrder.updateMany({
+        where: { id: { in: orders.map((o) => o.id) } },
+        data: { linkedTransactionId: transactionId, linkedAt: new Date(), linkedById: actorId ?? null },
+      }),
+      // The Jinius transactions moved the goods; this one records the same sale for accounting.
+      this.prisma.salesTransaction.update({ where: { id: transactionId }, data: { availabilityHandledElsewhere: true } }),
+    ]);
+    await this.setSuperseded(orders.map((o) => o.id), tx?.transactionRef ?? null);
+    return { attached: orders.length };
+  }
+
+  /**
+   * Orders no longer named on a transaction's lines: they are loose again.
+   *
+   * An edit that drops a Jinius line must give that sale back to the reports, or removing a line
+   * would quietly delete revenue.
+   */
+  async detachOrdersExcept(transactionId: string, keepOrderIds: string[]) {
+    const stale = await this.prisma.jiniusOrder.findMany({
+      where: { linkedTransactionId: transactionId, id: { notIn: keepOrderIds.length ? keepOrderIds : ['00000000-0000-0000-0000-000000000000'] } },
+      select: { id: true, salesTransactionId: true },
+    });
+    if (!stale.length) return { detached: 0 };
+    await this.prisma.$transaction([
+      this.prisma.jiniusOrder.updateMany({ where: { id: { in: stale.map((o) => o.id) } }, data: { linkedTransactionId: null, linkedAt: null } }),
+      this.prisma.salesTransaction.updateMany({
+        where: { id: { in: stale.map((o) => o.salesTransactionId).filter(Boolean) as string[] } },
+        data: { excludedFromReports: false, excludedReason: null },
+      }),
+    ]);
+    return { detached: stale.length };
   }
 
   /** Undo a link. The transaction itself is left alone - removing it is a person's decision. */

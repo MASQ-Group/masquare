@@ -3243,6 +3243,10 @@ model SalesTransactionItem {
   // un-submit/cancel add it back.
   availabilityDeductedQty Int @default(0) @map("availability_deducted_qty")
 
+  /// The Jinius sale this line came from, when a local invoice was filled in from one. Names the
+  /// marketplace order on the line itself, so an invoice can be read back to what it covers.
+  jiniusOrderId String? @map("jinius_order_id") @db.Uuid
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")

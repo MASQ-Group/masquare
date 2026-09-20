@@ -3506,6 +3506,8 @@ export interface TransactionAlert {
   items?: string[];
 }
 export interface SalesTransaction {
+  /** Where the row came from: 'manual', a channel import, or 'jinius'. */
+  source?: string;
   /** Real and visible, but left out of revenue and profit — with the reason why. */
   excludedFromReports?: boolean;
   excludedReason?: string | null;
@@ -4363,7 +4365,22 @@ export interface JiniusLocalSalePreview {
   suggestedRef: string;
 }
 
+/** A Jinius sale offered in the "Jinius Order ID" box, priced the way a local invoice prices it. */
+export interface JiniusPickerOrder {
+  id: string;
+  ref: string;
+  orderId: string;
+  orderedAt: string;
+  state: string;
+  grossTotal: number;
+  lines: { sku: string; productId: string | null; title: string | null; quantity: number; unitNetPrice: number; vatPct: number; grossAmount: number }[];
+  problems: string[];
+}
+
 export const jiniusOrdersApi = {
+  /** Jinius sales nothing invoices yet, for the picker on a local sale. */
+  unlinked: (q?: string, limit?: number) =>
+    api.get<{ orders: JiniusPickerOrder[] }>('/jinius/orders/unlinked', { params: { q, limit } }).then((r) => r.data),
   list: (params: { integrationId?: string; linked?: 'yes' | 'no'; q?: string; limit?: number } = {}) =>
     api.get<{ integrationId: string; orders: JiniusOrder[] }>('/jinius/orders', { params }).then((r) => r.data),
   sync: (body: { integrationId?: string; sinceDays?: number } = {}) =>

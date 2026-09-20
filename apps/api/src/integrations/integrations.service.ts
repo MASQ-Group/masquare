@@ -1,6 +1,7 @@
 import { ebayErrorText } from './ebay-error';
 import { EBAY_SCOPE_LABELS, EbayScopeMemory } from './ebay-scope-memory';
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { Prisma } from '@prisma/client';
@@ -99,6 +100,8 @@ export class IntegrationsService implements OnModuleInit {
     private readonly salesTx: SalesTransactionsService,
     private readonly storage: StorageService,
     private readonly scheduler: SchedulerRegistry,
+    /** Reaches JiniusOrdersService lazily: Jinius imports this module, so injecting it back is a cycle. */
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   /** On boot, schedule the daily auto-sync at the configured time (best-effort). */
@@ -4090,6 +4093,25 @@ export class IntegrationsService implements OnModuleInit {
   async syncOrders(id: string, trigger: 'manual' | 'schedule', actorId?: string, range?: { from?: string; to?: string }) {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
     if (!row) throw new NotFoundException('Integration not found');
+    /**
+     * Jinius is Mirakl, not a mapped CSV-ish feed: its orders arrive in one documented shape, so there
+     * is no field mapping to confirm and nothing for this importer to map. It runs its own pull and
+     * writes its own transactions, and answers here in the same shape so one button serves every channel.
+     */
+    if (row.channelType === 'jinius') {
+      if (row.status !== 'active') throw new BadRequestException('Integration is disabled.');
+      if (!row.targetSalesChannelId || !row.targetCompanyId) throw new BadRequestException('Set the target sales channel and company in the integration settings first.');
+      const jinius: any = this.moduleRef.get('JINIUS_ORDERS_SERVICE', { strict: false });
+      if (!jinius) throw new BadRequestException('Jinius orders are not available on this server.');
+      const r = await jinius.sync({ integrationId: id, actorId });
+      await this.audit(id, actorId, 'sync', `jinius ${trigger}: ${r.scanned} scanned, ${r.transactions} transaction(s)`);
+      return {
+        ok: true as const,
+        scanned: r.scanned, created: r.created, updated: r.updated, skipped: 0, cancelled: 0,
+        cancelledUpdated: 0, cancelledImported: 0, refunded: 0, errors: r.txProblems.length,
+        message: r.txProblems[0] ?? undefined,
+      };
+    }
     if (!['onbuy', 'amazon', 'ebay'].includes(row.channelType)) throw new BadRequestException('Order import supports OnBuy, Amazon and eBay only.');
     if (row.status !== 'active') throw new BadRequestException('Integration is disabled.');
     if (!row.mappingVerifiedAt) throw new BadRequestException('Confirm the field mapping before importing.');

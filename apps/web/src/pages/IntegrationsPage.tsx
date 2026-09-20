@@ -173,7 +173,12 @@ export function IntegrationsPage() {
   const countryOf = (i: ChannelIntegration) =>
     (i.targetSalesChannelId ? countryByChannelId.get(i.targetSalesChannelId) : null) ?? i.marketplace ?? null;
 
-  const canSync = (i: ChannelIntegration) => !!i.mappingVerifiedAt && !!i.targetSalesChannelId && !!i.targetCompanyId && i.status === 'active';
+  /**
+   * Jinius has no field mapping to confirm — Mirakl answers in one documented shape — so it is ready
+   * to sync as soon as it is active and pointed at a sales channel and company.
+   */
+  const canSync = (i: ChannelIntegration) =>
+    (i.channelType === 'jinius' || !!i.mappingVerifiedAt) && !!i.targetSalesChannelId && !!i.targetCompanyId && i.status === 'active';
 
   // ---- mutations -------------------------------------------------------
   const del = useMutation({
