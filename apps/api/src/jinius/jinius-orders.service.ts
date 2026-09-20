@@ -96,6 +96,18 @@ export class JiniusOrdersService {
     }
 
     await this.prisma.channelIntegration.update({ where: { id: integration.id }, data: { lastSyncedAt: new Date() } });
+
+    /**
+     * Every order held, not only the ones this pull touched.
+     *
+     * The pull is incremental — Mirakl is asked for what changed since last time — so an order stored
+     * before transactions existed would never be revisited, and its sale would never be reported. This
+     * writes the transaction for anything still without one, and is a no-op once they all have.
+     */
+    const backfilled = await this.backfillTransactions(integration, args.actorId);
+    counts.transactions += backfilled.written;
+    counts.txProblems.push(...backfilled.problems);
+
     this.logger.log(`Jinius orders: ${counts.scanned} scanned, ${counts.created} new, ${counts.transactions} transaction(s) written, ${counts.unmatched} line(s) matching no product`);
     return { ok: true as const, ...counts, newestOrder: newest };
   }
@@ -197,6 +209,43 @@ export class JiniusOrdersService {
       this.logger.log(`Jinius: ${returned} unit(s) returned to availability — the sales transactions hold them now`);
     }
     return returned;
+  }
+
+  /** Write the missing transactions for orders already held. Answers with what it did. */
+  private async backfillTransactions(
+    integration: { id: string; name: string; targetCompanyId: string | null; targetSalesChannelId: string | null },
+    actorId?: string,
+  ): Promise<{ written: number; problems: string[] }> {
+    const pending = await this.prisma.jiniusOrder.findMany({
+      where: { integrationId: integration.id, deletedAt: null, salesTransactionId: null },
+      orderBy: { orderedAt: 'asc' },
+      select: {
+        id: true, orderId: true, commercialId: true, orderedAt: true, state: true, currency: true,
+        taxMode: true, priceTotal: true, shippingPrice: true, totalCommission: true, totalPrice: true,
+      },
+    });
+    let written = 0;
+    const problems: string[] = [];
+    for (const o of pending) {
+      const r = await this.recordTransaction(integration, o.id, {
+        orderId: o.orderId,
+        commercialId: o.commercialId,
+        orderedAt: o.orderedAt,
+        state: o.state,
+        currency: o.currency,
+        taxMode: o.taxMode,
+        priceTotal: o.priceTotal,
+        shippingPrice: o.shippingPrice,
+        totalCommission: o.totalCommission,
+        totalPrice: o.totalPrice,
+        lines: [],
+      }, actorId);
+      if (r.written) written += 1;
+      // One reason is enough: they are all the same reason when they happen at all.
+      if (r.problem && !problems.includes(r.problem)) problems.push(r.problem);
+    }
+    if (written) this.logger.log(`Jinius: ${written} sale(s) already held now reported as transactions`);
+    return { written, problems };
   }
 
   /**
