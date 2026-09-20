@@ -2,20 +2,23 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { PrismaService } from '../prisma/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 import { JINIUS_PATHS, readJiniusTest } from '../integrations/jinius';
-import { readJiniusOrders, unitsToHold, STATES_WORTH_PULLING, type JiniusOrderRead } from './jinius-orders';
-import { buildLocalSaleDraft, jiniusSaleRef, type JiniusSaleLineIn } from './jinius-local-sale';
+import { holdsStock, readJiniusOrders, STATES_WORTH_PULLING, type JiniusOrderRead } from './jinius-orders';
+import { buildLocalSaleDraft, jiniusSaleRef, jiniusTransactionLines, type JiniusSaleLineIn } from './jinius-local-sale';
 import { SalesTransactionsService } from '../sales-transactions/sales-transactions.service';
 
 /** Mirakl's maximum page size for offset pagination. */
 const PAGE = 100;
 
 /**
- * Jinius orders: pulled from Mirakl, matched to products, and kept out of the revenue reports.
+ * Jinius orders: pulled from Mirakl, recorded as sales transactions, and superseded when accounting
+ * invoices them locally.
  *
- * The reports count the LOCAL transaction accounting issues for these sales, so an order here is the
- * trail back to the marketplace rather than a sale of its own. What it does affect is availability:
- * a Jinius sale takes units out of the shared pool every channel is told about, or the other channels
- * would go on offering stock that is already sold.
+ * A Jinius sale is an ordinary sale and is reported as one — same revenue, fee and profit arithmetic
+ * as Amazon, eBay and OnBuy, and it moves stock the same way. What is special is what happens next:
+ * accounting issues a LOCAL invoice covering a batch of these orders, and that invoice is entered
+ * here as its own transaction. The same money would then be counted twice, so linking an order to
+ * that invoice marks its Jinius transaction as invoiced locally: it stays in Sales Transactions,
+ * keeps its trail, and stops counting in revenue and profit.
  */
 @Injectable()
 export class JiniusOrdersService {
@@ -35,7 +38,7 @@ export class JiniusOrdersService {
         ...(integrationId ? { id: integrationId } : {}),
         ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
       },
-      select: { id: true, name: true, targetCompanyId: true, lastSyncedAt: true },
+      select: { id: true, name: true, targetCompanyId: true, targetSalesChannelId: true, lastSyncedAt: true },
       orderBy: { createdAt: 'asc' },
     });
     if (!rows.length) throw new NotFoundException('No Jinius connection is set up for this company.');
@@ -56,7 +59,11 @@ export class JiniusOrdersService {
       ? new Date(Date.now() - args.sinceDays * 864e5)
       : integration.lastSyncedAt ?? new Date(Date.now() - 365 * 864e5);
 
-    const counts = { scanned: 0, created: 0, updated: 0, lines: 0, unmatched: 0 };
+    // Before anything else, undo the holds the first version of this took: the sale is a transaction
+    // now, and the transaction moves the stock. Does nothing once there is nothing left to give back.
+    const released = await this.releaseLegacyHolds(integration.id, args.actorId);
+
+    const counts = { scanned: 0, created: 0, updated: 0, lines: 0, unmatched: 0, transactions: 0, released, txProblems: [] as string[] };
     let newest: Date | null = null;
 
     for (let offset = 0; ; offset += PAGE) {
@@ -77,6 +84,10 @@ export class JiniusOrdersService {
         counts[saved.created ? 'created' : 'updated'] += 1;
         counts.lines += order.lines.length;
         counts.unmatched += saved.unmatched;
+        // The sale itself, reported like any other channel's.
+        const tx = await this.recordTransaction(integration, saved.orderRowId, order, args.actorId);
+        if (tx.written) counts.transactions += 1;
+        if (tx.problem) counts.txProblems.push(tx.problem);
         if (order.orderedAt && (!newest || order.orderedAt > newest)) newest = order.orderedAt;
       }
       const total = Number(json?.total_count ?? 0);
@@ -85,9 +96,8 @@ export class JiniusOrdersService {
     }
 
     await this.prisma.channelIntegration.update({ where: { id: integration.id }, data: { lastSyncedAt: new Date() } });
-    const moved = await this.settleAvailability(integration.id, args.actorId);
-    this.logger.log(`Jinius orders: ${counts.scanned} scanned, ${counts.created} new, ${counts.unmatched} lines unmatched, availability ${moved.deducted} taken / ${moved.returned} given back`);
-    return { ok: true as const, ...counts, availability: moved, newestOrder: newest };
+    this.logger.log(`Jinius orders: ${counts.scanned} scanned, ${counts.created} new, ${counts.transactions} transaction(s) written, ${counts.unmatched} line(s) matching no product`);
+    return { ok: true as const, ...counts, newestOrder: newest };
   }
 
   /** One order and its lines, matched to products by our own SKU. */
@@ -131,7 +141,7 @@ export class JiniusOrdersService {
         update: data,
       });
     }
-    return { created: !existing, unmatched };
+    return { created: !existing, unmatched, orderRowId: row.id };
   }
 
   /** Our own SKUs, main and alias, lowercased — the same matching the listings sync uses. */
@@ -150,50 +160,146 @@ export class JiniusOrdersService {
   }
 
   /**
-   * Bring availability into line with what the orders now say.
+   * Give back what the order-level hold took.
    *
-   * Per line, not per order: a line already counted stays counted, and only the difference moves. A
-   * cancelled or refused order gives its units back, which is why this runs over everything rather
-   * than only over what this pull touched.
+   * The first version of this feature lowered availability from the ORDER, because a Jinius sale was
+   * not a transaction. It is one now, and a transaction moves stock like every other channel's — so
+   * those holds would be taken twice. This returns them once, writes the ledger line that says so,
+   * and is a no-op from then on.
    */
-  async settleAvailability(integrationId: string, actorId?: string) {
-    const lines = await this.prisma.jiniusOrderLine.findMany({
-      where: { order: { integrationId, deletedAt: null }, productId: { not: null } },
-      select: {
-        id: true, productId: true, quantity: true, state: true, availabilityDeductedQty: true,
-        order: { select: { id: true, orderId: true, state: true, availabilityDeductedAt: true } },
+  private async releaseLegacyHolds(integrationId: string, actorId?: string): Promise<number> {
+    const held = await this.prisma.jiniusOrderLine.findMany({
+      where: { order: { integrationId }, availabilityDeductedQty: { gt: 0 }, productId: { not: null } },
+      select: { id: true, productId: true, availabilityDeductedQty: true, order: { select: { id: true, orderId: true } } },
+    });
+    let returned = 0;
+    for (const l of held) {
+      const availability = await this.prisma.productAvailability.findUnique({ where: { productId: l.productId! }, select: { quantity: true } });
+      if (availability) {
+        const next = availability.quantity + l.availabilityDeductedQty;
+        await this.prisma.$transaction([
+          this.prisma.productAvailability.update({ where: { productId: l.productId! }, data: { quantity: next } }),
+          this.prisma.availabilityLedger.create({
+            data: {
+              productId: l.productId!, delta: l.availabilityDeductedQty, newQuantity: next, reason: 'cancellation',
+              refType: 'jinius_order', refId: l.order.id,
+              note: `Returned: Jinius order ${l.order.orderId} is reported as a sales transaction, which moves the stock`,
+              createdById: actorId ?? null,
+            },
+          }),
+        ]);
+        returned += l.availabilityDeductedQty;
+      }
+      await this.prisma.jiniusOrderLine.update({ where: { id: l.id }, data: { availabilityDeductedQty: 0 } });
+    }
+    if (held.length) {
+      await this.prisma.jiniusOrder.updateMany({ where: { integrationId, availabilityDeductedAt: { not: null } }, data: { availabilityDeductedAt: null } });
+      this.logger.log(`Jinius: ${returned} unit(s) returned to availability — the sales transactions hold them now`);
+    }
+    return returned;
+  }
+
+  /**
+   * The sales transaction for one Jinius order: created on the first pull, kept in step after that.
+   *
+   * Every figure comes from Jinius where Jinius states it — the price, the commission it keeps, the
+   * tax inside the price — and from the sales channel where it does not. The transaction is a DRAFT,
+   * as every channel import is, so a person reviews it before it is final.
+   *
+   * A transaction already invoiced locally is left alone apart from its money: re-pulling an order
+   * must not quietly un-supersede it.
+   */
+  private async recordTransaction(
+    integration: { id: string; targetCompanyId: string | null; targetSalesChannelId: string | null; name: string },
+    jiniusOrderId: string,
+    order: JiniusOrderRead,
+    actorId?: string,
+  ): Promise<{ written: boolean; problem?: string }> {
+    if (!integration.targetSalesChannelId) {
+      return { written: false, problem: `${integration.name} is not linked to a sales channel, so its orders cannot be reported. Link one in Setup → Integrations.` };
+    }
+    const row = await this.prisma.jiniusOrder.findUnique({
+      where: { id: jiniusOrderId },
+      select: { id: true, salesTransactionId: true, linkedTransactionId: true, lines: { select: { offerSku: true, productId: true, quantity: true, price: true, shippingPrice: true, totalCommission: true, taxAmount: true } } },
+    });
+    if (!row || !row.lines.length) return { written: false };
+
+    const channel = await this.prisma.salesChannel.findFirst({
+      where: { id: integration.targetSalesChannelId, deletedAt: null },
+      select: { id: true, companyId: true, nativeCountryId: true, nativeCurrency: true, nativeCountry: { select: { vatRate: true } } },
+    });
+    if (!channel) return { written: false, problem: 'The sales channel this Jinius connection points at no longer exists.' };
+    const vatPct = channel.nativeCountry?.vatRate != null ? Number(channel.nativeCountry.vatRate) : 0;
+
+    const items = jiniusTransactionLines(
+      row.lines.map((l) => ({
+        sku: l.offerSku, productId: l.productId, quantity: l.quantity,
+        price: l.price, shippingPrice: l.shippingPrice, totalCommission: l.totalCommission, taxAmount: l.taxAmount,
+      })),
+      vatPct,
+    );
+
+    const header = {
+      date: order.orderedAt!,
+      salesChannelId: channel.id,
+      companyId: channel.companyId ?? integration.targetCompanyId,
+      destinationCountryId: channel.nativeCountryId,
+      currency: order.currency || channel.nativeCurrency || 'EUR',
+      // Cyprus sales in euro: no conversion, and the VAT is ours to report.
+      exchangeRate: 1,
+      feeExchangeRate: 1,
+      taxType: 'vat',
+      vatCollectedByChannel: false,
+      fulfilmentStatus: order.state === 'CANCELED' || order.state === 'REFUSED' ? 'cancelled' : holdsStock(order.state) ? 'shipped' : 'pending',
+      resolution: order.state === 'CANCELED' || order.state === 'REFUSED' ? 'cancelled' : 'none',
+      source: 'jinius',
+      integrationId: integration.id,
+      updatedById: actorId ?? null,
+    };
+
+    if (row.salesTransactionId) {
+      await this.prisma.$transaction([
+        this.prisma.salesTransaction.update({ where: { id: row.salesTransactionId }, data: header }),
+        this.prisma.salesTransactionItem.deleteMany({ where: { transactionId: row.salesTransactionId } }),
+        this.prisma.salesTransactionItem.createMany({ data: items.map((i) => ({ transactionId: row.salesTransactionId!, ...i })) }),
+      ]);
+      return { written: true };
+    }
+
+    const tx = await this.prisma.salesTransaction.create({
+      data: {
+        ...header,
+        transactionRef: order.commercialId || order.orderId,
+        createdById: actorId ?? null,
+        items: { create: items },
+      },
+      select: { id: true },
+    });
+    await this.prisma.jiniusOrder.update({ where: { id: row.id }, data: { salesTransactionId: tx.id } });
+    return { written: true };
+  }
+
+
+  /**
+   * Take the Jinius transactions of these orders out of the reports, and say why on the row.
+   *
+   * They stay in Sales Transactions, marked. Removing them would lose the trail from a marketplace
+   * order to the money; counting them would report the sale twice, once as a Jinius sale and once on
+   * the local invoice that covers it.
+   */
+  private async setSuperseded(orderIds: string[], ref: string | null) {
+    const rows = await this.prisma.jiniusOrder.findMany({
+      where: { id: { in: orderIds }, salesTransactionId: { not: null } },
+      select: { salesTransactionId: true },
+    });
+    if (!rows.length) return;
+    await this.prisma.salesTransaction.updateMany({
+      where: { id: { in: rows.map((r) => r.salesTransactionId!) } },
+      data: {
+        excludedFromReports: true,
+        excludedReason: ref ? `Invoiced locally on ${ref}` : 'Invoiced locally',
       },
     });
-    let deducted = 0;
-    let returned = 0;
-    for (const l of lines) {
-      const want = unitsToHold({ quantity: l.quantity, state: l.state }, l.order.state);
-      const delta = want - l.availabilityDeductedQty;
-      if (delta === 0) continue;
-      const availability = await this.prisma.productAvailability.findUnique({ where: { productId: l.productId! }, select: { quantity: true } });
-      // No availability row means the product is not in the shared pool at all; there is nothing to
-      // lower, and inventing a row would advertise a quantity nobody set.
-      if (!availability) continue;
-      const next = Math.max(0, availability.quantity - delta);
-      await this.prisma.$transaction([
-        this.prisma.productAvailability.update({ where: { productId: l.productId! }, data: { quantity: next, lastSource: 'sale' } }),
-        this.prisma.availabilityLedger.create({
-          data: {
-            productId: l.productId!, delta: -(delta), newQuantity: next,
-            reason: delta > 0 ? 'sale' : 'cancellation',
-            refType: 'jinius_order', refId: l.order.id,
-            note: `Jinius order ${l.order.orderId} (${l.order.state})`,
-            createdById: actorId ?? null,
-          },
-        }),
-        this.prisma.jiniusOrderLine.update({ where: { id: l.id }, data: { availabilityDeductedQty: want } }),
-      ]);
-      if (delta > 0) deducted += delta; else returned += -delta;
-      if (!l.order.availabilityDeductedAt && want > 0) {
-        await this.prisma.jiniusOrder.update({ where: { id: l.order.id }, data: { availabilityDeductedAt: new Date() } });
-      }
-    }
-    return { deducted, returned };
   }
 
   /** The orders list: newest first, with their lines and whether a local transaction covers them. */
@@ -218,6 +324,7 @@ export class JiniusOrdersService {
       include: {
         lines: { orderBy: { createdAt: 'asc' } },
         linkedTransaction: { select: { id: true, transactionRef: true, date: true, status: true } },
+        salesTransaction: { select: { id: true, transactionRef: true, status: true, excludedFromReports: true } },
       },
     });
     return {
@@ -236,7 +343,10 @@ export class JiniusOrdersService {
         totalPrice: o.totalPrice,
         /** What the local invoice would carry for this order: the price less everything Jinius keeps. */
         netOfCommission: round2(o.priceTotal - o.totalCommission),
-        availabilityDeductedAt: o.availabilityDeductedAt,
+        /** The sale as the platform reports it, and whether it still counts. */
+        transaction: o.salesTransaction
+          ? { id: o.salesTransaction.id, ref: o.salesTransaction.transactionRef, status: o.salesTransaction.status, counted: !o.salesTransaction.excludedFromReports }
+          : null,
         linked: o.linkedTransaction
           ? { id: o.linkedTransaction.id, ref: o.linkedTransaction.transactionRef, date: o.linkedTransaction.date, status: o.linkedTransaction.status }
           : null,
@@ -349,13 +459,14 @@ export class JiniusOrdersService {
     } as any, args.actorId, 'user');
 
     await this.prisma.$transaction([
-      // The units left the shared pool when the orders shipped; submitting this must not take them again.
+      // The goods moved on the Jinius transactions; this invoice is the same goods seen by accounting.
       this.prisma.salesTransaction.update({ where: { id: created.id }, data: { availabilityHandledElsewhere: true } }),
       this.prisma.jiniusOrder.updateMany({
         where: { id: { in: preview.orders.map((o) => o.id) } },
         data: { linkedTransactionId: created.id, linkedAt: new Date(), linkedById: args.actorId ?? null },
       }),
     ]);
+    await this.setSuperseded(preview.orders.map((o) => o.id), created.transactionRef ?? null);
     this.logger.log(`Jinius: local transaction ${created.id} from ${preview.orders.length} order(s), ${preview.grossTotal}`);
     return { ok: true as const, transactionId: created.id, transactionRef: created.transactionRef ?? null, orderCount: preview.orders.length, grossTotal: preview.grossTotal };
   }
@@ -379,6 +490,7 @@ export class JiniusOrdersService {
       where: { id: { in: orders.map((o) => o.id) } },
       data: { linkedTransactionId: tx.id, linkedAt: new Date(), linkedById: args.actorId ?? null },
     });
+    await this.setSuperseded(orders.map((o) => o.id), tx.transactionRef);
     return { ok: true as const, linked: orders.length, transactionRef: tx.transactionRef };
   }
 
@@ -388,6 +500,11 @@ export class JiniusOrdersService {
     await this.prisma.jiniusOrder.updateMany({
       where: { id: { in: orders.map((o) => o.id) } },
       data: { linkedTransactionId: null, linkedAt: null, linkedById: args.actorId ?? null },
+    });
+    // Counted again: nothing invoices these sales now, so the reports must see them.
+    await this.prisma.salesTransaction.updateMany({
+      where: { id: { in: orders.map((o) => o.salesTransactionId).filter(Boolean) as string[] } },
+      data: { excludedFromReports: false, excludedReason: null },
     });
     return { ok: true as const, unlinked: orders.length };
   }

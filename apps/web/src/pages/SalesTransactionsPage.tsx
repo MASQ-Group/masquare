@@ -439,7 +439,17 @@ export function SalesTransactionsPage() {
   const renderCell = (key: ColKey, t: SalesTransaction) => {
     switch (key) {
       case 'date': return formatDate(t.date);
-      case 'ref': return <span className="font-medium text-n-800">{t.transactionRef}</span>;
+      case 'ref': return (
+        <span className="inline-flex items-center gap-1.5">
+          <span className="font-medium text-n-800">{t.transactionRef}</span>
+          {/* Counted once: a Jinius sale invoiced locally is the same money as the invoice covering it. */}
+          {t.excludedFromReports && (
+            <span className="tag border border-n-200 bg-n-50 text-n-500" title={t.excludedReason ?? 'Not counted in revenue and profit'}>
+              not counted
+            </span>
+          )}
+        </span>
+      );
       case 'status': return (
         <span className="inline-flex items-center gap-1.5">
           {chipMode === 'text'

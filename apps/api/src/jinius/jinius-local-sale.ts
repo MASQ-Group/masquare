@@ -113,6 +113,57 @@ export function buildLocalSaleDraft(lines: JiniusSaleLineIn[], orderedAt: Map<st
   };
 }
 
+/**
+ * One Jinius order as a sales transaction, in the channel's own terms.
+ *
+ * A Jinius sale is an ordinary sale and is reported as one: revenue at the price the buyer paid,
+ * Jinius's commission as the channel's selling fee, and the VAT that is already inside that price
+ * split out of it. Nothing here is netted off against anything - netting the fee into the price is
+ * what the LOCAL invoice does later, and only because that is what accounting invoices.
+ *
+ * Jinius states its figures per line (price, commission, tax), so those are used where given; the
+ * sales channel's own VAT rate fills the gap when a line carries no tax of its own.
+ */
+export interface JiniusTxLineIn {
+  sku: string;
+  productId: string | null;
+  quantity: number;
+  /** Line price without shipping, VAT included, as Jinius reports it. */
+  price: number;
+  shippingPrice: number;
+  /** Commission plus its VAT - the channel's selling fee for this line. */
+  totalCommission: number;
+  /** The tax inside the price, where Jinius stated it. */
+  taxAmount: number;
+}
+
+export interface ChannelTxLine {
+  sku: string;
+  productId: string | null;
+  quantity: number;
+  netSalesAmount: number;
+  vatAmount: number;
+  shippingAmount: number;
+  salesChannelSalesFeeAmount: number;
+}
+
+/** The lines of the sales transaction for one Jinius order. `vatPct` is the channel's rate. */
+export function jiniusTransactionLines(lines: JiniusTxLineIn[], vatPct: number): ChannelTxLine[] {
+  return lines.map((l) => {
+    // Jinius's own tax figure where it gave one; otherwise the rate the channel is set to.
+    const vat = l.taxAmount > 0 ? round2(l.taxAmount) : round2(l.price - l.price / (1 + vatPct / 100));
+    return {
+      sku: l.sku,
+      productId: l.productId,
+      quantity: l.quantity,
+      netSalesAmount: round2(l.price - vat),
+      vatAmount: vat,
+      shippingAmount: round2(l.shippingPrice),
+      salesChannelSalesFeeAmount: round2(l.totalCommission),
+    };
+  });
+}
+
 /** The reference a created transaction carries until somebody puts the accounting invoice number on it. */
 export function jiniusSaleRef(date: Date | null, orderCount: number): string {
   const d = (date ?? new Date()).toISOString().slice(0, 10);

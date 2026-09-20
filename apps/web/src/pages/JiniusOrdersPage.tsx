@@ -38,11 +38,9 @@ export function JiniusOrdersPage() {
   const sync = useMutation({
     mutationFn: () => jiniusOrdersApi.sync(),
     onSuccess: (r) => {
-      toast.success(`${r.scanned} order${r.scanned === 1 ? '' : 's'} read — ${r.created} new`
+      toast.success(`${r.scanned} order${r.scanned === 1 ? '' : 's'} read — ${r.created} new, ${r.transactions} transaction${r.transactions === 1 ? '' : 's'} written`
         + (r.unmatched ? `, ${r.unmatched} line${r.unmatched === 1 ? '' : 's'} matching no product` : ''));
-      if (r.availability.deducted || r.availability.returned) {
-        toast.info(`Availability: ${r.availability.deducted} taken, ${r.availability.returned} given back`);
-      }
+      for (const p of r.txProblems.slice(0, 3)) toast.warning(p, { duration: 12000 });
       qc.invalidateQueries({ queryKey: ['jinius'] });
     },
     onError: (e: any) => toast.error(e?.response?.data?.message ?? 'Could not read Jinius orders', { duration: 10000 }),
@@ -84,9 +82,9 @@ export function JiniusOrdersPage() {
       />
 
       <p className="text-[12.5px] text-n-500">
-        These orders are not counted in revenue or profit: accounting invoices them locally, and that
-        local transaction is what the reports count. Select orders to raise it, or to point them at an
-        invoice you have already entered.
+        Every Jinius order is a sales transaction and counts in revenue and profit like any other channel.
+        When accounting invoices a batch locally, link the orders to that invoice: their own transactions
+        then stop counting, so the same money is never reported twice.
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -142,7 +140,7 @@ export function JiniusOrdersPage() {
                   onChange={() => setSelected(allOn ? new Set() : new Set(rows.map((o) => o.id)))}
                 />
               </th>
-              {['Order', 'Date', 'State', 'Lines', 'Sold for', 'Jinius keeps', 'To invoice', 'Invoice'].map((h) => (
+              {['Order', 'Date', 'State', 'Lines', 'Sold for', 'Jinius keeps', 'Transaction', 'Local invoice'].map((h) => (
                 <th key={h} className="border-b border-n-200 bg-n-25 px-3 py-2 font-semibold">{h}</th>
               ))}
             </tr>
@@ -184,7 +182,15 @@ function OrderRow({ order, selected, onToggle, onOpenTransaction }: {
         <td className="border-b border-n-100 px-3 py-2 text-n-600">{order.lines.length}</td>
         <td className="mono border-b border-n-100 px-3 py-2 text-n-800">{money(order.priceTotal, order.currency)}</td>
         <td className="mono border-b border-n-100 px-3 py-2 text-n-500">{money(order.totalCommission, order.currency)}</td>
-        <td className="mono border-b border-n-100 px-3 py-2 font-semibold text-n-800">{money(order.netOfCommission, order.currency)}</td>
+        <td className="border-b border-n-100 px-3 py-2">
+          {order.transaction ? (
+            <span className={`mono text-[12px] ${order.transaction.counted ? 'text-n-700' : 'text-n-400 line-through'}`} title={order.transaction.counted ? 'Counted in revenue and profit' : 'Not counted — invoiced locally'}>
+              {order.transaction.ref}
+            </span>
+          ) : (
+            <span className="text-[12px] text-warning">none yet</span>
+          )}
+        </td>
         <td className="border-b border-n-100 px-3 py-2" onClick={(e) => e.stopPropagation()}>
           {order.linked ? (
             <button type="button" className="mono text-[12px] font-semibold text-teal-700 hover:underline" onClick={() => onOpenTransaction(order.linked!.id)}>

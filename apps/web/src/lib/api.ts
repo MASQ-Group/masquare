@@ -3506,6 +3506,9 @@ export interface TransactionAlert {
   items?: string[];
 }
 export interface SalesTransaction {
+  /** Real and visible, but left out of revenue and profit — with the reason why. */
+  excludedFromReports?: boolean;
+  excludedReason?: string | null;
   id: string;
   date: string;
   transactionRef: string;
@@ -4340,7 +4343,8 @@ export interface JiniusOrder {
   currency: string; taxMode: string | null;
   priceTotal: number; shippingPrice: number; totalCommission: number; totalPrice: number;
   netOfCommission: number;
-  availabilityDeductedAt: string | null;
+  /** The sale as the platform reports it, and whether it still counts towards revenue. */
+  transaction: { id: string; ref: string; status: string; counted: boolean } | null;
   /** The local transaction that accounts for this order; null while it is still uninvoiced. */
   linked: { id: string; ref: string; date: string; status: string } | null;
   lines: JiniusOrderLine[];
@@ -4363,7 +4367,7 @@ export const jiniusOrdersApi = {
   list: (params: { integrationId?: string; linked?: 'yes' | 'no'; q?: string; limit?: number } = {}) =>
     api.get<{ integrationId: string; orders: JiniusOrder[] }>('/jinius/orders', { params }).then((r) => r.data),
   sync: (body: { integrationId?: string; sinceDays?: number } = {}) =>
-    api.post<{ ok: true; scanned: number; created: number; updated: number; lines: number; unmatched: number; availability: { deducted: number; returned: number } }>('/jinius/orders/sync', body).then((r) => r.data),
+    api.post<{ ok: true; scanned: number; created: number; updated: number; lines: number; unmatched: number; transactions: number; released: number; txProblems: string[] }>('/jinius/orders/sync', body).then((r) => r.data),
   previewLocalSale: (orderIds: string[]) =>
     api.post<JiniusLocalSalePreview>('/jinius/orders/local-sale/preview', { orderIds }).then((r) => r.data),
   createLocalSale: (body: { orderIds: string[]; salesChannelId: string; date?: string; transactionRef?: string }) =>

@@ -664,6 +664,9 @@ export class SalesTransactionsService {
       transactionRef: t.transactionRef,
       alerts,
       hasAlerts: alerts.length > 0,
+      /** Real, visible, and not counted: a Jinius sale that accounting has invoiced locally. */
+      excludedFromReports: !!t.excludedFromReports,
+      excludedReason: t.excludedReason ?? null,
       salesChannelId: t.salesChannelId,
       salesChannel: t.salesChannel
         ? { id: t.salesChannel.id, name: t.salesChannel.name, kind: t.salesChannel.kind, showTransactionTotal: t.salesChannel.showTransactionTotal, nativeCountryIso: t.salesChannel.nativeCountry?.isoCode ?? null }
@@ -946,7 +949,8 @@ export class SalesTransactionsService {
    *  whole transactions; SKU/brand/vendor aggregate per line item (figures allocated by serialize
    *  sum back to the transaction). Honours every list filter including the computed ones. */
   async grouped(query: TxQuery, groupBy: 'channelGroup' | 'channel' | 'sku' | 'brand' | 'vendor') {
-    const where = this.buildWhere(query);
+    const where = { ...this.buildWhere(query), excludedFromReports: false };
+    // Totals, so a locally invoiced Jinius sale is not added to the money a second time.
     const rows = await this.prisma.salesTransaction.findMany({ where, include, orderBy: [{ date: 'desc' }] });
     const serviceMap = await this.cachedServiceMap();
     const fbaAvgMap = await this.buildFbaAverageMap(rows);
@@ -1456,9 +1460,16 @@ export class SalesTransactionsService {
     };
   }
 
+  /**
+   * Every transaction in a range, for the analytics.
+   *
+   * A transaction invoiced locally is left out: a Jinius sale and the local invoice that covers it
+   * are the same money, and counting both would report revenue this business never made. It stays in
+   * Sales Transactions, marked, so nothing is hidden — only counted once.
+   */
   async allInRange(from: Date, to: Date, companyIds?: string[]) {
     const rows = await this.prisma.salesTransaction.findMany({
-      where: { deletedAt: null, date: { gte: from, lte: to }, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
+      where: { deletedAt: null, excludedFromReports: false, date: { gte: from, lte: to }, ...(companyIds ? { companyId: { in: companyIds } } : {}) },
       include,
       orderBy: { date: 'asc' },
     });
@@ -2343,6 +2354,7 @@ export class SalesTransactionsService {
       where: { id: txId },
       select: {
         id: true, status: true, transactionRef: true, fulfilmentType: true, resolution: true,
+        availabilityHandledElsewhere: true,
         items: {
           where: { deletedAt: null },
           select: { id: true, sku: true, productId: true, quantity: true, stockDeductedQty: true, stockWarehouseId: true, product: { select: { serialTracked: true } } },
@@ -2350,6 +2362,12 @@ export class SalesTransactionsService {
       },
     });
     if (!tx) return;
+    /**
+     * The goods already left on another transaction. The local invoice raised for Jinius orders sells
+     * the same units the Jinius transactions already moved, so taking them again would empty a shelf
+     * that only sold once. A release is still honoured: units given back must always come back.
+     */
+    if (tx.availabilityHandledElsewhere && !opts.forceRelease) return;
     // FBA goods live in Amazon's fulfilment centres, never our warehouses — an FBA sale (and
     // its cancellation) must not move local stock.
     if (tx.fulfilmentType === 'FBA') return;
