@@ -17,6 +17,7 @@ import { withReturn } from '../lib/useBackLink';
 import { EditPriceModal } from '../components/channel-listings/EditPriceModal';
 import { ListEverywhereModal } from '../components/channel-listings/ListEverywhereModal';
 import { ProductImage } from '../components/products/ProductImage';
+import { invalidateListingViews } from '../lib/listingViews';
 
 const STATUS: Record<string, { label: string; color: string; bg: string }> = {
   live: { label: 'Live', color: '#0E7A73', bg: '#E1F3F1' },
@@ -81,9 +82,8 @@ export function ChannelListingDetailPage() {
     // skips one is worse than a button that admits the gap.
     const skipped = r.skipped?.length ? ` · ${r.skipped.join('; ')}` : '';
     toast.success(`Listed on ${r.listed} of ${r.checked} channel${r.checked === 1 ? '' : 's'}${removed}${failed}${skipped}`);
-    // Everything on this page reads those records, so all of it is now out of date.
-    qc.invalidateQueries({ queryKey: ['channel-listing-detail', productId] });
-    qc.invalidateQueries({ queryKey: ['listing', 'product-channels', productId] });
+    // Every screen that answers "where is this listed?" reads those records, not just this one.
+    invalidateListingViews(qc);
   });
 
   // The competitive read costs two live calls per candidate marketplace, so it is asked for.

@@ -42,6 +42,7 @@ import { mapOnBuyOrder } from './mappings/onbuy-mapping';
 import { amazonCancelStage, mapAmazonOrder } from './mappings/amazon-mapping';
 import { amazonOrderAction } from './mappings/amazon-order-action';
 import { mapEbayOrder, ebayMarketplaceToIso } from './mappings/ebay-mapping';
+import { ebayOfferRows, type EbayListingRow } from './ebay-offer-rows';
 import { readOrderMoney, readFinances, impliedEbayRate, type EbayFinancesRead } from './ebay-money-diagnostic';
 import { signedRequest, type SigningCipher, type SigningKey } from './ebay-signature';
 import { anyMarketplaceFacilitator, channelRemitsTheVat, couldChannelRemit } from './mappings/tax-collection';
@@ -2601,24 +2602,25 @@ export class IntegrationsService implements OnModuleInit {
     const classic = await this.ebayTradingListings(base, token, config, maxItems);
     if (items.length === 0) return classic;
 
-    // 2) Each SKU's offer → price, currency, listing status (getOffers is per-SKU).
+    /**
+     * 2) Each SKU's offers → price, currency, listing status. One row PER MARKETPLACE.
+     *
+     * eBay answers with one offer per site a SKU sells on, and this used to keep only the first of
+     * them. A product eBaymag had republished to Germany, France, Italy and Spain was therefore
+     * recorded as listed in Britain alone — and because this pull REPLACES a channel's rows, it also
+     * deleted the other markets whenever the per-product sync had found them. The per-SKU lookup
+     * below has always walked every offer; this now matches it.
+     */
     const out: any[] = [];
     for (const it of items) {
-      let price: number | null = null, currency: string | null = null, status: string | null = null, marketplace: string | null = null, externalId: string | null = null;
+      let offers: any[] = [];
       try {
         const res = await fetch(`${base}/sell/inventory/v1/offer?sku=${encodeURIComponent(it.sku)}`, { headers, signal: AbortSignal.timeout(15000) });
         const json: any = await res.json().catch(() => null);
-        if (res.ok) {
-          const offer = (json?.offers ?? [])[0] ?? null;
-          const p = offer?.pricingSummary?.price;
-          price = p?.value != null ? Number(p.value) : null;
-          currency = p?.currency ?? null;
-          status = offer?.status ?? offer?.listing?.listingStatus ?? null;
-          marketplace = ebayMarketplaceToIso(offer?.marketplaceId ?? null);
-          externalId = offer?.listing?.listingId ?? null; // eBay ItemID for the published listing
-        }
-      } catch { /* leave price null on a per-SKU error */ }
-      out.push({ sku: it.sku, asin: null, externalId, title: it.title, quantity: it.quantity, price, currency, fulfilmentChannel: null, status, marketplace });
+        if (res.ok) offers = Array.isArray(json?.offers) ? json.offers : [];
+      } catch { /* leave this SKU without offer detail on a per-SKU error */ }
+
+      out.push(...ebayOfferRows(it, offers));
     }
 
     // Merge, letting the Inventory API win a collision: it carries the offer detail, and a SKU it
@@ -2669,7 +2671,7 @@ export class IntegrationsService implements OnModuleInit {
         'Content-Language': 'en-US',
       };
 
-      const rows: Array<Record<string, unknown>> = [];
+      const rows: EbayListingRow[] = [];
       for (const sku of wanted) {
         const itemRes = await fetch(`${base}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, { headers, signal: AbortSignal.timeout(15000) });
         // 404 is a real answer for this SKU, not a failure of the call: eBay simply does not manage
@@ -2686,26 +2688,7 @@ export class IntegrationsService implements OnModuleInit {
         // One row per marketplace: an eBay SKU is offered separately on each site it sells in.
         const offerRes = await fetch(`${base}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}`, { headers, signal: AbortSignal.timeout(15000) });
         const offerJson: any = offerRes.ok ? await offerRes.json().catch(() => null) : null;
-        const offers: any[] = offerJson?.offers ?? [];
-        if (!offers.length) {
-          rows.push({ sku, asin: null, externalId: null, title, quantity, price: null, currency: null, fulfilmentChannel: null, status: null, marketplace: null });
-          continue;
-        }
-        for (const offer of offers) {
-          const p = offer?.pricingSummary?.price;
-          rows.push({
-            sku,
-            asin: null,
-            externalId: offer?.listing?.listingId ?? null, // the eBay ItemID
-            title,
-            quantity,
-            price: p?.value != null ? Number(p.value) : null,
-            currency: p?.currency ?? null,
-            fulfilmentChannel: null,
-            status: offer?.status ?? offer?.listing?.listingStatus ?? null,
-            marketplace: ebayMarketplaceToIso(offer?.marketplaceId ?? null),
-          });
-        }
+        rows.push(...ebayOfferRows({ sku, title, quantity }, offerJson?.offers ?? []));
       }
       return { ok: true, rows: rows as any };
     } catch (e: any) {

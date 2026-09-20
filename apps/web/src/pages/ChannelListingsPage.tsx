@@ -13,6 +13,7 @@ import { AnchoredPanel } from '../components/common/AnchoredPanel';
 import { usePersistentState } from '../lib/usePersistentState';
 import { listingUrl } from '../lib/channelUrls';
 import { CHANNEL_GROUPS, channelGroupOf, sortChannelsCanonical, type ChannelGroup } from '../lib/channelGroups';
+import { invalidateListingViews } from '../lib/listingViews';
 
 // Design status palette.
 const STATUS: Record<string, { label: string; color: string; dot: string; bg: string }> = {
@@ -384,8 +385,8 @@ export function ChannelListingsPage() {
     const fail = r.channels.filter((c) => !c.ok);
     const failNote = fail.length ? ` · ${fail.length} skipped${fail[0].message ? ` (${fail[0].message})` : ''}` : '';
     toast.success(`Synced ${r.total} listings across ${ok.length} channel${ok.length === 1 ? '' : 's'}${failNote}`);
-    qc.invalidateQueries({ queryKey: ['channel-listings'] });
-    qc.invalidateQueries({ queryKey: ['channel-listings-channels'] });
+    // Also the product card's Channels tab and the Listed column in All Products: same records.
+    invalidateListingViews(qc);
   }, [qc]);
   const sync = useJobProgress('channel-listings.sync', onSynced);
 
