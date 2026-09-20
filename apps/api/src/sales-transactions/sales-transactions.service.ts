@@ -664,6 +664,8 @@ export class SalesTransactionsService {
       transactionRef: t.transactionRef,
       alerts,
       hasAlerts: alerts.length > 0,
+      /** Where the row came from: 'manual', a channel import, or 'jinius'. */
+      source: t.source ?? 'manual',
       /** Real, visible, and not counted: a Jinius sale that accounting has invoiced locally. */
       excludedFromReports: !!t.excludedFromReports,
       excludedReason: t.excludedReason ?? null,
@@ -804,6 +806,8 @@ export class SalesTransactionsService {
         productCost: it.product?.purchaseCostAmount != null ? Number(it.product.purchaseCostAmount) : null, // catalogue unit cost
         averageCostEur: it.product?.averageCostEur != null ? Number(it.product.averageCostEur) : null, // moving average, once received
         unitNetCostEur: it.unitNetCostEur != null ? Number(it.unitNetCostEur) : null, // per-line override (EUR), if any
+        /** The Jinius sale this line covers, when the invoice was filled in from one. */
+        jiniusOrderId: it.jiniusOrderId ?? null,
         unitCostSnapshotEur: it.unitCostSnapshotEur != null ? Number(it.unitCostSnapshotEur) : null, // cost frozen at sale time
         costSnapshotSource: it.costSnapshotSource ?? null,
         unitCostEur: unitCostOf(it), // what COGS actually used
@@ -1140,6 +1144,19 @@ export class SalesTransactionsService {
     const feePctMap = await this.cachedFeePctMap();
     const fxFallback = await this.cachedFxFallbackMap();
     const out = this.serialize(t, serviceMap, fbaAvgMap, skuFulfilmentMap, feePctMap, fxFallback);
+
+    /**
+     * Name the Jinius sales this invoice covers, so reopening it shows them rather than bare ids.
+     * A second read because the line holds the id without a relation — the reference outlives the row.
+     */
+    const jiniusIds = [...new Set((out.items ?? []).map((i: any) => i.jiniusOrderId).filter(Boolean) as string[])];
+    if (jiniusIds.length) {
+      const orders = await this.prisma.jiniusOrder.findMany({ where: { id: { in: jiniusIds } }, select: { id: true, orderId: true, commercialId: true } });
+      const refById = new Map(orders.map((o) => [o.id, o.commercialId || o.orderId]));
+      for (const item of out.items ?? []) {
+        (item as any).jiniusOrderRef = (item as any).jiniusOrderId ? refById.get((item as any).jiniusOrderId) ?? null : null;
+      }
+    }
 
     // Attach the units this transaction consumed, so reopening it shows what left.
     // Only the detail view needs them, so the list paths stay untouched.
@@ -2230,6 +2247,8 @@ export class SalesTransactionsService {
       },
     });
 
+    // Before stock: attaching Jinius sales marks this transaction as moving none, because they did.
+    await this.attachJiniusOrders(t.id, dto.items ?? [], actorId);
     await this.consumeSerials(serialWork, t.id, dto.transactionRef, actorId);
     await this.reconcileSaleStock(t.id, actorId);
     await this.applyAvailabilitySellThrough(t.id, actorId);
@@ -2344,6 +2363,23 @@ export class SalesTransactionsService {
    * `forceRelease` treats the desired quantity as zero regardless of status — used when a sale
    * is deleted, so its stock is returned before the row goes away.
    */
+  /**
+   * Cover the Jinius sales a local invoice names on its lines.
+   *
+   * The orders become linked to this transaction, their own Jinius transactions stop counting, and
+   * this transaction is marked as moving no stock — the Jinius ones already did. An edit that drops
+   * a Jinius line releases that sale again, or removing a line would quietly delete revenue.
+   *
+   * Reached through the registry because Jinius imports this module; injecting it back is a cycle.
+   */
+  private async attachJiniusOrders(txId: string, items: Array<{ jiniusOrderId?: string | null }>, actorId?: string) {
+    const ids = [...new Set(items.map((i) => i.jiniusOrderId).filter((x): x is string => !!x))];
+    const jinius: any = this.moduleRef?.get('JINIUS_ORDERS_SERVICE', { strict: false }) ?? null;
+    if (!jinius) return;
+    await jinius.detachOrdersExcept(txId, ids);
+    if (ids.length) await jinius.attachOrders(ids, txId, actorId);
+  }
+
   private async reconcileSaleStock(txId: string, actorId?: string, opts: { forceRelease?: boolean } = {}) {
     const settings = await this.prisma.platformSettings.findFirst({ select: { deductStockOnSale: true } });
     // When the feature is off, never touch stock — but a delete must still return anything a
@@ -2744,6 +2780,8 @@ export class SalesTransactionsService {
     });
 
     await this.consumeSerials(serialWork, id, existing.transactionRef, user.sub);
+    // An edit can add or drop the Jinius sales this invoice covers; settle that before stock.
+    if (items) await this.attachJiniusOrders(id, items, user.sub);
     await this.reconcileSaleStock(id, user.sub);
     await this.applyAvailabilitySellThrough(id, user.sub);
 

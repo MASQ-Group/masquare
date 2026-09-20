@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom';
 import { AnchoredPanel } from '../components/common/AnchoredPanel';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Columns3, Download, Filter, Lock, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Trash2, Unlock, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Columns3, Download, Filter, Link2, Lock, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Save, Search, Trash2, Unlock, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DateRangePicker, ModalShell, Pagination, Select } from '@masquare/ui';
 import { countriesApi, profitTiersApi, salesChannelsApi, salesTransactionsApi, settingsApi, type ProfitTier, type SalesTransaction, type TransactionAlert, type TxGroupBy, type TxGroupRow, type TxFilterParams } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { CreateLocalSaleDialog, LinkLocalSaleDialog } from '../components/sales/JiniusLocalSale';
 import { useConfirm } from '../components/ConfirmProvider';
 import { usePersistentState } from '../lib/usePersistentState';
 import { formatDate, formatMoney } from '../lib/format';
@@ -191,6 +192,8 @@ export function SalesTransactionsPage() {
   const [resolving, setResolving] = useState<SalesTransaction | undefined>(undefined);
   const [reqOpen, setReqOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** Turning selected Jinius sales into the local invoice that accounts for them. */
+  const [jiniusAction, setJiniusAction] = useState<'create' | 'link' | null>(null);
 
   // view controls
   const [sortBy, setSortBy] = useState<SortKey>('date');
@@ -733,6 +736,21 @@ export function SalesTransactionsPage() {
           </button>
           <button className="btn btn-ghost h-8" disabled={bulk.isPending} onClick={() => bulk.mutate('draft')}>Save as draft</button>
           <button className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-semibold text-white hover:bg-primary-hover disabled:opacity-50" disabled={bulk.isPending} onClick={async () => { if (await confirm({ title: `Submit ${selected.size} transaction${selected.size === 1 ? '' : 's'}?`, message: 'They will be finalised. If stock deduction is on, their items come off stock now.', confirmLabel: 'Submit' })) bulk.mutate('submitted'); }}>Submit</button>
+          {/*
+            * Only for Jinius sales nothing invoices yet. A Jinius sale and the local invoice covering it
+            * are the same money, so this is where a person says which invoice covers which sales.
+            */}
+          {[...selected].length > 0 && items.filter((t) => selected.has(t.id)).length > 0
+            && items.filter((t) => selected.has(t.id)).every((t) => t.source === 'jinius' && !t.excludedFromReports) && (
+            <>
+              <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-teal-300 bg-n-0 px-3 text-[13px] font-medium text-teal-800 hover:bg-teal-50" onClick={() => setJiniusAction('create')}>
+                <Receipt size={14} /> Create local sale
+              </button>
+              <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[13px] font-medium text-n-700 hover:border-n-300" onClick={() => setJiniusAction('link')}>
+                <Link2 size={14} /> Link to local sale
+              </button>
+            </>
+          )}
           <button className="ml-auto text-[12.5px] font-medium text-n-500 hover:text-n-800" onClick={clearSel}>Clear</button>
         </div>
       )}
@@ -857,6 +875,11 @@ export function SalesTransactionsPage() {
             </div>
           )}
         </ModalShell>
+      )}
+      {jiniusAction && (
+        jiniusAction === 'create'
+          ? <CreateLocalSaleDialog ids={[...selected]} onClose={() => setJiniusAction(null)} onDone={() => { setJiniusAction(null); clearSel(); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }} />
+          : <LinkLocalSaleDialog ids={[...selected]} onClose={() => setJiniusAction(null)} onDone={() => { setJiniusAction(null); clearSel(); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }} />
       )}
     </div>
   );

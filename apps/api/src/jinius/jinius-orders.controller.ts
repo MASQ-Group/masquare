@@ -43,6 +43,12 @@ export class JiniusOrdersController {
     return this.svc.sync({ integrationId: body?.integrationId, sinceDays: body?.sinceDays, companyIds, actorId: user.sub });
   }
 
+  /** Unlinked Jinius sales for the "Jinius Order ID" box on a local sale, priced as that sale prices them. */
+  @Get('unlinked')
+  unlinked(@VisibleCompanies() companyIds: string[], @Query('q') q?: string, @Query('limit') limit?: string) {
+    return this.svc.unlinkedForPicker({ q, limit: limit ? Number(limit) : undefined, companyIds });
+  }
+
   /** What the local transaction would carry for a selection. Writes nothing. */
   @Post('local-sale/preview')
   preview(@Body() body: { orderIds?: string[] }, @VisibleCompanies() companyIds: string[]) {

@@ -7,6 +7,7 @@ import { DatePicker, Select, TabBar } from '@masquare/ui';
 import {
   countriesApi, productsApi, salesChannelsApi, salesTransactionsApi, shippingServicesApi, vatClassesApi,
   type RefLite, type SalesTransaction,
+  type JiniusPickerOrder,
 } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { RefField } from '../components/products/RefField';
@@ -17,6 +18,7 @@ import { TransactionTracking } from '../components/sales/TransactionTracking';
 import { useBackLink } from '../lib/useBackLink';
 import { EntityHistory } from '../components/common/EntityHistory';
 import { SerialPicker } from '../components/sales/SerialPicker';
+import { JiniusOrderPicker } from '../components/sales/JiniusOrderPicker';
 import { useConfirm } from '../components/ConfirmProvider';
 
 interface ItemForm {
@@ -36,6 +38,9 @@ interface ItemForm {
   vatClassId: string;
   /** Optional per-line unit cost override (EUR); '' = use the product's stored cost. */
   unitNetCost: string;
+  /** The Jinius sale this line was filled in from, and how it reads on screen. */
+  jiniusOrderId?: string | null;
+  jiniusOrderRef?: string | null;
   /** UI only — whether this row's advanced panel is expanded. */
   open: boolean;
 }
@@ -157,6 +162,14 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
   const [discountType, setDiscountType] = useState<string>(transaction?.discountType ?? '');
   const [discountValue, setDiscountValue] = useState<string>(transaction?.discountValue?.toString() ?? '');
   const [discountBase, setDiscountBase] = useState<'net' | 'gross'>(transaction?.discountBase ?? 'net');
+  /**
+   * A local invoice raised for Jinius sales.
+   *
+   * On, each line gains a Jinius Order ID box; choosing a sale fills the invoice with its products
+   * and the money that actually arrived. On save those sales are covered by this invoice and stop
+   * counting on their own. It starts on when the invoice being edited already names one.
+   */
+  const [fromJinius, setFromJinius] = useState(() => (transaction?.items ?? []).some((i: any) => i.jiniusOrderId));
   const [items, setItems] = useState<ItemForm[]>(
     transaction?.items.map((i) => ({
       productId: i.productId ?? null, sku: i.sku, quantity: String(i.quantity), serials: (i as any).serials ?? [],
@@ -168,6 +181,8 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
         : '',
       vatClassId: i.vatClassId ?? '',
       unitNetCost: i.unitNetCostEur?.toString() ?? '',
+      jiniusOrderId: (i as any).jiniusOrderId ?? null,
+      jiniusOrderRef: (i as any).jiniusOrderRef ?? null,
       open: false,
     })) ?? [emptyItem()],
   );
@@ -190,6 +205,34 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
     } else if (isLocal) {
       setChannel(null); // back to a marketplace: let the user pick which one
     }
+    touch();
+  };
+
+  /** Only meaningful on a local invoice: a marketplace sale is already reported by its own channel. */
+  const showJinius = isLocal && fromJinius;
+
+  /**
+   * Fill the invoice from one Jinius sale: its first product onto this line, the rest appended.
+   *
+   * Every line of that sale is carried, so the invoice covers the whole order — invoicing half of one
+   * and leaving the rest loose is how a sale ends up counted twice.
+   */
+  const fillFromJinius = (index: number, order: JiniusPickerOrder) => {
+    if (!order.lines.length) { toast.error(`${order.ref} has no line this invoice can carry.`); return; }
+    setItems((rows) => {
+      const made = order.lines.map((l) => ({
+        ...emptyItem(),
+        productId: l.productId,
+        sku: l.sku,
+        quantity: String(l.quantity),
+        unitNetPrice: l.unitNetPrice.toFixed(2),
+        jiniusOrderId: order.id,
+        jiniusOrderRef: order.ref,
+      }));
+      const next = [...rows];
+      next.splice(index, 1, ...made);
+      return next;
+    });
     touch();
   };
 
@@ -334,6 +377,8 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
               netSalesAmount: round2((Number(i.unitNetPrice) || 0) * (Number(i.quantity) || 0)),
               vatClassId: i.vatClassId || (i.productId ? productVatClassId.get(i.productId) ?? null : null),
               unitNetCostEur: numOrNull(i.unitNetCost),
+              // Names the Jinius sale this line covers; the server links it on save.
+              jiniusOrderId: i.jiniusOrderId ?? null,
             })),
           }
         : {
@@ -403,6 +448,8 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
   // Line table columns — same shape in both modes, but the middle three differ by what the
   // channel actually reports (local: unit price + VAT class; marketplace: the reported amounts).
   const cols = 'minmax(200px,1fr) 74px 120px 150px 108px 34px 34px';
+  /** With Jinius orders on, the line grows a column for the sale it came from. */
+  const colsJinius = 'minmax(180px,1fr) 150px 74px 120px 150px 108px 34px 34px';
 
   /**
    * Details / Tracking / History.
@@ -578,6 +625,21 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                     <Field label="Delivery cost to us" hint="Our cost, not charged to the buyer.">
                       <MoneyInput ccy="EUR" value={localShippingCost} onChange={(v) => { setLocalShippingCost(v); touch(); }} />
                     </Field>
+                    {/*
+                      * The invoice accounting raises for Jinius sales. With it on, each line can name the
+                      * sale it covers, and that sale stops being counted on its own once this is saved.
+                      */}
+                    <Field label="Jinius orders" hint="Fill lines from Jinius sales waiting to be invoiced.">
+                      <label className="flex h-[34px] cursor-pointer items-center gap-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-[var(--teal-500)]"
+                          checked={fromJinius}
+                          onChange={(e) => { setFromJinius(e.target.checked); touch(); }}
+                        />
+                        <span className="text-[13px] text-n-700">This invoice covers Jinius sales</span>
+                      </label>
+                    </Field>
                   </>
                 ) : (
                   <>
@@ -632,9 +694,16 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
               <div className="overflow-x-auto">
                 <div className="min-w-[760px]">
                   {/* header */}
-                  <div className="grid gap-2.5 border-b border-n-100 px-1 pb-2" style={{ gridTemplateColumns: cols }}>
-                    {['Product / SKU', 'Qty', isLocal ? 'Unit net' : 'Net sales', isLocal ? 'VAT class' : taxShortLabel(transaction?.taxType), isLocal ? 'Line net' : 'Line total'].map((h, i) => (
-                      <div key={h} className={`text-[11px] font-bold uppercase tracking-wide text-n-500 ${i === 4 ? 'text-right' : ''}`}>{h}</div>
+                  <div className="grid gap-2.5 border-b border-n-100 px-1 pb-2" style={{ gridTemplateColumns: showJinius ? colsJinius : cols }}>
+                    {[
+                      'Product / SKU',
+                      ...(showJinius ? ['Jinius order ID'] : []),
+                      'Qty',
+                      isLocal ? 'Unit net' : 'Net sales',
+                      isLocal ? 'VAT class' : taxShortLabel(transaction?.taxType),
+                      isLocal ? 'Line net' : 'Line total',
+                    ].map((h, i, all) => (
+                      <div key={h} className={`text-[11px] font-bold uppercase tracking-wide text-n-500 ${i === all.length - 1 ? 'text-right' : ''}`}>{h}</div>
                     ))}
                     <div /><div />
                   </div>
@@ -644,12 +713,20 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                     const lineTotal = round2((Number(it.netSalesAmount) || 0) + (Number(it.vatAmount) || 0));
                     return (
                       <div key={i} className="border-b border-n-50">
-                        <div className="grid items-center gap-2.5 px-1 py-2.5" style={{ gridTemplateColumns: cols }}>
+                        <div className="grid items-center gap-2.5 px-1 py-2.5" style={{ gridTemplateColumns: showJinius ? colsJinius : cols }}>
                           <ProductSkuField
                             value={{ productId: it.productId, sku: it.sku }}
                             onChange={(v) => setItem(i, v)}
                             onPick={(product) => { const c = resolvedUnitCostEur(product); if (c != null) setItem(i, { unitNetCost: round2(c).toFixed(2) }); }}
                           />
+                          {showJinius && (
+                            <JiniusOrderPicker
+                              value={it.jiniusOrderId ?? null}
+                              orderRef={it.jiniusOrderRef}
+                              onPick={(order) => fillFromJinius(i, order)}
+                              onClear={() => setItem(i, { jiniusOrderId: null, jiniusOrderRef: null })}
+                            />
+                          )}
                           <input
                             className="input mono text-center"
                             inputMode="decimal"

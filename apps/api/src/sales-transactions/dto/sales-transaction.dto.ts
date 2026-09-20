@@ -30,6 +30,13 @@ export class SalesTransactionItemDto {
   @IsOptional() @IsNumber() shippingAmount?: number | null;
   @IsOptional() @IsNumber() shippingAmountVat?: number | null;
   @IsOptional() @IsNumber() salesChannelSalesFeeAmount?: number | null;
+  /**
+   * The Jinius sale this line was filled in from, on a local invoice.
+   *
+   * Naming it here is what lets the platform cover that sale: on save, the orders named across the
+   * lines are linked to this transaction and stop counting in the reports on their own.
+   */
+  @IsOptional() @IsUUID() jiniusOrderId?: string | null;
   @IsOptional() @IsNumber() fbaFulfilmentFeeAmount?: number | null;
   @IsOptional() @IsNumber() amazonPointsAmount?: number | null;
 
