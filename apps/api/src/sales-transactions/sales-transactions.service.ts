@@ -616,13 +616,18 @@ export class SalesTransactionsService {
     if (!t.destinationCountryId) {
       alerts.push({ code: 'no_destination_country', severity: 'warning', message: 'No destination country — VAT and shipping zone cannot be determined' });
     }
-    // A local sale has no carrier, so "no shipping service" is the normal state, not a gap.
-    if (!isFba && !isLocal && !t.shippingServiceId) {
+    /**
+     * A local sale has no carrier, and neither does a channel that delivers its own orders (Jinius
+     * ships and bills the buyer). For those, "no shipping service" is the normal state rather than a
+     * gap — warning about it on every order teaches people to ignore the warnings that matter.
+     */
+    const channelShips = !!t.salesChannel?.shippingByChannel;
+    if (!isFba && !isLocal && !channelShips && !t.shippingServiceId) {
       alerts.push({ code: 'no_shipping_service', severity: 'warning', message: 'No shipping service — outbound shipping cost is not estimated' });
     }
     // A destination outside every zone of the chosen service yields no rate to price
     // against, so shipping silently reads as zero and profit is overstated. Name it.
-    if (shippingGap && !isFba && !isLocal) {
+    if (shippingGap && !isFba && !isLocal && !channelShips) {
       const dest = t.destinationCountry?.name ?? 'the destination country';
       const svcName = svc?.name ?? 'the shipping service';
       alerts.push(

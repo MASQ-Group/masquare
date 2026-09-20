@@ -261,6 +261,26 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
   };
 
   const setItem = (i: number, patch: Partial<ItemForm>) => { setItems((r) => r.map((x, idx) => (idx === i ? { ...x, ...patch } : x))); touch(); };
+
+  /**
+   * Take a line out. The last one is emptied instead of removed: a transaction always has a line to
+   * type into, and a delete button that does nothing on the only row reads as broken.
+   */
+  const removeItem = (i: number) => {
+    setItems((r) => (r.length > 1 ? r.filter((_, idx) => idx !== i) : [emptyItem()]));
+    touch();
+  };
+
+  /**
+   * Clearing the product clears the line.
+   *
+   * The figures belong to the product that was there: leaving a quantity, a price and a VAT class
+   * behind after the SKU has gone invites saving a line whose numbers describe something else.
+   */
+  const setLineProduct = (i: number, v: { productId: string | null; sku: string }) => {
+    if (!v.sku.trim() && !v.productId) { setItems((r) => r.map((x, idx) => (idx === i ? emptyItem() : x))); touch(); return; }
+    setItem(i, v);
+  };
   const canSave = useMemo(() => transactionRef.trim() && items.some((i) => i.sku.trim()), [transactionRef, items]);
 
   const handleDestination = (v: string | null) => {
@@ -448,8 +468,6 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
   // Line table columns — same shape in both modes, but the middle three differ by what the
   // channel actually reports (local: unit price + VAT class; marketplace: the reported amounts).
   const cols = 'minmax(200px,1fr) 74px 120px 150px 108px 34px 34px';
-  /** With Jinius orders on, the line grows a column for the sale it came from. */
-  const colsJinius = 'minmax(180px,1fr) 150px 74px 120px 150px 108px 34px 34px';
 
   /**
    * Details / Tracking / History.
@@ -694,16 +712,9 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
               <div className="overflow-x-auto">
                 <div className="min-w-[760px]">
                   {/* header */}
-                  <div className="grid gap-2.5 border-b border-n-100 px-1 pb-2" style={{ gridTemplateColumns: showJinius ? colsJinius : cols }}>
-                    {[
-                      'Product / SKU',
-                      ...(showJinius ? ['Jinius order ID'] : []),
-                      'Qty',
-                      isLocal ? 'Unit net' : 'Net sales',
-                      isLocal ? 'VAT class' : taxShortLabel(transaction?.taxType),
-                      isLocal ? 'Line net' : 'Line total',
-                    ].map((h, i, all) => (
-                      <div key={h} className={`text-[11px] font-bold uppercase tracking-wide text-n-500 ${i === all.length - 1 ? 'text-right' : ''}`}>{h}</div>
+                  <div className="grid gap-2.5 border-b border-n-100 px-1 pb-2" style={{ gridTemplateColumns: cols }}>
+                    {['Product / SKU', 'Qty', isLocal ? 'Unit net' : 'Net sales', isLocal ? 'VAT class' : taxShortLabel(transaction?.taxType), isLocal ? 'Line net' : 'Line total'].map((h, i) => (
+                      <div key={h} className={`text-[11px] font-bold uppercase tracking-wide text-n-500 ${i === 4 ? 'text-right' : ''}`}>{h}</div>
                     ))}
                     <div /><div />
                   </div>
@@ -713,20 +724,33 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                     const lineTotal = round2((Number(it.netSalesAmount) || 0) + (Number(it.vatAmount) || 0));
                     return (
                       <div key={i} className="border-b border-n-50">
-                        <div className="grid items-center gap-2.5 px-1 py-2.5" style={{ gridTemplateColumns: showJinius ? colsJinius : cols }}>
+                        {/*
+                          * The Jinius sale this line covers, on its own row above the line.
+                          *
+                          * It was a column, which squeezed the SKU search until its placeholder ran
+                          * under the next field and pushed the table into a sideways scroll. A line
+                          * has one Jinius order, so it reads as a label for the line rather than a
+                          * sixth thing to compare across rows.
+                          */}
+                        {showJinius && (
+                          <div className="flex items-center gap-2 px-1 pt-2.5">
+                            <span className="text-[11px] font-bold uppercase tracking-wide text-n-500">Jinius order ID</span>
+                            <div className="w-[260px]">
+                              <JiniusOrderPicker
+                                value={it.jiniusOrderId ?? null}
+                                orderRef={it.jiniusOrderRef}
+                                onPick={(order) => fillFromJinius(i, order)}
+                                onClear={() => setItem(i, { jiniusOrderId: null, jiniusOrderRef: null })}
+                              />
+                            </div>
+                          </div>
+                        )}
+                        <div className="grid items-center gap-2.5 px-1 py-2.5" style={{ gridTemplateColumns: cols }}>
                           <ProductSkuField
                             value={{ productId: it.productId, sku: it.sku }}
-                            onChange={(v) => setItem(i, v)}
+                            onChange={(v) => setLineProduct(i, v)}
                             onPick={(product) => { const c = resolvedUnitCostEur(product); if (c != null) setItem(i, { unitNetCost: round2(c).toFixed(2) }); }}
                           />
-                          {showJinius && (
-                            <JiniusOrderPicker
-                              value={it.jiniusOrderId ?? null}
-                              orderRef={it.jiniusOrderRef}
-                              onPick={(order) => fillFromJinius(i, order)}
-                              onClear={() => setItem(i, { jiniusOrderId: null, jiniusOrderRef: null })}
-                            />
-                          )}
                           <input
                             className="input mono text-center"
                             inputMode="decimal"
@@ -762,10 +786,9 @@ function TransactionForm({ transaction }: { transaction: SalesTransaction | null
                           </button>
                           <button
                             type="button"
-                            title="Remove"
-                            disabled={items.length === 1}
-                            onClick={() => { setItems((r) => r.filter((_, idx) => idx !== i)); touch(); }}
-                            className="grid h-[34px] w-[34px] place-items-center rounded-[9px] border border-n-200 bg-n-0 text-n-500 hover:border-danger-bd hover:bg-danger-bg hover:text-danger disabled:opacity-40"
+                            title={items.length === 1 ? 'Clear this line' : 'Remove this line'}
+                            onClick={() => removeItem(i)}
+                            className="grid h-[34px] w-[34px] place-items-center rounded-[9px] border border-n-200 bg-n-0 text-n-500 hover:border-danger-bd hover:bg-danger-bg hover:text-danger"
                           >
                             <Trash2 size={15} />
                           </button>
