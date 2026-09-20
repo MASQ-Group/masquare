@@ -189,7 +189,7 @@ export function IntegrationsPage() {
     mutationFn: (id: string) => integrationsApi.sync(id),
     onMutate: (id) => setSyncingId(id),
     onSuccess: (res) => {
-      if (res.ok) toast.success(`Sync complete — ${res.created} created, ${res.updated} updated${res.cancelled ? `, ${res.cancelled} cancelled skipped` : ''}`);
+      if (res.ok) toast.success(`Sync complete — ${res.created} created, ${res.updated} updated${res.cancelled ? `, ${res.cancelled} cancelled skipped` : ''}${res.message ? ` · ${res.message}` : ''}`);
       else toast.error(res.message ?? 'Sync failed');
       invalidate();
       qc.invalidateQueries({ queryKey: ['sales-transactions'] });

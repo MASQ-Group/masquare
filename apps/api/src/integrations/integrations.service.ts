@@ -4109,7 +4109,12 @@ export class IntegrationsService implements OnModuleInit {
         ok: true as const,
         scanned: r.scanned, created: r.created, updated: r.updated, skipped: 0, cancelled: 0,
         cancelledUpdated: 0, cancelledImported: 0, refunded: 0, errors: r.txProblems.length,
-        message: r.txProblems[0] ?? undefined,
+        // What a person needs to read: orders are only half of it, the sales are the point.
+        message: [
+          `${r.transactions} sale${r.transactions === 1 ? '' : 's'} reported`,
+          r.unmatched ? `${r.unmatched} line${r.unmatched === 1 ? '' : 's'} matching no product` : null,
+          r.txProblems[0] ?? null,
+        ].filter(Boolean).join(' · '),
       };
     }
     if (!['onbuy', 'amazon', 'ebay'].includes(row.channelType)) throw new BadRequestException('Order import supports OnBuy, Amazon and eBay only.');
