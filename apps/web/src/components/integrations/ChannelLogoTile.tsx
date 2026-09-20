@@ -20,6 +20,7 @@ const BRAND: Record<string, { bg: string; color: string }> = {
   amazon: { bg: '#232F3E', color: '#FF9900' },
   ebay: { bg: '#EEF3FB', color: '#2C6ED5' },
   onbuy: { bg: '#F4ECFB', color: '#7A3FBF' },
+  jinius: { bg: '#E8F1FB', color: '#1B4F9C' },
 };
 
 const ACCEPT = '.png,.jpg,.jpeg,.webp,.svg,image/*';

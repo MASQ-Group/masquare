@@ -5,6 +5,7 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { JINIUS_PATHS, jiniusHeaders, jiniusUrl, jiniusUrlProblem, readJiniusTest } from './jinius';
 import { CryptoService } from '../crypto/crypto.service';
 import { StorageService } from '../storage/storage.service';
 import { SalesTransactionsService } from '../sales-transactions/sales-transactions.service';
@@ -389,6 +390,7 @@ export class IntegrationsService implements OnModuleInit {
     if (row.channelType === 'amazon') return this.testAmazon(config, secrets);
     if (row.channelType === 'ebay') return this.testEbay(config, secrets);
     if (row.channelType === 'onbuy') return this.testOnBuy(config, secrets, mode);
+    if (row.channelType === 'jinius') return this.testJinius(config, secrets);
     return { ok: false, message: 'Testing not supported for this channel yet.' };
   }
 
@@ -1194,6 +1196,38 @@ export class IntegrationsService implements OnModuleInit {
       return { ok: false, message: `OnBuy responded ${res.status}${detail ? `: ${detail}` : ''}` };
     } catch (e: any) {
       return { ok: false, message: e?.name === 'TimeoutError' ? 'Request timed out.' : 'Could not reach the OnBuy API — check the API URL.' };
+    }
+  }
+
+  /**
+   * Jinius (Mirakl): list one offer — OF21, the endpoint Mirakl expects to be called repeatedly.
+   *
+   * Not A01 (shop information), which reads better but which Mirakl limits to once a day: a test
+   * button that starts failing after the second press is worse than a plainer message.
+   */
+  private async testJinius(config: Record<string, string>, secrets: Record<string, string>): Promise<{ ok: boolean; message: string }> {
+    const apiKey = secrets.apiKey;
+    if (!apiKey) return { ok: false, message: 'No API key saved for this connection.' };
+    const problem = jiniusUrlProblem(config.url ?? '');
+    if (problem) return { ok: false, message: problem };
+
+    const shopId = (config.shopId ?? '').trim() || null;
+    try {
+      const res = await fetch(jiniusUrl(config.url, JINIUS_PATHS.offers, { max: 1, shop_id: shopId ?? undefined }), {
+        headers: jiniusHeaders(apiKey),
+        signal: AbortSignal.timeout(12000),
+      });
+      const text = await res.text();
+      let json: unknown = text;
+      try { json = JSON.parse(text); } catch { /* Mirakl answers plain text on some errors. */ }
+      return readJiniusTest(res.status, json, shopId);
+    } catch (e: any) {
+      return {
+        ok: false,
+        message: e?.name === 'TimeoutError'
+          ? 'Jinius did not answer within 12 seconds.'
+          : 'Could not reach Jinius — check the API base URL from the guide.',
+      };
     }
   }
 
