@@ -80,3 +80,48 @@ export function readJiniusTest(status: number, body: unknown, shopId?: string | 
   if (status >= 500) return { ok: false, message: `Jinius had a server error (${status})${detail}. Nothing is wrong at our end; try again later.` };
   return { ok: false, message: `Jinius answered ${status}${detail}.` };
 }
+
+
+/** One Jinius offer in the shape the channel-listings sync stores, whatever channel it came from. */
+export interface JiniusListingRow {
+  sku: string;
+  asin: string | null;
+  externalId: string | null;
+  title: string | null;
+  quantity: number | null;
+  price: number | null;
+  currency: string | null;
+  fulfilmentChannel: 'FBM' | 'FBA' | null;
+  status: string | null;
+  marketplace: string | null;
+}
+
+/**
+ * One page of OF21 as listing rows.
+ *
+ * `shop_sku` is the seller's OWN sku — the one that matches a product here. `product_sku` is the
+ * marketplace's product identifier and matches nothing of ours, so an offer without a shop_sku is
+ * dropped rather than stored under a code nobody can look up.
+ *
+ * An offer can exist and not be for sale: `active: false` is kept as INACTIVE so the listing reads
+ * as what it is rather than as a live offer.
+ */
+export function readJiniusOffers(json: unknown, currency = 'EUR'): { rows: JiniusListingRow[]; totalCount: number | null } {
+  const body = json && typeof json === 'object' ? (json as Record<string, any>) : null;
+  const offers: any[] = Array.isArray(body?.offers) ? body!.offers : [];
+  const rows = offers
+    .map((o): JiniusListingRow => ({
+      sku: typeof o?.shop_sku === 'string' ? o.shop_sku.trim() : '',
+      asin: null,
+      externalId: o?.offer_id != null ? String(o.offer_id) : null,
+      title: typeof o?.product_title === 'string' && o.product_title.trim() ? o.product_title.trim() : null,
+      quantity: o?.quantity != null && Number.isFinite(Number(o.quantity)) ? Number(o.quantity) : null,
+      price: o?.price != null && Number.isFinite(Number(o.price)) ? Number(o.price) : null,
+      currency: (currency || 'EUR').toUpperCase(),
+      fulfilmentChannel: null,
+      status: o?.active === false ? 'INACTIVE' : (typeof o?.state_code === 'string' && o.state_code ? o.state_code : 'ACTIVE'),
+      marketplace: null,
+    }))
+    .filter((r) => r.sku);
+  return { rows, totalCount: typeof body?.total_count === 'number' ? body!.total_count : null };
+}

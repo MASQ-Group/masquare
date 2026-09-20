@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { JINIUS_PATHS, jiniusBase, jiniusHeaders, jiniusUrl, jiniusUrlProblem, readJiniusTest } from './jinius';
+import { JINIUS_PATHS, jiniusBase, jiniusHeaders, jiniusUrl, jiniusUrlProblem, readJiniusOffers, readJiniusTest } from './jinius';
 
 describe('the Jinius (Mirakl) base URL', () => {
   it('takes the host however it was pasted', () => {
@@ -48,5 +48,41 @@ describe('what a connection test means', () => {
 
   it('passes Mirakl’s own words through, cut short', () => {
     expect(readJiniusTest(400, { message: 'shop_id must be an integer' }).message).toContain('shop_id must be an integer');
+  });
+});
+
+describe('reading a page of offers', () => {
+  /** OF21's documented fields, as Mirakl returns them. */
+  const page = {
+    total_count: 682,
+    offers: [
+      { offer_id: 11223, shop_sku: 'LAG-612676', product_sku: 'MP-99', product_title: 'Victorinox card wallet', quantity: 4, price: 39.9, active: true, state_code: '11' },
+      { offer_id: 11224, shop_sku: ' LE-83306 ', product_title: '  ', quantity: 0, price: 12, active: false },
+      { offer_id: 11225, product_sku: 'MP-77', quantity: 1, price: 5 },
+    ],
+  };
+
+  it('keeps the seller’s own SKU, the offer id, stock and price', () => {
+    const { rows, totalCount } = readJiniusOffers(page);
+    expect(totalCount).toBe(682);
+    expect(rows[0]).toEqual({
+      sku: 'LAG-612676', asin: null, externalId: '11223', title: 'Victorinox card wallet',
+      quantity: 4, price: 39.9, currency: 'EUR', fulfilmentChannel: null, status: '11', marketplace: null,
+    });
+  });
+
+  it('marks an offer that is not for sale, and trims what it was given', () => {
+    const { rows } = readJiniusOffers(page);
+    expect(rows[1]).toMatchObject({ sku: 'LE-83306', status: 'INACTIVE', title: null, quantity: 0 });
+  });
+
+  /** product_sku is the marketplace's code and matches no product here. */
+  it('drops an offer with no shop SKU rather than storing one nobody can look up', () => {
+    expect(readJiniusOffers(page).rows).toHaveLength(2);
+  });
+
+  it('is safe on an answer that carries nothing', () => {
+    expect(readJiniusOffers(null)).toEqual({ rows: [], totalCount: null });
+    expect(readJiniusOffers({ offers: [] })).toEqual({ rows: [], totalCount: null });
   });
 });

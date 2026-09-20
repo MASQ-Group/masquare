@@ -74,7 +74,7 @@ export class ChannelListingsService implements OnApplicationBootstrap {
   /** The connected channels (Amazon marketplaces) that can carry listings. */
   async channels(companyIds?: string[]) {
     const rows = await this.prisma.channelIntegration.findMany({
-      where: { ...ACTIVE, status: 'active', channelType: { in: ['amazon', 'ebay', 'onbuy'] }, ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}) },
+      where: { ...ACTIVE, status: 'active', channelType: { in: ChannelListingsService.LISTING_CHANNELS }, ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}) },
       orderBy: { name: 'asc' },
       select: { id: true, name: true, marketplace: true, channelType: true, targetSalesChannelId: true, targetCompanyId: true },
     });
@@ -511,7 +511,7 @@ export class ChannelListingsService implements OnApplicationBootstrap {
 
   /** Pull listings from the given (or all active Amazon) channels into ChannelListing. */
   // Channel types we can pull listings from today.
-  private static readonly LISTING_CHANNELS = ['amazon', 'ebay', 'onbuy'];
+  private static readonly LISTING_CHANNELS = ['amazon', 'ebay', 'onbuy', 'jinius'];
 
   async sync(integrationIds?: string[], companyIds?: string[], progress?: ProgressSink) {
     // "Sync all" (no explicit ids) syncs every channel type with a listings connector.
@@ -545,6 +545,8 @@ export class ChannelListingsService implements OnApplicationBootstrap {
           intg.channelType === 'amazon' ? await this.integrations.fetchAmazonListings(intg.id)
           : intg.channelType === 'ebay' ? { rows: await this.integrations.fetchEbayListings(intg.id), reportedTotal: null, complete: true }
           : intg.channelType === 'onbuy' ? { rows: await this.integrations.fetchOnBuyListings(intg.id), reportedTotal: null, complete: true }
+          // Mirakl answers with its own total, so the guard below compares like with like.
+          : intg.channelType === 'jinius' ? { ...(await this.integrations.fetchJiniusListings(intg.id)), complete: true }
           : null;
         const listings = pull?.rows ?? null;
         if (!listings || !pull) {
@@ -752,6 +754,20 @@ export class ChannelListingsService implements OnApplicationBootstrap {
 
     const results: any[] = [];
     for (const l of listings) {
+      /**
+       * Jinius is read-only for now: its offers are pulled in so they can be seen and matched, and
+       * their stock is still maintained in Jinius itself. Skipped with that reason rather than
+       * attempted — an unavailable push would log a failure against every offer on every run.
+       */
+      if (l.integration.channelType === 'jinius') {
+        results.push({
+          productId: l.productId, channelKey: channelKeyOf(l), channel: l.integration.name, channelType: l.integration.channelType,
+          marketplace: l.marketplace, countryIso: isoOf(l), channelSku: l.channelSku,
+          currentQty: l.listedQuantity, targetQty: null, ok: false, skipped: true,
+          message: 'Jinius stock is maintained in Jinius — the platform only reads its offers for now',
+        });
+        continue;
+      }
       if (l.integration.channelType === 'onbuy' && heldOnbuy.has(`${l.integrationId}|${l.channelSku}`)) {
         results.push({
           productId: l.productId, channelKey: channelKeyOf(l), channel: l.integration.name, channelType: l.integration.channelType,
