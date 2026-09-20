@@ -1026,7 +1026,8 @@ model Product {
   @@index([categoryId])
   @@index([productTypeId])
   @@index([fulfilmentTypeId])
-  @@map("product")
+  @@map("product")
+  jiniusOrderLines JiniusOrderLine[]
 }
 
 // ===========================================================================
@@ -2385,7 +2386,8 @@ model ChannelIntegration {
   channelAvailability ProductChannelAvailability[]
   productPlans        ProductChannelPlan[]
 
-  @@map("channel_integration")
+  @@map("channel_integration")
+  jiniusOrders JiniusOrder[]
 }
 
 // One encrypted secret field (e.g. liveSecretKey). Stores only ciphertext + the
@@ -2988,6 +2990,12 @@ model SalesTransaction {
   resolutionSource      String?   @map("resolution_source") // manual | amazon
   // Provenance: 'manual' or an importer key like 'onbuy'; integrationId links the
   // source integration so a re-sync only ever touches its own imported records.
+  /**
+   * The units this transaction sells were already taken off channel availability by the channel
+   * orders it invoices (Jinius), so submitting it must not take them again. Physical warehouse stock
+   * still moves here: the goods leave the shelf once, on the transaction that records the sale.
+   */
+  availabilityHandledElsewhere Boolean @default(false) @map("availability_handled_elsewhere")
   source                String    @default("manual") @map("source")
   integrationId         String?   @map("integration_id") @db.Uuid
 
@@ -2998,6 +3006,7 @@ model SalesTransaction {
   deletedAt   DateTime? @map("deleted_at")
 
   salesChannel       SalesChannel?                   @relation(fields: [salesChannelId], references: [id], onDelete: SetNull)
+  jiniusOrders       JiniusOrder[]
   destinationCountry Country?                        @relation(fields: [destinationCountryId], references: [id], onDelete: SetNull)
   company            Company?                        @relation(fields: [companyId], references: [id], onDelete: SetNull)
   shippingService    ShippingService?                @relation("TxShippingService", fields: [shippingServiceId], references: [id], onDelete: SetNull)
@@ -4620,4 +4629,92 @@ model FedexDutyRule {
 
   @@index([sortOrder])
   @@map("fedex_duty_rule")
+}
+
+
+/**
+ * An order pulled from Jinius (Mirakl), kept as an ORDER and never as a sales transaction.
+ *
+ * Accounting issues a local invoice for these sales — they are Cyprus sales — and that local
+ * transaction is what the platform's revenue and profit reports count. Importing the Jinius order as
+ * a transaction as well would count the same sale twice. So the order lives here: visible, matched to
+ * products, able to lower availability, and linked to the local transaction that invoices it.
+ */
+model JiniusOrder {
+  id            String  @id @default(uuid()) @db.Uuid
+  integrationId String  @map("integration_id") @db.Uuid
+  companyId     String? @map("company_id") @db.Uuid
+  /// Mirakl's own order id, and the commercial id a person sees on the marketplace.
+  orderId       String  @map("order_id")
+  commercialId  String? @map("commercial_id")
+  orderedAt     DateTime @map("ordered_at")
+  /// Mirakl order_state: WAITING_ACCEPTANCE, SHIPPING, SHIPPED, RECEIVED, CANCELED, REFUSED…
+  state         String
+  currency      String  @default("EUR")
+  /// Mirakl's `order_tax_mode`: TAX_INCLUDED or TAX_EXCLUDED. The local invoice splits VAT out of a
+  /// tax-included price, so an order that says otherwise is worth seeing rather than assuming.
+  taxMode       String? @map("tax_mode")
+  /// The channel's own figures, as it reported them.
+  priceTotal      Float @default(0) @map("price_total")
+  shippingPrice   Float @default(0) @map("shipping_price")
+  /// Everything Jinius keeps: commission plus the VAT on it.
+  totalCommission Float @default(0) @map("total_commission")
+  totalPrice      Float @default(0) @map("total_price")
+  /// The local sales transaction that invoices this order. While set, the reports count that
+  /// transaction and this order is only the trail back to the marketplace.
+  linkedTransactionId String?   @map("linked_transaction_id") @db.Uuid
+  linkedAt            DateTime? @map("linked_at")
+  linkedById          String?   @map("linked_by") @db.Uuid
+  /// When its units were taken off the shared availability pool. Null while never deducted.
+  availabilityDeductedAt DateTime? @map("availability_deducted_at")
+  /// Mirakl's answer as it arrived, for a question the columns above cannot settle.
+  raw          Json?
+  lastPulledAt DateTime @map("last_pulled_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  lines             JiniusOrderLine[]
+  integration       ChannelIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  linkedTransaction SalesTransaction?  @relation(fields: [linkedTransactionId], references: [id], onDelete: SetNull)
+
+  @@unique([integrationId, orderId])
+  @@index([linkedTransactionId])
+  @@index([orderedAt])
+  @@index([deletedAt])
+  @@map("jinius_order")
+}
+
+/// One line of a Jinius order: our own SKU, what it sold for, and what Jinius kept.
+model JiniusOrderLine {
+  id             String  @id @default(uuid()) @db.Uuid
+  jiniusOrderId  String  @map("jinius_order_id") @db.Uuid
+  orderLineId    String  @map("order_line_id")
+  /// `offer_sku` — the seller's own SKU, which is what matches a product here.
+  offerSku       String  @map("offer_sku")
+  productTitle   String? @map("product_title")
+  productId      String? @map("product_id") @db.Uuid
+  quantity       Int     @default(1)
+  /// Line price without shipping, and the unit price behind it.
+  price          Float   @default(0)
+  unitPrice      Float?  @map("unit_price")
+  shippingPrice  Float   @default(0) @map("shipping_price")
+  /// Commission plus its VAT for this line — what is taken off the price on the local invoice.
+  totalCommission Float  @default(0) @map("total_commission")
+  /// The tax Mirakl reported inside this line's price, when it reported any.
+  taxAmount       Float  @default(0) @map("tax_amount")
+  state          String?
+  /// Units of this line already taken off availability, so a re-pull moves only the difference.
+  availabilityDeductedQty Int @default(0) @map("availability_deducted_qty")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  order   JiniusOrder @relation(fields: [jiniusOrderId], references: [id], onDelete: Cascade)
+  product Product?    @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@unique([jiniusOrderId, orderLineId])
+  @@index([productId])
+  @@map("jinius_order_line")
 }

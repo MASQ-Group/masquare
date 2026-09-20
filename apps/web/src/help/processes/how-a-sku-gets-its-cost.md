@@ -7,7 +7,7 @@ covers:
   - apps/api/src/purchase-orders/costing.service.ts
   - apps/api/src/sales-transactions/sales-transactions.service.ts
   - apps/api/src/fba-shipments/fba-shipments.service.ts
-reviewed: 2026-09-15
+reviewed: 2026-09-20
 ---
 
 # How a SKU gets its cost
@@ -43,6 +43,11 @@ flowchart TD
     ORDERCOST --> PROFIT[Profit]
     REV[Revenue - refund] --> PROFIT
 ```
+
+Outbound shipping is a cost only where WE post the parcel. A sales channel set to *deliver the
+order and charge the buyer for it* — a marketplace that ships from its own stock — contributes no
+carriage to the cost side, because none is ours to pay. A shipment actually recorded against the
+order still counts, whoever was meant to send it.
 
 ## Where a unit cost comes from
 

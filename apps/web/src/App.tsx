@@ -24,6 +24,7 @@ const SettingsPage = lazyPage(() => import('./pages/SettingsPage'), 'SettingsPag
 const ActivityPage = lazyPage(() => import('./pages/ActivityPage'), 'ActivityPage');
 const ProductsPage = lazyPage(() => import('./pages/ProductsPage'), 'ProductsPage');
 const SalesTransactionsPage = lazyPage(() => import('./pages/SalesTransactionsPage'), 'SalesTransactionsPage');
+const JiniusOrdersPage = lazyPage(() => import('./pages/JiniusOrdersPage'), 'JiniusOrdersPage');
 const SalesTransactionFormPage = lazyPage(() => import('./pages/SalesTransactionFormPage'), 'SalesTransactionFormPage');
 const ShipmentsPage = lazyPage(() => import('./pages/ShipmentsPage'), 'ShipmentsPage');
 const FbaShipmentsPage = lazyPage(() => import('./pages/FbaShipmentsPage'), 'FbaShipmentsPage');
@@ -161,6 +162,8 @@ export function App() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/products" element={<RequireArea area="products"><ProductsPage /></RequireArea>} />
         <Route path="/sales-transactions" element={<RequireArea area="sales_transactions"><SalesTransactionsPage /></RequireArea>} />
+        {/* Marketplace orders that are invoiced locally: not transactions themselves, so their own page. */}
+        <Route path="/jinius-orders" element={<RequireArea area="sales_transactions"><JiniusOrdersPage /></RequireArea>} />
         {/* Literal path before ":id" so /new isn't read as an id. */}
         <Route path="/sales-transactions/new" element={<RequireArea area="sales_transactions"><SalesTransactionFormPage /></RequireArea>} />
         <Route path="/sales-transactions/:id/edit" element={<RequireArea area="sales_transactions"><SalesTransactionFormPage /></RequireArea>} />

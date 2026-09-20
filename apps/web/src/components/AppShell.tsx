@@ -31,6 +31,7 @@ import {
   PanelLeftOpen,
   Plug,
   Receipt,
+  ShoppingBag,
   RotateCcw,
   ScanBarcode,
   Search,
@@ -99,6 +100,7 @@ const NAV_GROUPS: { label: string; items: NavDef[] }[] = [
     label: 'Sales',
     items: [
       { to: '/sales-transactions', label: 'Sales Transactions', area: 'sales_transactions', icon: Receipt },
+      { to: '/jinius-orders', label: 'Jinius Orders', area: 'sales_transactions', icon: ShoppingBag },
     ],
   },
   {
