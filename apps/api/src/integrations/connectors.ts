@@ -136,7 +136,36 @@ const ONBUY: ConnectorDef = {
   ],
 };
 
-const CONNECTORS: ConnectorDef[] = [AMAZON, EBAY, ONBUY];
+// --- Jinius (Cyprus marketplace, built on Mirakl) -------------------------
+/**
+ * Jinius runs on Mirakl, so the credentials are Mirakl's: an API key sent as the whole Authorization
+ * header, and a shop id where a key reaches more than one shop. The host differs per marketplace and
+ * comes from the API guide Jinius issues with the key, so it is asked for rather than assumed.
+ */
+const JINIUS: ConnectorDef = {
+  type: 'jinius',
+  label: 'Jinius',
+  description: 'Jinius, the Cyprus marketplace — Mirakl seller API: offers, stock, price and orders.',
+  testable: true,
+  marketplaces: [{ id: 'CY', label: 'Jinius Cyprus', meta: { currency: 'EUR', countryIso: 'CY' } }],
+  fields: [
+    {
+      key: 'url', label: 'API base URL', type: 'url', secret: false, required: true, group: 'Connection',
+      placeholder: 'https://<marketplace>.mirakl.net',
+      help: 'From the Jinius API guide — the Mirakl host. Not the seller portal address. With or without /api.',
+    },
+    {
+      key: 'shopId', label: 'Shop ID', type: 'text', secret: false, required: false, group: 'Connection',
+      help: 'Mirakl shop_id. Needed only when the key reaches more than one shop; otherwise its own shop is used.',
+    },
+    {
+      key: 'apiKey', label: 'API key', type: 'text', secret: true, required: true, group: 'Credentials',
+      help: 'Sent as the Authorization header exactly as given — Mirakl does not use "Bearer". Encrypted here and never shown again.',
+    },
+  ],
+};
+
+const CONNECTORS: ConnectorDef[] = [AMAZON, EBAY, ONBUY, JINIUS];
 
 export const listConnectors = (): ConnectorDef[] => CONNECTORS;
 export const getConnector = (type: string): ConnectorDef | undefined => CONNECTORS.find((c) => c.type === type);
