@@ -464,7 +464,7 @@ export function BulkPricingPage() {
                       </span>
                       <span className="code block text-[10px] font-normal normal-case text-n-400">{c.currency}</span>
                       {/* Naming the service here is what makes a price reproducible elsewhere. */}
-                      <span className="block text-[10px] font-normal normal-case text-n-400">{c.shippingServiceName ?? 'no shipping'}</span>
+                      <span className="block text-[10px] font-normal normal-case text-n-400">{c.shippingByChannel ? 'delivery by the channel' : c.shippingServiceName ?? 'no shipping'}</span>
                     </th>
                   ))}
                 </tr>

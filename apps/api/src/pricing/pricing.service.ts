@@ -72,6 +72,8 @@ export interface ListingEconomics {
   feePct?: number;
   vatPct?: number;
   shippingServiceName?: string | null;
+  /** The channel ships and charges for it, so shippingEur is 0 by rule rather than by accident. */
+  shippingByChannel?: boolean;
 }
 
 /** Tax the channel applies to a listing, and whether our listed price already contains it. */
@@ -126,6 +128,18 @@ export class PricingService {
       // Margin against what the buyer pays, matching the transaction module's base.
       marginPct: grossEur > 0 ? round((profit / grossEur) * 100) : 0,
     };
+  }
+
+  /**
+   * What the outbound shipping of one unit costs US on this channel.
+   *
+   * Zero when the channel performs and charges delivery itself: a Jinius price is advertised without
+   * postage because Jinius ships it and bills the buyer, so deducting our carrier rate would report a
+   * margin the business never loses. Anywhere else it is the resolved rate, and an unresolved rate
+   * stays null so the caller can say it could not be worked out rather than treat it as free.
+   */
+  private shippingCostEur(channel: any, resolved: number | null): number | null {
+    return channel?.shippingByChannel ? 0 : resolved;
   }
 
   /**
@@ -456,7 +470,8 @@ export class PricingService {
       // best available proxy for freighting one unit there.
       const fba = fbaCosts.get(channel.id);
       const fbaInboundEur = isFba ? fba?.inboundEur ?? null : null;
-      const autoShipEur = isFba ? fbaInboundEur ?? ship.costEur ?? 0 : ship.costEur ?? 0;
+      // A channel that ships it itself costs us no postage; FBA keeps its own inbound allocation.
+      const autoShipEur = isFba ? fbaInboundEur ?? ship.costEur ?? 0 : this.shippingCostEur(channel, ship.costEur) ?? 0;
 
       const inputs: CostInputs = {
         costEur: dto.costEur ?? autoCost,
@@ -474,7 +489,7 @@ export class PricingService {
         taxType: tax.taxType,
       };
       return {
-        ccy, rate, weight, ship, inputs, autoVat, autoFee, taxType: tax.taxType, pointsPct: inputs.pointsPct,
+        ccy, rate, weight, ship, inputs, autoVat, autoFee, taxType: tax.taxType, pointsPct: inputs.pointsPct, channel,
         // Where each FBA number came from, so the form can say whether it used a real allocated
         // cost or fell back to an estimate rather than presenting both as equally solid.
         fbaInboundSource: isFba ? (fbaInboundEur != null ? 'allocated' : 'estimated') : null,
@@ -554,7 +569,9 @@ export class PricingService {
       auto: {
         costEur: round(autoCost),
         shippingServiceId: service?.id ?? null,
-        shippingServiceName: service?.name ?? null,
+        shippingServiceName: p.channel?.shippingByChannel && !isFba ? null : service?.name ?? null,
+        /** The channel delivers and charges for it, so our carrier rate is not part of this sale. */
+        shippingByChannel: !!p.channel?.shippingByChannel && !isFba,
         // For FBA this is what the form actually applied (allocated inbound, or the weight
         // estimate when the product has never been sent in), not the outbound rate.
         shippingEur: isFba ? p.inputs.shippingEur : p.ship.costEur,
@@ -655,13 +672,13 @@ export class PricingService {
       if (!costCache.has(product.id)) costCache.set(product.id, await this.productCostEur(product));
       const service = serviceByChannel.get(channel.id);
       const weight = this.unitWeightKg(product, service?.calcMethod ?? null);
-      const ship = this.lookupShipping(service, channel.nativeCountryId, weight);
+      const shipEur = this.shippingCostEur(channel, this.lookupShipping(service, channel.nativeCountryId, weight).costEur);
       // Threshold rules (e.g. UK £135) compare against the price in the channel's own
       // currency, so the tax regime is resolved from the native gross, not the EUR figure.
       const tax = this.resolveTax(channel, gross);
       const inputs: CostInputs = {
         costEur: costCache.get(product.id) ?? 0,
-        shippingEur: ship.costEur ?? 0,
+        shippingEur: shipEur ?? 0,
         importPct: 0,
         feePct: channel.generalSalesFeePct != null ? Number(channel.generalSalesFeePct) : 0,
         vatPct: tax.vatPct,
@@ -683,7 +700,8 @@ export class PricingService {
         vatEur: econ.vatEur,
         feePct: inputs.feePct,
         vatPct: inputs.vatPct,
-        shippingServiceName: service?.name ?? null,
+        shippingServiceName: channel.shippingByChannel ? null : service?.name ?? null,
+        shippingByChannel: !!channel.shippingByChannel,
       });
     }
     return out;
@@ -705,7 +723,7 @@ export class PricingService {
     currency: string;
     marginPct: number | null;
     profitEur: number | null;
-    inputs: { costEur: number; shippingEur: number; feePct: number; vatPct: number; shippingServiceName: string | null };
+    inputs: { costEur: number; shippingEur: number; feePct: number; vatPct: number; shippingServiceName: string | null; shippingByChannel?: boolean };
     problems: string[];
   }> {
     const [product, [channel]] = await Promise.all([
@@ -723,9 +741,9 @@ export class PricingService {
     const costEur = await this.productCostEur(product);
     const service = await this.resolveService(null, channel.nativeCountryId);
     const weight = this.unitWeightKg(product, service?.calcMethod ?? null);
-    const ship = this.lookupShipping(service, channel.nativeCountryId, weight);
+    const shipEur = this.shippingCostEur(channel, this.lookupShipping(service, channel.nativeCountryId, weight).costEur);
     if (!(costEur > 0)) problems.push('no purchase cost recorded for this product');
-    if (ship.costEur == null) problems.push(`no shipping cost could be worked out${service?.name ? ` for ${service.name}` : ''} — check the product weight and the channel country's default service`);
+    if (shipEur == null) problems.push(`no shipping cost could be worked out${service?.name ? ` for ${service.name}` : ''} — check the product weight and the channel country's default service`);
     if (rate == null) problems.push(`no exchange rate for ${currency}`);
     const feePct = channel.generalSalesFeePct != null ? Number(channel.generalSalesFeePct) : 0;
     if (channel.generalSalesFeePct == null) problems.push(`no sales fee % is set on ${channel.name} — the price ignores the channel’s commission`);
@@ -734,7 +752,7 @@ export class PricingService {
       const tax = this.resolveTax(channel, grossNative);
       return {
         costEur,
-        shippingEur: ship.costEur ?? 0,
+        shippingEur: shipEur ?? 0,
         importPct: 0,
         feePct,
         vatPct: tax.vatPct,
@@ -757,7 +775,11 @@ export class PricingService {
       currency,
       marginPct: econ.marginPct,
       profitEur: econ.profitEur,
-      inputs: { costEur: round(costEur), shippingEur: round(final.shippingEur), feePct, vatPct: final.vatPct, shippingServiceName: service?.name ?? null },
+      inputs: {
+        costEur: round(costEur), shippingEur: round(final.shippingEur), feePct, vatPct: final.vatPct,
+        shippingServiceName: channel.shippingByChannel ? null : service?.name ?? null,
+        shippingByChannel: !!channel.shippingByChannel,
+      },
       problems,
     };
   }
@@ -788,8 +810,10 @@ export class PricingService {
       channelName: c.name,
       currency: c.nativeCurrency ?? 'EUR',
       countryIso: c.nativeCountry?.isoCode ?? null,
-      shippingServiceId: serviceByChannel.get(c.id)?.id ?? null,
-      shippingServiceName: serviceByChannel.get(c.id)?.name ?? null,
+      shippingServiceId: c.shippingByChannel ? null : serviceByChannel.get(c.id)?.id ?? null,
+      shippingServiceName: c.shippingByChannel ? null : serviceByChannel.get(c.id)?.name ?? null,
+      /** The channel delivers and charges for it, so no shipping is taken off these prices. */
+      shippingByChannel: !!c.shippingByChannel,
       unavailable: (c.nativeCurrency ?? 'EUR') !== 'EUR' && rates.get((c.nativeCurrency ?? 'EUR').toUpperCase()) == null,
     }));
 
@@ -802,16 +826,17 @@ export class PricingService {
 
         const service = serviceByChannel.get(channel.id) ?? null;
         const weight = this.unitWeightKg(product, service?.calcMethod ?? null);
-        const ship = this.lookupShipping(service, channel.nativeCountryId, weight);
+        const shipEur = this.shippingCostEur(channel, this.lookupShipping(service, channel.nativeCountryId, weight).costEur);
         // A weight-based method with no weight on the product would silently price at
         // zero shipping, so the cell is refused rather than quietly understating cost.
-        if (service && weight == null) return { priceNative: null, profitEur: null, marginPct: null, reason: 'Missing weight/dimensions' };
+        // A channel that ships it itself needs no weight at all.
+        if (service && weight == null && !channel.shippingByChannel) return { priceNative: null, profitEur: null, marginPct: null, reason: 'Missing weight/dimensions' };
 
         const tax = this.resolveTax(channel, 0);
         const feePct = channel.generalSalesFeePct != null ? Number(channel.generalSalesFeePct) : 0;
         const inputs: CostInputs = {
           costEur,
-          shippingEur: dto.shippingCostEur ?? ship.costEur ?? 0,
+          shippingEur: dto.shippingCostEur ?? shipEur ?? 0,
           importPct: dto.importPct ?? 0,
           feePct,
           // The under-the-line rate for now; a threshold channel is re-costed at the side the

@@ -7,6 +7,8 @@ export class CreateSalesChannelDto {
   @IsOptional() @IsString() nativeCurrency?: string;
   @IsOptional() @IsNumber() generalSalesFeePct?: number | null;
   @IsOptional() @IsBoolean() feeChargedInNativeCurrency?: boolean;
+  /** The channel ships the order and charges the buyer for it, so our carrier rate is not its cost. */
+  @IsOptional() @IsBoolean() shippingByChannel?: boolean;
   @IsOptional() @IsString() feeCurrency?: string | null;
   @IsOptional() @IsBoolean() showTransactionTotal?: boolean;
   /** Chip colours shown wherever this channel's name appears (CSS colours). */

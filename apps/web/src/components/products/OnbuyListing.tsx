@@ -539,7 +539,7 @@ export function OnbuyPriceSuggestion({ productId, integrationId, price, onUse }:
       )}
       {s && (
         <div className="mt-1 text-[11.5px] text-n-500">
-          Cost €{s.inputs.costEur.toFixed(2)} · shipping €{s.inputs.shippingEur.toFixed(2)}{s.inputs.shippingServiceName ? ` (${s.inputs.shippingServiceName})` : ''} · OnBuy fee {s.inputs.feePct}% · VAT {s.inputs.vatPct}%
+          Cost €{s.inputs.costEur.toFixed(2)} · {s.inputs.shippingByChannel ? 'delivery by the channel' : `shipping €${s.inputs.shippingEur.toFixed(2)}${s.inputs.shippingServiceName ? ` (${s.inputs.shippingServiceName})` : ''}`} · OnBuy fee {s.inputs.feePct}% · VAT {s.inputs.vatPct}%
         </div>
       )}
       {data.problems.length > 0 && (
