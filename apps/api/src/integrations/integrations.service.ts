@@ -5,7 +5,7 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { JINIUS_PATHS, jiniusHeaders, jiniusUrl, jiniusUrlProblem, readJiniusTest } from './jinius';
+import { JINIUS_PATHS, jiniusHeaders, jiniusUrl, jiniusUrlProblem, readJiniusOffers, readJiniusTest } from './jinius';
 import { CryptoService } from '../crypto/crypto.service';
 import { StorageService } from '../storage/storage.service';
 import { SalesTransactionsService } from '../sales-transactions/sales-transactions.service';
@@ -2877,6 +2877,60 @@ export class IntegrationsService implements OnModuleInit {
     return out.filter((x) => x.sku);
   }
 
+  /**
+   * Jinius offers, every page of them (Mirakl OF21).
+   *
+   * Mirakl answers `total_count` with the first page, which is returned alongside the rows: the
+   * listings sync refuses to replace what it holds when a pull comes back far short of the channel's
+   * own count, and that guard is only as good as the number it is given.
+   *
+   * A Jinius offer carries the seller's own SKU as `shop_sku`, which is what matches a product here.
+   */
+  async fetchJiniusListings(integrationId: string, opts: { maxItems?: number } = {}): Promise<{
+    rows: Array<{
+      sku: string; asin: string | null; externalId: string | null; title: string | null; quantity: number | null;
+      price: number | null; currency: string | null; fulfilmentChannel: 'FBM' | 'FBA' | null; status: string | null;
+      marketplace: string | null;
+    }>;
+    reportedTotal: number | null;
+  }> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'jinius' } });
+    if (!row) throw new NotFoundException('Jinius integration not found');
+    const config = (row.config ?? {}) as Record<string, string>;
+    const secrets = await this.decryptedSecrets(row.id);
+    const apiKey = secrets.apiKey;
+    if (!apiKey) throw new BadRequestException('No API key saved for this Jinius connection.');
+    const problem = jiniusUrlProblem(config.url ?? '');
+    if (problem) throw new BadRequestException(problem);
+    const shopId = (config.shopId ?? '').trim() || undefined;
+
+    const maxItems = opts.maxItems ?? 10000;
+    // 100 is Mirakl's documented maximum page size for offset pagination.
+    const pageSize = Math.min(100, maxItems);
+    const rows: any[] = [];
+    let reportedTotal: number | null = null;
+
+    for (let offset = 0; offset < maxItems; offset += pageSize) {
+      const url = jiniusUrl(config.url, JINIUS_PATHS.offers, { max: pageSize, offset, shop_id: shopId });
+      const res = await fetch(url, { headers: jiniusHeaders(apiKey), signal: AbortSignal.timeout(20000) });
+      const text = await res.text();
+      let json: any = null;
+      try { json = JSON.parse(text); } catch { /* Mirakl answers plain text on some errors. */ }
+      if (!res.ok) {
+        const outcome = readJiniusTest(res.status, json ?? text, shopId ?? null);
+        throw new BadRequestException(outcome.message);
+      }
+      // Jinius sells in Cyprus, in euro; Mirakl does not repeat the currency on every offer.
+      const page = readJiniusOffers(json, config.currency || 'EUR');
+      if (reportedTotal == null) reportedTotal = page.totalCount;
+      rows.push(...page.rows);
+      const received = Array.isArray(json?.offers) ? json.offers.length : 0;
+      if (!received) break;
+      if (reportedTotal != null && offset + pageSize >= reportedTotal) break;
+    }
+    return { rows, reportedTotal };
+  }
+
   /** One page of orders. When paging with NextToken, SP-API forbids other filters. */
   private async amazonGetOrdersPage(endpoint: string, token: string, marketplaceId: string, opts: { createdAfter?: string; createdBefore?: string; lastUpdatedAfter?: string; nextToken?: string | null }): Promise<{ ok: boolean; status?: number; message?: string; orders: any[]; nextToken: string | null }> {
     const params = new URLSearchParams({ MarketplaceIds: marketplaceId });
@@ -3720,12 +3774,13 @@ export class IntegrationsService implements OnModuleInit {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id, deletedAt: null } });
     if (!row) throw new NotFoundException('Integration not found');
     const type = row.channelType;
-    if (!['amazon', 'ebay', 'onbuy'].includes(type)) throw new BadRequestException('Listings preview supports Amazon, eBay and OnBuy only.');
+    if (!['amazon', 'ebay', 'onbuy', 'jinius'].includes(type)) throw new BadRequestException('Listings preview supports Amazon, eBay, OnBuy and Jinius only.');
     try {
       const listings =
         // Amazon now reports completeness alongside the rows; the preview only wants the rows.
         type === 'amazon' ? (await this.fetchAmazonListings(id, { maxPages: 1 })).rows
         : type === 'ebay' ? await this.fetchEbayListings(id, { maxItems: limit })
+        : type === 'jinius' ? (await this.fetchJiniusListings(id, { maxItems: limit })).rows
         : await this.fetchOnBuyListings(id, { maxItems: limit });
       await this.audit(id, actorId, 'listings.preview', `${type} count=${listings.length}`);
       return { ok: true, channelType: type, count: listings.length, listings: listings.slice(0, limit) };

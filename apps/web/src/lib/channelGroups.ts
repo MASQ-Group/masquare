@@ -23,9 +23,10 @@ export type ChannelGroupKey =
   | 'ebay-eu'
   | 'ebay-americas'
   | 'ebay-au'
-  | 'onbuy';
+  | 'onbuy'
+  | 'jinius';
 
-export type ChannelPlatform = 'amazon' | 'ebay' | 'onbuy' | 'other';
+export type ChannelPlatform = 'amazon' | 'ebay' | 'onbuy' | 'jinius' | 'other';
 
 export interface ChannelGroup {
   key: ChannelGroupKey;
@@ -47,6 +48,7 @@ export const CHANNEL_GROUPS: ChannelGroup[] = [
   { key: 'ebay-americas', label: 'eBay Americas', platform: 'ebay', isos: ['US', 'CA'] },
   { key: 'ebay-au', label: 'eBay Australia', platform: 'ebay', isos: ['AU'] },
   { key: 'onbuy', label: 'OnBuy', platform: 'onbuy', isos: ['GB'] },
+  { key: 'jinius', label: 'Jinius', platform: 'jinius', isos: ['CY'] },
 ];
 
 /**
@@ -60,7 +62,7 @@ export const CHANNEL_GROUPS: ChannelGroup[] = [
 export interface ChannelLike {
   name: string;
   countryIso?: string | null;
-  /** 'amazon' | 'ebay' | 'onbuy' — the connector key, when the caller has it. */
+  /** 'amazon' | 'ebay' | 'onbuy' | 'jinius' — the connector key, when the caller has it. */
   channelType?: string | null;
 }
 
@@ -70,6 +72,7 @@ export function channelPlatform(nameOrChannel: string | ChannelLike): ChannelPla
   if (candidate.includes('amazon')) return 'amazon';
   if (candidate.includes('ebay')) return 'ebay';
   if (candidate.includes('onbuy')) return 'onbuy';
+  if (candidate.includes('jinius')) return 'jinius';
   return 'other';
 }
 
