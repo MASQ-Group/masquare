@@ -2878,6 +2878,32 @@ export class IntegrationsService implements OnModuleInit {
   }
 
   /**
+   * One authenticated GET against Jinius (Mirakl), for the modules that read it.
+   *
+   * The key stays in here: a caller says which endpoint and which parameters, never how to
+   * authenticate, so there is one place that knows how Mirakl is spoken to.
+   */
+  async jiniusGet(integrationId: string, path: string, params: Record<string, string | number | undefined> = {}): Promise<{ ok: boolean; status: number; json: any; text: string; shopId: string | null }> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'jinius' } });
+    if (!row) throw new NotFoundException('Jinius integration not found');
+    const config = (row.config ?? {}) as Record<string, string>;
+    const problem = jiniusUrlProblem(config.url ?? '');
+    if (problem) throw new BadRequestException(problem);
+    const secrets = await this.decryptedSecrets(row.id);
+    if (!secrets.apiKey) throw new BadRequestException('No API key saved for this Jinius connection.');
+    const shopId = (config.shopId ?? '').trim() || null;
+
+    const res = await fetch(jiniusUrl(config.url, path, { ...params, shop_id: shopId ?? undefined }), {
+      headers: jiniusHeaders(secrets.apiKey),
+      signal: AbortSignal.timeout(25000),
+    });
+    const text = await res.text();
+    let json: any = null;
+    try { json = JSON.parse(text); } catch { /* Mirakl answers plain text on some errors. */ }
+    return { ok: res.ok, status: res.status, json, text, shopId };
+  }
+
+  /**
    * Jinius offers, every page of them (Mirakl OF21).
    *
    * Mirakl answers `total_count` with the first page, which is returned alongside the rows: the

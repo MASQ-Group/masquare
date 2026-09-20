@@ -42,6 +42,7 @@ import { CustomsFxModule } from './customs-fx/customs-fx.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { ChannelListingsModule } from './channel-listings/channel-listings.module';
+import { JiniusModule } from './jinius/jinius.module';
 import { StorageModule } from './storage/storage.module';
 import { AmazonRepricingModule } from './amazon-repricing/amazon-repricing.module';
 import { HealthController } from './health.controller';
@@ -104,6 +105,7 @@ import { HealthController } from './health.controller';
     ExpensesModule,
     AvailabilityModule,
     ChannelListingsModule,
+    JiniusModule,
     IntegrationsModule,
     AmazonRepricingModule,
     ListingModule,

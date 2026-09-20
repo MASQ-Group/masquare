@@ -4327,6 +4327,53 @@ export interface DeliveryAddressView {
   channel: string | null;
 }
 
+/** One Jinius order as the orders page reads it. */
+export interface JiniusOrderLine {
+  id: string; sku: string; title: string | null; productId: string | null;
+  quantity: number; price: number; unitPrice: number | null; totalCommission: number;
+  /** What the local invoice carries for this line: sold for, less everything Jinius keeps. */
+  netOfCommission: number; state: string | null;
+}
+
+export interface JiniusOrder {
+  id: string; orderId: string; commercialId: string | null; orderedAt: string; state: string;
+  currency: string; taxMode: string | null;
+  priceTotal: number; shippingPrice: number; totalCommission: number; totalPrice: number;
+  netOfCommission: number;
+  availabilityDeductedAt: string | null;
+  /** The local transaction that accounts for this order; null while it is still uninvoiced. */
+  linked: { id: string; ref: string; date: string; status: string } | null;
+  lines: JiniusOrderLine[];
+}
+
+export interface JiniusLocalSalePreview {
+  orderCount: number;
+  orders: { id: string; orderId: string; orderedAt: string; state: string }[];
+  lines: {
+    orderId: string; orderLineId: string; sku: string; title: string | null; productId: string | null;
+    quantity: number; grossAmount: number; netSalesAmount: number; vatAmount: number; vatPct: number;
+  }[];
+  grossTotal: number; netTotal: number; vatTotal: number; commissionTotal: number;
+  date: string | null;
+  problems: string[];
+  suggestedRef: string;
+}
+
+export const jiniusOrdersApi = {
+  list: (params: { integrationId?: string; linked?: 'yes' | 'no'; q?: string; limit?: number } = {}) =>
+    api.get<{ integrationId: string; orders: JiniusOrder[] }>('/jinius/orders', { params }).then((r) => r.data),
+  sync: (body: { integrationId?: string; sinceDays?: number } = {}) =>
+    api.post<{ ok: true; scanned: number; created: number; updated: number; lines: number; unmatched: number; availability: { deducted: number; returned: number } }>('/jinius/orders/sync', body).then((r) => r.data),
+  previewLocalSale: (orderIds: string[]) =>
+    api.post<JiniusLocalSalePreview>('/jinius/orders/local-sale/preview', { orderIds }).then((r) => r.data),
+  createLocalSale: (body: { orderIds: string[]; salesChannelId: string; date?: string; transactionRef?: string }) =>
+    api.post<{ ok: true; transactionId: string; transactionRef: string | null; orderCount: number; grossTotal: number }>('/jinius/orders/local-sale', body).then((r) => r.data),
+  link: (orderIds: string[], transactionId: string) =>
+    api.post<{ ok: true; linked: number; transactionRef: string }>('/jinius/orders/link', { orderIds, transactionId }).then((r) => r.data),
+  unlink: (orderIds: string[]) =>
+    api.post<{ ok: true; unlinked: number }>('/jinius/orders/unlink', { orderIds }).then((r) => r.data),
+};
+
 export const salesTransactionsApi = {
   activity: (id: string, params: { page?: number; pageSize?: number } = {}) =>
     api.get<{ items: ActivityEntry[]; total: number; page: number; pageSize: number }>(`/sales-transactions/${id}/activity`, { params }).then((r) => r.data),

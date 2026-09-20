@@ -2419,7 +2419,7 @@ export class SalesTransactionsService {
         where: { id: txId },
         select: {
           id: true, integrationId: true, salesChannelId: true, transactionRef: true,
-          resolution: true, channelShipmentStatus: true,
+          resolution: true, channelShipmentStatus: true, availabilityHandledElsewhere: true,
           items: { where: { deletedAt: null }, select: { sku: true, productId: true, quantity: true } },
         },
       }),
@@ -2442,6 +2442,13 @@ export class SalesTransactionsService {
       units.set(it.productId, (units.get(it.productId) ?? 0) + n);
     }
     if (units.size === 0) return [];
+
+    /**
+     * Its units are already off the pool. A transaction created from Jinius orders invoices sales
+     * whose stock left availability when the orders shipped, so taking them again would sell the
+     * same units twice over.
+     */
+    if (tx.availabilityHandledElsewhere) return [];
 
     const key = orderKey(tx);
     const already = new Set(
