@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { JINIUS_PATHS, jiniusBase, jiniusHeaders, jiniusUrl, jiniusUrlProblem, readJiniusOffers, readJiniusTest } from './jinius';
+import {
+  JINIUS_PATHS, jiniusBase, jiniusHeaders, jiniusOfferUpdateBody, jiniusUrl, jiniusUrlProblem, readJiniusImportId,
+  readJiniusImportReport, readJiniusOffers, readJiniusPushOutcome, readJiniusTest,
+} from './jinius';
 
 describe('the Jinius (Mirakl) base URL', () => {
   it('takes the host however it was pasted', () => {
@@ -99,5 +102,67 @@ describe('reading a page of offers', () => {
   it('is safe on an answer that carries nothing', () => {
     expect(readJiniusOffers(null)).toEqual({ rows: [], totalCount: null });
     expect(readJiniusOffers({ offers: [] })).toEqual({ rows: [], totalCount: null });
+  });
+});
+
+
+describe('changing an offer on Jinius', () => {
+  /**
+   * Mirakl leaves alone what an update does not mention. That is the whole reason only the changed
+   * field is sent: a stock push that restated a price would undo a price someone had just set, and
+   * the two go out from different parts of the platform.
+   */
+  it('sends only the field being changed', () => {
+    expect(jiniusOfferUpdateBody([{ shopSku: 'IT49693', quantity: 4 }]).offers[0])
+      .toEqual({ shop_sku: 'IT49693', update_delete: 'update', quantity: 4 });
+    expect(jiniusOfferUpdateBody([{ shopSku: 'IT49693', price: 129.949 }]).offers[0])
+      .toEqual({ shop_sku: 'IT49693', update_delete: 'update', price: 129.95 });
+  });
+
+  /** Mirakl counts whole units, and a negative quantity is not something we can mean. */
+  it('sends a whole, never-negative quantity', () => {
+    expect(jiniusOfferUpdateBody([{ shopSku: 'A', quantity: -3 }]).offers[0]).toMatchObject({ quantity: 0 });
+    expect(jiniusOfferUpdateBody([{ shopSku: 'A', quantity: 2.6 }]).offers[0]).toMatchObject({ quantity: 3 });
+  });
+
+  it('reads the import id Mirakl answers with', () => {
+    expect(readJiniusImportId({ import_id: 4417 })).toBe(4417);
+    expect(readJiniusImportId({})).toBeNull();
+  });
+
+  it('reads an import report, and whether Mirakl has finished with it', () => {
+    expect(readJiniusImportReport({ import_status: 'COMPLETE', lines_read: 1, lines_in_success: 1, lines_in_error: 0 }))
+      .toEqual({ status: 'COMPLETE', done: true, read: 1, accepted: 1, errors: 0 });
+    expect(readJiniusImportReport({ import_status: 'RUNNING' }).done).toBe(false);
+    expect(readJiniusImportReport(null).status).toBe('UNKNOWN');
+  });
+});
+
+describe('what an offer write came to', () => {
+  const done = (o: Partial<ReturnType<typeof readJiniusImportReport>> = {}) =>
+    ({ status: 'COMPLETE', done: true, read: 1, accepted: 1, errors: 0, ...o });
+
+  /**
+   * Accepting is not succeeding. Mirakl queues the write and applies it afterwards, so a push we
+   * did not wait for must not be reported as a finished change - the next sync is what proves it.
+   */
+  it('separates sent from done', () => {
+    expect(readJiniusPushOutcome(200, 77, null, 'Quantity 4')).toMatchObject({ ok: true });
+    expect(readJiniusPushOutcome(200, 77, null, 'Quantity 4').message).toContain('queued');
+    expect(readJiniusPushOutcome(200, 77, done(), 'Quantity 4').message).toContain('accepted by Jinius');
+  });
+
+  it('calls a rejected line a failure, not a success', () => {
+    const r = readJiniusPushOutcome(200, 77, done({ accepted: 0, errors: 1 }), 'Price 12.00');
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('rejected 1');
+    expect(readJiniusPushOutcome(200, 77, done({ status: 'FAILED', errors: 0 }), 'x').ok).toBe(false);
+  });
+
+  it('names a permission problem as one', () => {
+    expect(readJiniusPushOutcome(403, null, null, 'x').message).toContain('offer-write permission');
+    expect(readJiniusPushOutcome(500, null, null, 'x').ok).toBe(false);
+    // Accepted with nothing to confirm it by is not something to report as done.
+    expect(readJiniusPushOutcome(200, null, null, 'x').ok).toBe(false);
   });
 });

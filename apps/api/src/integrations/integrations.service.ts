@@ -6,7 +6,10 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { JINIUS_PATHS, jiniusHeaders, jiniusUrl, jiniusUrlProblem, readJiniusOffers, readJiniusTest } from './jinius';
+import {
+  JINIUS_PATHS, jiniusHeaders, jiniusOfferUpdateBody, jiniusUrl, jiniusUrlProblem, readJiniusImportId,
+  readJiniusImportReport, readJiniusOffers, readJiniusPushOutcome, readJiniusTest, type JiniusOfferWrite,
+} from './jinius';
 import { CryptoService } from '../crypto/crypto.service';
 import { StorageService } from '../storage/storage.service';
 import { SalesTransactionsService } from '../sales-transactions/sales-transactions.service';
@@ -2893,6 +2896,84 @@ export class IntegrationsService implements OnModuleInit {
     let json: any = null;
     try { json = JSON.parse(text); } catch { /* Mirakl answers plain text on some errors. */ }
     return { ok: res.ok, status: res.status, json, text, shopId };
+  }
+
+  /**
+   * One authenticated write to Jinius.
+   *
+   * Separate from the read so that every call that changes something on the marketplace is visible
+   * in one place, and so a reader cannot pass a body to a method named `get`.
+   */
+  private async jiniusPost(integrationId: string, path: string, body: unknown): Promise<{ ok: boolean; status: number; json: any; text: string }> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'jinius' } });
+    if (!row) throw new NotFoundException('Jinius integration not found');
+    const config = (row.config ?? {}) as Record<string, string>;
+    const problem = jiniusUrlProblem(config.url ?? '');
+    if (problem) throw new BadRequestException(problem);
+    const secrets = await this.decryptedSecrets(row.id);
+    if (!secrets.apiKey) throw new BadRequestException('No API key saved for this Jinius connection.');
+    const shopId = (config.shopId ?? '').trim() || null;
+
+    const res = await fetch(jiniusUrl(config.url, path, { shop_id: shopId ?? undefined }), {
+      method: 'POST',
+      headers: { ...jiniusHeaders(secrets.apiKey), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(25000),
+    });
+    const text = await res.text();
+    let json: any = null;
+    try { json = JSON.parse(text); } catch { /* Mirakl answers plain text on some errors. */ }
+    return { ok: res.ok, status: res.status, json, text };
+  }
+
+  /**
+   * Change one Jinius offer (Mirakl OF24), and say honestly whether it is done.
+   *
+   * Mirakl queues an offer write and applies it afterwards, so accepting is not the same as
+   * succeeding. `confirm` waits briefly for the import's report, which is worth doing for a single
+   * price a person just typed and not worth doing for a sweep over hundreds of offers — those are
+   * confirmed by the next sync, which reads the figures back from Jinius itself.
+   */
+  private async pushJiniusOffer(
+    integrationId: string,
+    write: JiniusOfferWrite,
+    what: string,
+    dryRun: boolean,
+    confirm = false,
+  ): Promise<{ ok: boolean; message: string }> {
+    if (dryRun) {
+      const fields = [
+        write.quantity != null ? `quantity ${write.quantity}` : null,
+        write.price != null ? `price ${write.price.toFixed(2)}` : null,
+      ].filter(Boolean).join(', ');
+      return { ok: true, message: `validated (would set ${fields} on Jinius offer ${write.shopSku})` };
+    }
+    const res = await this.jiniusPost(integrationId, JINIUS_PATHS.offers, jiniusOfferUpdateBody([write]));
+    const importId = res.ok ? readJiniusImportId(res.json) : null;
+
+    let report = null as ReturnType<typeof readJiniusImportReport> | null;
+    if (confirm && importId != null) {
+      // Three short looks. Mirakl usually finishes a one-line import inside a second or two, and a
+      // person waiting on a price they just typed would rather wait than be told "probably".
+      for (const wait of [700, 1200, 2000]) {
+        await new Promise((r) => setTimeout(r, wait));
+        const r = await this.jiniusGet(integrationId, `${JINIUS_PATHS.offerImports}/${importId}`);
+        if (!r.ok) break;
+        report = readJiniusImportReport(r.json);
+        if (report.done) break;
+      }
+    }
+    return readJiniusPushOutcome(res.status, importId, report, what);
+  }
+
+  /** Jinius stock (Mirakl OF24). Confirmed by the next sync rather than waited on. */
+  async pushJiniusQuantity(integrationId: string, channelSku: string, quantity: number, dryRun = false): Promise<{ ok: boolean; message: string }> {
+    return this.pushJiniusOffer(integrationId, { shopSku: channelSku, quantity }, `Quantity ${Math.max(0, Math.round(quantity))}`, dryRun);
+  }
+
+  /** Jinius price (Mirakl OF24). Waited on, because a person is looking at the answer. */
+  async pushJiniusPrice(integrationId: string, channelSku: string, price: number, dryRun = false): Promise<{ ok: boolean; message: string }> {
+    return this.pushJiniusOffer(integrationId, { shopSku: channelSku, price }, `Price ${price.toFixed(2)}`, dryRun, true);
   }
 
   /**
