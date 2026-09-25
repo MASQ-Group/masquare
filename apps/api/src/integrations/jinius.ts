@@ -118,31 +118,41 @@ export interface JiniusListingRow {
 /**
  * One page of OF21 as listing rows.
  *
- * `shop_sku` is the seller's OWN sku — the one that matches a product here. `product_sku` is the
- * marketplace's product identifier and matches nothing of ours, so an offer without a shop_sku is
- * dropped rather than stored under a code nobody can look up.
+ * `shop_sku` is the seller's OWN sku — the one that matches a product here. An offer that carries
+ * none is not dropped: it falls back to Mirakl's own product sku, because an offer nobody here can
+ * see is stock nobody here can maintain. Those arrive unlinked, which is a worklist item rather
+ * than a silence, and `skuless` counts them so a sync can say how many there were.
  *
- * An offer can exist and not be for sale: `active: false` is kept as INACTIVE so the listing reads
- * as what it is rather than as a live offer.
+ * `status` is deliberately NULL for a live offer. The field means Amazon's buyability answer, and
+ * everything that reads it treats a non-null value that is not BUYABLE as "cannot be bought". Mirakl
+ * has no such field — its `state_code` is the CONDITION of the goods ("11" is new) — so putting that
+ * here read as paused across all 690 live Jinius offers. An offer Mirakl marks inactive is a real
+ * "not for sale" and keeps a value that says so.
  */
-export function readJiniusOffers(json: unknown, currency = 'EUR'): { rows: JiniusListingRow[]; totalCount: number | null } {
+export function readJiniusOffers(json: unknown, currency = 'EUR'): { rows: JiniusListingRow[]; totalCount: number | null; skuless: number } {
   const body = json && typeof json === 'object' ? (json as Record<string, any>) : null;
   const offers: any[] = Array.isArray(body?.offers) ? body!.offers : [];
+  let skuless = 0;
   const rows = offers
-    .map((o): JiniusListingRow => ({
-      sku: typeof o?.shop_sku === 'string' ? o.shop_sku.trim() : '',
-      asin: null,
-      externalId: o?.offer_id != null ? String(o.offer_id) : null,
-      title: typeof o?.product_title === 'string' && o.product_title.trim() ? o.product_title.trim() : null,
-      quantity: o?.quantity != null && Number.isFinite(Number(o.quantity)) ? Number(o.quantity) : null,
-      price: o?.price != null && Number.isFinite(Number(o.price)) ? Number(o.price) : null,
-      currency: (currency || 'EUR').toUpperCase(),
-      fulfilmentChannel: null,
-      status: o?.active === false ? 'INACTIVE' : (typeof o?.state_code === 'string' && o.state_code ? o.state_code : 'ACTIVE'),
-      marketplace: null,
-    }))
+    .map((o): JiniusListingRow => {
+      const shopSku = typeof o?.shop_sku === 'string' ? o.shop_sku.trim() : '';
+      if (!shopSku) skuless += 1;
+      const productSku = o?.product_sku != null ? String(o.product_sku).trim() : '';
+      return {
+        sku: shopSku || productSku,
+        asin: null,
+        externalId: o?.offer_id != null ? String(o.offer_id) : null,
+        title: typeof o?.product_title === 'string' && o.product_title.trim() ? o.product_title.trim() : null,
+        quantity: o?.quantity != null && Number.isFinite(Number(o.quantity)) ? Number(o.quantity) : null,
+        price: o?.price != null && Number.isFinite(Number(o.price)) ? Number(o.price) : null,
+        currency: (currency || 'EUR').toUpperCase(),
+        fulfilmentChannel: null,
+        status: o?.active === false ? 'INACTIVE' : null,
+        marketplace: null,
+      };
+    })
     .filter((r) => r.sku);
-  return { rows, totalCount: typeof body?.total_count === 'number' ? body!.total_count : null };
+  return { rows, totalCount: typeof body?.total_count === 'number' ? body!.total_count : null, skuless };
 }
 
 /**

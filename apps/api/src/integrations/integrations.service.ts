@@ -2992,6 +2992,7 @@ export class IntegrationsService implements OnModuleInit {
       marketplace: string | null;
     }>;
     reportedTotal: number | null;
+    skuless: number;
   }> {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'jinius' } });
     if (!row) throw new NotFoundException('Jinius integration not found');
@@ -3008,6 +3009,8 @@ export class IntegrationsService implements OnModuleInit {
     const pageSize = Math.min(100, maxItems);
     const rows: any[] = [];
     let reportedTotal: number | null = null;
+    /** Offers Mirakl returned without a shop SKU of ours. Counted so a gap can be seen, not guessed. */
+    let skuless = 0;
 
     for (let offset = 0; offset < maxItems; offset += pageSize) {
       const url = jiniusUrl(config.url, JINIUS_PATHS.offers, { max: pageSize, offset, shop_id: shopId });
@@ -3023,11 +3026,13 @@ export class IntegrationsService implements OnModuleInit {
       const page = readJiniusOffers(json, config.currency || 'EUR');
       if (reportedTotal == null) reportedTotal = page.totalCount;
       rows.push(...page.rows);
+      skuless += page.skuless;
       const received = Array.isArray(json?.offers) ? json.offers.length : 0;
       if (!received) break;
       if (reportedTotal != null && offset + pageSize >= reportedTotal) break;
     }
-    return { rows, reportedTotal };
+    if (skuless) this.logger.warn(`Jinius: ${skuless} offer(s) carry no shop SKU — stored under Mirakl's product sku, so they are visible but unlinked.`);
+    return { rows, reportedTotal, skuless };
   }
 
   /** One page of orders. When paging with NextToken, SP-API forbids other filters. */
