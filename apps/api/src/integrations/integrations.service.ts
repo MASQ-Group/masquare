@@ -2966,6 +2966,30 @@ export class IntegrationsService implements OnModuleInit {
     return readJiniusPushOutcome(res.status, importId, report, what);
   }
 
+  /**
+   * Create an offer on Jinius (Mirakl OF24, `update_delete: "new"`).
+   *
+   * Waited on, because this is a person creating something rather than a sweep correcting figures:
+   * "queued" is a poor answer to "did you list it". The import id comes back either way, so a write
+   * that has not settled by the time we stop looking is still traceable.
+   */
+  async jiniusCreateOffer(integrationId: string, body: unknown): Promise<{ ok: boolean; message: string; importId: number | null }> {
+    const res = await this.jiniusPost(integrationId, JINIUS_PATHS.offers, body);
+    const importId = res.ok ? readJiniusImportId(res.json) : null;
+    let report = null as ReturnType<typeof readJiniusImportReport> | null;
+    if (importId != null) {
+      for (const wait of [700, 1200, 2000, 3000]) {
+        await new Promise((r) => setTimeout(r, wait));
+        const r = await this.jiniusGet(integrationId, `${JINIUS_PATHS.offerImports}/${importId}`);
+        if (!r.ok) break;
+        report = readJiniusImportReport(r.json);
+        if (report.done) break;
+      }
+    }
+    const outcome = readJiniusPushOutcome(res.status, importId, report, 'The offer');
+    return { ...outcome, importId };
+  }
+
   /** Jinius stock (Mirakl OF24). Confirmed by the next sync rather than waited on. */
   async pushJiniusQuantity(integrationId: string, channelSku: string, quantity: number, dryRun = false): Promise<{ ok: boolean; message: string }> {
     return this.pushJiniusOffer(integrationId, { shopSku: channelSku, quantity }, `Quantity ${Math.max(0, Math.round(quantity))}`, dryRun);

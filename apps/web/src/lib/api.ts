@@ -4424,6 +4424,34 @@ export interface JiniusOfferProbeResult {
   ours: { quantity: number | null; price: number | null; status: string | null; lastPulledAt: string | null; lastPushedAt: string | null } | null;
 }
 
+/** What Jinius would be sent for a new offer, and what stops it. */
+export interface JiniusListingPreviewResult {
+  sku: string | null;
+  ean: string | null;
+  carried: boolean;
+  theirProduct: { productId: string | null; productIdType: string | null; title: string | null; categoryCode: string | null; categoryLabel: string | null } | null;
+  lookupProblem: string | null;
+  offer: { shopSku: string | null; productId: string | null; productIdType: string | null; price: number | null; quantity: number; stateCode: string };
+  existing: { quantity: number | null; price: number | null } | null;
+  blockers: string[];
+  warnings: string[];
+  planStatus: string | null;
+  liveWrites: boolean;
+}
+
+export const jiniusListingApi = {
+  pricing: (productId: string, integrationId: string, atPriceCents?: number) =>
+    api.get<{ suggestion: any; breakevenNative: number | null; at: any; problems: string[] }>(
+      `/listing/jinius/products/${productId}/pricing`, { params: { integrationId, atPriceCents } },
+    ).then((r) => r.data),
+  preview: (productId: string, integrationId: string) =>
+    api.get<JiniusListingPreviewResult>(`/listing/jinius/products/${productId}/preview`, { params: { integrationId } }).then((r) => r.data),
+  create: (productId: string, integrationId: string, confirm: boolean) =>
+    api.post<{ ok: boolean; dryRun: boolean; importId: number | null; message: string }>(
+      `/listing/jinius/products/${productId}/create`, { integrationId, confirm },
+    ).then((r) => r.data),
+};
+
 export const jiniusCatalogueApi = {
   probe: (integrationId?: string) =>
     api.get<JiniusCatalogueProbeResult>('/jinius/orders/catalogue-probe', { params: integrationId ? { integrationId } : {} }).then((r) => r.data),
