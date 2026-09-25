@@ -112,3 +112,28 @@ export function byCanonicalName<T>(store: Readonly<Record<string, T>>): Map<stri
   }
   return out;
 }
+
+/**
+ * A channel's own answers, with the shared store filling only what the channel lacks.
+ *
+ * The channel's record always wins where it has one: it was researched against that channel's own
+ * field, may carry a person's edit, and is the answer somebody reviewed. The shared store is the
+ * floor underneath — it answers the fields nobody has answered here yet, under the name the channel
+ * uses, so the resolver that reads the result needs no idea any of this happened.
+ *
+ * Only the names asked for are filled. A shared fact no field on this channel wants is not smuggled
+ * into a payload because it happened to be known.
+ */
+export function withSharedFacts<T>(
+  own: Readonly<Record<string, T>>,
+  shared: Readonly<Record<string, T>>,
+  names: readonly string[],
+): Record<string, T> {
+  const out: Record<string, T> = { ...own };
+  for (const name of names) {
+    if (out[name] !== undefined) continue;
+    const found = factFor(shared, name);
+    if (found !== undefined) out[name] = found;
+  }
+  return out;
+}

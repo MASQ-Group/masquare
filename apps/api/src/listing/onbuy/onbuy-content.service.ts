@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { ActivityService } from '../../activity/activity.service';
 import { ProductFactsService } from '../../gather/product-facts.service';
+import { withSharedFacts } from '../../gather/fact-names';
 import { diffRecords } from '../../activity/diff';
 import { PRODUCT_FIELD_LABELS } from '../../activity/product-fields';
 import { canGather, foldFindings } from '../../gather/gather-rules';
@@ -142,14 +143,24 @@ export class OnbuyContentService {
   /** Everything the OnBuy content tab shows. Read-only. */
   async view(productId: string, integrationId: string | undefined, companyIds: string[]) {
     const integration = await this.integrationFor(integrationId, companyIds);
-    const [plan, evidence] = await Promise.all([this.plan(productId, integration), this.ebayEvidence(productId)]);
-    const records = normaliseAspects(plan?.specifics);
+    const [plan, evidence, shared] = await Promise.all([
+      this.plan(productId, integration), this.ebayEvidence(productId), this.facts.facts(productId),
+    ]);
+    const own = normaliseAspects(plan?.specifics);
     let fields: OnbuyField[] = [];
     let fieldsProblem: string | null = null;
     if (plan?.categoryRef) {
       try { fields = await this.categoryFields(integration.id, plan.categoryRef); }
       catch (e: any) { fieldsProblem = e?.message ?? 'OnBuy could not be asked about this category.'; }
     }
+    /**
+     * OnBuy's own answers first, then what is known about the product generally.
+     *
+     * A colour found while researching for eBay answers OnBuy's colour field without anybody asking
+     * for it again. OnBuy's own record still wins wherever it has one, and only fields THIS category
+     * asks for are filled - a fact nothing here wants is not smuggled in because it is known.
+     */
+    const records = withSharedFacts(own, shared, fields.map((f) => f.name));
     const resolved = resolveOnbuyFields(fields, records);
     return {
       integrationId: integration.id,

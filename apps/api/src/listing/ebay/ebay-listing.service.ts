@@ -12,6 +12,7 @@ import { canGather, foldFindings, type SourceFinding } from '../../gather/gather
 import { verifyIdentity } from '../../gather/identity';
 import { ManufacturerSourceService } from '../../gather/manufacturer-source.service';
 import { ProductFactsService } from '../../gather/product-facts.service';
+import { withSharedFacts } from '../../gather/fact-names';
 import { WebResearchService } from '../../gather/web-research.service';
 import { screenResearch, type ResearchedFinding, type ResearchedSource } from '../../gather/screen-research';
 import { htmlToPlainText, proseToHtml, renderEbayDescription } from './description-template';
@@ -1554,7 +1555,15 @@ export class EbayListingService {
     if (input.categoryId) {
       const res = await this.integrations.ebayCategoryAspects(integrationId, input.categoryId);
       if (!res.ok) throw new BadRequestException(`Could not check the category's item specifics: ${res.message}`);
-      const resolved = resolveAspects(res.aspects, planned, facts);
+      /**
+       * eBay's own answers first, then what is known about the product generally.
+       *
+       * A fact researched while writing OnBuy's content answers eBay's item specific without being
+       * found again. Only what this category ASKS for is filled, and only values already eligible to
+       * be published - the shared store holds held-back suggestions too, and they stay held back.
+       */
+      const shared = await this.facts.knownFor(productId, res.aspects.map((a) => a.name));
+      const resolved = resolveAspects(res.aspects, withSharedFacts(planned, shared, res.aspects.map((a) => a.name)), facts);
       const gaps = missingAspects(resolved);
       if (gaps.length) throw new BadRequestException(`Not ready to list â€” item specifics: ${gaps.join(', ')}`);
       input.extraAspects = { ...aspectsForPayload(resolved), ...(args.aspects ?? {}) };
