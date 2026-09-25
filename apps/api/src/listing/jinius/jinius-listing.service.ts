@@ -46,15 +46,24 @@ export class JiniusListingService {
     const scope = companyIds ? { targetCompanyId: { in: companyIds } } : {};
     const row = await this.prisma.channelIntegration.findFirst({
       where: { id: integrationId, deletedAt: null, channelType: 'jinius', ...scope },
-      select: { id: true, name: true, targetSalesChannelId: true, targetCompanyId: true },
+      select: { id: true, name: true, marketplace: true, targetSalesChannelId: true, targetCompanyId: true },
     });
     if (!row) throw new NotFoundException('Jinius integration not found');
     return row;
   }
 
-  private plan(productId: string, integrationId: string) {
+  /**
+   * The plan row, found the way the plan editor SAVES it.
+   *
+   * A plan is keyed on the integration's own marketplace, which is "CY" for Jinius rather than the
+   * empty string. Looking under '' found nothing, so a price somebody had just typed and saved came
+   * back as "No price set for Jinius" and the create button stayed dead. The key is read from the
+   * integration here for the same reason it is written from it there.
+   */
+  private async plan(productId: string, integrationId: string) {
+    const integration = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId }, select: { marketplace: true } });
     return this.prisma.productChannelPlan.findFirst({
-      where: { productId, integrationId, marketplace: '', deletedAt: null },
+      where: { productId, integrationId, marketplace: integration?.marketplace ?? '', deletedAt: null },
       select: { id: true, channelSku: true, condition: true, offerPriceCents: true, status: true, externalListingId: true },
     });
   }
@@ -190,7 +199,7 @@ export class JiniusListingService {
      */
     if (r.ok) {
       await this.prisma.productChannelPlan.updateMany({
-        where: { productId, integrationId, marketplace: '', deletedAt: null },
+        where: { productId, integrationId, marketplace: integration.marketplace ?? '', deletedAt: null },
         data: { status: 'SUBMITTED', updatedById: actorId ?? null },
       });
       this.logger.log(`Jinius offer submitted: ${input.sku} at ${input.price} x${input.stock} (${r.message})`);
@@ -199,6 +208,7 @@ export class JiniusListingService {
     await this.prisma.channelPush.create({
       data: {
         companyId: integration.targetCompanyId, integrationId: integration.id, productId,
+        // Empty, matching the listing rows: a Jinius offer is not per-market the way an eBay one is.
         channelSku: input.sku ?? '', marketplace: '', field: 'listing',
         requestedValue: Math.round((input.price ?? 0) * 100), previousValue: null,
         ok: r.ok, message: r.message.slice(0, 300), dryRun: false, createdById: actorId ?? null,
