@@ -20,6 +20,21 @@ describe('the Jinius (Mirakl) base URL', () => {
     expect(jiniusUrl('https://shop.mirakl.net', JINIUS_PATHS.offers, { max: 1, shop_id: '4321' }))
       .toBe('https://shop.mirakl.net/api/offers?max=1&shop_id=4321');
   });
+
+  /**
+   * Mirakl documents a product lookup as `product_references=EAN|123,EAN|456`, pipe and comma as they
+   * are. Encoding turns those into %7C and %2C, and a gateway that does not decode them answers 200
+   * with nothing found — which reads as "they do not carry it" and is not.
+   */
+  it('can send a parameter exactly as documented, unencoded', () => {
+    expect(jiniusUrl('https://shop.mirakl.net', '/api/products', { shop_id: '4321' }, { product_references: 'EAN|123,EAN|456' }))
+      .toBe('https://shop.mirakl.net/api/products?shop_id=4321&product_references=EAN|123,EAN|456');
+    // Encoded is still the default, so ordinary calls are unaffected.
+    expect(jiniusUrl('https://shop.mirakl.net', '/api/products', { product_references: 'EAN|123' }))
+      .toBe('https://shop.mirakl.net/api/products?product_references=EAN%7C123');
+    expect(jiniusUrl('https://shop.mirakl.net', '/api/products', {}, { product_references: '  ' }))
+      .toBe('https://shop.mirakl.net/api/products');
+  });
 });
 
 describe('the Authorization header', () => {

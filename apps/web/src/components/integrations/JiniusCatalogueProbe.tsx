@@ -105,6 +105,10 @@ export function JiniusCatalogueProbe({ integrationId, onClose }: { integrationId
                           {o.references.length
                             ? o.references.map((r) => `${r.type} ${r.value}`).join(', ')
                             : <span className="text-n-400">no reference</span>}
+                          {/* Their barcode against ours: where they disagree, no lookup could ever match. */}
+                          {o.eanDiffers && (
+                            <span className="ml-1 text-warning">— ours is {o.ourEan}</span>
+                          )}
                         </td>
                         <td className="truncate py-1 text-n-500">{o.title ?? ''}</td>
                       </tr>
@@ -112,6 +116,28 @@ export function JiniusCatalogueProbe({ integrationId, onClose }: { integrationId
                   </tbody>
                 </table>
               </div>
+            )}
+
+            {d.lookupAttempts.length > 0 && (
+              <details className="text-[12px]">
+                <summary className="cursor-pointer text-n-500 hover:text-n-700">
+                  The same lookup, asked {d.lookupAttempts.length} ways — what Jinius actually answered
+                </summary>
+                <div className="mt-1 flex flex-col gap-1.5">
+                  {d.lookupAttempts.map((a) => (
+                    <div key={a.how} className="rounded-lg border border-n-200 bg-n-25 p-2">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-n-700">{a.how}</span>
+                        <span className="mono text-[11px] text-n-500">HTTP {a.status}</span>
+                        <span className="text-[11px] text-n-500">
+                          {a.products == null ? 'no product list in the answer' : `${a.products} product${a.products === 1 ? '' : 's'}`}
+                        </span>
+                      </div>
+                      <pre className="mono mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all text-[11px] text-n-500">{a.excerpt}</pre>
+                    </div>
+                  ))}
+                </div>
+              </details>
             )}
 
             {d.attributesFor && (

@@ -172,6 +172,54 @@ export class JiniusCatalogueService {
         : 'No product here has a barcode to look up.',
     });
 
+    /**
+     * Our own barcode next to the one Jinius holds for the same offer.
+     *
+     * They should be the same code for the same box. Where they differ, either our barcode is wrong or
+     * the offer was attached to the wrong catalogue product — and either way no barcode lookup could
+     * ever match, which is worth knowing before blaming the endpoint.
+     */
+    const offerSkus = ourOffers.map((o) => o.shopSku).filter(Boolean);
+    const oursBySku = new Map(
+      (offerSkus.length
+        ? await this.prisma.product.findMany({ where: { mainSku: { in: offerSkus }, deletedAt: null }, select: { mainSku: true, ean: true } })
+        : []
+      ).map((p) => [p.mainSku, (p.ean ?? '').trim()]),
+    );
+    const offerRows = ourOffers.map((o) => {
+      const theirEan = o.references.find((r) => r.type === 'EAN')?.value ?? null;
+      const ourEan = oursBySku.get(o.shopSku) || null;
+      return { ...o, ourEan, eanDiffers: !!theirEan && !!ourEan && theirEan !== ourEan };
+    });
+
+    /**
+     * Why a lookup that cannot fail, fails.
+     *
+     * Every reference asked about below comes off a live offer, so Jinius certainly holds it. If the
+     * answer is still empty, the fault is in how we ask, not in what they carry — so the same lookup
+     * goes out encoded (as we send it) and exactly as Mirakl documents it, pipe and comma unencoded,
+     * and the first of the answer is kept verbatim rather than summarised into another "0 found".
+     */
+    const liveEan = ourOffers.flatMap((o) => o.references).find((r) => r.type === 'EAN')?.value ?? null;
+    const ownRef = ourOffers.flatMap((o) => o.references).find((r) => !['EAN', 'GTIN', 'UPC'].includes(r.type)) ?? null;
+    const lookupAttempts: { how: string; status: number; products: number | null; excerpt: string }[] = [];
+    const tryLookup = async (how: string, encoded: boolean, reference: string | null, extra: Record<string, string | number> = {}) => {
+      if (reference === null) return;
+      const r = encoded
+        ? await this.integrations.jiniusGet(integration.id, PATHS.products, { ...extra, product_references: reference })
+        : await this.integrations.jiniusGet(integration.id, PATHS.products, extra, { product_references: reference });
+      const list = Array.isArray(r.json?.products) ? r.json.products : null;
+      lookupAttempts.push({ how, status: r.status, products: list ? list.length : null, excerpt: (r.text ?? '').slice(0, 400) });
+      return r;
+    };
+    if (liveEan) {
+      await tryLookup('EAN, encoded as we send it', true, `EAN|${liveEan}`);
+      await tryLookup('EAN, exactly as Mirakl documents it', false, `EAN|${liveEan}`);
+    }
+    if (ownRef) await tryLookup(`${ownRef.type}, exactly as Mirakl documents it`, false, `${ownRef.type}|${ownRef.value}`);
+    // With no filter at all: whether the endpoint yields any product to this shop is its own answer.
+    await tryLookup('no filter at all, one row', true, '', { max: 1 });
+
     capabilities.push({
       name: 'See what our live offers point at',
       allowed: ourOffers.length > 0,
@@ -182,6 +230,17 @@ export class JiniusCatalogueService {
           : offerTypes.length
             ? `Our offers carry ${offerTypes.join(', ')} — so that is what Jinius recognises.`
             : 'Our offers carry no product reference at all: they are attached by a product code of Jinius\u2019s own, not by a barcode.',
+    });
+
+    const anyProducts = lookupAttempts.some((a) => (a.products ?? 0) > 0);
+    capabilities.push({
+      name: 'Look a product up in their catalogue',
+      allowed: anyProducts,
+      detail: !lookupAttempts.length
+        ? 'Nothing live to look up with.'
+        : anyProducts
+          ? `The lookup works when asked as "${lookupAttempts.find((a) => (a.products ?? 0) > 0)!.how}".`
+          : 'Every lookup came back empty, including ones for references taken off our own live offers \u2014 so their product search is not open to this shop.',
     });
 
     /**
@@ -215,8 +274,10 @@ export class JiniusCatalogueService {
       matchedWith,
       referenceAttempts: attempts,
       /** Our own live offers, and the references Jinius holds for them. */
-      ourOffers,
+      ourOffers: offerRows,
       offerReferenceTypes: offerTypes,
+      /** The same lookup asked several ways, kept verbatim, so an empty answer can be read. */
+      lookupAttempts,
       sample: found.map((m) => {
         const ours = products.find((p) => (p.ean ?? '').trim() === m.reference) ?? null;
         return {
