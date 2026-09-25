@@ -4412,9 +4412,23 @@ export interface JiniusCatalogueProbeResult {
   attributeCount: number;
 }
 
+/** One Jinius offer as Jinius describes it, beside what we hold for it. */
+export interface JiniusOfferProbeResult {
+  integrationId: string;
+  sku: string;
+  scanned: number;
+  totalOffers: number | null;
+  found: boolean;
+  verdict: string;
+  fields: { name: string; value: string; aboutQuantity: boolean }[];
+  ours: { quantity: number | null; price: number | null; status: string | null; lastPulledAt: string | null; lastPushedAt: string | null } | null;
+}
+
 export const jiniusCatalogueApi = {
   probe: (integrationId?: string) =>
     api.get<JiniusCatalogueProbeResult>('/jinius/orders/catalogue-probe', { params: integrationId ? { integrationId } : {} }).then((r) => r.data),
+  offer: (sku: string, integrationId?: string) =>
+    api.get<JiniusOfferProbeResult>('/jinius/orders/offer-probe', { params: { sku, ...(integrationId ? { integrationId } : {}) } }).then((r) => r.data),
 };
 
 export const jiniusOrdersApi = {

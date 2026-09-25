@@ -6,6 +6,7 @@ import {
   readJiniusProductMatches, readLookupAnswer, requiredAttributes,
   type JiniusCapability, type JiniusLookupAttempt,
 } from './jinius-catalogue';
+import { readJiniusOfferDetail, readOfferQuantityVerdict, type JiniusOfferDetail } from './jinius-offer-probe';
 
 /** Mirakl's catalogue endpoints, by its own codes. */
 const PATHS = {
@@ -341,5 +342,58 @@ export class JiniusCatalogueService {
       + `imports ${imports.status}, our offers carry [${offerTypes.join(', ')}]`,
     );
     return result;
+  }
+
+  /**
+   * One offer, exactly as Jinius describes it, beside what we hold for it.
+   *
+   * For when their API and their seller portal disagree - OF21 answered quantity 3 for 65-16567828
+   * while the portal showed 1, minutes after the pull and with nothing ever pushed from here. No
+   * summary can settle that; only the field names Jinius actually sends can.
+   *
+   * Every page is read rather than filtered, because a filter we guessed at is one more thing that
+   * could be the reason an offer is not found.
+   */
+  async offerProbe(integrationId: string | undefined, companyIds: string[], sku: string) {
+    const wanted = (sku ?? '').trim();
+    if (!wanted) throw new BadRequestException('Give the shop SKU of the offer to look at.');
+    const integration = await this.integration(integrationId, companyIds);
+
+    const PAGE = 100;
+    const MAX_PAGES = 30;
+    let detail: JiniusOfferDetail | null = null;
+    let scanned = 0;
+    let total: number | null = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const r = await this.integrations.jiniusGet(integration.id, PATHS.offers, { max: PAGE, offset: page * PAGE });
+      if (!r.ok) throw new BadRequestException(`Jinius answered ${r.status} when asked for its offers.`);
+      const offers = Array.isArray(r.json?.offers) ? r.json.offers : [];
+      if (total == null && typeof r.json?.total_count === 'number') total = r.json.total_count;
+      scanned += offers.length;
+      detail = readJiniusOfferDetail(r.json, wanted);
+      if (detail) break;
+      if (!offers.length || (total != null && scanned >= total)) break;
+    }
+
+    const row = await this.prisma.channelListing.findFirst({
+      where: { integrationId: integration.id, channelSku: wanted },
+      select: { listedQuantity: true, listedPrice: true, listingStatus: true, lastPulledAt: true, lastPushedAt: true },
+    });
+
+    return {
+      integrationId: integration.id,
+      sku: wanted,
+      scanned,
+      totalOffers: total,
+      found: !!detail,
+      verdict: readOfferQuantityVerdict(detail, row?.listedQuantity ?? null, wanted),
+      fields: detail?.fields ?? [],
+      ours: row
+        ? {
+          quantity: row.listedQuantity, price: row.listedPrice, status: row.listingStatus,
+          lastPulledAt: row.lastPulledAt, lastPushedAt: row.lastPushedAt,
+        }
+        : null,
+    };
   }
 }

@@ -21,6 +21,7 @@ import { Flag } from '../components/common/Flag';
 import { useAuth } from '../lib/auth';
 import { sortByChannelCanonical } from '../lib/channelGroups';
 import { JiniusCatalogueProbe } from '../components/integrations/JiniusCatalogueProbe';
+import { JiniusOfferProbe } from '../components/integrations/JiniusOfferProbe';
 
 const fmtDateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
@@ -131,6 +132,7 @@ export function IntegrationsPage() {
   const [listingsPreview, setListingsPreview] = useState<ChannelIntegration | undefined>();
   /** Jinius only: what its catalogue lets a seller do. */
   const [catalogueProbe, setCatalogueProbe] = useState<ChannelIntegration | undefined>();
+  const [offerProbe, setOfferProbe] = useState<ChannelIntegration | undefined>();
 
   const [tab, setTab] = useState<Tab>('all');
   const [query, setQuery] = useState('');
@@ -557,6 +559,7 @@ export function IntegrationsPage() {
                             onMapping={() => setMapVerify(i)}
                             onPreviewListings={() => setListingsPreview(i)}
                             onProbeCatalogue={() => setCatalogueProbe(i)}
+                            onProbeOffer={() => setOfferProbe(i)}
                             onShowErrors={() => setSyncErrors(i)}
                             onRemove={() => confirm(`Remove integration “${i.name}”? Stored keys will be deleted.`) && del.mutate(i.id)}
                           />
@@ -590,6 +593,9 @@ export function IntegrationsPage() {
       )}
       {groupBackfill && (
         <GroupBackfillModal scopeLabel={groupBackfill.label} integrations={groupBackfill.list} onClose={() => setGroupBackfill(undefined)} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }} />
+      )}
+      {offerProbe && (
+        <JiniusOfferProbe integrationId={offerProbe.id} onClose={() => setOfferProbe(undefined)} />
       )}
       {catalogueProbe && (
         <JiniusCatalogueProbe integrationId={catalogueProbe.id} onClose={() => setCatalogueProbe(undefined)} />
@@ -663,10 +669,10 @@ function HealthChip({ dot, color, text }: { dot: string; color: string; text: st
 
 function IntegrationRow({
   i, last, selected, expanded, syncing, maskSecrets, canSync, countryCode, logoUrl,
-  onToggleSel, onToggleExpand, onSync, onEdit, onBackfill, onMapping, onPreviewListings, onProbeCatalogue, onRemove, onShowErrors,
+  onToggleSel, onToggleExpand, onSync, onEdit, onBackfill, onMapping, onPreviewListings, onProbeCatalogue, onProbeOffer, onRemove, onShowErrors,
 }: {
   i: ChannelIntegration; last: boolean; selected: boolean; expanded: boolean; syncing: boolean; maskSecrets: boolean; canSync: boolean;
-  onToggleSel: () => void; onToggleExpand: () => void; onSync: () => void; onEdit: () => void; onBackfill: () => void; onMapping: () => void; onPreviewListings: () => void; onProbeCatalogue: () => void; onRemove: () => void;
+  onToggleSel: () => void; onToggleExpand: () => void; onSync: () => void; onEdit: () => void; onBackfill: () => void; onMapping: () => void; onPreviewListings: () => void; onProbeCatalogue: () => void; onProbeOffer: () => void; onRemove: () => void;
   onShowErrors: () => void;
   countryCode?: string | null;
   // Some channels (eBay) run one account across every marketplace, so a single country flag
@@ -803,6 +809,9 @@ function IntegrationRow({
               )}
               {i.channelType === 'jinius' && (
                 <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300" title="Ask Jinius which products it carries, what its categories demand, and whether we may add products — nothing is sent" onClick={onProbeCatalogue}><Eye size={14} /> What Jinius allows</button>
+              )}
+              {i.channelType === 'jinius' && (
+                <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300" title="Read every field Jinius sends for one of our offers, beside what we hold — nothing is sent" onClick={onProbeOffer}><Search size={14} /> Check one offer</button>
               )}
               <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-bd bg-n-0 px-3 text-[12.5px] font-semibold text-danger hover:bg-danger-bg" onClick={onRemove}><Trash2 size={14} /> Remove</button>
             </div>
