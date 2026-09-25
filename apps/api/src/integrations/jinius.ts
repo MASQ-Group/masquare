@@ -20,6 +20,8 @@ export const JINIUS_PATHS = {
   account: '/api/account',
   /** OR11 — orders, newest first. */
   orders: '/api/orders',
+  /** OF02 — how an offer import ended. Mirakl applies offer writes after accepting them. */
+  offerImports: '/api/offers/imports',
 } as const;
 
 /** The host with any trailing slash and a trailing `/api` removed — both are easy to paste in. */
@@ -141,4 +143,83 @@ export function readJiniusOffers(json: unknown, currency = 'EUR'): { rows: Jiniu
     }))
     .filter((r) => r.sku);
   return { rows, totalCount: typeof body?.total_count === 'number' ? body!.total_count : null };
+}
+
+/**
+ * One offer to change on Jinius (Mirakl OF24).
+ *
+ * Only the fields given are sent, and `update` leaves everything else on the offer alone: a stock
+ * push must not quietly restate a price, and a price change must not restate a quantity.
+ */
+export interface JiniusOfferWrite {
+  shopSku: string;
+  price?: number;
+  quantity?: number;
+}
+
+export function jiniusOfferUpdateBody(writes: readonly JiniusOfferWrite[]): { offers: Record<string, unknown>[] } {
+  return {
+    offers: writes.map((w) => ({
+      shop_sku: w.shopSku,
+      update_delete: 'update',
+      ...(w.price != null && Number.isFinite(w.price) ? { price: Number(w.price.toFixed(2)) } : {}),
+      // Mirakl takes whole units, and a negative quantity is not a thing we can mean.
+      ...(w.quantity != null && Number.isFinite(w.quantity) ? { quantity: Math.max(0, Math.round(w.quantity)) } : {}),
+    })),
+  };
+}
+
+/** Mirakl answers an offer write with the id of the import it queued, not with the result. */
+export function readJiniusImportId(json: unknown): number | null {
+  const body = json && typeof json === 'object' ? (json as Record<string, any>) : null;
+  const raw = body?.import_id ?? body?.importId ?? null;
+  return raw != null && Number.isFinite(Number(raw)) ? Number(raw) : null;
+}
+
+/** How an offer import ended, as Mirakl reports it while it runs and once it is done. */
+export interface JiniusImportReport {
+  status: string;
+  /** Mirakl has finished with it, one way or the other. */
+  done: boolean;
+  read: number | null;
+  accepted: number | null;
+  errors: number | null;
+}
+
+/** The statuses Mirakl uses for an import that is over. Anything else is still in progress. */
+const IMPORT_FINISHED = ['COMPLETE', 'FAILED', 'CANCELLED', 'CANCELED'];
+
+export function readJiniusImportReport(json: unknown): JiniusImportReport {
+  const body = json && typeof json === 'object' ? (json as Record<string, any>) : null;
+  const num = (v: unknown) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null);
+  const status = String(body?.import_status ?? body?.status ?? '').toUpperCase();
+  return {
+    status: status || 'UNKNOWN',
+    done: IMPORT_FINISHED.includes(status),
+    read: num(body?.lines_read),
+    accepted: num(body?.lines_in_success),
+    errors: num(body?.lines_in_error),
+  };
+}
+
+/**
+ * What one offer write came to, in the words the person who pressed the button needs.
+ *
+ * Mirakl accepts an offer write and applies it afterwards, so "sent" and "done" are different
+ * things and this says which it is. A queued import that we did not wait for is reported as sent
+ * and not yet confirmed — never as success, because the next sync is what proves the figure.
+ */
+export function readJiniusPushOutcome(
+  status: number,
+  importId: number | null,
+  report: JiniusImportReport | null,
+  what: string,
+): JiniusOutcome {
+  if (status === 401 || status === 403) return { ok: false, message: `Jinius refused the offer write (${status}). The API key needs offer-write permission for this shop.` };
+  if (status >= 400) return { ok: false, message: `Jinius answered ${status} to the offer write.` };
+  if (importId == null) return { ok: false, message: 'Jinius accepted the request but returned no import id, so there is nothing to confirm it by.' };
+  if (!report || !report.done) return { ok: true, message: `${what} sent to Jinius (import ${importId}) — queued there; the next sync confirms the figure.` };
+  if (report.errors) return { ok: false, message: `Jinius rejected ${report.errors} of ${report.read ?? '?'} line(s) in import ${importId} (${report.status}).` };
+  if (report.status === 'FAILED' || report.status === 'CANCELLED' || report.status === 'CANCELED') return { ok: false, message: `Import ${importId} ended ${report.status}.` };
+  return { ok: true, message: `${what} accepted by Jinius (import ${importId}).` };
 }

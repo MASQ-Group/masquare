@@ -27,6 +27,8 @@ const MARKET_ALIASES: Record<string, string[]> = { GB: ['GB', 'UK'], UK: ['GB', 
  *
  * How the price reaches the channel:
  *   OnBuy   PUT /v2/listings/by-sku, price only.
+ *   Jinius  Mirakl OF24 POST /api/offers, keyed on our own shop SKU, price only — Mirakl queues the
+ *           write and applies it after answering, so the push waits briefly for its import report.
  *   eBay    a listing this platform published is an Inventory API offer, changed through eBay's bulk
  *           price call (eBay refuses Trading-API revisions of those); any other eBay listing — made
  *           on eBay, or by eBaymag — through ReviseInventoryStatus, the call the stock push uses.
@@ -51,7 +53,7 @@ export class ListingPriceService {
   private async resolve(t: ListingPriceTarget, companyIds?: string[]) {
     const integration = await this.prisma.channelIntegration.findFirst({
       where: {
-        id: t.integrationId, deletedAt: null, channelType: { in: ['ebay', 'onbuy'] },
+        id: t.integrationId, deletedAt: null, channelType: { in: ['ebay', 'onbuy', 'jinius'] },
         ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
       },
       select: { id: true, name: true, channelType: true, marketplace: true, targetCompanyId: true, targetSalesChannelId: true },
@@ -85,6 +87,8 @@ export class ListingPriceService {
         ? await this.prisma.salesChannel.findFirst({ where: { id: integration.targetSalesChannelId }, select: { id: true, nativeCurrency: true } })
         : null;
 
+    // Jinius sells in Cyprus, in euro, and resolves its sales channel the way OnBuy does: the one
+    // named on the connection. Only eBay needs a channel per market.
     const currency = (listing.currency ?? salesChannel?.nativeCurrency ?? (integration.channelType === 'onbuy' ? 'GBP' : 'EUR')).toUpperCase();
     return { integration, listing, salesChannelId: salesChannel?.id ?? null, currency, marketIso };
   }
@@ -144,7 +148,11 @@ export class ListingPriceService {
     const price = t.priceCents / 100;
 
     let result: { ok: boolean; message: string };
-    if (integration.channelType === 'onbuy') {
+    if (integration.channelType === 'jinius') {
+      // Mirakl keys an offer on the seller's own SKU, and takes a partial update: the price moves,
+      // the quantity on the offer is left exactly as it is.
+      result = await this.integrations.pushJiniusPrice(integration.id, listing.channelSku, price, dryRun);
+    } else if (integration.channelType === 'onbuy') {
       if (dryRun) {
         result = { ok: true, message: `validated (set SKU ${listing.channelSku} to ${price.toFixed(2)} on OnBuy)` };
       } else {

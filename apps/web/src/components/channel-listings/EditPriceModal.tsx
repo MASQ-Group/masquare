@@ -30,8 +30,8 @@ export function EditPriceModal({
   integrationId: string;
   channelName: string;
   /**
-   * Which channel's price call to use. Amazon quotes against its own live fees; eBay and OnBuy are
-   * costed by the platform's model for the channel. Same answers, same window.
+   * Which channel's price call to use. Amazon quotes against its own live fees; eBay, OnBuy and
+   * Jinius are costed by the platform's model for the channel. Same answers, same window.
    */
   channelType?: string | null;
   /** The listing's SKU and market — eBay needs both, since one account lists in many markets. */

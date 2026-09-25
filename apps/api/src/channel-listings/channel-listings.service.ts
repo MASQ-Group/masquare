@@ -754,20 +754,6 @@ export class ChannelListingsService implements OnApplicationBootstrap {
 
     const results: any[] = [];
     for (const l of listings) {
-      /**
-       * Jinius is read-only for now: its offers are pulled in so they can be seen and matched, and
-       * their stock is still maintained in Jinius itself. Skipped with that reason rather than
-       * attempted — an unavailable push would log a failure against every offer on every run.
-       */
-      if (l.integration.channelType === 'jinius') {
-        results.push({
-          productId: l.productId, channelKey: channelKeyOf(l), channel: l.integration.name, channelType: l.integration.channelType,
-          marketplace: l.marketplace, countryIso: isoOf(l), channelSku: l.channelSku,
-          currentQty: l.listedQuantity, targetQty: null, ok: false, skipped: true,
-          message: 'Jinius stock is maintained in Jinius — the platform only reads its offers for now',
-        });
-        continue;
-      }
       if (l.integration.channelType === 'onbuy' && heldOnbuy.has(`${l.integrationId}|${l.channelSku}`)) {
         results.push({
           productId: l.productId, channelKey: channelKeyOf(l), channel: l.integration.name, channelType: l.integration.channelType,
@@ -818,6 +804,8 @@ export class ChannelListingsService implements OnApplicationBootstrap {
         l.integration.channelType === 'amazon' ? await this.integrations.pushAmazonQuantity(l.integrationId, l.channelSku, target, dryRun)
         : l.integration.channelType === 'onbuy' ? await this.integrations.pushOnBuyQuantity(l.integrationId, l.channelSku, target, dryRun)
         : l.integration.channelType === 'ebay' ? await this.integrations.pushEbayQuantity(l.integrationId, l.channelSku, l.marketplace, target, dryRun, l.externalListingId)
+        // Jinius takes the shop's own SKU, which is what its offers are keyed on here too.
+        : l.integration.channelType === 'jinius' ? await this.integrations.pushJiniusQuantity(l.integrationId, l.channelSku, target, dryRun)
         : { ok: false, message: `Push for ${l.integration.channelType} not available yet` };
       if (!dryRun) {
         if (r.ok) await this.prisma.channelListing.update({ where: { id: l.id }, data: { listedQuantity: target, lastPushedAt: new Date() } });

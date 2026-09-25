@@ -439,7 +439,7 @@ export function ChannelListingDetailPage() {
                       {/* The number the card just called a loss is the number this changes. Going
                           through the full listing flow to edit it is six steps about a listing
                           that already exists. */}
-                      {c.integrationId && c.listed && ['amazon', 'ebay', 'onbuy'].includes(c.channelType ?? '') && (
+                      {c.integrationId && c.listed && ['amazon', 'ebay', 'onbuy', 'jinius'].includes(c.channelType ?? '') && (
                         <button
                           type="button"
                           // An eBay card is keyed "<integration>:<market>" — one eBay account serves many
