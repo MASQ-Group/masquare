@@ -244,3 +244,36 @@ describe('looseOrderOwner', () => {
     expect(looseOrderOwner('---', loose)).toBeNull();
   });
 });
+
+describe('the link the account sync writes', () => {
+  const catalogue = [
+    { id: 'p1', mainSku: 'BE-BF600WHITE', aliases: [] },
+    { id: 'p2', mainSku: '92-QP420/50', aliases: [] },
+    { id: 'p3', mainSku: 'POT-CK920S-599', aliases: [] },
+    { id: 'p4', mainSku: 'POT-CK920S599', aliases: [] },
+  ];
+  const exact = buildSkuOwnerIndex(catalogue);
+  const loose = buildLooseSkuIndex(catalogue);
+
+  /**
+   * The account sync REPLACES a channel's rows, and it used to rebuild them with exact matching
+   * only — while relinkListings matched punctuation too. So every sync undid the pass: a row relink
+   * had claimed came back owned by nobody. `BE-BF600 WHITE` sat unlinked on Jinius for that reason,
+   * a live offer whose stock nothing here maintained.
+   */
+  it('claims a row that differs from a known SKU by punctuation alone', () => {
+    expect(matchSku('BE-BF600 WHITE', exact, loose)).toMatchObject({ how: 'punctuation', owner: { productId: 'p1' } });
+  });
+
+  /** A slash is punctuation like any other, and the channel may report it either way. */
+  it('recognises our SKU whichever way the channel spells the separator', () => {
+    expect(matchSku('92-QP420/50', exact, loose).owner?.productId).toBe('p2');
+    expect(matchSku('92-QP420-50', exact, loose).owner?.productId).toBe('p2');
+    expect(matchSku('92QP42050', exact, loose).owner?.productId).toBe('p2');
+  });
+
+  /** Two products that differ only by punctuation make the key unusable, not a coin toss. */
+  it('links nothing when several products claim the same squashed key', () => {
+    expect(matchSku('POT CK920S 599', exact, loose)).toEqual({ owner: null, how: 'ambiguous' });
+  });
+});

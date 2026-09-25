@@ -85,8 +85,17 @@ describe('reading a page of offers', () => {
     expect(totalCount).toBe(682);
     expect(rows[0]).toEqual({
       sku: 'LAG-612676', asin: null, externalId: '11223', title: 'Victorinox card wallet',
-      quantity: 4, price: 39.9, currency: 'EUR', fulfilmentChannel: null, status: '11', marketplace: null,
+      quantity: 4, price: 39.9, currency: 'EUR', fulfilmentChannel: null, status: null, marketplace: null,
     });
+  });
+
+  /**
+   * `status` means Amazon's buyability answer, and every reader treats a non-null value without
+   * BUYABLE in it as "cannot be bought". Mirakl has no such field - `state_code` is the CONDITION of
+   * the goods, "11" being new - and storing that here made all 690 live Jinius offers read as paused.
+   */
+  it('leaves the buyability field alone for a live offer, whatever condition the goods are in', () => {
+    expect(readJiniusOffers(page).rows[0].status).toBeNull();
   });
 
   it('marks an offer that is not for sale, and trims what it was given', () => {
@@ -94,14 +103,21 @@ describe('reading a page of offers', () => {
     expect(rows[1]).toMatchObject({ sku: 'LE-83306', status: 'INACTIVE', title: null, quantity: 0 });
   });
 
-  /** product_sku is the marketplace's code and matches no product here. */
-  it('drops an offer with no shop SKU rather than storing one nobody can look up', () => {
-    expect(readJiniusOffers(page).rows).toHaveLength(2);
+  /**
+   * An offer with no shop SKU of ours used to be dropped, which made it invisible here: not on the
+   * product, not in any worklist, and unreachable by the stock push. It is kept under Mirakl's own
+   * product sku instead - unlinked, which is a thing somebody can see and fix.
+   */
+  it('keeps an offer that carries no shop SKU, and counts it', () => {
+    const { rows, skuless } = readJiniusOffers(page);
+    expect(rows).toHaveLength(3);
+    expect(rows[2]).toMatchObject({ sku: 'MP-77', quantity: 1 });
+    expect(skuless).toBe(1);
   });
 
   it('is safe on an answer that carries nothing', () => {
-    expect(readJiniusOffers(null)).toEqual({ rows: [], totalCount: null });
-    expect(readJiniusOffers({ offers: [] })).toEqual({ rows: [], totalCount: null });
+    expect(readJiniusOffers(null)).toEqual({ rows: [], totalCount: null, skuless: 0 });
+    expect(readJiniusOffers({ offers: [] })).toEqual({ rows: [], totalCount: null, skuless: 0 });
   });
 });
 

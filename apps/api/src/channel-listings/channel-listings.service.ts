@@ -167,20 +167,6 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     return two.length === 2 ? two.toUpperCase() : null;
   }
 
-  /** SKU (main + alias, lowercased) → productId, for matching pulled listings to our catalogue. */
-  private async buildSkuMap() {
-    const products = await this.prisma.product.findMany({
-      where: ACTIVE,
-      select: { id: true, mainSku: true, aliases: { where: ACTIVE, select: { skuValue: true } } },
-    });
-    const m = new Map<string, string>();
-    for (const p of products) {
-      m.set(p.mainSku.trim().toLowerCase(), p.id);
-      for (const a of p.aliases) m.set(a.skuValue.trim().toLowerCase(), p.id);
-    }
-    return m;
-  }
-
   /**
    * After a COMPLETE account pull, settle every plan on that channel that was waiting.
    *
@@ -533,7 +519,21 @@ export class ChannelListingsService implements OnApplicationBootstrap {
     };
     const ints = await this.prisma.channelIntegration.findMany({ where, select: { id: true, name: true, channelType: true, targetCompanyId: true } });
     progress?.setTotal(ints.length);
-    const skuMap = await this.buildSkuMap();
+    /**
+     * The same two indexes `relinkListings` uses, because this sync REPLACES the rows it rebuilds.
+     *
+     * Linking here was exact-only while the relink pass matched punctuation as well, so every sync
+     * quietly undid the pass: a row relink had claimed came back owned by nobody, and stayed that
+     * way until someone ran relink again. `BE-BF600 WHITE` was unlinked on Jinius for exactly that
+     * reason. Exact still wins and an ambiguous key still links to nothing — this is the identical
+     * rule, applied where the rows are written rather than only after the fact.
+     */
+    const catalogue = await this.prisma.product.findMany({
+      where: ACTIVE,
+      select: { id: true, mainSku: true, aliases: { where: ACTIVE, select: { skuValue: true } } },
+    });
+    const ownerIndex = buildSkuOwnerIndex(catalogue);
+    const looseIndex = buildLooseSkuIndex(catalogue);
     const now = new Date();
     const results: Array<{ integrationId: string; name: string; ok: boolean; pulled?: number; message?: string }> = [];
     for (const intg of ints) {
@@ -568,7 +568,7 @@ export class ChannelListingsService implements OnApplicationBootstrap {
           seen.add(key);
           data.push({
             integrationId: intg.id, companyId: intg.targetCompanyId, channelSku: l.sku, marketplace,
-            productId: skuMap.get(l.sku.trim().toLowerCase()) ?? null,
+            productId: matchSku(l.sku, ownerIndex, looseIndex).owner?.productId ?? null,
             asin: l.asin, externalListingId: l.externalId ?? null, title: l.title, listedQuantity: l.quantity, listedPrice: l.price,
             currency: l.currency, fulfilmentChannel: l.fulfilmentChannel, listingStatus: l.status, lastPulledAt: now,
           });
