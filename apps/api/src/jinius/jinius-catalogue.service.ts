@@ -32,6 +32,9 @@ const PATHS = {
  */
 const REFERENCE_TYPES = ['EAN', 'GTIN', 'UPC'] as const;
 
+/** How many references to put in one lookup. Small enough that a length limit cannot be the reason. */
+const CHUNK = 3;
+
 /**
  * What Jinius allows, asked of Jinius.
  *
@@ -108,51 +111,23 @@ export class JiniusCatalogueService {
       this.integrations.jiniusGet(integration.id, PATHS.productImports, { max: 1 }),
     ]);
 
-    /** Each reference type in turn; the one that finds anything is the one Jinius matches on. */
-    const attempts: { type: string; status: number; matched: number }[] = [];
-    let found: ReturnType<typeof readJiniusProductMatches> = [];
-    let matchedWith: string | null = null;
-    for (const type of REFERENCE_TYPES) {
-      if (!barcodes.length) break;
-      const r = await this.integrations.jiniusGet(integration.id, PATHS.products, {
-        product_references: barcodes.map((b) => `${type}|${b}`).join(','),
-      });
-      const rows = r.ok ? readJiniusProductMatches(r.json, barcodes) : [];
-      const hits = rows.filter((m) => m.found).length;
-      attempts.push({ type, status: r.status, matched: hits });
-      if (hits > found.filter((m) => m.found).length) { found = rows; matchedWith = type; }
-      if (hits === barcodes.length) break; // nothing better to find
-    }
-    if (!found.length && barcodes.length) found = barcodes.map((reference) => ({ reference, found: false, productId: null, productIdType: null, title: null, categoryCode: null, categoryLabel: null }));
-
     /**
      * What our own live offers are attached to.
      *
-     * It only matters when the barcodes found nothing — and then it is the whole answer. These offers
-     * are live on Jinius, so every reference they carry is one Jinius recognises.
+     * Read before anything is looked up, because these are the references Jinius certainly holds:
+     * the offers are live. They are what the lookup gets tested with, so a failure can only be about
+     * how we asked.
      */
     const offersRead = await this.integrations.jiniusGet(integration.id, PATHS.offers, { max: 5 });
     const ourOffers = offersRead.ok ? readJiniusOfferAttachments(offersRead.json) : [];
     const offerTypes = offerReferenceTypes(ourOffers);
 
-    /**
-     * One more lookup, with a type our own offers carry that we had not thought to ask for.
-     *
-     * If Jinius keys on something of its own, this is where that is proven: the values come from live
-     * offers, so a lookup that still finds nothing means P31 is not the way in at all.
-     */
-    for (const type of offerTypes) {
-      if (attempts.some((a) => a.type === type)) continue;
-      const values = ourOffers.flatMap((o) => o.references.filter((r) => r.type === type).map((r) => r.value)).slice(0, 10);
-      if (!values.length) continue;
-      const r = await this.integrations.jiniusGet(integration.id, PATHS.products, {
-        product_references: values.map((v) => `${type}|${v}`).join(','),
-      });
-      const rows = r.ok ? readJiniusProductMatches(r.json, values) : [];
-      const hits = rows.filter((m) => m.found).length;
-      attempts.push({ type, status: r.status, matched: hits });
-      if (hits > found.filter((m) => m.found).length) { found = rows; matchedWith = type; }
-    }
+    /** What the sample lookup came to, filled in once the diagnosis below says how to ask. */
+    const attempts: { type: string; status: number; matched: number }[] = [];
+    let found: ReturnType<typeof readJiniusProductMatches> = barcodes.map((reference) => ({
+      reference, found: false, productId: null, productIdType: null, title: null, categoryCode: null, categoryLabel: null,
+    }));
+    let matchedWith: string | null = null;
 
     const capabilities: JiniusCapability[] = [readImportPermission(imports.status)];
 
@@ -207,7 +182,10 @@ export class JiniusCatalogueService {
       const list = Array.isArray(r.json?.products) ? r.json.products : null;
       lookupAttempts.push({
         how, kind, encoding, type, asked: values.length, status: r.status,
-        products: list ? list.length : null, excerpt: (r.text ?? '').slice(0, 400),
+        products: list ? list.length : null,
+        // What came back is not the same question as what we could tie back to the asking.
+        matched: list ? readJiniusProductMatches(r.json, values).filter((m) => m.found).length : null,
+        excerpt: (r.text ?? '').slice(0, 400),
       });
       return r;
     };
@@ -227,29 +205,49 @@ export class JiniusCatalogueService {
     const listAnswer = readLookupAnswer(lookupAttempts);
 
     /**
-     * Ask the sample again, the way that works.
+     * Now ask about our own products, the way the diagnosis says works.
      *
-     * The first pass asked the only way the platform knows, and the diagnosis above has just shown
-     * that way to be wrong. Leaving the table reading "not carried" would be reporting our own bug as
-     * their catalogue — which is exactly the mistake this whole probe exists to stop.
+     * Deliberately last. Every earlier version asked first, in the one way the platform knew, and
+     * reported the empty answer as "Jinius does not carry it" — about products we were selling there
+     * at the time. The lookup is only worth running once we know how this marketplace wants to be
+     * asked, and the sample table then shows their catalogue rather than our bug.
      */
-    if (listAnswer.works && listAnswer.type && barcodes.length && !found.some((m) => m.found)) {
-      const type = listAnswer.type;
-      let rows: typeof found = [];
-      if (listAnswer.askOneAtATime) {
-        for (const b of barcodes) {
-          const r = await this.integrations.jiniusGet(integration.id, PATHS.products, { product_references: `${type}|${b}` });
-          rows.push(readJiniusProductMatches(r.ok ? r.json : null, [b])[0]);
+    if (listAnswer.matchesBack && barcodes.length) {
+      const askFor = async (type: string, values: string[]) => {
+        if (listAnswer.askOneAtATime) {
+          const out: typeof found = [];
+          for (const v of values) {
+            const r = await this.integrations.jiniusGet(integration.id, PATHS.products, { product_references: `${type}|${v}` });
+            out.push(readJiniusProductMatches(r.ok ? r.json : null, [v])[0]);
+          }
+          return out;
         }
-      } else {
-        const r = await this.integrations.jiniusGet(
-          integration.id, PATHS.products, {}, { product_references: barcodes.map((b) => `${type}|${b}`).join(',') },
-        );
-        rows = readJiniusProductMatches(r.ok ? r.json : null, barcodes);
+        /**
+         * In chunks, because a long list is a different request from a short one.
+         * The diagnosis proves at most a few references at a time; nothing proves ten, and a
+         * marketplace that quietly ignores an over-long filter would look like an empty catalogue.
+         */
+        const out: typeof found = [];
+        for (let i = 0; i < values.length; i += CHUNK) {
+          const part = values.slice(i, i + CHUNK);
+          const filter = part.map((v) => `${type}|${v}`).join(',');
+          const r = listAnswer.sendUnencoded
+            ? await this.integrations.jiniusGet(integration.id, PATHS.products, {}, { product_references: filter })
+            : await this.integrations.jiniusGet(integration.id, PATHS.products, { product_references: filter });
+          out.push(...readJiniusProductMatches(r.ok ? r.json : null, part));
+        }
+        return out;
+      };
+
+      // The type the diagnosis proved first, then the others: our barcodes may be of another kind.
+      const order = [listAnswer.type, ...REFERENCE_TYPES.filter((t) => t !== listAnswer.type)].filter(Boolean) as string[];
+      for (const type of order) {
+        const rows = await askFor(type, barcodes);
+        const hits = rows.filter((m) => m.found).length;
+        attempts.push({ type, status: 200, matched: hits });
+        if (hits > found.filter((m) => m.found).length) { found = rows; matchedWith = type; }
+        if (hits === barcodes.length) break;
       }
-      const hits = rows.filter((m) => m.found).length;
-      attempts.push({ type: `${type}, asked ${listAnswer.askOneAtATime ? 'one at a time' : 'unencoded'}`, status: 200, matched: hits });
-      if (hits) { found = rows; matchedWith = type; }
     }
 
     capabilities.push({
@@ -277,10 +275,12 @@ export class JiniusCatalogueService {
 
     capabilities.push({
       name: 'Look a product up in their catalogue',
-      allowed: listAnswer.works,
-      detail: listAnswer.works
-        ? `Yes \u2014 asked as "${lookupAttempts.find((a) => (a.products ?? 0) > 0)!.how}".`
-        : 'No \u2014 every way of asking came back empty.',
+      allowed: listAnswer.matchesBack,
+      detail: listAnswer.matchesBack
+        ? `Yes \u2014 asked as "${lookupAttempts.find((a) => (a.matched ?? 0) > 0)!.how}".`
+        : listAnswer.works
+          ? 'Their answer carries products, but none we can tie back to what we asked \u2014 we are reading the reply wrongly.'
+          : 'No \u2014 every way of asking came back empty.',
     });
 
     /**

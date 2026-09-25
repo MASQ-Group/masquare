@@ -85,6 +85,23 @@ export interface JiniusCatalogueMatch {
  * references are matched back: a barcode missing from the reply is a product Jinius does not carry,
  * which is the interesting half of the answer.
  */
+/**
+ * Every string and number anywhere in a product record.
+ *
+ * The last resort for tying an answer back to what was asked. An operator may carry the reference
+ * under a name of its own, and a matcher that insists on `product_references` then reports "not
+ * carried" about a product sitting in front of it. We asked for one exact reference; if that exact
+ * string is anywhere in the record, the record is that product's.
+ */
+function everyValue(value: unknown, out: string[] = [], depth = 0): string[] {
+  if (depth > 6) return out;
+  if (typeof value === 'string') { const t = value.trim(); if (t) out.push(t); return out; }
+  if (typeof value === 'number') { out.push(String(value)); return out; }
+  if (Array.isArray(value)) { for (const v of value) everyValue(v, out, depth + 1); return out; }
+  if (value && typeof value === 'object') { for (const v of Object.values(value)) everyValue(v, out, depth + 1); }
+  return out;
+}
+
 export function readJiniusProductMatches(json: unknown, asked: readonly string[]): JiniusCatalogueMatch[] {
   const body = json && typeof json === 'object' ? (json as Record<string, any>) : null;
   const rows: any[] = Array.isArray(body?.products) ? body!.products : [];
@@ -98,6 +115,8 @@ export function readJiniusProductMatches(json: unknown, asked: readonly string[]
     // Some operators answer with the reference only at the top level.
     const single = String(p?.product_reference ?? '').trim();
     if (single) byReference.set(single, p);
+    // And some under a name of their own, so the whole record is searched for what we asked.
+    for (const v of everyValue(p)) if (!byReference.has(v)) byReference.set(v, p);
   }
   return asked.map((reference) => {
     const p = byReference.get(reference.trim()) ?? null;
@@ -172,12 +191,22 @@ export interface JiniusLookupAttempt {
   status: number;
   /** How many products came back, or null when the answer carried no product list at all. */
   products: number | null;
+  /**
+   * How many of those tied back to a reference we asked for.
+   *
+   * Separate from `products` on purpose: an answer full of products that tie back to nothing is a
+   * reply we are reading wrongly, and reporting that as "they do not carry it" would be a lie.
+   */
+  matched: number | null;
   excerpt: string;
 }
 
 /** What the attempts add up to, and what to do about it. */
 export interface JiniusLookupAnswer {
+  /** Jinius returns products for what we ask. */
   works: boolean;
+  /** And we can tie those products back to the references we asked for. */
+  matchesBack: boolean;
   /** Ask for one reference per request: a list comes back empty however it is sent. */
   askOneAtATime: boolean;
   /** Send the separators unencoded: the same list works that way and not encoded. */
@@ -195,36 +224,51 @@ export interface JiniusLookupAnswer {
  * attempts differ only in how, so the difference between them IS the answer.
  */
 export function readLookupAnswer(attempts: readonly JiniusLookupAttempt[]): JiniusLookupAnswer {
+  // A hit is an answer we could READ: products came back AND tied back to what we asked for.
   const hit = (k: JiniusLookupAttempt['kind'], e?: JiniusLookupAttempt['encoding']) =>
-    attempts.find((a) => a.kind === k && (e ? a.encoding === e : true) && (a.products ?? 0) > 0) ?? null;
+    attempts.find((a) => a.kind === k && (e ? a.encoding === e : true) && (a.matched ?? 0) > 0) ?? null;
   const listEncoded = hit('list', 'encoded');
   const listDocumented = hit('list', 'documented');
   const single = hit('single');
-  const none = { works: false, askOneAtATime: false, sendUnencoded: false, type: null, message: '' };
+  const none = { works: false, matchesBack: false, askOneAtATime: false, sendUnencoded: false, type: null, message: '' };
 
   if (!attempts.length) return { ...none, message: 'There was nothing live to look up with, so the lookup was not tested.' };
 
   if (listEncoded) {
     return {
-      works: true, askOneAtATime: false, sendUnencoded: false, type: listEncoded.type,
+      works: true, matchesBack: true, askOneAtATime: false, sendUnencoded: false, type: listEncoded.type,
       message: `Jinius answers a list of ${listEncoded.type} references exactly as the platform already sends it, `
         + 'so matching products is a solved problem and the listing flow can be built on it.',
     };
   }
   if (listDocumented) {
     return {
-      works: true, askOneAtATime: false, sendUnencoded: true, type: listDocumented.type,
+      works: true, matchesBack: true, askOneAtATime: false, sendUnencoded: true, type: listDocumented.type,
       message: `Jinius understands a list of ${listDocumented.type} references only when the pipe and comma are sent as `
-        + 'Mirakl documents them. We were percent-encoding both, which their gateway reads as no filter at all and '
-        + 'answers with nothing — which is why every barcode looked "not carried". Sending them unencoded is the fix.',
+        + 'Mirakl documents them, and we were percent-encoding both. Sending them unencoded is the fix.',
     };
   }
   if (single) {
     return {
-      works: true, askOneAtATime: true, sendUnencoded: false, type: single.type,
-      message: `Jinius answers one ${single.type} at a time and returns nothing for a list, however the list is sent. `
-        + 'Matching works — the lookup just has to ask for one barcode per request, which is why every barcode '
-        + 'looked "not carried" when they were asked for together.',
+      works: true, matchesBack: true, askOneAtATime: true, sendUnencoded: false, type: single.type,
+      message: `Jinius answers one ${single.type} at a time and returns nothing usable for a list, however the list is `
+        + 'sent. Matching works — the lookup just has to ask for one barcode per request.',
+    };
+  }
+
+  /**
+   * Products came back, and not one of them tied back to what we asked for.
+   *
+   * That is OUR fault, not theirs, and saying so is the whole point: the alternative is a report
+   * full of "they do not carry it" about products sitting in the answer.
+   */
+  const answered = attempts.find((a) => (a.products ?? 0) > 0);
+  if (answered) {
+    return {
+      works: true, matchesBack: false, askOneAtATime: false, sendUnencoded: false, type: answered.type,
+      message: `Jinius answers the lookup — ${answered.products} product(s) came back for ${answered.asked} `
+        + `${answered.type} reference(s) — but none tie back to the references we asked for, so we are reading their `
+        + 'reply wrongly rather than being told they do not carry it. The verbatim answer below shows the shape.',
     };
   }
   return {
