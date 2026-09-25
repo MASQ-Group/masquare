@@ -27,12 +27,29 @@ export function jiniusBase(raw: string): string {
   return (raw ?? '').trim().replace(/\s+/g, '').replace(/\/+$/, '').replace(/\/api$/i, '');
 }
 
-export function jiniusUrl(baseUrl: string, path: string, params: Record<string, string | number | undefined | null> = {}): string {
+/**
+ * A Jinius URL.
+ *
+ * `rawParams` are appended exactly as given, without percent-encoding. Mirakl documents product
+ * lookups as `product_references=EAN|123,EAN|456` — pipe and comma as they are — and a gateway that
+ * does not decode `%7C` and `%2C` answers 200 with nothing found, which reads as "not carried" and is
+ * not. Everything ordinary goes through `params`, which encodes properly; `rawParams` exists so we can
+ * ask the documented way as well and see which one the marketplace understands.
+ */
+export function jiniusUrl(
+  baseUrl: string,
+  path: string,
+  params: Record<string, string | number | undefined | null> = {},
+  rawParams: Record<string, string | undefined | null> = {},
+): string {
   const query = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && String(v).trim() !== '') query.set(k, String(v));
   }
-  const q = query.toString();
+  const raw = Object.entries(rawParams)
+    .filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '')
+    .map(([k, v]) => `${k}=${v}`);
+  const q = [query.toString(), ...raw].filter(Boolean).join('&');
   return `${jiniusBase(baseUrl)}${path}${q ? `?${q}` : ''}`;
 }
 

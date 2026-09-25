@@ -2869,7 +2869,13 @@ export class IntegrationsService implements OnModuleInit {
    * The key stays in here: a caller says which endpoint and which parameters, never how to
    * authenticate, so there is one place that knows how Mirakl is spoken to.
    */
-  async jiniusGet(integrationId: string, path: string, params: Record<string, string | number | undefined> = {}): Promise<{ ok: boolean; status: number; json: any; text: string; shopId: string | null }> {
+  async jiniusGet(
+    integrationId: string,
+    path: string,
+    params: Record<string, string | number | undefined> = {},
+    /** Appended unencoded — for the few Mirakl parameters a gateway expects exactly as documented. */
+    rawParams: Record<string, string | undefined> = {},
+  ): Promise<{ ok: boolean; status: number; json: any; text: string; shopId: string | null }> {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'jinius' } });
     if (!row) throw new NotFoundException('Jinius integration not found');
     const config = (row.config ?? {}) as Record<string, string>;
@@ -2879,7 +2885,7 @@ export class IntegrationsService implements OnModuleInit {
     if (!secrets.apiKey) throw new BadRequestException('No API key saved for this Jinius connection.');
     const shopId = (config.shopId ?? '').trim() || null;
 
-    const res = await fetch(jiniusUrl(config.url, path, { ...params, shop_id: shopId ?? undefined }), {
+    const res = await fetch(jiniusUrl(config.url, path, { ...params, shop_id: shopId ?? undefined }, rawParams), {
       headers: jiniusHeaders(secrets.apiKey),
       signal: AbortSignal.timeout(25000),
     });
