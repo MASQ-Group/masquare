@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  readImportPermission, readJiniusAttributes, readJiniusHierarchies, readJiniusProductMatches, requiredAttributes,
+  offerReferenceTypes, readImportPermission, readJiniusAttributes, readJiniusHierarchies, readJiniusOfferAttachments,
+  readJiniusProductMatches, requiredAttributes,
 } from './jinius-catalogue';
 
 describe('the category tree', () => {
@@ -70,5 +71,37 @@ describe('whether we may add products to their catalogue', () => {
     expect(readImportPermission(403).detail).toContain('only list against products Jinius already carries');
     expect(readImportPermission(404).allowed).toBe(false);
     expect(readImportPermission(500).detail).toContain('500');
+  });
+});
+
+
+describe('what our own live offers are attached to', () => {
+  /**
+   * The decisive read: an offer that is live on Jinius names something Jinius recognises, so whatever
+   * reference it carries is the one a new offer would have to be created against.
+   */
+  it('reads the reference each offer carries, however the operator spells the pair', () => {
+    const rows = readJiniusOfferAttachments({
+      offers: [
+        {
+          shop_sku: 'IT49693', product_sku: 'JIN-4410', product_title: 'Sage Barista Express',
+          product_references: [{ reference_type: 'ean', reference: '9312432030144' }],
+        },
+        // Some operators answer with the other spelling, and some carry nothing at all.
+        { shop_sku: 'IT57697', product_sku: 'JIN-9001', product_references: [{ type: 'SHOP_SKU', value: 'IT57697' }] },
+        { shop_sku: 'RE-S8540', product_sku: 'JIN-7', product_references: [] },
+      ],
+    });
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({ shopSku: 'IT49693', productSku: 'JIN-4410', references: [{ type: 'EAN', value: '9312432030144' }] });
+    expect(rows[1].references[0]).toEqual({ type: 'SHOP_SKU', value: 'IT57697' });
+    expect(rows[2].references).toEqual([]);
+    expect(offerReferenceTypes(rows)).toEqual(['EAN', 'SHOP_SKU']);
+  });
+
+  /** No reference anywhere is itself the answer: their catalogue is not keyed on barcodes. */
+  it('says nothing rather than guessing when the offers carry no reference', () => {
+    expect(offerReferenceTypes(readJiniusOfferAttachments({ offers: [{ shop_sku: 'A1' }] }))).toEqual([]);
+    expect(readJiniusOfferAttachments(null)).toEqual([]);
   });
 });

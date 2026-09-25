@@ -2,7 +2,8 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { PrismaService } from '../prisma/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 import {
-  readImportPermission, readJiniusAttributes, readJiniusHierarchies, readJiniusProductMatches, requiredAttributes,
+  offerReferenceTypes, readImportPermission, readJiniusAttributes, readJiniusHierarchies, readJiniusOfferAttachments,
+  readJiniusProductMatches, requiredAttributes,
   type JiniusCapability,
 } from './jinius-catalogue';
 
@@ -18,6 +19,8 @@ const PATHS = {
   productImports: '/api/products/imports',
   /** VL11 — the operator's value lists. */
   valuesLists: '/api/values_lists',
+  /** OF21 — our own offers, read here to see what they are attached to. */
+  offers: '/api/offers',
 } as const;
 
 /**
@@ -122,6 +125,35 @@ export class JiniusCatalogueService {
     }
     if (!found.length && barcodes.length) found = barcodes.map((reference) => ({ reference, found: false, productId: null, productIdType: null, title: null, categoryCode: null, categoryLabel: null }));
 
+    /**
+     * What our own live offers are attached to.
+     *
+     * It only matters when the barcodes found nothing — and then it is the whole answer. These offers
+     * are live on Jinius, so every reference they carry is one Jinius recognises.
+     */
+    const offersRead = await this.integrations.jiniusGet(integration.id, PATHS.offers, { max: 5 });
+    const ourOffers = offersRead.ok ? readJiniusOfferAttachments(offersRead.json) : [];
+    const offerTypes = offerReferenceTypes(ourOffers);
+
+    /**
+     * One more lookup, with a type our own offers carry that we had not thought to ask for.
+     *
+     * If Jinius keys on something of its own, this is where that is proven: the values come from live
+     * offers, so a lookup that still finds nothing means P31 is not the way in at all.
+     */
+    for (const type of offerTypes) {
+      if (attempts.some((a) => a.type === type)) continue;
+      const values = ourOffers.flatMap((o) => o.references.filter((r) => r.type === type).map((r) => r.value)).slice(0, 10);
+      if (!values.length) continue;
+      const r = await this.integrations.jiniusGet(integration.id, PATHS.products, {
+        product_references: values.map((v) => `${type}|${v}`).join(','),
+      });
+      const rows = r.ok ? readJiniusProductMatches(r.json, values) : [];
+      const hits = rows.filter((m) => m.found).length;
+      attempts.push({ type, status: r.status, matched: hits });
+      if (hits > found.filter((m) => m.found).length) { found = rows; matchedWith = type; }
+    }
+
     const capabilities: JiniusCapability[] = [readImportPermission(imports.status)];
 
     const tree = hierarchies.ok ? readJiniusHierarchies(hierarchies.json) : { categories: [], total: null };
@@ -138,6 +170,18 @@ export class JiniusCatalogueService {
         ? `${carried.length} of ${barcodes.length} sampled barcodes found${matchedWith ? ` using ${matchedWith}` : ''} (${tried}). `
           + `${listedSkus.size} of the sample are products we already sell on Jinius.`
         : 'No product here has a barcode to look up.',
+    });
+
+    capabilities.push({
+      name: 'See what our live offers point at',
+      allowed: ourOffers.length > 0,
+      detail: !offersRead.ok
+        ? `Jinius answered ${offersRead.status} when asked for our offers.`
+        : !ourOffers.length
+          ? 'No offers came back to read.'
+          : offerTypes.length
+            ? `Our offers carry ${offerTypes.join(', ')} — so that is what Jinius recognises.`
+            : 'Our offers carry no product reference at all: they are attached by a product code of Jinius\u2019s own, not by a barcode.',
     });
 
     /**
@@ -170,6 +214,9 @@ export class JiniusCatalogueService {
       /** Which reference type Jinius answered to, so the listing flow asks with the right one. */
       matchedWith,
       referenceAttempts: attempts,
+      /** Our own live offers, and the references Jinius holds for them. */
+      ourOffers,
+      offerReferenceTypes: offerTypes,
       sample: found.map((m) => {
         const ours = products.find((p) => (p.ean ?? '').trim() === m.reference) ?? null;
         return {
@@ -186,7 +233,10 @@ export class JiniusCatalogueService {
       requiredAttributes: requiredAttributes(attributes).map((a) => ({ code: a.code, label: a.label, type: a.type, valuesList: a.valuesList })),
       attributeCount: attributes.length,
     };
-    this.logger.log(`Jinius probe: ${carried.length}/${barcodes.length} barcodes carried, ${tree.categories.length} categories, imports ${imports.status}`);
+    this.logger.log(
+      `Jinius probe: ${carried.length}/${barcodes.length} barcodes carried, ${tree.categories.length} categories, `
+      + `imports ${imports.status}, our offers carry [${offerTypes.join(', ')}]`,
+    );
     return result;
   }
 }

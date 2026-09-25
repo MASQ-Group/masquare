@@ -113,6 +113,52 @@ export function readJiniusProductMatches(json: unknown, asked: readonly string[]
   });
 }
 
+/** One of OUR live offers on Jinius, and what it is attached to in their catalogue. */
+export interface JiniusOfferAttachment {
+  /** Our own code, the one the offer was created with. */
+  shopSku: string;
+  /** Their code for the same thing — what a new offer would have to name. */
+  productSku: string | null;
+  title: string | null;
+  /** Every reference Jinius itself holds for that product. This is the answer we came for. */
+  references: { type: string; value: string }[];
+}
+
+/**
+ * What our own live offers are attached to.
+ *
+ * The decisive read when a barcode lookup finds nothing: these offers exist, so whatever they name is
+ * a reference Jinius certainly recognises. If they carry an EAN, the lookup was asked wrongly; if they
+ * carry only a code of Jinius's own, its catalogue is not keyed on barcodes at all and a listing flow
+ * has to work from that code instead.
+ */
+export function readJiniusOfferAttachments(json: unknown): JiniusOfferAttachment[] {
+  const body = json && typeof json === 'object' ? (json as Record<string, any>) : null;
+  const offers: any[] = Array.isArray(body?.offers) ? body!.offers : [];
+  return offers
+    .map((o): JiniusOfferAttachment => {
+      const raw: any[] = Array.isArray(o?.product_references) ? o.product_references : [];
+      // Operators spell the pair differently; both spellings mean the same thing.
+      const references = raw
+        .map((r) => ({
+          type: String(r?.reference_type ?? r?.type ?? '').trim().toUpperCase(),
+          value: String(r?.reference ?? r?.value ?? '').trim(),
+        }))
+        .filter((r) => r.type && r.value);
+      return {
+        shopSku: typeof o?.shop_sku === 'string' ? o.shop_sku.trim() : '',
+        productSku: o?.product_sku != null && String(o.product_sku).trim() ? String(o.product_sku).trim() : null,
+        title: typeof o?.product_title === 'string' && o.product_title.trim() ? o.product_title.trim() : null,
+        references,
+      };
+    })
+    .filter((o) => o.shopSku || o.productSku);
+}
+
+/** The distinct reference types our own offers carry, in the order met, without repeats. */
+export const offerReferenceTypes = (rows: readonly JiniusOfferAttachment[]): string[] =>
+  [...new Set(rows.flatMap((o) => o.references.map((r) => r.type)))];
+
 /** What one probed capability came back as, in words a person can act on. */
 export interface JiniusCapability {
   name: string;

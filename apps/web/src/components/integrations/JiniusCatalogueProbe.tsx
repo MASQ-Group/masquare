@@ -85,6 +85,35 @@ export function JiniusCatalogueProbe({ integrationId, onClose }: { integrationId
               </table>
             </div>
 
+            {d.ourOffers.length > 0 && (
+              <div>
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-n-500">
+                  What our own offers there are attached to
+                  <span className="ml-1 font-normal normal-case text-n-400">
+                    {d.offerReferenceTypes.length
+                      ? `(they carry ${d.offerReferenceTypes.join(', ')})`
+                      : '(they carry no barcode at all)'}
+                  </span>
+                </div>
+                <table className="w-full text-[12px]">
+                  <tbody>
+                    {d.ourOffers.map((o) => (
+                      <tr key={o.shopSku || o.productSku || ''}>
+                        <td className="mono py-1 pr-3 text-teal-700">{o.shopSku}</td>
+                        <td className="mono py-1 pr-3 text-n-500">{o.productSku ?? ''}</td>
+                        <td className="py-1 pr-3 text-n-600">
+                          {o.references.length
+                            ? o.references.map((r) => `${r.type} ${r.value}`).join(', ')
+                            : <span className="text-n-400">no reference</span>}
+                        </td>
+                        <td className="truncate py-1 text-n-500">{o.title ?? ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
             {d.attributesFor && (
               <div>
                 <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-n-500">
