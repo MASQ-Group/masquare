@@ -2993,6 +2993,7 @@ export class IntegrationsService implements OnModuleInit {
     }>;
     reportedTotal: number | null;
     skuless: number;
+    heldBack: number;
   }> {
     const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'jinius' } });
     if (!row) throw new NotFoundException('Jinius integration not found');
@@ -3011,6 +3012,8 @@ export class IntegrationsService implements OnModuleInit {
     let reportedTotal: number | null = null;
     /** Offers Mirakl returned without a shop SKU of ours. Counted so a gap can be seen, not guessed. */
     let skuless = 0;
+    /** Offers where what can be sold differs from what the offer was set to. */
+    let heldBack = 0;
 
     for (let offset = 0; offset < maxItems; offset += pageSize) {
       const url = jiniusUrl(config.url, JINIUS_PATHS.offers, { max: pageSize, offset, shop_id: shopId });
@@ -3027,12 +3030,14 @@ export class IntegrationsService implements OnModuleInit {
       if (reportedTotal == null) reportedTotal = page.totalCount;
       rows.push(...page.rows);
       skuless += page.skuless;
+      heldBack += page.heldBack;
       const received = Array.isArray(json?.offers) ? json.offers.length : 0;
       if (!received) break;
       if (reportedTotal != null && offset + pageSize >= reportedTotal) break;
     }
     if (skuless) this.logger.warn(`Jinius: ${skuless} offer(s) carry no shop SKU — stored under Mirakl's product sku, so they are visible but unlinked.`);
-    return { rows, reportedTotal, skuless };
+    if (heldBack) this.logger.log(`Jinius: ${heldBack} offer(s) can sell fewer units than the offer was set to; the sellable figure is the one stored.`);
+    return { rows, reportedTotal, skuless, heldBack };
   }
 
   /** One page of orders. When paging with NextToken, SP-API forbids other filters. */

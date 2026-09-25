@@ -128,22 +128,35 @@ export interface JiniusListingRow {
  * has no such field — its `state_code` is the CONDITION of the goods ("11" is new) — so putting that
  * here read as paused across all 690 live Jinius offers. An offer Mirakl marks inactive is a real
  * "not for sale" and keeps a value that says so.
+ *
+ * The QUANTITY is `available_quantity`, not `quantity`. Mirakl sends both: `quantity` is the figure
+ * the seller set on the offer, `available_quantity` is what is left to sell once Mirakl's own holds
+ * come off — and the second is what their seller portal shows and what a buyer can actually order.
+ * Reading the first had 65-16567828 showing 3 units here against 1 on Jinius. `heldBack` counts the
+ * offers where the two disagree, because a gap that appears across many offers at once is worth
+ * seeing rather than discovering one SKU at a time.
  */
-export function readJiniusOffers(json: unknown, currency = 'EUR'): { rows: JiniusListingRow[]; totalCount: number | null; skuless: number } {
+export function readJiniusOffers(json: unknown, currency = 'EUR'): { rows: JiniusListingRow[]; totalCount: number | null; skuless: number; heldBack: number } {
   const body = json && typeof json === 'object' ? (json as Record<string, any>) : null;
   const offers: any[] = Array.isArray(body?.offers) ? body!.offers : [];
   let skuless = 0;
+  let heldBack = 0;
+  const num = (v: unknown) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null);
   const rows = offers
     .map((o): JiniusListingRow => {
       const shopSku = typeof o?.shop_sku === 'string' ? o.shop_sku.trim() : '';
       if (!shopSku) skuless += 1;
       const productSku = o?.product_sku != null ? String(o.product_sku).trim() : '';
+      const declared = num(o?.quantity);
+      const available = num(o?.available_quantity);
+      if (available != null && declared != null && available !== declared) heldBack += 1;
       return {
         sku: shopSku || productSku,
         asin: null,
         externalId: o?.offer_id != null ? String(o.offer_id) : null,
         title: typeof o?.product_title === 'string' && o.product_title.trim() ? o.product_title.trim() : null,
-        quantity: o?.quantity != null && Number.isFinite(Number(o.quantity)) ? Number(o.quantity) : null,
+        // What can actually be bought. An operator that sends no available_quantity has only the one.
+        quantity: available ?? declared,
         price: o?.price != null && Number.isFinite(Number(o.price)) ? Number(o.price) : null,
         currency: (currency || 'EUR').toUpperCase(),
         fulfilmentChannel: null,
@@ -152,7 +165,7 @@ export function readJiniusOffers(json: unknown, currency = 'EUR'): { rows: Jiniu
       };
     })
     .filter((r) => r.sku);
-  return { rows, totalCount: typeof body?.total_count === 'number' ? body!.total_count : null, skuless };
+  return { rows, totalCount: typeof body?.total_count === 'number' ? body!.total_count : null, skuless, heldBack };
 }
 
 /**
