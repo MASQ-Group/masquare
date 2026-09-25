@@ -88,5 +88,26 @@ const when = (d) => (d ? d.toISOString().replace('T', ' ').slice(0, 19) : 'never
     }
   }
 
+  /**
+   * Orders on Jinius for the same SKU, and what state they are in.
+   *
+   * Mirakl holds stock against an order that has not shipped yet. If their portal shows what is
+   * still SELLABLE while OF21 answers with what the offer was SET to, the difference between the
+   * two figures is exactly the units sitting in orders - and that is arithmetic we can check here
+   * rather than a theory about their API.
+   */
+  const lines = await p.jiniusOrderLine.findMany({
+    where: { offerSku: WANTED },
+    select: { quantity: true, order: { select: { orderId: true, commercialId: true, state: true, orderedAt: true } } },
+  });
+  console.log(`
+Jinius order lines for ${WANTED}: ${lines.length}`);
+  const held = new Map();
+  for (const l of lines) {
+    console.log(`  ${l.order.commercialId ?? l.order.orderId} ${when(l.order.orderedAt)} ${l.order.state} qty=${l.quantity}`);
+    held.set(l.order.state, (held.get(l.order.state) ?? 0) + l.quantity);
+  }
+  if (held.size) console.log(`  units by state: ${[...held].map(([s, n]) => `${s}=${n}`).join(', ')}`);
+
   await p.$disconnect();
 })();

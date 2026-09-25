@@ -33,6 +33,21 @@ export class JiniusOrdersController {
     return this.catalogue.probe(integrationId, companyIds);
   }
 
+  /**
+   * One offer, exactly as Jinius describes it, beside what we hold for it. Reads only.
+   *
+   * For when their API and their seller portal disagree about the same offer — which no summary of
+   * ours can settle, only the field names Jinius actually sends.
+   */
+  @Get('offer-probe')
+  offerProbe(
+    @VisibleCompanies() companyIds: string[],
+    @Query('sku') sku: string,
+    @Query('integrationId') integrationId?: string,
+  ) {
+    return this.catalogue.offerProbe(integrationId, companyIds, sku);
+  }
+
   /** The orders we hold, newest first. */
   @Get()
   list(
