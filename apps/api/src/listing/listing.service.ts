@@ -12,7 +12,7 @@ import { restrictionFor, restrictionReason } from './brand-restrictions';
  * Shopify is deliberately absent: our own store is a separate module, not a marketplace we attach
  * offers to, and treating it as one here would put a storefront behind marketplace rules.
  */
-const LISTABLE_CHANNELS = ['amazon', 'ebay', 'onbuy'];
+const LISTABLE_CHANNELS = ['amazon', 'ebay', 'onbuy', 'jinius'];
 
 export interface ChannelPlanPatch {
   offerPriceCents?: number | null;
