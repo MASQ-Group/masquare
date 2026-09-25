@@ -3,6 +3,7 @@ import { IntegrationsModule } from '../integrations/integrations.module';
 import { SalesTransactionsModule } from '../sales-transactions/sales-transactions.module';
 import { JiniusOrdersController } from './jinius-orders.controller';
 import { JiniusOrdersService } from './jinius-orders.service';
+import { JiniusCatalogueService } from './jinius-catalogue.service';
 
 /**
  * Jinius orders. Its own module because these orders are not sales transactions and not channel
@@ -13,7 +14,7 @@ import { JiniusOrdersService } from './jinius-orders.service';
   controllers: [JiniusOrdersController],
   // Under a token as well, so IntegrationsService can reach it lazily: Jinius imports Integrations,
   // and a direct injection the other way would be a cycle.
-  providers: [JiniusOrdersService, { provide: 'JINIUS_ORDERS_SERVICE', useExisting: JiniusOrdersService }],
+  providers: [JiniusOrdersService, JiniusCatalogueService, { provide: 'JINIUS_ORDERS_SERVICE', useExisting: JiniusOrdersService }],
   exports: [JiniusOrdersService, 'JINIUS_ORDERS_SERVICE'],
 })
 export class JiniusModule {}

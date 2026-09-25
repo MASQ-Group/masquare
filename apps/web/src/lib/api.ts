@@ -4377,6 +4377,26 @@ export interface JiniusPickerOrder {
   problems: string[];
 }
 
+/** What Jinius allows a seller to do with its catalogue, read from Jinius. */
+export interface JiniusCatalogueProbeResult {
+  integrationId: string;
+  integrationName: string;
+  capabilities: { name: string; allowed: boolean; detail: string }[];
+  /** The reference an offer would be created against, as Jinius names it. */
+  referenceType: string | null;
+  sample: { reference: string; found: boolean; productId: string | null; productIdType: string | null; title: string | null; categoryCode: string | null; categoryLabel: string | null; sku: string | null; ourTitle: string | null }[];
+  categories: { code: string; label: string; level: number | null; leaf: boolean }[];
+  categoryCount: number | null;
+  attributesFor: string | null;
+  requiredAttributes: { code: string; label: string; type: string | null; valuesList: string | null }[];
+  attributeCount: number;
+}
+
+export const jiniusCatalogueApi = {
+  probe: (integrationId?: string) =>
+    api.get<JiniusCatalogueProbeResult>('/jinius/orders/catalogue-probe', { params: integrationId ? { integrationId } : {} }).then((r) => r.data),
+};
+
 export const jiniusOrdersApi = {
   /** Jinius sales nothing invoices yet, for the picker on a local sale. */
   unlinked: (q?: string, limit?: number) =>
