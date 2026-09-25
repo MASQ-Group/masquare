@@ -220,7 +220,12 @@ export function PlanEditor({
   // What each step needs, in the order it is needed. Amazon and OnBuy attach to a catalogue entry,
   // so the match comes first; eBay has no equivalent and starts at the price.
   const priceSet = price.trim() !== '' && Number(price.replace(',', '.')) > 0;
-  const termsSet = handling.trim() !== '' && (!isOnBuy || delivery.trim() !== '');
+  /**
+   * Jinius takes no terms from us. A Mirakl offer carries a price, a quantity and a condition, and
+   * its delivery is the operator's - Jinius performs and charges the shipping. Gating step 4 on a
+   * handling time we never send would be asking for something that goes nowhere.
+   */
+  const termsSet = isJinius ? true : handling.trim() !== '' && (!isOnBuy || delivery.trim() !== '');
   const matched = isAmazon ? !!asin : isOnBuy ? !!opc || (onbuyCreating && !!categoryRef) : true;
 
   const done = { match: matched, price: priceSet, terms: termsSet };
@@ -431,16 +436,19 @@ export function PlanEditor({
             </span>
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Handling time (days)</span>
-            <input
-              value={handling}
-              onChange={(e) => setHandling(e.target.value)}
-              inputMode="numeric"
-              placeholder="days to dispatch"
-              className="input mono h-8 text-[12.5px]"
-            />
-          </label>
+          {/* Jinius performs and charges the delivery itself, so a dispatch time here would go nowhere. */}
+          {!isJinius && (
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Handling time (days)</span>
+              <input
+                value={handling}
+                onChange={(e) => setHandling(e.target.value)}
+                inputMode="numeric"
+                placeholder="days to dispatch"
+                className="input mono h-8 text-[12.5px]"
+              />
+            </label>
+          )}
 
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">Condition</span>
@@ -453,8 +461,11 @@ export function PlanEditor({
             )}
           </label>
 
-          {/* OnBuy lists against a catalogue product, which already has its category. */}
-          {!isAmazon && !isOnBuy && (
+          {/*
+            * OnBuy lists against a catalogue product, which already has its category. So does
+            * Jinius - the offer attaches to their product, which sits in a category of theirs.
+            */}
+          {!isAmazon && !isOnBuy && !isJinius && (
             <label className="flex flex-col gap-1">
               <span className="text-[11px] font-semibold uppercase tracking-wide text-n-500">
                 {isEbay ? 'eBay category id' : 'Category'}
