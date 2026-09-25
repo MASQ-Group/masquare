@@ -74,7 +74,7 @@ describe('reading a page of offers', () => {
   const page = {
     total_count: 682,
     offers: [
-      { offer_id: 11223, shop_sku: 'LAG-612676', product_sku: 'MP-99', product_title: 'Victorinox card wallet', quantity: 4, price: 39.9, active: true, state_code: '11' },
+      { offer_id: 11223, shop_sku: 'LAG-612676', product_sku: 'MP-99', product_title: 'Victorinox card wallet', quantity: 4, available_quantity: 4, price: 39.9, active: true, state_code: '11' },
       { offer_id: 11224, shop_sku: ' LE-83306 ', product_title: '  ', quantity: 0, price: 12, active: false },
       { offer_id: 11225, product_sku: 'MP-77', quantity: 1, price: 5 },
     ],
@@ -115,9 +115,33 @@ describe('reading a page of offers', () => {
     expect(skuless).toBe(1);
   });
 
+  /**
+   * Mirakl sends both figures and they mean different things: `quantity` is what the seller set,
+   * `available_quantity` is what is left to sell once Mirakl's holds come off - and the second is
+   * what their portal shows and what a buyer can order. 65-16567828 read 3 here against 1 there
+   * until this was fixed.
+   */
+  it('stores what can be sold, not what the offer was set to', () => {
+    const answer = { offers: [{ shop_sku: 'A', quantity: 3, available_quantity: 1, price: 12.5 }] };
+    const { rows, heldBack } = readJiniusOffers(answer);
+    expect(rows[0].quantity).toBe(1);
+    expect(heldBack).toBe(1);
+  });
+
+  it('uses the only figure there is when the operator sends one', () => {
+    const { rows, heldBack } = readJiniusOffers({ offers: [{ shop_sku: 'A', quantity: 7, price: 1 }] });
+    expect(rows[0].quantity).toBe(7);
+    expect(heldBack).toBe(0);
+  });
+
+  /** A genuine zero is a real state, and must not be read as "no figure given". */
+  it('keeps a sellable zero', () => {
+    expect(readJiniusOffers({ offers: [{ shop_sku: 'A', quantity: 4, available_quantity: 0 }] }).rows[0].quantity).toBe(0);
+  });
+
   it('is safe on an answer that carries nothing', () => {
-    expect(readJiniusOffers(null)).toEqual({ rows: [], totalCount: null, skuless: 0 });
-    expect(readJiniusOffers({ offers: [] })).toEqual({ rows: [], totalCount: null, skuless: 0 });
+    expect(readJiniusOffers(null)).toEqual({ rows: [], totalCount: null, skuless: 0, heldBack: 0 });
+    expect(readJiniusOffers({ offers: [] })).toEqual({ rows: [], totalCount: null, skuless: 0, heldBack: 0 });
   });
 });
 
