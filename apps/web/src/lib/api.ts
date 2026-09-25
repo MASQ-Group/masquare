@@ -4395,7 +4395,12 @@ export interface JiniusCatalogueProbeResult {
   }[];
   offerReferenceTypes: string[];
   /** The same lookup asked several ways, kept verbatim, so an empty answer can be read. */
-  lookupAttempts: { how: string; status: number; products: number | null; excerpt: string }[];
+  lookupAttempts: {
+    how: string; kind: 'single' | 'list' | 'unfiltered'; encoding: 'encoded' | 'documented';
+    type: string; asked: number; status: number; products: number | null; excerpt: string;
+  }[];
+  /** What those attempts add up to, and what to do about it. */
+  listAnswer: { works: boolean; askOneAtATime: boolean; sendUnencoded: boolean; type: string | null; message: string };
   sample: { reference: string; found: boolean; productId: string | null; productIdType: string | null; title: string | null; categoryCode: string | null; categoryLabel: string | null; sku: string | null; ourTitle: string | null; weSellThere: boolean }[];
   categories: { code: string; label: string; level: number | null; leaf: boolean }[];
   categoryCount: number | null;
