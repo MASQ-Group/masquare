@@ -11,6 +11,7 @@ import {
 import { canGather, foldFindings, type SourceFinding } from '../../gather/gather-rules';
 import { verifyIdentity } from '../../gather/identity';
 import { ManufacturerSourceService } from '../../gather/manufacturer-source.service';
+import { ProductFactsService } from '../../gather/product-facts.service';
 import { WebResearchService } from '../../gather/web-research.service';
 import { screenResearch, type ResearchedFinding, type ResearchedSource } from '../../gather/screen-research';
 import { htmlToPlainText, proseToHtml, renderEbayDescription } from './description-template';
@@ -54,6 +55,7 @@ export class EbayListingService {
     private readonly web: WebResearchService,
     private readonly prices: PricingService,
     private readonly activity: ActivityService,
+    private readonly facts: ProductFactsService,
   ) {}
 
   /**
@@ -1164,6 +1166,14 @@ export class EbayListingService {
       args.sources,
       args.findings,
     );
+    /**
+     * The same findings, kept for every channel as well as for eBay.
+     *
+     * OnBuy already reads eBay's verified facts, one way, and Jinius would have needed its own copy
+     * of that arrangement. Findings land in one place instead, so a source found here counts
+     * everywhere - including towards the two-sources rule that decides what may be published.
+     */
+    await this.facts.remember(ctx.product.id, screened.accepted, new Date().toISOString(), args.userId);
     const saved = await this.foldAndSave(plan, cat, aspectNames, screened.accepted, args.userId);
 
     this.logger.log(

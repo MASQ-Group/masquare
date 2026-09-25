@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { PrismaModule } from '../prisma/prisma.module';
 import { ManufacturerSourceService } from './manufacturer-source.service';
+import { ProductFactsService } from './product-facts.service';
 import { WebResearchService } from './web-research.service';
 
 /**
@@ -10,7 +12,8 @@ import { WebResearchService } from './web-research.service';
  * specifics are simply the first thing built on top of them.
  */
 @Module({
-  providers: [ManufacturerSourceService, WebResearchService],
-  exports: [ManufacturerSourceService, WebResearchService],
+  imports: [PrismaModule],
+  providers: [ManufacturerSourceService, ProductFactsService, WebResearchService],
+  exports: [ManufacturerSourceService, ProductFactsService, WebResearchService],
 })
 export class GatherModule {}
