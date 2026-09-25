@@ -8,6 +8,7 @@ import { AmazonCandidates } from './AmazonCandidates';
 import { AmazonOfferPreview } from './AmazonOfferPreview';
 import { EditPriceModal } from '../channel-listings/EditPriceModal';
 import { OnbuyCandidates, OnbuyCompetition, OnbuyCreateCategory, OnbuyCreatePreview, OnbuyDeliveryTemplateSelect, OnbuyListingPreview, OnbuyPriceCheck, OnbuyPriceSuggestion } from './OnbuyListing';
+import { JiniusListingPreview } from './JiniusListing';
 import { CompetitorPrices } from './CompetitorPrices';
 import { LaunchPrice } from './LaunchPrice';
 import { currencyForMarketplace, isZeroDecimalCurrency, limitPriceInput } from '../../lib/currencies';
@@ -122,6 +123,7 @@ export function PlanEditor({
   const isAmazon = row.channelType === 'amazon';
   const isEbay = row.channelType === 'ebay';
   const isOnBuy = row.channelType === 'onbuy';
+  const isJinius = row.channelType === 'jinius';
   // Amazon and OnBuy both attach to a catalogue product found by barcode, so both start with a match.
   const hasMatchStep = isAmazon || isOnBuy;
 
@@ -541,6 +543,13 @@ export function PlanEditor({
           />
         ) : isOnBuy ? (
           <OnbuyListingPreview
+            productId={productId}
+            integrationId={row.integrationId}
+            savePlan={() => save.mutateAsync()}
+            onListed={onSaved}
+          />
+        ) : isJinius ? (
+          <JiniusListingPreview
             productId={productId}
             integrationId={row.integrationId}
             savePlan={() => save.mutateAsync()}
