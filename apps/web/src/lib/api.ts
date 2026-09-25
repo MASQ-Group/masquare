@@ -4384,7 +4384,10 @@ export interface JiniusCatalogueProbeResult {
   capabilities: { name: string; allowed: boolean; detail: string }[];
   /** The reference an offer would be created against, as Jinius names it. */
   referenceType: string | null;
-  sample: { reference: string; found: boolean; productId: string | null; productIdType: string | null; title: string | null; categoryCode: string | null; categoryLabel: string | null; sku: string | null; ourTitle: string | null }[];
+  /** The reference type Jinius actually answered to, and what each type returned. */
+  matchedWith: string | null;
+  referenceAttempts: { type: string; status: number; matched: number }[];
+  sample: { reference: string; found: boolean; productId: string | null; productIdType: string | null; title: string | null; categoryCode: string | null; categoryLabel: string | null; sku: string | null; ourTitle: string | null; weSellThere: boolean }[];
   categories: { code: string; label: string; level: number | null; leaf: boolean }[];
   categoryCount: number | null;
   attributesFor: string | null;

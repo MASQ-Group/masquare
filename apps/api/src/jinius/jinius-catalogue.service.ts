@@ -21,6 +21,15 @@ const PATHS = {
 } as const;
 
 /**
+ * The reference types worth trying, because the operator chooses which it matches on.
+ *
+ * Mirakl's own documentation says SHOP_SKU and SKU are not valid here, and leaves the rest to the
+ * operator: a marketplace may key on EAN, on GTIN, on UPC, or on a code of its own. Asking with each
+ * in turn is the only way to learn which, and it is three cheap reads.
+ */
+const REFERENCE_TYPES = ['EAN', 'GTIN', 'UPC'] as const;
+
+/**
  * What Jinius allows, asked of Jinius.
  *
  * Read-only, and deliberately the first thing built for listing: a Mirakl marketplace decides for
@@ -61,22 +70,57 @@ export class JiniusCatalogueService {
   async probe(integrationId: string | undefined, companyIds: string[], sampleSize = 10) {
     const integration = await this.integration(integrationId, companyIds);
 
-    // Products of ours with a barcode, newest first: the ones most likely to be listed next.
-    const products = await this.prisma.product.findMany({
-      where: { deletedAt: null, ean: { not: null }, NOT: { ean: '' } },
-      orderBy: { createdAt: 'desc' },
-      take: Math.min(Math.max(sampleSize, 1), 25),
-      select: { mainSku: true, title: true, ean: true },
+    /**
+     * Products we already sell on Jinius, first.
+     *
+     * The first version sampled our newest products, and every one came back "not carried" — which
+     * says nothing, because a product we have never listed there probably is not there. A product we
+     * are ALREADY selling on Jinius must exist in its catalogue, so if the lookup cannot find that
+     * one, the lookup is wrong rather than the catalogue empty. Newest products fill any remainder,
+     * because "are the ones we would list next already there?" is the other half of the question.
+     */
+    const take = Math.min(Math.max(sampleSize, 1), 25);
+    const listedHere = await this.prisma.channelListing.findMany({
+      where: { integration: { id: integration.id }, product: { deletedAt: null, ean: { not: null }, NOT: { ean: '' } } },
+      take,
+      orderBy: { lastPulledAt: 'desc' },
+      select: { product: { select: { mainSku: true, title: true, ean: true } } },
     });
+    const sampled = listedHere.map((l) => l.product!).filter(Boolean);
+    if (sampled.length < take) {
+      const more = await this.prisma.product.findMany({
+        where: { deletedAt: null, ean: { not: null }, NOT: { ean: '' }, mainSku: { notIn: sampled.map((p) => p.mainSku) } },
+        orderBy: { createdAt: 'desc' },
+        take: take - sampled.length,
+        select: { mainSku: true, title: true, ean: true },
+      });
+      sampled.push(...more);
+    }
+    const products = sampled;
+    const listedSkus = new Set(listedHere.map((l) => l.product!.mainSku));
     const barcodes = products.map((p) => (p.ean ?? '').trim()).filter(Boolean);
 
-    const [hierarchies, matches, imports] = await Promise.all([
+    const [hierarchies, imports] = await Promise.all([
       this.integrations.jiniusGet(integration.id, PATHS.hierarchies, { max: 100 }),
-      barcodes.length
-        ? this.integrations.jiniusGet(integration.id, PATHS.products, { product_references: barcodes.map((b) => `EAN|${b}`).join(',') })
-        : Promise.resolve(null),
       this.integrations.jiniusGet(integration.id, PATHS.productImports, { max: 1 }),
     ]);
+
+    /** Each reference type in turn; the one that finds anything is the one Jinius matches on. */
+    const attempts: { type: string; status: number; matched: number }[] = [];
+    let found: ReturnType<typeof readJiniusProductMatches> = [];
+    let matchedWith: string | null = null;
+    for (const type of REFERENCE_TYPES) {
+      if (!barcodes.length) break;
+      const r = await this.integrations.jiniusGet(integration.id, PATHS.products, {
+        product_references: barcodes.map((b) => `${type}|${b}`).join(','),
+      });
+      const rows = r.ok ? readJiniusProductMatches(r.json, barcodes) : [];
+      const hits = rows.filter((m) => m.found).length;
+      attempts.push({ type, status: r.status, matched: hits });
+      if (hits > found.filter((m) => m.found).length) { found = rows; matchedWith = type; }
+      if (hits === barcodes.length) break; // nothing better to find
+    }
+    if (!found.length && barcodes.length) found = barcodes.map((reference) => ({ reference, found: false, productId: null, productIdType: null, title: null, categoryCode: null, categoryLabel: null }));
 
     const capabilities: JiniusCapability[] = [readImportPermission(imports.status)];
 
@@ -85,15 +129,14 @@ export class JiniusCatalogueService {
       ? { name: 'Read the category tree', allowed: true, detail: `${tree.total ?? tree.categories.length} categories.` }
       : { name: 'Read the category tree', allowed: false, detail: `Jinius answered ${hierarchies.status}.` });
 
-    const found = matches?.ok ? readJiniusProductMatches(matches.json, barcodes) : [];
     const carried = found.filter((m) => m.found);
+    const tried = attempts.map((a) => `${a.type}: ${a.status === 200 ? `${a.matched} found` : `HTTP ${a.status}`}`).join(', ');
     capabilities.push({
       name: 'Match our products by barcode',
       allowed: carried.length > 0,
-      detail: matches
-        ? matches.ok
-          ? `${carried.length} of ${barcodes.length} sampled barcodes are already in Jinius’s catalogue.`
-          : `Jinius answered ${matches.status} to a barcode lookup.`
+      detail: barcodes.length
+        ? `${carried.length} of ${barcodes.length} sampled barcodes found${matchedWith ? ` using ${matchedWith}` : ''} (${tried}). `
+          + `${listedSkus.size} of the sample are products we already sell on Jinius.`
         : 'No product here has a barcode to look up.',
     });
 
@@ -103,7 +146,16 @@ export class JiniusCatalogueService {
      */
     let attributes: ReturnType<typeof readJiniusAttributes> = [];
     let attributesFor: string | null = null;
-    const sampleCategory = carried.find((m) => m.categoryCode)?.categoryCode ?? tree.categories.find((c) => c.leaf)?.code ?? null;
+    /**
+     * A category we can actually reach: one of a product they carry, else the deepest in the tree.
+     * Not every operator flags the end of a branch, and picking the first category would describe a
+     * department rather than something a product goes in.
+     */
+    const deepest = [...tree.categories].sort((a, b) => (b.level ?? 0) - (a.level ?? 0))[0];
+    const sampleCategory = carried.find((m) => m.categoryCode)?.categoryCode
+      ?? tree.categories.find((c) => c.leaf)?.code
+      ?? deepest?.code
+      ?? null;
     if (sampleCategory) {
       const r = await this.integrations.jiniusGet(integration.id, PATHS.attributes, { hierarchy: sampleCategory });
       if (r.ok) { attributes = readJiniusAttributes(r.json); attributesFor = sampleCategory; }
@@ -115,11 +167,19 @@ export class JiniusCatalogueService {
       capabilities,
       /** What an offer would be created against, as Jinius names it. */
       referenceType: carried[0]?.productIdType ?? null,
-      sample: found.map((m) => ({
-        ...m,
-        sku: products.find((p) => (p.ean ?? '').trim() === m.reference)?.mainSku ?? null,
-        ourTitle: products.find((p) => (p.ean ?? '').trim() === m.reference)?.title ?? null,
-      })),
+      /** Which reference type Jinius answered to, so the listing flow asks with the right one. */
+      matchedWith,
+      referenceAttempts: attempts,
+      sample: found.map((m) => {
+        const ours = products.find((p) => (p.ean ?? '').trim() === m.reference) ?? null;
+        return {
+          ...m,
+          sku: ours?.mainSku ?? null,
+          ourTitle: ours?.title ?? null,
+          /** We already sell this one on Jinius, so their catalogue certainly holds it. */
+          weSellThere: !!ours && listedSkus.has(ours.mainSku),
+        };
+      }),
       categories: tree.categories.slice(0, 15),
       categoryCount: tree.total,
       attributesFor,

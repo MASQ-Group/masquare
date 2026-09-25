@@ -53,9 +53,10 @@ export function JiniusCatalogueProbe({ integrationId, onClose }: { integrationId
               ))}
             </div>
 
-            {d.referenceType && (
+            {d.matchedWith && (
               <p className="text-[12.5px] text-n-600">
-                An offer would be created against Jinius’s <span className="mono">{d.referenceType}</span> reference.
+                Jinius matches on <span className="mono">{d.matchedWith}</span>
+                {d.referenceType && <> and an offer would be created against its <span className="mono">{d.referenceType}</span> reference</>}.
               </p>
             )}
 
@@ -70,7 +71,10 @@ export function JiniusCatalogueProbe({ integrationId, onClose }: { integrationId
                       <td className="py-1 pr-3">
                         {s.found
                           ? <span className="text-success">in their catalogue</span>
-                          : <span className="text-n-400">not carried</span>}
+                          : s.weSellThere
+                            /* We sell it there, so they hold it: the lookup missed it, not the catalogue. */
+                            ? <span className="text-warning">we sell it there, yet not found</span>
+                            : <span className="text-n-400">not carried</span>}
                       </td>
                       <td className="truncate py-1 text-n-600">{s.title ?? s.ourTitle ?? ''}</td>
                       <td className="py-1 text-n-400">{s.categoryLabel ?? ''}</td>
