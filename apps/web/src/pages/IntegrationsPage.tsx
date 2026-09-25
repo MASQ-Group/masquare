@@ -20,6 +20,7 @@ import { ChannelLogoTile } from '../components/integrations/ChannelLogoTile';
 import { Flag } from '../components/common/Flag';
 import { useAuth } from '../lib/auth';
 import { sortByChannelCanonical } from '../lib/channelGroups';
+import { JiniusCatalogueProbe } from '../components/integrations/JiniusCatalogueProbe';
 
 const fmtDateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—';
@@ -128,6 +129,8 @@ export function IntegrationsPage() {
   const [groupBackfill, setGroupBackfill] = useState<{ label: string; list: ChannelIntegration[] } | undefined>();
   const [syncTime, setSyncTime] = useState('05:00');
   const [listingsPreview, setListingsPreview] = useState<ChannelIntegration | undefined>();
+  /** Jinius only: what its catalogue lets a seller do. */
+  const [catalogueProbe, setCatalogueProbe] = useState<ChannelIntegration | undefined>();
 
   const [tab, setTab] = useState<Tab>('all');
   const [query, setQuery] = useState('');
@@ -553,6 +556,7 @@ export function IntegrationsPage() {
                             onBackfill={() => setBackfill(i)}
                             onMapping={() => setMapVerify(i)}
                             onPreviewListings={() => setListingsPreview(i)}
+                            onProbeCatalogue={() => setCatalogueProbe(i)}
                             onShowErrors={() => setSyncErrors(i)}
                             onRemove={() => confirm(`Remove integration “${i.name}”? Stored keys will be deleted.`) && del.mutate(i.id)}
                           />
@@ -586,6 +590,9 @@ export function IntegrationsPage() {
       )}
       {groupBackfill && (
         <GroupBackfillModal scopeLabel={groupBackfill.label} integrations={groupBackfill.list} onClose={() => setGroupBackfill(undefined)} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ['sales-transactions'] }); }} />
+      )}
+      {catalogueProbe && (
+        <JiniusCatalogueProbe integrationId={catalogueProbe.id} onClose={() => setCatalogueProbe(undefined)} />
       )}
       {listingsPreview && (
         <ListingsPreviewModal integration={listingsPreview} onClose={() => setListingsPreview(undefined)} />
@@ -656,10 +663,10 @@ function HealthChip({ dot, color, text }: { dot: string; color: string; text: st
 
 function IntegrationRow({
   i, last, selected, expanded, syncing, maskSecrets, canSync, countryCode, logoUrl,
-  onToggleSel, onToggleExpand, onSync, onEdit, onBackfill, onMapping, onPreviewListings, onRemove, onShowErrors,
+  onToggleSel, onToggleExpand, onSync, onEdit, onBackfill, onMapping, onPreviewListings, onProbeCatalogue, onRemove, onShowErrors,
 }: {
   i: ChannelIntegration; last: boolean; selected: boolean; expanded: boolean; syncing: boolean; maskSecrets: boolean; canSync: boolean;
-  onToggleSel: () => void; onToggleExpand: () => void; onSync: () => void; onEdit: () => void; onBackfill: () => void; onMapping: () => void; onPreviewListings: () => void; onRemove: () => void;
+  onToggleSel: () => void; onToggleExpand: () => void; onSync: () => void; onEdit: () => void; onBackfill: () => void; onMapping: () => void; onPreviewListings: () => void; onProbeCatalogue: () => void; onRemove: () => void;
   onShowErrors: () => void;
   countryCode?: string | null;
   // Some channels (eBay) run one account across every marketplace, so a single country flag
@@ -793,6 +800,9 @@ function IntegrationRow({
               <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300 disabled:opacity-50" disabled={!canSync} title={canSync ? 'Import all orders in a past date range' : 'Verify the mapping and set the target first'} onClick={onBackfill}><Download size={14} /> Pull older orders</button>
               {['amazon', 'ebay', 'onbuy'].includes(i.channelType) && (
                 <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300" title="Fetch a few live listings to preview — nothing is saved" onClick={onPreviewListings}><Eye size={14} /> Preview listings</button>
+              )}
+              {i.channelType === 'jinius' && (
+                <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-n-200 bg-n-0 px-3 text-[12.5px] font-semibold text-n-700 hover:border-n-300" title="Ask Jinius which products it carries, what its categories demand, and whether we may add products — nothing is sent" onClick={onProbeCatalogue}><Eye size={14} /> What Jinius allows</button>
               )}
               <button className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-bd bg-n-0 px-3 text-[12.5px] font-semibold text-danger hover:bg-danger-bg" onClick={onRemove}><Trash2 size={14} /> Remove</button>
             </div>

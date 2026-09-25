@@ -5,7 +5,8 @@ import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser, type AuthUser } from '../common/current-user.decorator';
 import { VisibleCompanies } from '../common/active-company.decorator';
 import { AccessArea } from '../access/access.decorators';
-import { JiniusOrdersService } from './jinius-orders.service';
+import { JiniusOrdersService } from './jinius-orders.service';
+import { JiniusCatalogueService } from './jinius-catalogue.service';
 
 /**
  * Jinius orders and the local transaction that invoices them.
@@ -19,7 +20,18 @@ import { JiniusOrdersService } from './jinius-orders.service';
 @Controller('jinius/orders')
 @AccessArea('sales_transactions')
 export class JiniusOrdersController {
-  constructor(private readonly svc: JiniusOrdersService) {}
+  constructor(private readonly svc: JiniusOrdersService, private readonly catalogue: JiniusCatalogueService) {}
+
+  /**
+   * What Jinius allows a seller to do with its catalogue. Reads only, from Jinius and from here.
+   *
+   * Asked before a listing flow is built on assumptions: a Mirakl marketplace decides its own
+   * product references, categories, required attributes and whether sellers may add products.
+   */
+  @Get('catalogue-probe')
+  probe(@VisibleCompanies() companyIds: string[], @Query('integrationId') integrationId?: string) {
+    return this.catalogue.probe(integrationId, companyIds);
+  }
 
   /** The orders we hold, newest first. */
   @Get()
