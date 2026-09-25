@@ -4387,6 +4387,9 @@ export interface JiniusCatalogueProbeResult {
   /** The reference type Jinius actually answered to, and what each type returned. */
   matchedWith: string | null;
   referenceAttempts: { type: string; status: number; matched: number }[];
+  /** Our own live offers on Jinius, and the references their catalogue holds for them. */
+  ourOffers: { shopSku: string; productSku: string | null; title: string | null; references: { type: string; value: string }[] }[];
+  offerReferenceTypes: string[];
   sample: { reference: string; found: boolean; productId: string | null; productIdType: string | null; title: string | null; categoryCode: string | null; categoryLabel: string | null; sku: string | null; ourTitle: string | null; weSellThere: boolean }[];
   categories: { code: string; label: string; level: number | null; leaf: boolean }[];
   categoryCount: number | null;
