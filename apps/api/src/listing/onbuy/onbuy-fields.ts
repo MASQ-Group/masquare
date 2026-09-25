@@ -98,7 +98,8 @@ export function readMeasurement(value: string, units: string[]): { value: string
 
 export interface ResolvedOnbuyFields {
   features: { option_id: number }[];
-  technical: { detail_id: number; value: string; unit: string }[];
+  /** `unit` only where OnBuy says the detail has one; a detail with no units takes plain text. */
+  technical: { detail_id: number; value: string; unit?: string }[];
   /** Required features with no usable answer, by name. */
   missing: string[];
   /** Answers that exist but cannot be sent, and why. */
@@ -119,6 +120,19 @@ export function resolveOnbuyFields(fields: OnbuyField[], records: Record<string,
       continue;
     }
     if (value == null) continue;
+    /**
+     * A technical detail with NO units is not a measurement - it is free text.
+     *
+     * Every detail used to go through the measurement reader, which checks the unit against the
+     * field's list. With an empty list nothing can ever match, so every answer was rejected whatever
+     * it said: Colour "Black" came back as "not a single number with a unit", and Capacity "9.2 L"
+     * as "unit L is not one OnBuy takes here ()" - with the allowed units printed as an empty pair
+     * of brackets, which was the tell. A list we do not have is not a list that forbids everything.
+     */
+    if (!f.units.length) {
+      out.technical.push({ detail_id: Number(f.detailId), value: value.trim() });
+      continue;
+    }
     const m = readMeasurement(value, f.units);
     if ('why' in m) out.rejected.push({ name: f.name, value, why: m.why });
     else out.technical.push({ detail_id: Number(f.detailId), value: m.value, unit: m.unit });

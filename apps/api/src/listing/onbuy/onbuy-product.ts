@@ -55,7 +55,8 @@ export interface OnbuyProductInput {
   uid: string;
   /** OnBuy option ids for the category's features, and its technical details. */
   features: { option_id: number }[];
-  technical: { detail_id: number; value: string; unit: string }[];
+  /** `unit` only where OnBuy says the detail has one — a detail with no units takes plain text. */
+  technical: { detail_id: number; value: string; unit?: string }[];
   /** The free specification table. */
   productData: { label: string; value: string; group?: string }[];
   /** GPSR text, already in OnBuy's field names, and safety documents. */

@@ -209,7 +209,12 @@ function FieldsStep({ productId, view, onView }: { productId: string; view: Onbu
               <label htmlFor={`onbuy-field-${f.name}`} className="text-[12.5px] text-n-700">
                 {f.name}
                 {f.kind === 'feature' && f.required && <span className="ml-1 text-danger">*</span>}
-                <span className="block text-[11px] text-n-400">{f.kind === 'feature' ? `${f.options.length} OnBuy options` : `measurement · ${f.units.join(', ')}`}</span>
+                {/* A detail with no units is free text, not a measurement with an empty list of allowed ones. */}
+                <span className="block text-[11px] text-n-400">
+                  {f.kind === 'feature'
+                    ? `${f.options.length} OnBuy options`
+                    : f.units.length ? `measurement · ${f.units.join(', ')}` : 'text'}
+                </span>
               </label>
               {f.kind === 'feature' ? (
                 <select
@@ -227,7 +232,7 @@ function FieldsStep({ productId, view, onView }: { productId: string; view: Onbu
                   className="input mono h-8 text-[12.5px]"
                   value={value(f)}
                   onChange={(e) => setEdits((s) => ({ ...s, [f.name]: e.target.value }))}
-                  placeholder={`e.g. 45 ${f.units[0] ?? ''}`.trim()}
+                  placeholder={f.units.length ? `e.g. 45 ${f.units[0]}` : 'as the page says it'}
                 />
               )}
             </div>

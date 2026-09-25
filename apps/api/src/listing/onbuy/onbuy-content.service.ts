@@ -244,7 +244,9 @@ export class OnbuyContentService {
           required: f.kind === 'feature' ? f.required : false,
           acceptedValues: f.kind === 'feature' ? f.options.map((o) => o.name).slice(0, 120) : null,
           acceptedValuesTotal: f.kind === 'feature' ? f.options.length : null,
-          units: f.kind === 'technical' ? f.units : null,
+          // Null means "not a measurement": this detail takes plain text, and inventing a unit for
+          // it is what produced Colour "Black" being checked against a list of units that is empty.
+          units: f.kind === 'technical' && f.units.length ? f.units : null,
           current: rec ? { value: rec.value, basis: classifyAspect(rec), heldBackForAPerson: !isPayloadEligible(rec) } : null,
         };
       }),
