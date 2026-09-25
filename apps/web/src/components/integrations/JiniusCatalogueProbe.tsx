@@ -85,9 +85,9 @@ export function JiniusCatalogueProbe({ integrationId, onClose }: { integrationId
             <>
               {/* The answer first: what this run establishes, before any of the evidence for it. */}
               <p className={`rounded-md border px-3 py-2.5 text-[12.5px] ${
-                d.listAnswer && !d.listAnswer.works
+                d.listAnswer && !d.listAnswer.matchesBack
                   ? 'border-orange-200 bg-orange-50 text-orange-800'
-                  : carried > 0 || d.listAnswer?.works
+                  : carried > 0 || d.listAnswer?.matchesBack
                     ? 'border-teal-100 bg-teal-50 text-teal-800'
                     : 'border-n-200 bg-n-25 text-n-600'
               }`}>
@@ -206,12 +206,13 @@ export function JiniusCatalogueProbe({ integrationId, onClose }: { integrationId
               {d.lookupAttempts.length > 0 && (
                 <Section title="The same lookup, asked several ways">
                   <table className="w-full table-fixed border-collapse">
-                    <colgroup><col /><col className="w-[110px]" /><col className="w-[140px]" /></colgroup>
+                    <colgroup><col /><col className="w-[100px]" /><col className="w-[130px]" /><col className="w-[160px]" /></colgroup>
                     <thead>
                       <tr>
                         <th className={TH}>How we asked</th>
                         <th className={TH}>Answered</th>
                         <th className={TH}>Products back</th>
+                        <th className={TH}>Tied to our asking</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -221,6 +222,16 @@ export function JiniusCatalogueProbe({ integrationId, onClose }: { integrationId
                           <td className={`${TD} mono whitespace-nowrap text-[12px] text-n-500`}>HTTP {a.status}</td>
                           <td className={`${TD} whitespace-nowrap text-[12px] ${(a.products ?? 0) > 0 ? 'text-teal-700' : 'text-n-500'}`}>
                             {a.products == null ? 'no product list' : `${a.products} product${a.products === 1 ? '' : 's'}`}
+                          </td>
+                          {/* Products that came back and products we could read are different questions. */}
+                          <td className={`${TD} whitespace-nowrap text-[12px] ${
+                            (a.matched ?? 0) > 0 ? 'text-teal-700' : (a.products ?? 0) > 0 ? 'text-orange-700' : 'text-n-500'
+                          }`}>
+                            {a.matched == null
+                              ? '—'
+                              : a.matched > 0
+                                ? `${a.matched} of ${a.asked}`
+                                : (a.products ?? 0) > 0 ? 'none of them' : '—'}
                           </td>
                         </tr>
                       ))}

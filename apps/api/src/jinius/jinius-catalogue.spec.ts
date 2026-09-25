@@ -109,7 +109,7 @@ describe('what our own live offers are attached to', () => {
 
 describe('what the lookups add up to', () => {
   const attempt = (o: Partial<JiniusLookupAttempt>): JiniusLookupAttempt => ({
-    how: 'x', kind: 'single', encoding: 'encoded', type: 'EAN', asked: 1, status: 200, products: 0, excerpt: '', ...o,
+    how: 'x', kind: 'single', encoding: 'encoded', type: 'EAN', asked: 1, status: 200, products: 0, matched: 0, excerpt: '', ...o,
   });
 
   /**
@@ -119,9 +119,9 @@ describe('what the lookups add up to', () => {
    */
   it('names the encoding as the fault when a list works only as documented', () => {
     const a = readLookupAnswer([
-      attempt({ kind: 'single', encoding: 'encoded', products: 1 }),
+      attempt({ kind: 'single', encoding: 'encoded', products: 1, matched: 1 }),
       attempt({ kind: 'list', encoding: 'encoded', asked: 3, products: 0 }),
-      attempt({ kind: 'list', encoding: 'documented', asked: 3, products: 3 }),
+      attempt({ kind: 'list', encoding: 'documented', asked: 3, products: 3, matched: 3 }),
     ]);
     expect(a).toMatchObject({ works: true, sendUnencoded: true, askOneAtATime: false, type: 'EAN' });
     expect(a.message).toContain('unencoded');
@@ -129,7 +129,7 @@ describe('what the lookups add up to', () => {
 
   it('says to ask one at a time when no list works but a single does', () => {
     const a = readLookupAnswer([
-      attempt({ kind: 'single', products: 1 }),
+      attempt({ kind: 'single', products: 1, matched: 1 }),
       attempt({ kind: 'list', encoding: 'encoded', asked: 3, products: 0 }),
       attempt({ kind: 'list', encoding: 'documented', asked: 3, products: 0 }),
     ]);
@@ -138,7 +138,7 @@ describe('what the lookups add up to', () => {
   });
 
   it('leaves well alone when the list already works as we send it', () => {
-    const a = readLookupAnswer([attempt({ kind: 'list', encoding: 'encoded', asked: 3, products: 3 })]);
+    const a = readLookupAnswer([attempt({ kind: 'list', encoding: 'encoded', asked: 3, products: 3, matched: 3 })]);
     expect(a).toMatchObject({ works: true, askOneAtATime: false, sendUnencoded: false });
   });
 
@@ -148,5 +148,38 @@ describe('what the lookups add up to', () => {
     expect(a.works).toBe(false);
     expect(a.message).toContain('product import');
     expect(readLookupAnswer([]).message).toContain('nothing live to look up with');
+  });
+});
+
+
+describe('an answer whose shape we do not recognise', () => {
+  /**
+   * The failure this was written for. Jinius returns the product for a barcode we asked about, under
+   * field names of its own - and the old matcher, which insisted on `product_references`, called it
+   * "not carried" about a product sitting in the reply.
+   */
+  it('ties a product back by the reference wherever it appears in the record', () => {
+    const answer = {
+      products: [{
+        productId: 'JIN-55', productTitle: 'Barista Express',
+        identifiers: { barcodes: ['9312432024686'] },
+      }],
+    };
+    const [m] = readJiniusProductMatches(answer, ['9312432024686']);
+    expect(m.found).toBe(true);
+  });
+
+  /** It stays honest: a reference that is genuinely absent is still absent. */
+  it('does not invent a match for a reference the answer does not carry', () => {
+    const answer = { products: [{ productId: 'JIN-55', identifiers: { barcodes: ['1111111111111'] } }] };
+    expect(readJiniusProductMatches(answer, ['9312432024686'])[0].found).toBe(false);
+  });
+
+  it('says products came back that we could not read, rather than blaming their catalogue', () => {
+    const a = readLookupAnswer([
+      { how: 'x', kind: 'list', encoding: 'encoded', type: 'EAN', asked: 3, status: 200, products: 3, matched: 0, excerpt: '' },
+    ]);
+    expect(a).toMatchObject({ works: true, matchesBack: false });
+    expect(a.message).toContain('reading their reply wrongly');
   });
 });
