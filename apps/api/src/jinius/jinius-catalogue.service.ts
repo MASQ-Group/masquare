@@ -3,8 +3,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { IntegrationsService } from '../integrations/integrations.service';
 import {
   offerReferenceTypes, readImportPermission, readJiniusAttributes, readJiniusHierarchies, readJiniusOfferAttachments,
-  readJiniusProductMatches, requiredAttributes,
-  type JiniusCapability,
+  readJiniusProductMatches, readLookupAnswer, requiredAttributes,
+  type JiniusCapability, type JiniusLookupAttempt,
 } from './jinius-catalogue';
 
 /** Mirakl's catalogue endpoints, by its own codes. */
@@ -161,17 +161,6 @@ export class JiniusCatalogueService {
       ? { name: 'Read the category tree', allowed: true, detail: `${tree.total ?? tree.categories.length} categories.` }
       : { name: 'Read the category tree', allowed: false, detail: `Jinius answered ${hierarchies.status}.` });
 
-    const carried = found.filter((m) => m.found);
-    const tried = attempts.map((a) => `${a.type}: ${a.status === 200 ? `${a.matched} found` : `HTTP ${a.status}`}`).join(', ');
-    capabilities.push({
-      name: 'Match our products by barcode',
-      allowed: carried.length > 0,
-      detail: barcodes.length
-        ? `${carried.length} of ${barcodes.length} sampled barcodes found${matchedWith ? ` using ${matchedWith}` : ''} (${tried}). `
-          + `${listedSkus.size} of the sample are products we already sell on Jinius.`
-        : 'No product here has a barcode to look up.',
-    });
-
     /**
      * Our own barcode next to the one Jinius holds for the same offer.
      *
@@ -200,25 +189,68 @@ export class JiniusCatalogueService {
      * goes out encoded (as we send it) and exactly as Mirakl documents it, pipe and comma unencoded,
      * and the first of the answer is kept verbatim rather than summarised into another "0 found".
      */
-    const liveEan = ourOffers.flatMap((o) => o.references).find((r) => r.type === 'EAN')?.value ?? null;
+    const liveEans = [...new Set(ourOffers.flatMap((o) => o.references).filter((r) => r.type === 'EAN').map((r) => r.value))];
     const ownRef = ourOffers.flatMap((o) => o.references).find((r) => !['EAN', 'GTIN', 'UPC'].includes(r.type)) ?? null;
-    const lookupAttempts: { how: string; status: number; products: number | null; excerpt: string }[] = [];
-    const tryLookup = async (how: string, encoded: boolean, reference: string | null, extra: Record<string, string | number> = {}) => {
-      if (reference === null) return;
-      const r = encoded
-        ? await this.integrations.jiniusGet(integration.id, PATHS.products, { ...extra, product_references: reference })
-        : await this.integrations.jiniusGet(integration.id, PATHS.products, extra, { product_references: reference });
+    const lookupAttempts: JiniusLookupAttempt[] = [];
+    const lookup = async (
+      how: string,
+      kind: JiniusLookupAttempt['kind'],
+      encoding: JiniusLookupAttempt['encoding'],
+      type: string,
+      values: string[],
+      extra: Record<string, string | number> = {},
+    ) => {
+      const filter = values.map((v) => `${type}|${v}`).join(',');
+      const r = encoding === 'encoded'
+        ? await this.integrations.jiniusGet(integration.id, PATHS.products, { ...extra, product_references: filter })
+        : await this.integrations.jiniusGet(integration.id, PATHS.products, extra, { product_references: filter });
       const list = Array.isArray(r.json?.products) ? r.json.products : null;
-      lookupAttempts.push({ how, status: r.status, products: list ? list.length : null, excerpt: (r.text ?? '').slice(0, 400) });
+      lookupAttempts.push({
+        how, kind, encoding, type, asked: values.length, status: r.status,
+        products: list ? list.length : null, excerpt: (r.text ?? '').slice(0, 400),
+      });
       return r;
     };
-    if (liveEan) {
-      await tryLookup('EAN, encoded as we send it', true, `EAN|${liveEan}`);
-      await tryLookup('EAN, exactly as Mirakl documents it', false, `EAN|${liveEan}`);
+    if (liveEans.length) {
+      await lookup('One EAN, encoded as the platform sends it', 'single', 'encoded', 'EAN', liveEans.slice(0, 1));
+      await lookup('One EAN, exactly as Mirakl documents it', 'single', 'documented', 'EAN', liveEans.slice(0, 1));
     }
-    if (ownRef) await tryLookup(`${ownRef.type}, exactly as Mirakl documents it`, false, `${ownRef.type}|${ownRef.value}`);
+    // A list is the interesting case: it is how the platform asks, and its separator is the comma.
+    if (liveEans.length > 1) {
+      await lookup(`${Math.min(liveEans.length, 3)} EANs at once, encoded as the platform sends it`, 'list', 'encoded', 'EAN', liveEans.slice(0, 3));
+      await lookup(`${Math.min(liveEans.length, 3)} EANs at once, exactly as Mirakl documents it`, 'list', 'documented', 'EAN', liveEans.slice(0, 3));
+    }
+    if (ownRef) await lookup(`One ${ownRef.type}, exactly as Mirakl documents it`, 'single', 'documented', ownRef.type, [ownRef.value]);
     // With no filter at all: whether the endpoint yields any product to this shop is its own answer.
-    await tryLookup('no filter at all, one row', true, '', { max: 1 });
+    await lookup('No filter at all, one row', 'unfiltered', 'encoded', '', [], { max: 1 });
+
+    const listAnswer = readLookupAnswer(lookupAttempts);
+
+    /**
+     * Ask the sample again, the way that works.
+     *
+     * The first pass asked the only way the platform knows, and the diagnosis above has just shown
+     * that way to be wrong. Leaving the table reading "not carried" would be reporting our own bug as
+     * their catalogue — which is exactly the mistake this whole probe exists to stop.
+     */
+    if (listAnswer.works && listAnswer.type && barcodes.length && !found.some((m) => m.found)) {
+      const type = listAnswer.type;
+      let rows: typeof found = [];
+      if (listAnswer.askOneAtATime) {
+        for (const b of barcodes) {
+          const r = await this.integrations.jiniusGet(integration.id, PATHS.products, { product_references: `${type}|${b}` });
+          rows.push(readJiniusProductMatches(r.ok ? r.json : null, [b])[0]);
+        }
+      } else {
+        const r = await this.integrations.jiniusGet(
+          integration.id, PATHS.products, {}, { product_references: barcodes.map((b) => `${type}|${b}`).join(',') },
+        );
+        rows = readJiniusProductMatches(r.ok ? r.json : null, barcodes);
+      }
+      const hits = rows.filter((m) => m.found).length;
+      attempts.push({ type: `${type}, asked ${listAnswer.askOneAtATime ? 'one at a time' : 'unencoded'}`, status: 200, matched: hits });
+      if (hits) { found = rows; matchedWith = type; }
+    }
 
     capabilities.push({
       name: 'See what our live offers point at',
@@ -232,15 +264,23 @@ export class JiniusCatalogueService {
             : 'Our offers carry no product reference at all: they are attached by a product code of Jinius\u2019s own, not by a barcode.',
     });
 
-    const anyProducts = lookupAttempts.some((a) => (a.products ?? 0) > 0);
+    const carried = found.filter((m) => m.found);
+    const tried = attempts.map((a) => `${a.type}: ${a.status === 200 ? `${a.matched} found` : `HTTP ${a.status}`}`).join(', ');
+    capabilities.push({
+      name: 'Match our products by barcode',
+      allowed: carried.length > 0,
+      detail: barcodes.length
+        ? `${carried.length} of ${barcodes.length} sampled barcodes found${matchedWith ? ` using ${matchedWith}` : ''} (${tried}). `
+          + `${listedSkus.size} of the sample are products we already sell on Jinius.`
+        : 'No product here has a barcode to look up.',
+    });
+
     capabilities.push({
       name: 'Look a product up in their catalogue',
-      allowed: anyProducts,
-      detail: !lookupAttempts.length
-        ? 'Nothing live to look up with.'
-        : anyProducts
-          ? `The lookup works when asked as "${lookupAttempts.find((a) => (a.products ?? 0) > 0)!.how}".`
-          : 'Every lookup came back empty, including ones for references taken off our own live offers \u2014 so their product search is not open to this shop.',
+      allowed: listAnswer.works,
+      detail: listAnswer.works
+        ? `Yes \u2014 asked as "${lookupAttempts.find((a) => (a.products ?? 0) > 0)!.how}".`
+        : 'No \u2014 every way of asking came back empty.',
     });
 
     /**
@@ -278,6 +318,8 @@ export class JiniusCatalogueService {
       offerReferenceTypes: offerTypes,
       /** The same lookup asked several ways, kept verbatim, so an empty answer can be read. */
       lookupAttempts,
+      /** What those attempts add up to, and what to do about it. */
+      listAnswer,
       sample: found.map((m) => {
         const ours = products.find((p) => (p.ean ?? '').trim() === m.reference) ?? null;
         return {

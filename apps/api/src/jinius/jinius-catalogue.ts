@@ -159,6 +159,82 @@ export function readJiniusOfferAttachments(json: unknown): JiniusOfferAttachment
 export const offerReferenceTypes = (rows: readonly JiniusOfferAttachment[]): string[] =>
   [...new Set(rows.flatMap((o) => o.references.map((r) => r.type)))];
 
+/** One lookup, asked one particular way, with what came back. */
+export interface JiniusLookupAttempt {
+  /** How we asked, in words — this is what a person reads in the report. */
+  how: string;
+  /** One reference, several at once, or no filter at all. */
+  kind: 'single' | 'list' | 'unfiltered';
+  /** `encoded` is what URLSearchParams produces; `documented` is Mirakl's own pipe and comma. */
+  encoding: 'encoded' | 'documented';
+  type: string;
+  asked: number;
+  status: number;
+  /** How many products came back, or null when the answer carried no product list at all. */
+  products: number | null;
+  excerpt: string;
+}
+
+/** What the attempts add up to, and what to do about it. */
+export interface JiniusLookupAnswer {
+  works: boolean;
+  /** Ask for one reference per request: a list comes back empty however it is sent. */
+  askOneAtATime: boolean;
+  /** Send the separators unencoded: the same list works that way and not encoded. */
+  sendUnencoded: boolean;
+  /** The reference type that answered. */
+  type: string | null;
+  message: string;
+}
+
+/**
+ * What the lookups add up to.
+ *
+ * Every reference asked about comes off one of our own live offers, so Jinius holds all of them. An
+ * empty answer therefore says something about how we asked, never about what they carry — and the
+ * attempts differ only in how, so the difference between them IS the answer.
+ */
+export function readLookupAnswer(attempts: readonly JiniusLookupAttempt[]): JiniusLookupAnswer {
+  const hit = (k: JiniusLookupAttempt['kind'], e?: JiniusLookupAttempt['encoding']) =>
+    attempts.find((a) => a.kind === k && (e ? a.encoding === e : true) && (a.products ?? 0) > 0) ?? null;
+  const listEncoded = hit('list', 'encoded');
+  const listDocumented = hit('list', 'documented');
+  const single = hit('single');
+  const none = { works: false, askOneAtATime: false, sendUnencoded: false, type: null, message: '' };
+
+  if (!attempts.length) return { ...none, message: 'There was nothing live to look up with, so the lookup was not tested.' };
+
+  if (listEncoded) {
+    return {
+      works: true, askOneAtATime: false, sendUnencoded: false, type: listEncoded.type,
+      message: `Jinius answers a list of ${listEncoded.type} references exactly as the platform already sends it, `
+        + 'so matching products is a solved problem and the listing flow can be built on it.',
+    };
+  }
+  if (listDocumented) {
+    return {
+      works: true, askOneAtATime: false, sendUnencoded: true, type: listDocumented.type,
+      message: `Jinius understands a list of ${listDocumented.type} references only when the pipe and comma are sent as `
+        + 'Mirakl documents them. We were percent-encoding both, which their gateway reads as no filter at all and '
+        + 'answers with nothing — which is why every barcode looked "not carried". Sending them unencoded is the fix.',
+    };
+  }
+  if (single) {
+    return {
+      works: true, askOneAtATime: true, sendUnencoded: false, type: single.type,
+      message: `Jinius answers one ${single.type} at a time and returns nothing for a list, however the list is sent. `
+        + 'Matching works — the lookup just has to ask for one barcode per request, which is why every barcode '
+        + 'looked "not carried" when they were asked for together.',
+    };
+  }
+  return {
+    ...none,
+    message: 'Every lookup came back empty, including ones for references taken straight off our own live offers. '
+      + 'Their product search is not open to this shop, so listing has to go through product import rather than '
+      + 'matching against what they already carry.',
+  };
+}
+
 /** What one probed capability came back as, in words a person can act on. */
 export interface JiniusCapability {
   name: string;

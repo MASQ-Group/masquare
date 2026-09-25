@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   offerReferenceTypes, readImportPermission, readJiniusAttributes, readJiniusHierarchies, readJiniusOfferAttachments,
-  readJiniusProductMatches, requiredAttributes,
+  readJiniusProductMatches, readLookupAnswer, requiredAttributes, type JiniusLookupAttempt,
 } from './jinius-catalogue';
 
 describe('the category tree', () => {
@@ -103,5 +103,50 @@ describe('what our own live offers are attached to', () => {
   it('says nothing rather than guessing when the offers carry no reference', () => {
     expect(offerReferenceTypes(readJiniusOfferAttachments({ offers: [{ shop_sku: 'A1' }] }))).toEqual([]);
     expect(readJiniusOfferAttachments(null)).toEqual([]);
+  });
+});
+
+
+describe('what the lookups add up to', () => {
+  const attempt = (o: Partial<JiniusLookupAttempt>): JiniusLookupAttempt => ({
+    how: 'x', kind: 'single', encoding: 'encoded', type: 'EAN', asked: 1, status: 200, products: 0, excerpt: '', ...o,
+  });
+
+  /**
+   * The case this was written for. Every reference asked about is off a live offer, so an empty
+   * answer is about how we asked - and reporting it as "they do not carry it" is reporting our own
+   * bug as their catalogue.
+   */
+  it('names the encoding as the fault when a list works only as documented', () => {
+    const a = readLookupAnswer([
+      attempt({ kind: 'single', encoding: 'encoded', products: 1 }),
+      attempt({ kind: 'list', encoding: 'encoded', asked: 3, products: 0 }),
+      attempt({ kind: 'list', encoding: 'documented', asked: 3, products: 3 }),
+    ]);
+    expect(a).toMatchObject({ works: true, sendUnencoded: true, askOneAtATime: false, type: 'EAN' });
+    expect(a.message).toContain('unencoded');
+  });
+
+  it('says to ask one at a time when no list works but a single does', () => {
+    const a = readLookupAnswer([
+      attempt({ kind: 'single', products: 1 }),
+      attempt({ kind: 'list', encoding: 'encoded', asked: 3, products: 0 }),
+      attempt({ kind: 'list', encoding: 'documented', asked: 3, products: 0 }),
+    ]);
+    expect(a).toMatchObject({ works: true, askOneAtATime: true, sendUnencoded: false });
+    expect(a.message).toContain('one barcode per request');
+  });
+
+  it('leaves well alone when the list already works as we send it', () => {
+    const a = readLookupAnswer([attempt({ kind: 'list', encoding: 'encoded', asked: 3, products: 3 })]);
+    expect(a).toMatchObject({ works: true, askOneAtATime: false, sendUnencoded: false });
+  });
+
+  /** Nothing anywhere is an answer too: match-and-list is not the road, product import is. */
+  it('reads a wholly empty result as their search being closed to us', () => {
+    const a = readLookupAnswer([attempt({ products: 0 }), attempt({ kind: 'list', products: 0 })]);
+    expect(a.works).toBe(false);
+    expect(a.message).toContain('product import');
+    expect(readLookupAnswer([]).message).toContain('nothing live to look up with');
   });
 });
