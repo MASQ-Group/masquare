@@ -12,6 +12,11 @@ const TECHNICAL = [
     { detail_id: '9', name: 'Size', units: ['cm'] },
   ] },
   { group_id: '3', group_name: 'Weight', options: [{ detail_id: '20', name: 'Weight', units: ['kg'] }] },
+  // Real categories carry details with no units at all: a colour, a warranty, a material.
+  { group_id: '5', group_name: 'General Product Information', options: [
+    { detail_id: '31', name: 'Finish' },
+    { detail_id: '32', name: 'Manufacturer Warranty', units: [] },
+  ] },
 ];
 
 const rec = (value: string) => ({ value, origins: [{ kind: 'manufacturer' as const, value, url: 'https://x' }] });
@@ -19,7 +24,7 @@ const rec = (value: string) => ({ value, origins: [{ kind: 'manufacturer' as con
 describe('parseOnbuyFields', () => {
   it('reads features with their options and technical details with their units', () => {
     const fields = parseOnbuyFields(FEATURES, TECHNICAL);
-    expect(fields.map((f) => f.name)).toEqual(['Colour', 'Size', 'Seat Width', 'Office Chair Dimensions › Size', 'Weight']);
+    expect(fields.map((f) => f.name)).toEqual(['Colour', 'Size', 'Seat Width', 'Office Chair Dimensions › Size', 'Weight', 'Finish', 'Manufacturer Warranty']);
     expect(fields[0]).toMatchObject({ kind: 'feature', required: true, options: [{ id: '11', name: 'Black' }, { id: '12', name: 'Grey' }] });
     expect(fields[2]).toMatchObject({ kind: 'technical', detailId: '4', units: ['m', 'cm', 'mm', 'in'] });
   });
@@ -41,6 +46,26 @@ describe('readMeasurement', () => {
 
 describe('resolveOnbuyFields', () => {
   const fields = parseOnbuyFields(FEATURES, TECHNICAL);
+
+  /**
+   * The failure this was written for. Every technical detail went through the measurement reader,
+   * which checks the unit against the field's list - so a field with an EMPTY list rejected every
+   * answer whatever it said. A live OnBuy listing was refused with Colour "Black" called "not a
+   * single number with a unit", and Capacity "9.2 L" called a unit OnBuy does not take "()".
+   * A list we do not have is not a list that forbids everything.
+   */
+  it('sends a detail with no units as the text it is', () => {
+    const r = resolveOnbuyFields(fields, { Finish: rec('Black'), 'Manufacturer Warranty': rec('2 years') });
+    expect(r.technical).toEqual([{ detail_id: 31, value: 'Black' }, { detail_id: 32, value: '2 years' }]);
+    expect(r.rejected).toEqual([]);
+  });
+
+  /** A detail that DOES declare units is still a measurement, and a wrong unit is still refused. */
+  it('still holds measurements to the units OnBuy lists', () => {
+    const r = resolveOnbuyFields(fields, { 'Seat Width': rec('52 ft') });
+    expect(r.technical).toEqual([]);
+    expect(r.rejected[0].why).toContain('not one OnBuy takes here');
+  });
 
   it('sends an option by its id and a measurement with its unit', () => {
     const r = resolveOnbuyFields(fields, { Colour: rec('black'), 'Seat Width': rec('52 cm'), Weight: rec('9') });
