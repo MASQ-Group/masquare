@@ -918,6 +918,16 @@ model Product {
    */
   facts Json?
 
+  /**
+   * The buyer-facing words, once, in the parts a channel assembles to its own limits.
+   *
+   * `{ title: { brand, model, whatItIs, attributes[] }, paragraphs[], features[] }`. A title is the
+   * same product said to the same buyer whatever the marketplace; only the room differs. Rendered
+   * per channel (see `gather/product-copy.ts`), and read ONLY where a channel has nothing of its
+   * own - `ebayTitle` and the `onbuy*` columns below still win wherever they are set.
+   */
+  copy Json?
+
   // ---- Listing content ----------------------------------------------------
   // Only eBay and Shopify ever display any of this. Amazon and OnBuy attach our offer to their own
   // catalogue entry and show their own copy, so `title` above stays what it has always been: a name
