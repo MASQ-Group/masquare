@@ -2288,12 +2288,33 @@ export const amazonListingApi = {
     api.post<AmazonOfferPreview>(`/listing/amazon/products/${productId}/channels/${integrationId}/preview`, {}).then((r) => r.data),
 };
 
+
+/** What content a product has, for every channel that shows any. */
+export interface ChannelContentState {
+  channelType: string;
+  label: string;
+  title: { source: 'channel' | 'shared' | 'none'; value: string | null; fits: boolean; limit: number | null } | null;
+  description: { source: 'channel' | 'shared' | 'none' } | null;
+  category: { needed: boolean; chosen: boolean; name: string | null };
+  blockers: string[];
+}
+
+export interface ContentReadiness {
+  productId: string;
+  sku: string;
+  hasSharedCopy: boolean;
+  summary: string;
+  channels: ChannelContentState[];
+}
+
 export const listingApi = {
   marketplaceProfiles: () => api.get<MarketplaceProfile[]>('/listing/marketplace-profiles').then((r) => r.data),
   updateMarketplaceProfile: (id: string, patch: Partial<MarketplaceProfile>) =>
     api.patch<MarketplaceProfile>(`/listing/marketplace-profiles/${id}`, patch).then((r) => r.data),
   productChannels: (productId: string) =>
     api.get<ProductChannels>(`/listing/products/${productId}/channels`).then((r) => r.data),
+  contentReadiness: (productId: string) =>
+    api.get<ContentReadiness>(`/listing/products/${productId}/content-readiness`).then((r) => r.data),
   upsertPlan: (productId: string, integrationId: string, patch: Partial<ChannelPlan>) =>
     api.put<ChannelPlan>(`/listing/products/${productId}/channels/${integrationId}`, patch).then((r) => r.data),
   removePlan: (productId: string, integrationId: string, marketplace: string) =>

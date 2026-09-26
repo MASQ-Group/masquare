@@ -1,6 +1,8 @@
 import { pickLiveListing } from '../channel-listings/pick-live-listing';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { hasCopy, readProductCopy } from '../gather/product-copy';
+import { channelContentState, contentSummary, type ChannelContentState } from './content-rules';
 import { evaluateEligibility, type MarketProfile, type ProductTechnical } from './eligibility';
 import { evaluateReadiness, checkBoost, type ListingFacts } from './readiness';
 import { fullScopeIntegrationWhere } from '../common/amazon-scope';
@@ -44,6 +46,74 @@ export class ListingService {
     const existing = await this.prisma.marketplaceProfile.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Marketplace profile not found');
     return this.prisma.marketplaceProfile.update({ where: { id }, data: patch });
+  }
+
+  /**
+   * One place to see what content this product has, for every channel that shows any.
+   *
+   * The question people were answering by opening four tabs in turn: is this product ready to list
+   * where we sell? Answered from what we hold rather than by asking the marketplaces - a view that
+   * made a dozen API calls every time it opened would be slow enough that nobody opened it, and its
+   * answer would still be a snapshot. The marketplace's own checks stay on the channel's own tab,
+   * where they are asked for deliberately.
+   */
+  async contentReadiness(productId: string, companyIds?: string[]) {
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, deletedAt: null },
+      select: {
+        id: true, mainSku: true, copy: true, ebayTitle: true, descriptionHtml: true,
+        onbuyTitle: true, onbuyDescriptionHtml: true,
+      },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+
+    const integrations = await this.prisma.channelIntegration.findMany({
+      where: {
+        deletedAt: null, status: 'active', channelType: { in: LISTABLE_CHANNELS },
+        ...(companyIds ? { targetCompanyId: { in: companyIds } } : {}),
+      },
+      select: { id: true, name: true, channelType: true, marketplace: true },
+      orderBy: [{ channelType: 'asc' }, { name: 'asc' }],
+    });
+    const plans = await this.prisma.productChannelPlan.findMany({
+      where: { productId, deletedAt: null },
+      select: { integrationId: true, marketplace: true, categoryRef: true, categoryName: true },
+    });
+
+    const copy = readProductCopy(product.copy);
+    /**
+     * One row per channel TYPE, not per connection.
+     *
+     * Content is the product's, not an account's: the words that go to eBay UK are the words that go
+     * to eBay Germany, and a row per marketplace would ask the same question eight times and answer
+     * it identically. Which account lists where is a question for the Channels tab.
+     */
+    const seen = new Set<string>();
+    const states: ChannelContentState[] = [];
+    for (const intg of integrations) {
+      if (seen.has(intg.channelType)) continue;
+      seen.add(intg.channelType);
+      const plan = plans.find((pl) => pl.integrationId === intg.id)
+        ?? plans.find((pl) => integrations.some((i) => i.id === pl.integrationId && i.channelType === intg.channelType));
+      const own = intg.channelType === 'ebay' ? product.ebayTitle : intg.channelType === 'onbuy' ? product.onbuyTitle : null;
+      const hasOwnDescription = intg.channelType === 'ebay'
+        ? !!product.descriptionHtml?.trim()
+        : intg.channelType === 'onbuy' ? !!product.onbuyDescriptionHtml?.trim() : false;
+      const state = channelContentState(
+        { channelType: intg.channelType, ownTitle: own, hasOwnDescription, categoryRef: plan?.categoryRef, categoryName: plan?.categoryName },
+        copy,
+      );
+      if (state) states.push(state);
+    }
+
+    return {
+      productId: product.id,
+      sku: product.mainSku,
+      /** Whether there is anything shared to fall back on at all. */
+      hasSharedCopy: hasCopy(copy),
+      summary: contentSummary(states),
+      channels: states,
+    };
   }
 
   /**

@@ -41,6 +41,12 @@ export class ListingController {
    * marketplace, so without this the tab listed Amazon DE, FR, ES and the rest twice over — once
    * per company, with nothing on screen to tell the two apart.
    */
+  /** What content this product has for every channel that shows any. Read-only, and local. */
+  @Get('products/:productId/content-readiness')
+  contentReadiness(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
+    return this.svc.contentReadiness(productId, companyIds);
+  }
+
   @Get('products/:productId/channels')
   productChannels(@Param('productId') productId: string, @VisibleCompanies() companyIds: string[]) {
     return this.svc.productChannels(productId, companyIds);
