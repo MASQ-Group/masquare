@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { ActivityService } from '../../activity/activity.service';
+import { ProductFactsService } from '../../gather/product-facts.service';
 import { diffRecords } from '../../activity/diff';
 import { PRODUCT_FIELD_LABELS } from '../../activity/product-fields';
 import { canGather, foldFindings } from '../../gather/gather-rules';
@@ -42,6 +43,7 @@ export class OnbuyContentService {
     private readonly prisma: PrismaService,
     private readonly integrations: IntegrationsService,
     private readonly activity: ActivityService,
+    private readonly facts: ProductFactsService,
   ) {}
 
   /** The OnBuy connection: the one named, or the only one in the caller's companies. */
@@ -278,8 +280,17 @@ export class OnbuyContentService {
       args.sources,
       args.findings,
     );
+    const at = new Date().toISOString();
+    /**
+     * The same findings, kept for every channel as well as for OnBuy.
+     *
+     * A colour found here used to be invisible to eBay and to Jinius, which sent Claude to find it
+     * again - and a value each channel found once from a retailer stayed held back on both, because
+     * neither could see that two sources now agreed.
+     */
+    await this.facts.remember(p.id, screened.accepted, at, args.userId);
     const existing = normaliseAspects(plan.specifics);
-    const { records, ignored, touched } = foldFindings(existing, screened.accepted, names, new Date().toISOString());
+    const { records, ignored, touched } = foldFindings(existing, screened.accepted, names, at);
     if (touched.some((t) => t.changed)) {
       await this.prisma.productChannelPlan.update({
         where: { id: plan.id },

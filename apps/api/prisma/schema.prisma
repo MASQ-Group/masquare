@@ -906,6 +906,18 @@ model Product {
   msrpAmount           Decimal? @map("msrp_amount") @db.Decimal(14, 4)
   msrpCurrency         String   @default("EUR") @map("msrp_currency")
 
+  /**
+   * What is TRUE about this product, whatever a marketplace calls it.
+   *
+   * `Record<canonicalName, AspectRecord>` - the same evidence shape the per-channel columns use, so
+   * a source found while researching for eBay counts for OnBuy and Jinius too, including towards
+   * the two-sources rule that decides what may be published. The names are canonical (see
+   * `gather/fact-names.ts`): a channel asks for a fact by whatever IT calls the thing.
+   *
+   * Per-channel answers stay where they are and still win. This is the floor, not a replacement.
+   */
+  facts Json?
+
   // ---- Listing content ----------------------------------------------------
   // Only eBay and Shopify ever display any of this. Amazon and OnBuy attach our offer to their own
   // catalogue entry and show their own copy, so `title` above stays what it has always been: a name
