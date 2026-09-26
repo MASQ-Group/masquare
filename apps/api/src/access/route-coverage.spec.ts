@@ -76,8 +76,8 @@ describe('access declarations', () => {
     // missing entirely — a floor cannot notice an omission above it. If this number moves, a
     // controller was added or removed and somebody should say which.
     const classes = FILES.reduce((n, f) => n + declarations(readFileSync(f, 'utf8')).length, 0);
-    // 71 since JiniusListingController (25 Sep 2026) — creating an offer on Jinius, under channel listings.
-    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(71);
+    // 72 since McpOAuthController (26 Sep 2026) — the connector's sign-in form, so claude.ai can connect.
+    expect(classes, `Controller classes found across ${FILES.length} files`).toBe(72);
   });
 
   it('declares an area, an explicit exemption, or the portal on every controller', () => {
@@ -193,6 +193,11 @@ describe('access declarations', () => {
       // controller itself. It then acts as one named user, and that user's ordinary company grants
       // still decide what it can reach — so the exemption is from the login guard, not from scoping.
       '/mcp/mcp.controller.ts',
+      // The connector's sign-in form, where Claude on claude.ai sends a person to connect. Public by
+      // necessity: they are not signed in to maSquare yet, which is what the form is for. The gate is
+      // the password, a signed and short-lived sign-in request, a per-account attempt limit, and a
+      // fixed list of accounts allowed to connect — administrators never among them.
+      '/mcp/oauth/mcp-oauth.controller.ts',
       // A person's own notifications. Nothing here can reach anybody else's — every route is scoped
       // to the signed-in user — so there is no area to check, and the exemption says so out loud
       // rather than leaving the decorator off and looking like an oversight.
