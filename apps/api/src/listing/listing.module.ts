@@ -13,6 +13,7 @@ import { OnbuyImagesService } from './onbuy/onbuy-images.service';
 import { OnbuyContentService } from './onbuy/onbuy-content.service';
 import { JiniusListingController } from './jinius/jinius-listing.controller';
 import { JiniusListingService } from './jinius/jinius-listing.service';
+import { ProductContentService } from './product-content.service';
 import { ListingPriceController } from './price/listing-price.controller';
 import { ListingPriceService } from './price/listing-price.service';
 import { IntegrationsModule } from '../integrations/integrations.module';
@@ -24,9 +25,9 @@ import { PricingModule } from '../pricing/pricing.module';
   // PricingModule for its FX rates: an eBay UK listing prices in GBP from a cost recorded in EUR.
   imports: [IntegrationsModule, AmazonRepricingModule, GatherModule, PricingModule],
   controllers: [ListingController, AmazonListingController, EbayListingController, OnbuyListingController, JiniusListingController, ListingPriceController, AvailabilitySweepController],
-  providers: [ListingService, AmazonListingService, EbayListingService, OnbuyListingService, OnbuyImagesService, OnbuyContentService, JiniusListingService, ListingPriceService, AvailabilitySweepService],
+  providers: [ListingService, AmazonListingService, EbayListingService, OnbuyListingService, OnbuyImagesService, OnbuyContentService, JiniusListingService, ProductContentService, ListingPriceService, AvailabilitySweepService],
   // EbayListingService and OnbuyContentService are exported for the maSquare connector (McpModule),
   // which runs research through the same gather rules rather than keeping a second copy of them.
-  exports: [ListingService, AvailabilitySweepService, EbayListingService, OnbuyContentService],
+  exports: [ListingService, AvailabilitySweepService, EbayListingService, OnbuyContentService, ProductContentService],
 })
 export class ListingModule {}

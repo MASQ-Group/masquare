@@ -6,6 +6,7 @@ import type { CompanyScopeService } from '../common/company-scope';
 import type { AuthUser } from '../common/current-user.decorator';
 import type { EbayListingService } from '../listing/ebay/ebay-listing.service';
 import type { OnbuyContentService } from '../listing/onbuy/onbuy-content.service';
+import type { ProductContentService } from '../listing/product-content.service';
 
 /**
  * The maSquare connector: what Claude can see and do when a person points it at this platform.
@@ -33,6 +34,8 @@ export interface McpDeps {
   listing: EbayListingService;
   /** OnBuy content: the same research rules, OnBuy's fields and words. */
   onbuy: OnbuyContentService;
+  /** Every channel at once: one brief, one set of words, kept for the product rather than a channel. */
+  content: ProductContentService;
   scope: CompanyScopeService;
   prisma: PrismaService;
 }
@@ -103,6 +106,20 @@ export const INSTRUCTIONS = [
   '- Skip Brand, MPN and Model — maSquare takes those from the product itself.',
   '- Skip fields already answered by a person or by the manufacturer (see "current" in the brief).',
   '',
+  'EVERY CHANNEL AT ONCE (prefer this when the user wants a product ready to list, not one marketplace):',
+  '1. get_product_for_gather with channel "all" - one list of what EVERY channel is waiting for, folded so',
+  '   a fact three marketplaces ask for appears once and names all three. It also gives alreadyKnown: what',
+  '   the platform already holds about this product from any earlier research, so do not go looking for',
+  '   those again unless a page you are already reading happens to state one.',
+  '2. submit_gather_findings as usual. The findings are kept for the product, so an answer found here',
+  '   serves every channel - including towards the two-sources rule, which sources found for different',
+  '   channels can now meet together.',
+  '3. submit_product_copy - the words ONCE, as PARTS. Give brand, model, what the thing is, and the facts',
+  '   buyers filter on MOST USEFUL FIRST, because each channel assembles its own title from them and the',
+  '   room runs out from the end. Do not write a finished title: eBay allows 80 characters and OnBuy 150,',
+  '   and a finished title belongs to one of them. Paragraphs are plain prose, never HTML.',
+  '   Anything already written on a channel tab wins there, so this never overwrites a persons words.',
+  '',
   'ONBUY CONTENT (used when maSquare creates a product on OnBuy; same rules as above):',
   '1. get_product_for_gather with channel "onbuy" — the OnBuy category\'s fields: FEATURES (OnBuy\'s own',
   '   option lists; report exactly one of acceptedValues) and TECHNICAL DETAILS. A detail that lists "units"',
@@ -168,18 +185,23 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
         + 'values eBay accepts where it restricts them and the values its buyer filters use where it does not; '
         + 'and what is already answered. If the product is not '
         + 'ready, "refusal" says why. With channel "onbuy": the OnBuy category\'s features and technical details '
-        + 'instead, the pages already accepted for this product, and its current OnBuy words. Read-only.',
+        + 'instead, the pages already accepted for this product, and its current OnBuy words. '
+        + 'With channel "all": what EVERY channel is waiting for, in one list, folded so a fact three '
+        + 'marketplaces ask for appears once and names all three — plus what is already known about the '
+        + 'product, so a trip is only spent on what is genuinely missing. Read-only.',
       inputSchema: {
         sku: z.string().min(1).max(100).describe('The product SKU, exactly.'),
-        channel: z.enum(['ebay', 'onbuy']).optional().describe('Whose fields to research. eBay unless "onbuy".'),
+        channel: z.enum(['ebay', 'onbuy', 'all']).optional()
+          .describe('Whose fields to research. eBay unless "onbuy", or "all" for every channel at once.'),
         company: z.string().max(200).optional()
           .describe('Company name, only needed when the user has more than one company selling on eBay.'),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ sku, company, channel }) => run(async () => {
-      const companyId = await resolveCompany(deps, actor, company, channel ?? 'ebay');
+      const companyId = await resolveCompany(deps, actor, company, channel === 'all' ? 'ebay' : channel ?? 'ebay');
       const productId = await requireProduct(deps, sku);
+      if (channel === 'all') return deps.content.brief(productId, [companyId]);
       return channel === 'onbuy'
         ? deps.onbuy.brief(productId, [companyId])
         : deps.listing.researchBrief(productId, [companyId]);
@@ -333,6 +355,48 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
     }),
   );
 
+  addTool<CopyArgs>(server,
+    'submit_product_copy',
+    {
+      title: 'Write the words once, for every channel',
+      description:
+        'The buyer-facing words kept for the PRODUCT rather than for one marketplace. A title is given as '
+        + 'PARTS - brand, model, what the thing is, and the facts buyers filter on - because each channel '
+        + 'assembles its own title from them to its own limit: eBay stops at 80 characters, OnBuy at 150. '
+        + 'Do not write a finished title; a finished title belongs to one channel and storing one puts us '
+        + 'back to writing the same sentence per marketplace. Paragraphs are plain prose, never HTML: each '
+        + 'channel adds its own markup. Used only where a channel has nothing written for it of its own, so '
+        + 'this never overwrites words somebody wrote for eBay or OnBuy. The reply shows the title each '
+        + 'channel comes out with, so you can see the consequence of the parts you chose.',
+      inputSchema: {
+        sku: z.string().min(1).max(100).describe('The product SKU, exactly.'),
+        brand: z.string().max(80).optional().describe('The brand, as the manufacturer writes it.'),
+        model: z.string().max(80).optional().describe('The model or part number a buyer searches for. Never our internal SKU.'),
+        whatItIs: z.string().max(120).optional()
+          .describe('What the thing IS, as a buyer would say it: "espresso machine", not "appliance".'),
+        attributes: z.array(z.string().max(60)).max(8).optional()
+          .describe('The facts buyers filter on, MOST USEFUL FIRST - the room runs out from the end, so the last one is dropped first.'),
+        paragraphs: z.array(z.string().max(1200)).max(5).optional()
+          .describe('Two or three short paragraphs of plain prose. No markup. Every fact from a page you cited.'),
+        features: z.array(z.string().max(200)).max(10).optional()
+          .describe('Ordered selling points, one line each.'),
+        company: z.string().max(200).optional()
+          .describe('Company name, only needed when the user has more than one company.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (a) => run(async () => {
+      await resolveCompany(deps, actor, a.company, 'ebay');
+      const productId = await requireProduct(deps, a.sku);
+      return deps.content.submitCopy(productId, {
+        title: { brand: a.brand, model: a.model, whatItIs: a.whatItIs, attributes: a.attributes },
+        paragraphs: a.paragraphs,
+        features: a.features,
+        userId: actor.sub,
+      });
+    }),
+  );
+
   addPrompt<{ skus: string }>(server,
     'write_onbuy_content',
     {
@@ -452,7 +516,11 @@ function addPrompt<A>(
  */
 interface CompanyArg { company?: string }
 interface ListArgs extends CompanyArg { skus?: string[]; search?: string; onlyReady?: boolean; limit?: number }
-interface BriefArgs extends CompanyArg { sku: string; channel?: 'ebay' | 'onbuy' }
+interface BriefArgs extends CompanyArg { sku: string; channel?: 'ebay' | 'onbuy' | 'all' }
+interface CopyArgs extends CompanyArg {
+  sku: string; brand?: string; model?: string; whatItIs?: string; attributes?: string[];
+  paragraphs?: string[]; features?: string[];
+}
 interface OnbuyContentArgs extends CompanyArg {
   sku: string;
   title?: string | null;

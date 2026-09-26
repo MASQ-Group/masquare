@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { byCanonicalName, canonicalFactName, factFor, sameFact } from './fact-names';
+import { byCanonicalName, canonicalFactName, factFor, sameFact, withSharedFacts } from './fact-names';
 
 describe('one name for a fact', () => {
   /**
@@ -56,5 +56,35 @@ describe('finding what we hold, by the name a channel uses', () => {
     const m = byCanonicalName({ Colour: 'Black', Color: 'Grey' });
     expect(m.get('colour')!.value).toBe('Black');
     expect(m.size).toBe(1);
+  });
+});
+
+describe('a channel reading what is known generally', () => {
+  const shared = { colour: 'Black', power: '2100 W', 'seat width': '52 cm' };
+
+  /**
+   * The channel's own record always wins: it was researched against that channel's field, may carry
+   * a person's edit, and is the answer somebody reviewed. The shared store is the floor underneath.
+   */
+  it('never overwrites an answer the channel already has', () => {
+    const out = withSharedFacts({ Colour: 'Grey' }, shared, ['Colour', 'Wattage']);
+    expect(out.Colour).toBe('Grey');
+    expect(out.Wattage).toBe('2100 W');
+  });
+
+  /** Filled under the name the CHANNEL uses, so the resolver needs no idea this happened. */
+  it('answers under the channel’s own spelling', () => {
+    expect(withSharedFacts({}, shared, ['Color'])).toEqual({ Color: 'Black' });
+    expect(withSharedFacts({}, shared, ['General Product Information › Colour']))
+      .toEqual({ 'General Product Information › Colour': 'Black' });
+  });
+
+  /** A known fact no field asks for is not smuggled into a payload because it happens to exist. */
+  it('fills only the fields asked for', () => {
+    expect(withSharedFacts({}, shared, ['Colour'])).toEqual({ Colour: 'Black' });
+  });
+
+  it('leaves a field nothing answers alone', () => {
+    expect(withSharedFacts({}, shared, ['Blade Retention System'])).toEqual({});
   });
 });

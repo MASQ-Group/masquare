@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CompanyScopeService } from '../common/company-scope';
 import { EbayListingService } from '../listing/ebay/ebay-listing.service';
 import { OnbuyContentService } from '../listing/onbuy/onbuy-content.service';
+import { ProductContentService } from '../listing/product-content.service';
 import type { AuthUser } from '../common/current-user.decorator';
 import { bearerMatches, readMcpConfig } from './mcp-auth';
 import { buildMasquareServer } from './mcp-tools';
@@ -41,6 +42,8 @@ export class McpController {
     private readonly scope: CompanyScopeService,
     private readonly listing: EbayListingService,
     private readonly onbuy: OnbuyContentService,
+    /** Every channel at once: one brief, and the words kept for the product rather than a channel. */
+    private readonly content: ProductContentService,
   ) {}
 
   @Post()
@@ -66,7 +69,10 @@ export class McpController {
       return;
     }
 
-    const server = buildMasquareServer({ listing: this.listing, onbuy: this.onbuy, scope: this.scope, prisma: this.prisma }, actor);
+    const server = buildMasquareServer(
+      { listing: this.listing, onbuy: this.onbuy, content: this.content, scope: this.scope, prisma: this.prisma },
+      actor,
+    );
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
 
     // Both are per-request; closing them when the response ends is what keeps the endpoint stateless.

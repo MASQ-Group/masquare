@@ -11,6 +11,7 @@ import { EntityHistory } from '../common/EntityHistory';
 import { ProductDocuments } from './ProductDocuments';
 import { EbayContentTab } from './EbayContentTab';
 import { OnbuyContentTab } from './OnbuyContentTab';
+import { ContentReadiness } from './ContentReadiness';
 import { RichTextEditor } from '../common/RichTextEditor';
 import { FeatureList } from './FeatureList';
 import { FileDrop, ModalShell, Select } from '@masquare/ui';
@@ -570,9 +571,14 @@ export function ProductModal({ product, onClose, onSaved }: Props) {
 
       {tab === 'content' && (
         <div className="flex flex-col gap-4">
+          {/*
+            * One place to see where this product stands on every channel, before any of the copy
+            * below. It was four tabs opened in turn, and each channel added made it one more.
+            */}
+          {product && <ContentReadiness productId={product.id} />}
           <p className="text-[12.5px] text-n-500">
-            Only eBay shows any of this. Amazon and OnBuy attach our offer to their own catalogue entry and
-            never display our copy.
+            The copy below is the product's own. A channel that has nothing written for it uses these words,
+            assembled to its own limits; anything written on a channel's own tab wins there.
           </p>
           {/*
             * The eBay title and the category used to sit here. They moved to the eBay content tab:

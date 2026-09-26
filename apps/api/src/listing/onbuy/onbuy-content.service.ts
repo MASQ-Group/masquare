@@ -3,6 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { IntegrationsService } from '../../integrations/integrations.service';
 import { ActivityService } from '../../activity/activity.service';
 import { ProductFactsService } from '../../gather/product-facts.service';
+import { withSharedFacts } from '../../gather/fact-names';
+import { readProductCopy, renderFeatures, renderParagraphs, renderTitle } from '../../gather/product-copy';
 import { diffRecords } from '../../activity/diff';
 import { PRODUCT_FIELD_LABELS } from '../../activity/product-fields';
 import { canGather, foldFindings } from '../../gather/gather-rules';
@@ -110,6 +112,8 @@ export class OnbuyContentService {
       select: {
         id: true, mainSku: true, title: true, manufacturerSku: true, ean: true, upc: true, manufacturerUrls: true,
         onbuyTitle: true, onbuyDescriptionHtml: true, onbuySummaryPoints: true, onbuyAiModel: true,
+        // The product's own words, used where OnBuy has none of its own.
+        copy: true,
         brand: { select: { name: true, website: true } },
         aliases: { where: { deletedAt: null }, select: { skuValue: true } },
       },
@@ -142,14 +146,24 @@ export class OnbuyContentService {
   /** Everything the OnBuy content tab shows. Read-only. */
   async view(productId: string, integrationId: string | undefined, companyIds: string[]) {
     const integration = await this.integrationFor(integrationId, companyIds);
-    const [plan, evidence] = await Promise.all([this.plan(productId, integration), this.ebayEvidence(productId)]);
-    const records = normaliseAspects(plan?.specifics);
+    const [plan, evidence, shared] = await Promise.all([
+      this.plan(productId, integration), this.ebayEvidence(productId), this.facts.facts(productId),
+    ]);
+    const own = normaliseAspects(plan?.specifics);
     let fields: OnbuyField[] = [];
     let fieldsProblem: string | null = null;
     if (plan?.categoryRef) {
       try { fields = await this.categoryFields(integration.id, plan.categoryRef); }
       catch (e: any) { fieldsProblem = e?.message ?? 'OnBuy could not be asked about this category.'; }
     }
+    /**
+     * OnBuy's own answers first, then what is known about the product generally.
+     *
+     * A colour found while researching for eBay answers OnBuy's colour field without anybody asking
+     * for it again. OnBuy's own record still wins wherever it has one, and only fields THIS category
+     * asks for are filled - a fact nothing here wants is not smuggled in because it is known.
+     */
+    const records = withSharedFacts(own, shared, fields.map((f) => f.name));
     const resolved = resolveOnbuyFields(fields, records);
     return {
       integrationId: integration.id,
@@ -409,10 +423,26 @@ export class OnbuyContentService {
     const resolved = resolveOnbuyFields(fields, normaliseAspects(plan?.specifics));
     for (const name of resolved.missing) missing.push(`OnBuy field "${name}" — answer it on the OnBuy content tab`);
     const safety = onbuySafetyBody(normaliseSafety(plan?.safetyContent));
+
+    /**
+     * OnBuy's own words first, then the product's, assembled to OnBuy's room.
+     *
+     * A title written for OnBuy is OnBuy's title and is never touched. Where nobody has written one,
+     * the shared parts are assembled to OnBuy's 150 characters rather than a second version of the
+     * same sentence being written by hand for every channel.
+     */
+    const copy = readProductCopy(p.copy);
+    const sharedTitle = renderTitle(copy.title, ONBUY_TITLE_MAX);
+    const sharedDescription = renderParagraphs(copy.paragraphs, 'html');
+    const sharedPoints = renderFeatures(copy.features, ONBUY_MAX_SUMMARY_POINTS);
+    const ownPoints = p.onbuySummaryPoints.map((s) => s.trim()).filter(Boolean);
+
     return {
-      name: p.onbuyTitle?.trim() || null,
-      description: htmlToPlainText(p.onbuyDescriptionHtml).trim() ? p.onbuyDescriptionHtml!.trim() : null,
-      summaryPoints: p.onbuySummaryPoints.map((s) => s.trim()).filter(Boolean),
+      name: p.onbuyTitle?.trim() || sharedTitle || null,
+      description: htmlToPlainText(p.onbuyDescriptionHtml).trim()
+        ? p.onbuyDescriptionHtml!.trim()
+        : sharedDescription || null,
+      summaryPoints: ownPoints.length ? ownPoints : sharedPoints,
       features: resolved.features,
       technical: resolved.technical,
       rejected: resolved.rejected,
