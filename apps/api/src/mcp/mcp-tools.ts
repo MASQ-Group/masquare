@@ -397,6 +397,53 @@ export function buildMasquareServer(deps: McpDeps, actor: AuthUser): McpServer {
     }),
   );
 
+  /**
+   * The one to reach for when a product should be ready to sell, rather than ready on one
+   * marketplace. Listed as a prompt because a capability nobody can find is a capability nobody has:
+   * the per-channel flows each had one, and this did not, so the only way to use it was to know the
+   * words. Now it is in the list beside them.
+   */
+  addPrompt<{ skus: string }>(server,
+    'prepare_product_content',
+    {
+      title: 'Prepare a product for every channel, in one pass',
+      description:
+        'Research once and write once for one or more maSquare products: one list of what every channel is '
+        + 'waiting for, then the words stored as parts so each marketplace assembles its own title.',
+      argsSchema: {
+        skus: z.string().describe('One or more SKUs, separated by commas or spaces.'),
+      },
+    },
+    ({ skus }) => ({
+      messages: [{
+        role: 'user' as const,
+        content: {
+          type: 'text' as const,
+          text: [
+            `Prepare these maSquare products for every channel: ${skus}`,
+            '',
+            'For each product:',
+            '1. get_product_for_gather with channel "all". It gives ONE list of what every channel is waiting',
+            '   for, folded so a fact several marketplaces ask for appears once and names them all, plus',
+            '   alreadyKnown - what the platform already holds. Do not go looking for anything in alreadyKnown',
+            '   again unless a page you are reading anyway happens to state it.',
+            '   If a channel reports a problem instead of fields (usually no category chosen), note it and carry',
+            '   on with the rest - it is a thing for a person to do, not something to work around.',
+            '2. Search the web for what is genuinely missing, most-wanted first. The manufacturer page first,',
+            '   and every page must be THIS model.',
+            '3. submit_gather_findings once, with every page used and every value found.',
+            '4. submit_product_copy - the words ONCE, as parts: brand, model, what the thing is, and the facts',
+            '   buyers filter on MOST USEFUL FIRST. Do not write a finished title. Paragraphs are plain prose.',
+            '   The reply shows the title each channel comes out with; if one does not fit, say so.',
+            '',
+            'When all are done, give me a short table: SKU, facts learned, facts still held back for a person,',
+            'what is still missing, and any channel that could not be asked and why.',
+          ].join('\n'),
+        },
+      }],
+    }),
+  );
+
   addPrompt<{ skus: string }>(server,
     'write_onbuy_content',
     {
