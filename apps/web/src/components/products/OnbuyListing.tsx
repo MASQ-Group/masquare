@@ -610,6 +610,14 @@ export function OnbuyListingPreview({ productId, integrationId, savePlan, onList
         toast.success(`Listed on OnBuy — ${r.sku} on ${r.opc}`);
         if (r.message) toast.warning(r.message, { duration: 12000 });
         onListed();
+        /**
+         * Ask OnBuy again, so the panel shows what just happened.
+         *
+         * A toast is gone in seconds and the panel underneath still showed the state from BEFORE the
+         * listing - so anyone who looked away came back to a card that gave no sign it had worked.
+         * The preview is the panel's only source of truth, so it is the thing that has to be re-read.
+         */
+        preview.mutate();
       } else {
         toast.error(r.message, { duration: 12000 });
       }

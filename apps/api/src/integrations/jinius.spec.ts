@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   JINIUS_PATHS, jiniusBase, jiniusHeaders, jiniusOfferUpdateBody, jiniusUrl, jiniusUrlProblem, readJiniusImportId,
-  readJiniusImportReport, readJiniusOffers, readJiniusPushOutcome, readJiniusTest,
+  readJiniusErrorReport, readJiniusImportReport, readJiniusOffers, readJiniusPushOutcome, readJiniusTest,
 } from './jinius';
 
 describe('the Jinius (Mirakl) base URL', () => {
@@ -204,5 +204,49 @@ describe('what an offer write came to', () => {
     expect(readJiniusPushOutcome(500, null, null, 'x').ok).toBe(false);
     // Accepted with nothing to confirm it by is not something to report as done.
     expect(readJiniusPushOutcome(200, null, null, 'x').ok).toBe(false);
+  });
+});
+
+describe('the reason Jinius refused a line', () => {
+  /**
+   * "Jinius rejected 1 of 1 line(s)" was true and useless. Mirakl writes the reason into an error
+   * report, one row per refused line, and nobody went and got it. The longest field of each row is
+   * taken because that is reliably the message wherever an operator put it.
+   */
+  it('reads the reason out of their error report, whatever it is delimited with', () => {
+    const semi = 'sku;error\nIT49693;The product id does not exist in the catalogue';
+    expect(readJiniusErrorReport(semi)).toEqual(['The product id does not exist in the catalogue']);
+
+    const tabbed = 'sku\terror\nIT49693\tPrice is below the minimum for this category';
+    expect(readJiniusErrorReport(tabbed)).toEqual(['Price is below the minimum for this category']);
+  });
+
+  it('keeps a quoted field whole, commas and all', () => {
+    const csv = 'sku,error\nIT49693,"Missing state_code, which this category requires"';
+    expect(readJiniusErrorReport(csv)).toEqual(['Missing state_code, which this category requires']);
+  });
+
+  it('stops at the number asked for, and is safe on nothing', () => {
+    const many = ['sku;error', 'a;first reason here', 'b;second reason here', 'c;third reason here', 'd;fourth'].join('\n');
+    expect(readJiniusErrorReport(many, 2)).toEqual(['first reason here', 'second reason here']);
+    expect(readJiniusErrorReport('')).toEqual([]);
+    // A header on its own is not a reason.
+    expect(readJiniusErrorReport('sku;error')).toEqual([]);
+  });
+});
+
+describe('what an offer write came to, with their words', () => {
+  const rejected = { status: 'COMPLETE', done: true, read: 1, accepted: 0, errors: 1 };
+
+  /** The count alone says nothing anybody can act on; their reason is the whole point. */
+  it('puts their reason in the message when there is one', () => {
+    const r = readJiniusPushOutcome(200, 2316399, rejected, 'The offer', ['The product id does not exist']);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('The product id does not exist');
+  });
+
+  it('says so plainly when the report gave nothing readable', () => {
+    expect(readJiniusPushOutcome(200, 2316399, rejected, 'The offer').message)
+      .toContain('gave no reason we could read');
   });
 });
