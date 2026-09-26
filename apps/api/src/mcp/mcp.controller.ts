@@ -10,7 +10,7 @@ import { EbayListingService } from '../listing/ebay/ebay-listing.service';
 import { OnbuyContentService } from '../listing/onbuy/onbuy-content.service';
 import { ProductContentService } from '../listing/product-content.service';
 import type { AuthUser } from '../common/current-user.decorator';
-import { bearerMatches, readMcpConfig } from './mcp-auth';
+import { matchCredential, readMcpConfig } from './mcp-auth';
 import { buildMasquareServer } from './mcp-tools';
 
 /**
@@ -24,7 +24,8 @@ import { buildMasquareServer } from './mcp-tools';
  * `@Public()` and `@NoAccessCheck()` switch off the platform's own login and permission guards, which
  * expect a maSquare browser session. That is not the same as no authentication: this controller
  * checks the connector's bearer token itself, on every request, before anything else happens — and
- * acts as one named user whose ordinary company grants still decide what it may reach.
+ * acts as the user that token names (the everyday user, or the owner for the owner token), whose
+ * ordinary company grants still decide what it may reach.
  *
  * Imported from the SDK's CommonJS build by way of a `paths` entry in tsconfig: this API resolves
  * modules the older "node" way, which cannot read the SDK's `exports` map. The emitted require keeps
@@ -56,15 +57,19 @@ export class McpController {
       return;
     }
 
-    if (!bearerMatches(req.headers.authorization, config.token)) {
+    for (const w of config.warnings) this.logger.warn(`Connector configuration: ${w}`);
+
+    const credential = matchCredential(req.headers.authorization, config.credentials);
+    if (!credential) {
       this.logger.warn(`Connector request with a missing or wrong token from ${req.ip}`);
       res.status(401).setHeader('WWW-Authenticate', 'Bearer').json(rpcError(-32001, 'Unauthorized'));
       return;
     }
 
-    const actor = await this.actingUser(config.userEmail);
+    const actor = await this.actingUser(credential.userEmail);
     if (!actor) {
-      this.logger.error('MCP_USER_EMAIL does not name an active maSquare user, so the connector cannot act.');
+      const setting = credential.kind === 'admin' ? 'MCP_ADMIN_USER_EMAIL' : 'MCP_USER_EMAIL';
+      this.logger.error(`${setting} does not name an active maSquare user, so the connector cannot act.`);
       res.status(403).json(rpcError(-32001, 'The connector is not linked to an active maSquare user.'));
       return;
     }
