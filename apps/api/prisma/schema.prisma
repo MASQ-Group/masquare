@@ -4728,3 +4728,51 @@ model JiniusOrderLine {
   @@index([productId])
   @@map("jinius_order_line")
 }
+
+// ─── maSquare connector sign-in (OAuth) ──────────────────────────────────────────────────────────
+// How Claude on claude.ai signs in to the connector: an app registers itself (a client), a person
+// signs in and a one-time code comes back, and the code is exchanged for tokens. Access tokens are
+// signed and short-lived, so they are not stored; only what must be single-use or revocable is.
+// Codes and refresh tokens are kept as SHA-256 hashes, never as the values themselves.
+
+/// An app that registered itself to sign people in, e.g. Claude on claude.ai.
+model McpOAuthClient {
+  id        String   @id @default(uuid()) @db.Uuid
+  clientId  String   @unique @map("client_id")
+  /// The registration as the app sent it and we accepted it (redirect URIs, name, auth method).
+  info      Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("mcp_oauth_client")
+}
+
+/// A one-time code handed back after a person signs in, exchanged once for tokens.
+model McpOAuthCode {
+  id            String    @id @default(uuid()) @db.Uuid
+  codeHash      String    @unique @map("code_hash")
+  clientId      String    @map("client_id")
+  userId        String    @map("user_id") @db.Uuid
+  codeChallenge String    @map("code_challenge")
+  redirectUri   String    @map("redirect_uri")
+  resource      String?
+  expiresAt     DateTime  @map("expires_at")
+  usedAt        DateTime? @map("used_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@map("mcp_oauth_code")
+}
+
+/// A long-lived token an app trades for a new access token. Replaced on every use.
+model McpOAuthRefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  clientId  String    @map("client_id")
+  userId    String    @map("user_id") @db.Uuid
+  resource  String?
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("mcp_oauth_refresh_token")
+}

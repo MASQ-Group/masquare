@@ -12,6 +12,7 @@ import { ProductContentService } from '../listing/product-content.service';
 import type { AuthUser } from '../common/current-user.decorator';
 import { matchCredential, readMcpConfig } from './mcp-auth';
 import { buildMasquareServer } from './mcp-tools';
+import { McpOAuthService } from './oauth/mcp-oauth.service';
 
 /**
  * The maSquare connector's HTTP endpoint: `POST /api/mcp`.
@@ -45,32 +46,44 @@ export class McpController {
     private readonly onbuy: OnbuyContentService,
     /** Every channel at once: one brief, and the words kept for the product rather than a channel. */
     private readonly content: ProductContentService,
+    /** Sign-in for claude.ai, when configured: a second way in beside the fixed tokens. */
+    private readonly oauth: McpOAuthService,
   ) {}
 
   @Post()
   async handle(@Req() req: Request, @Res() res: Response): Promise<void> {
     const config = readMcpConfig(process.env);
-    if (!config.enabled) {
+    const oauthOn = this.oauth.config.enabled;
+    if (!config.enabled && !oauthOn) {
       // The operator learns why from the log; a caller learns only that there is nothing here.
       this.logger.warn(`Connector request refused: ${config.reason}`);
       res.status(404).json(rpcError(-32001, 'Not found'));
       return;
     }
 
-    for (const w of config.warnings) this.logger.warn(`Connector configuration: ${w}`);
+    let actor: AuthUser | null = null;
+    const credential = config.enabled ? matchCredential(req.headers.authorization, config.credentials) : null;
+    if (config.enabled) for (const w of config.warnings) this.logger.warn(`Connector configuration: ${w}`);
 
-    const credential = matchCredential(req.headers.authorization, config.credentials);
-    if (!credential) {
-      this.logger.warn(`Connector request with a missing or wrong token from ${req.ip}`);
-      res.status(401).setHeader('WWW-Authenticate', 'Bearer').json(rpcError(-32001, 'Unauthorized'));
-      return;
+    if (credential) {
+      actor = await this.actingUser(credential.userEmail);
+      if (!actor) {
+        const setting = credential.kind === 'admin' ? 'MCP_ADMIN_USER_EMAIL' : 'MCP_USER_EMAIL';
+        this.logger.error(`${setting} does not name an active maSquare user, so the connector cannot act.`);
+        res.status(403).json(rpcError(-32001, 'The connector is not linked to an active maSquare user.'));
+        return;
+      }
+    } else if (oauthOn) {
+      // Not a fixed token, so perhaps a sign-in token; re-checked against the account every time.
+      actor = await this.signedInUser(req.headers.authorization);
     }
 
-    const actor = await this.actingUser(credential.userEmail);
     if (!actor) {
-      const setting = credential.kind === 'admin' ? 'MCP_ADMIN_USER_EMAIL' : 'MCP_USER_EMAIL';
-      this.logger.error(`${setting} does not name an active maSquare user, so the connector cannot act.`);
-      res.status(403).json(rpcError(-32001, 'The connector is not linked to an active maSquare user.'));
+      this.logger.warn(`Connector request with a missing or wrong token from ${req.ip}`);
+      // Tells a client that supports sign-in where to find out how, which is how claude.ai starts it.
+      const metadata = this.oauth.resourceMetadataUrl();
+      const challenge = metadata ? `Bearer resource_metadata="${metadata}"` : 'Bearer';
+      res.status(401).setHeader('WWW-Authenticate', challenge).json(rpcError(-32001, 'Unauthorized'));
       return;
     }
 
@@ -107,6 +120,18 @@ export class McpController {
   @Delete()
   remove(@Res() res: Response): void {
     res.status(405).setHeader('Allow', 'POST').json(rpcError(-32000, 'Method not allowed'));
+  }
+
+  /** The account a sign-in token acts as, or null if the token is not one or may no longer connect. */
+  private async signedInUser(header: string | undefined): Promise<AuthUser | null> {
+    const match = /^Bearer\s+(.+)$/i.exec(header?.trim() ?? '');
+    if (!match) return null;
+    try {
+      const info = await this.oauth.verifyAccessToken(match[1].trim());
+      return await this.oauth.allowedUser(String(info.extra?.userId ?? ''));
+    } catch {
+      return null;
+    }
   }
 
   /**
