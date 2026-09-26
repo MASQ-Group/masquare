@@ -13,6 +13,7 @@ import { verifyIdentity } from '../../gather/identity';
 import { ManufacturerSourceService } from '../../gather/manufacturer-source.service';
 import { ProductFactsService } from '../../gather/product-facts.service';
 import { withSharedFacts } from '../../gather/fact-names';
+import { EBAY_TITLE_MAX, readProductCopy, renderTitle } from '../../gather/product-copy';
 import { WebResearchService } from '../../gather/web-research.service';
 import { screenResearch, type ResearchedFinding, type ResearchedSource } from '../../gather/screen-research';
 import { htmlToPlainText, proseToHtml, renderEbayDescription } from './description-template';
@@ -857,6 +858,8 @@ export class EbayListingService {
       where: { id: productId, deletedAt: null },
       select: {
         id: true, mainSku: true, title: true, ebayTitle: true, manufacturerSku: true,
+        // The product's own words, used where eBay has none of its own.
+        copy: true,
         brand: { select: { name: true } },
       },
     });
@@ -942,7 +945,13 @@ export class EbayListingService {
 
     return {
       sku: product.mainSku,
-      title: product.ebayTitle ?? product.title,
+      /**
+       * eBay's own title first, then the product's parts assembled to eBay's 80 characters.
+       *
+       * `product.title` is the last resort and always was: it is a name for our own people, not
+       * something written for a buyer, and it is only reached when nobody has written either.
+       */
+      title: product.ebayTitle ?? (renderTitle(readProductCopy(product.copy).title, EBAY_TITLE_MAX) || product.title),
       manufacturerSku: product.manufacturerSku,
       /** The currency the LISTING sells in â€” every figure below is in it. */
       currency,
