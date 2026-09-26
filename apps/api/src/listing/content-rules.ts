@@ -40,7 +40,18 @@ export interface ChannelContentRules {
 export const CHANNEL_CONTENT_RULES: Record<string, ChannelContentRules> = {
   ebay: { label: 'eBay', titleMax: EBAY_TITLE_MAX, showsOurWords: true, needsCategory: true, descriptionFormat: 'template' },
   onbuy: { label: 'OnBuy', titleMax: 150, showsOurWords: true, needsCategory: true, descriptionFormat: 'html' },
-  jinius: { label: 'Jinius', titleMax: 150, showsOurWords: true, needsCategory: true, descriptionFormat: 'plain' },
+  /**
+   * Jinius behaves like Amazon TODAY and like OnBuy later.
+   *
+   * The listing flow that exists attaches an offer to a product their catalogue already carries, and
+   * a buyer then reads THEIR page - so nothing here is wanted, and asking for a title, a description
+   * and a category was asking for three things that reach nobody. Worse, no Jinius category can be
+   * chosen anywhere yet, so the row demanded something the platform gives no way to give.
+   *
+   * This becomes { titleMax: 150, showsOurWords: true, needsCategory: true } the day product import
+   * lands, because a product we create in their catalogue IS ours to describe.
+   */
+  jinius: { label: 'Jinius', titleMax: null, showsOurWords: false, needsCategory: false, descriptionFormat: null },
   amazon: { label: 'Amazon', titleMax: null, showsOurWords: false, needsCategory: false, descriptionFormat: null },
 };
 

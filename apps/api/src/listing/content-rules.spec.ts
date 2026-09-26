@@ -50,6 +50,20 @@ describe('what each channel wants of our words', () => {
     ]);
   });
 
+  /**
+   * Jinius attaches an offer to a product its catalogue already carries, and the buyer reads THEIR
+   * page. Asking for a title, a description and a category was asking for three things that reach
+   * nobody - and no Jinius category can be chosen anywhere, so the row demanded something the
+   * platform gives no way to give. It changes the day product import lands.
+   */
+  it('asks nothing of Jinius while an offer attaches to a product it already carries', () => {
+    const s = channelContentState({ channelType: 'jinius' }, EMPTY)!;
+    expect(s.title).toBeNull();
+    expect(s.description).toBeNull();
+    expect(s.category.needed).toBe(false);
+    expect(s.blockers).toEqual([]);
+  });
+
   it('is silent about a channel it has never been taught', () => {
     expect(channelContentState({ channelType: 'etsy' }, COPY)).toBeNull();
     expect(contentRulesFor('etsy')).toBeNull();
