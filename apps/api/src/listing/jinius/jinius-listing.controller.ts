@@ -6,6 +6,7 @@ import { CurrentUser, type AuthUser } from '../../common/current-user.decorator'
 import { VisibleCompanies, WriteCompany } from '../../common/active-company.decorator';
 import { AccessArea, RequireCapability } from '../../access/access.decorators';
 import { JiniusListingService } from './jinius-listing.service';
+import { JiniusProductService } from './jinius-product.service';
 
 /**
  * Listing on Jinius. The same guards as the eBay and OnBuy listing routes: admin, and the
@@ -17,7 +18,11 @@ import { JiniusListingService } from './jinius-listing.service';
 @Controller('listing/jinius')
 @AccessArea('channel_listings')
 export class JiniusListingController {
-  constructor(private readonly svc: JiniusListingService) {}
+  constructor(
+    private readonly svc: JiniusListingService,
+    /** Creating a product in their catalogue, for when attaching to theirs is not good enough. */
+    private readonly products: JiniusProductService,
+  ) {}
 
   /** A price at the launch margin, and what a typed one would earn. Read-only. */
   @Get('products/:productId/pricing')
@@ -35,6 +40,49 @@ export class JiniusListingController {
   @Get('products/:productId/preview')
   preview(@Param('productId') productId: string, @Query('integrationId') integrationId: string, @VisibleCompanies() companyIds: string[]) {
     return this.svc.preview(productId, integrationId, companyIds);
+  }
+
+  /** Their categories, searched by name. A category decides which attributes a product needs. */
+  @Get('categories')
+  categories(
+    @VisibleCompanies() companyIds: string[],
+    @Query('q') q?: string,
+    @Query('integrationId') integrationId?: string,
+  ) {
+    return this.products.categories(integrationId, q ?? '', companyIds);
+  }
+
+  /** What creating this product in their catalogue would send, and what still stops it. Sends nothing. */
+  @Get('products/:productId/create-preview')
+  createPreview(
+    @Param('productId') productId: string,
+    @Query('categoryCode') categoryCode: string,
+    @VisibleCompanies() companyIds: string[],
+    @Query('integrationId') integrationId?: string,
+  ) {
+    return this.products.preview(productId, integrationId, categoryCode, companyIds);
+  }
+
+  /** Create the product in their catalogue, so an offer can carry our own words. */
+  @Post('products/:productId/create-product')
+  @RequireCapability('marketplace_write')
+  createProduct(
+    @Param('productId') productId: string,
+    @Body() body: { integrationId?: string; categoryCode: string; confirm?: boolean },
+    @CurrentUser() user: AuthUser,
+    @WriteCompany() companyId: string,
+  ) {
+    return this.products.create(productId, body?.integrationId, { categoryCode: body?.categoryCode, confirm: body?.confirm }, user.sub, [companyId]);
+  }
+
+  /** How an import that was still running has got on since. */
+  @Get('imports/:importId')
+  importStatus(
+    @Param('importId') importId: string,
+    @VisibleCompanies() companyIds: string[],
+    @Query('integrationId') integrationId?: string,
+  ) {
+    return this.products.importStatus(integrationId, Number(importId), companyIds);
   }
 
   /** Create the offer on Jinius. Needs the platform's listing-writes setting AND an explicit confirm. */

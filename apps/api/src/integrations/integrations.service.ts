@@ -2990,6 +2990,44 @@ export class IntegrationsService implements OnModuleInit {
     return { ...outcome, importId };
   }
 
+  /**
+   * One authenticated FILE upload to Jinius.
+   *
+   * Mirakl takes a product import as a file rather than as JSON, so this is separate from the write
+   * above. The Content-Type is deliberately NOT set: fetch writes the multipart boundary itself, and
+   * a hand-written header without the boundary is a request no server can parse.
+   */
+  async jiniusPostFile(
+    integrationId: string,
+    path: string,
+    file: { name: string; content: string; type: string },
+    fields: Record<string, string> = {},
+  ): Promise<{ ok: boolean; status: number; json: any; text: string }> {
+    const row = await this.prisma.channelIntegration.findFirst({ where: { id: integrationId, deletedAt: null, channelType: 'jinius' } });
+    if (!row) throw new NotFoundException('Jinius integration not found');
+    const config = (row.config ?? {}) as Record<string, string>;
+    const problem = jiniusUrlProblem(config.url ?? '');
+    if (problem) throw new BadRequestException(problem);
+    const secrets = await this.decryptedSecrets(row.id);
+    if (!secrets.apiKey) throw new BadRequestException('No API key saved for this Jinius connection.');
+    const shopId = (config.shopId ?? '').trim() || null;
+
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) form.append(k, v);
+    form.append('file', new Blob([file.content], { type: file.type }), file.name);
+
+    const res = await fetch(jiniusUrl(config.url, path, { shop_id: shopId ?? undefined }), {
+      method: 'POST',
+      headers: { Authorization: (secrets.apiKey ?? '').trim(), Accept: 'application/json' },
+      body: form,
+      signal: AbortSignal.timeout(60000),
+    });
+    const text = await res.text();
+    let json: any = null;
+    try { json = JSON.parse(text); } catch { /* Mirakl answers plain text on some errors. */ }
+    return { ok: res.ok, status: res.status, json, text };
+  }
+
   /** Jinius stock (Mirakl OF24). Confirmed by the next sync rather than waited on. */
   async pushJiniusQuantity(integrationId: string, channelSku: string, quantity: number, dryRun = false): Promise<{ ok: boolean; message: string }> {
     return this.pushJiniusOffer(integrationId, { shopSku: channelSku, quantity }, `Quantity ${Math.max(0, Math.round(quantity))}`, dryRun);
