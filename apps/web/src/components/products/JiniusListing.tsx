@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { AlertTriangle, Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { jiniusListingApi } from '../../lib/api';
+import { JiniusCreateProduct } from './JiniusCreateProduct';
 
 /**
  * Step 4 for Jinius: check, then create the offer.
@@ -73,10 +74,18 @@ export function JiniusListingPreview({ productId, integrationId, savePlan, onLis
               {p.theirProduct?.categoryLabel ? <> in {p.theirProduct.categoryLabel}</> : null}. An offer can be attached to it.
             </p>
           ) : (
-            <p className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-900">
-              <AlertTriangle size={13} className="mr-1 inline" />
-              {p.lookupProblem ?? `Jinius does not carry ${p.ean ?? 'this product'}. Listing it needs a product import, which is not built yet.`}
-            </p>
+            <>
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-900">
+                <AlertTriangle size={13} className="mr-1 inline" />
+                {p.lookupProblem ?? `Jinius does not carry ${p.ean ?? 'this product'}.`}
+              </p>
+              {/*
+                * Offered here because this is the moment it means something: they do not have it, so
+                * the way to sell it is to give them the product. Also the road when their own entry
+                * is wrong - IT49693 sits on a catalogue product whose barcode is not ours.
+                */}
+              <JiniusCreateProduct productId={productId} integrationId={integrationId} onCreated={() => preview.mutate()} />
+            </>
           )}
 
           {p.existing && (

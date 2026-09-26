@@ -4460,6 +4460,36 @@ export interface JiniusListingPreviewResult {
   liveWrites: boolean;
 }
 
+/** What creating a product in Jinius's catalogue would send. */
+export interface JiniusProductPreview {
+  integrationId: string;
+  categoryCode: string;
+  shopSku: string | null;
+  attributes: { code: string; label: string; required: boolean; value: string | null }[];
+  missing: string[];
+  imageProblems: string[];
+  file: { name: string; delimiter: string; content: string };
+  liveWrites: boolean;
+}
+
+export const jiniusProductApi = {
+  categories: (q: string, integrationId?: string) =>
+    api.get<{ integrationId: string; total: number; categories: { code: string; label: string; level: number | null; leaf: boolean }[] }>(
+      '/listing/jinius/categories', { params: { q, integrationId } },
+    ).then((r) => r.data),
+  createPreview: (productId: string, categoryCode: string, integrationId?: string) =>
+    api.get<JiniusProductPreview>(`/listing/jinius/products/${productId}/create-preview`, { params: { categoryCode, integrationId } })
+      .then((r) => r.data),
+  createProduct: (productId: string, categoryCode: string, confirm: boolean, integrationId?: string) =>
+    api.post<{ ok: boolean; dryRun: boolean; importId: number | null; message: string; status?: string | null; theirAnswer?: string | null }>(
+      `/listing/jinius/products/${productId}/create-product`, { categoryCode, confirm, integrationId },
+    ).then((r) => r.data),
+  importStatus: (importId: number, integrationId?: string) =>
+    api.get<{ importId: number; status: string; done: boolean; integrated: number | null; rejected: number | null; ok: boolean; message: string }>(
+      `/listing/jinius/imports/${importId}`, { params: { integrationId } },
+    ).then((r) => r.data),
+};
+
 export const jiniusListingApi = {
   pricing: (productId: string, integrationId: string, atPriceCents?: number) =>
     api.get<{ suggestion: any; breakevenNative: number | null; at: any; problems: string[] }>(
