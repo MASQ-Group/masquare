@@ -43,3 +43,10 @@ npm run dev               # api :3000 + web :5173
   AND *C* ∈ company grants. Admins implicitly hold all grants.
 - **Shared components** (`packages/ui`): smart reference input, bulk-import framework,
   modal shell — built once, reused everywhere.
+
+## Merging and deploying
+
+`main` changes only through a pull request, and only the owner merges — on GitHub, not from a
+Claude session. Railway deploys whatever lands on `main`, so merging *is* deploying. Claude may
+open and update pull requests but never merges them or turns on auto-merge; `.claude/settings.json`
+denies both tools.
