@@ -7,8 +7,9 @@ import { CronJob } from 'cron';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  JINIUS_PATHS, jiniusHeaders, jiniusOfferUpdateBody, jiniusUrl, jiniusUrlProblem, readJiniusImportId,
-  readJiniusImportReport, readJiniusOffers, readJiniusPushOutcome, readJiniusTest, type JiniusOfferWrite,
+  JINIUS_PATHS, jiniusHeaders, jiniusOfferUpdateBody, jiniusUrl, jiniusUrlProblem, readJiniusErrorReport,
+  readJiniusImportId, readJiniusImportReport, readJiniusOffers, readJiniusPushOutcome, readJiniusTest,
+  type JiniusOfferWrite,
 } from './jinius';
 import { CryptoService } from '../crypto/crypto.service';
 import { StorageService } from '../storage/storage.service';
@@ -3048,7 +3049,17 @@ export class IntegrationsService implements OnModuleInit {
         if (report.done) break;
       }
     }
-    const outcome = readJiniusPushOutcome(res.status, importId, report, 'The offer');
+    /**
+     * Their reason, not our count.
+     *
+     * "Jinius rejected 1 of 1 line(s)" is true and useless: the reason is one fetch away, in the
+     * error report Mirakl writes for exactly this. Fetched only on a rejection, because that is the
+     * only time there is anything in it.
+     */
+    const reasons = report?.errors
+      ? readJiniusErrorReport((await this.jiniusGet(integrationId, `${JINIUS_PATHS.offerImports}/${importId}/error_report`)).text)
+      : [];
+    const outcome = readJiniusPushOutcome(res.status, importId, report, 'The offer', reasons);
     return { ...outcome, importId };
   }
 

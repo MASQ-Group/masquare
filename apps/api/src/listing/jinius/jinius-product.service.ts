@@ -6,6 +6,7 @@ import { factFor } from '../../gather/fact-names';
 import { eligibleValues } from '../../gather/provenance';
 import { readProductCopy, renderParagraphs, renderTitle } from '../../gather/product-copy';
 import { readJiniusAttributes, readJiniusHierarchies } from '../../jinius/jinius-catalogue';
+import { readJiniusErrorReport } from '../../integrations/jinius';
 import { OnbuyImagesService } from '../onbuy/onbuy-images.service';
 import {
   jiniusProductCsv, missingForJiniusProduct, readJiniusProductImportId, readJiniusProductImportReport,
@@ -220,7 +221,12 @@ export class JiniusProductService {
       }
     }
 
+    /** Their reason, where there is one to have: a count of rejections is not something to act on. */
+    const reasons = report?.rejected
+      ? readJiniusErrorReport((await this.integrations.jiniusGet(intg.id, `${PATHS.productImports}/${importId}/error_report`)).text)
+      : [];
     const outcome = readJiniusProductOutcome(res.status, importId, report);
+    if (reasons.length) outcome.message = `${outcome.message} Jinius said: ${reasons.join(' | ')}`;
     this.logger.log(`Jinius product import for ${input.shopSku}: ${outcome.message}`);
     /**
      * The raw answer is kept on a failure.
@@ -234,6 +240,7 @@ export class JiniusProductService {
       dryRun: false,
       importId,
       status: report?.status ?? null,
+      reasons,
       theirAnswer: outcome.ok ? null : (res.text ?? '').slice(0, 600),
     };
   }

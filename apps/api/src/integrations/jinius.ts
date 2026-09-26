@@ -232,17 +232,49 @@ export function readJiniusImportReport(json: unknown): JiniusImportReport {
  * things and this says which it is. A queued import that we did not wait for is reported as sent
  * and not yet confirmed — never as success, because the next sync is what proves the figure.
  */
+/**
+ * The first real reasons out of a Mirakl error report.
+ *
+ * Mirakl answers a rejected import with a FILE, one row per refused line, and the reason is a column
+ * in it. "Jinius rejected 1 of 1 line(s)" was true and useless - the reason was one fetch away and
+ * nobody went and got it. The header row is dropped and the longest field of each row is taken,
+ * because that is reliably the message wherever the operator put it.
+ */
+/** A row ending, however the operator's export wrote it. */
+const NEWLINES = /\r?\n/;
+/** Semicolon, tab, or a comma that is not inside quotes - operators use all three. */
+const FIELD_SEPARATORS = /;|\t|,(?=(?:[^"]*"[^"]*")*[^"]*$)/;
+const QUOTES = /^"|"$/g;
+
+export function readJiniusErrorReport(text: string, max = 3): string[] {
+  const rows = String(text ?? '').split(NEWLINES).map((r) => r.trim()).filter(Boolean);
+  if (rows.length < 2) return [];
+  return rows
+    .slice(1, 1 + max)
+    .map((row) => {
+      const fields = row.split(FIELD_SEPARATORS).map((f) => f.replace(QUOTES, '').trim());
+      return fields.sort((a, b) => b.length - a.length)[0] ?? '';
+    })
+    .filter(Boolean);
+}
+
 export function readJiniusPushOutcome(
   status: number,
   importId: number | null,
   report: JiniusImportReport | null,
   what: string,
+  /** What Mirakl's error report said, where it was fetched. */
+  reasons: readonly string[] = [],
 ): JiniusOutcome {
   if (status === 401 || status === 403) return { ok: false, message: `Jinius refused the offer write (${status}). The API key needs offer-write permission for this shop.` };
   if (status >= 400) return { ok: false, message: `Jinius answered ${status} to the offer write.` };
   if (importId == null) return { ok: false, message: 'Jinius accepted the request but returned no import id, so there is nothing to confirm it by.' };
   if (!report || !report.done) return { ok: true, message: `${what} sent to Jinius (import ${importId}) — queued there; the next sync confirms the figure.` };
-  if (report.errors) return { ok: false, message: `Jinius rejected ${report.errors} of ${report.read ?? '?'} line(s) in import ${importId} (${report.status}).` };
+  if (report.errors) {
+    // Their own words first, if we have them: the count alone says nothing anybody can act on.
+    const said = reasons.length ? ` ${reasons.join(' | ')}` : ' Their error report gave no reason we could read.';
+    return { ok: false, message: `Jinius rejected ${report.errors} of ${report.read ?? '?'} line(s) in import ${importId}.${said}` };
+  }
   if (report.status === 'FAILED' || report.status === 'CANCELLED' || report.status === 'CANCELED') return { ok: false, message: `Import ${importId} ended ${report.status}.` };
   return { ok: true, message: `${what} accepted by Jinius (import ${importId}).` };
 }

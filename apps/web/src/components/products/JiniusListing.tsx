@@ -35,6 +35,8 @@ export function JiniusListingPreview({ productId, integrationId, savePlan, onLis
       if (r.ok) {
         toast.success(r.message, { duration: 12000 });
         onListed();
+        // Ask again, so the panel shows the offer that now exists rather than the state before it.
+        preview.mutate();
       } else {
         toast.error(r.message, { duration: 12000 });
       }
