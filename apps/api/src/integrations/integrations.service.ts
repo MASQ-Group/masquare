@@ -1241,20 +1241,82 @@ export class IntegrationsService implements OnModuleInit {
   // --- OnBuy data pull (read-only preview for now) --------------------------
 
   /** Fresh OnBuy access token (valid ~15 min). Prefers live keys, else test. */
+  /**
+   * OnBuy's access token, kept until it is nearly due to expire.
+   *
+   * Every OnBuy call used to fetch a fresh one first, so a product search was two round trips to
+   * OnBuy rather than one - and the first of them was the one that failed. Keyed by the credentials
+   * rather than by the connection, so a key change invalidates it by construction instead of by
+   * somebody remembering to clear it.
+   */
+  private readonly onbuyTokens = new Map<string, { token: string; base: string; mode: 'live' | 'test'; until: number }>();
+
+  /** Refreshed this far before expiry, so a token never expires in flight. */
+  private static readonly ONBUY_TOKEN_MARGIN_MS = 60_000;
+
   private async onbuyAccessToken(config: Record<string, string>, secrets: Record<string, string>): Promise<{ token: string; mode: 'live' | 'test'; base: string }> {
     const mode: 'live' | 'test' = secrets.liveConsumerKey && secrets.liveSecretKey ? 'live' : 'test';
     const consumerKey = secrets[mode === 'live' ? 'liveConsumerKey' : 'testConsumerKey'];
     const secretKey = secrets[mode === 'live' ? 'liveSecretKey' : 'testSecretKey'];
     if (!consumerKey || !secretKey) throw new BadRequestException('No OnBuy keys set.');
     const base = (config.url || 'https://api.onbuy.com/v2').replace(/\/+$/, '');
-    const res = await fetch(`${base}/auth/request-token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ consumer_key: consumerKey, secret_key: secretKey }).toString(),
-      signal: AbortSignal.timeout(8000),
-    });
-    const json: any = await res.json().catch(() => null);
-    if (!res.ok || !json?.access_token) throw new BadRequestException(`OnBuy auth failed (${res.status}).`);
+
+    const key = `${base}|${mode}|${consumerKey}`;
+    const held = this.onbuyTokens.get(key);
+    if (held && held.until > Date.now()) return { token: held.token, mode: held.mode, base: held.base };
+
+    /**
+     * One retry, and only on a timeout.
+     *
+     * A search from the product card came back as an internal error because OnBuy's auth endpoint
+     * did not answer inside eight seconds, and nothing caught it. A transient timeout on an auth
+     * endpoint is exactly the case one retry settles; anything OnBuy actually SAYS is not retried,
+     * because a refusal repeated is still a refusal.
+     */
+    let json: any = null;
+    let status = 0;
+    let lastTimeout: unknown = null;
+    for (const attempt of [0, 1]) {
+      try {
+        const res = await fetch(`${base}/auth/request-token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ consumer_key: consumerKey, secret_key: secretKey }).toString(),
+          signal: AbortSignal.timeout(8000),
+        });
+        status = res.status;
+        json = await res.json().catch(() => null);
+        lastTimeout = null;
+        break;
+      } catch (e: any) {
+        lastTimeout = e;
+        if (attempt === 1) break;
+        this.logger.warn(`OnBuy auth did not answer (${e?.name ?? 'error'}) — trying once more.`);
+      }
+    }
+
+    /**
+     * A marketplace that does not answer is not an internal error.
+     *
+     * It reached the caller as one: an uncaught TimeoutError became a 500 and the product card said
+     * "internal error", which tells a person nothing and sends them to us instead of to OnBuy.
+     */
+    if (lastTimeout) {
+      throw new BadRequestException('OnBuy did not answer in time. Nothing was changed — try again in a moment.');
+    }
+    if (status !== 200 || !json?.access_token) throw new BadRequestException(`OnBuy auth failed (${status}).`);
+
+    /**
+     * OnBuy states when the token dies. Where it does not, or says something unusable, a short life
+     * is assumed - a token held too long fails the NEXT call, which is a worse failure than one
+     * extra auth round trip.
+     */
+    const expiresAt = Number(json.expires_at);
+    const until = Number.isFinite(expiresAt) && expiresAt > 0
+      ? expiresAt * 1000 - IntegrationsService.ONBUY_TOKEN_MARGIN_MS
+      : Date.now() + 5 * 60_000;
+    this.onbuyTokens.set(key, { token: json.access_token, base, mode, until });
+
     return { token: json.access_token, mode, base };
   }
 
