@@ -5,8 +5,10 @@ import { byCanonicalName, canonicalFactName } from '../gather/fact-names';
 import { hasCopy, readProductCopy, renderTitle, type ProductCopy } from '../gather/product-copy';
 import { classifyAspect, isPayloadEligible, normaliseAspects } from '../gather/provenance';
 import { CHANNEL_CONTENT_RULES, contentRulesFor } from './content-rules';
+import { chooseCategory, type CategoryCandidate, type CategoryChoice } from './category-choice';
 import { EbayListingService } from './ebay/ebay-listing.service';
 import { OnbuyContentService } from './onbuy/onbuy-content.service';
+import { OnbuyListingService } from './onbuy/onbuy-listing.service';
 
 /** The channels whose words and fields this brief covers, in the order a person thinks of them. */
 const COVERED = ['ebay', 'onbuy', 'jinius'] as const;
@@ -36,6 +38,8 @@ export class ProductContentService {
     private readonly facts: ProductFactsService,
     private readonly ebay: EbayListingService,
     private readonly onbuy: OnbuyContentService,
+    /** OnBuy's category search lives here; it stands in for the taxonomy suggestion eBay has. */
+    private readonly onbuyListing: OnbuyListingService,
   ) {}
 
   private async product(productId: string) {
@@ -48,6 +52,116 @@ export class ProductContentService {
     });
     if (!p) throw new NotFoundException('Product not found');
     return p;
+  }
+
+  /**
+   * What our own products of the same internal category went in, on one channel.
+   *
+   * A person's judgement, already made, repeatedly. It is the second opinion the marketplace's own
+   * suggestion is weighed against - and where the two agree there is nothing left to decide.
+   */
+  private async categoryHistory(productId: string, channelType: string) {
+    const product = await this.prisma.product.findFirst({ where: { id: productId }, select: { categoryId: true } });
+    if (!product?.categoryId) return null;
+    const used = await this.prisma.productChannelPlan.findMany({
+      where: {
+        deletedAt: null, productId: { not: productId }, categoryRef: { not: null },
+        integration: { channelType, deletedAt: null },
+        product: { categoryId: product.categoryId, deletedAt: null },
+      },
+      select: { categoryRef: true, categoryName: true },
+      take: 500,
+    });
+    const by = new Map<string, { id: string; name: string; uses: number }>();
+    for (const u of used) {
+      const id = (u.categoryRef ?? '').trim();
+      if (!id) continue;
+      const e = by.get(id) ?? { id, name: u.categoryName ?? id, uses: 0 };
+      e.uses += 1;
+      by.set(id, e);
+    }
+    return [...by.values()].sort((a, b) => b.uses - a.uses)[0] ?? null;
+  }
+
+  /** What the marketplace itself suggests for this product, in its own taxonomy. */
+  private async marketplaceSuggestions(productId: string, channelType: string, companyIds: string[]): Promise<CategoryCandidate[]> {
+    try {
+      if (channelType === 'ebay') {
+        const r = await this.ebay.categorySuggestions(productId, undefined, undefined, companyIds);
+        return (r.suggestions ?? []).map((sg: any) => ({ id: String(sg.categoryId), name: String(sg.categoryName ?? ''), path: sg.path ?? null, relevancy: sg.relevancy ?? null }));
+      }
+      if (channelType === 'onbuy') {
+        /**
+         * OnBuy has no equivalent of eBay's taxonomy suggestion, so its own search stands in: the
+         * words a buyer would use to find the thing are the words its categories are named for.
+         */
+        const p = await this.product(productId);
+        const words = [p.brand?.name, p.title].filter(Boolean).join(' ').trim();
+        if (words.length < 2) return [];
+        const integration = await this.onbuy.integrationFor(undefined, companyIds);
+        const r = await this.onbuyListing.searchCategories(integration.id, words, companyIds);
+        return (r.categories ?? []).map((c: any) => ({ id: String(c.id ?? c.categoryId ?? ''), name: String(c.name ?? c.tree ?? ''), path: c.tree ?? null }));
+      }
+    } catch {
+      // A marketplace that will not answer leaves the history to decide on its own, which it can.
+    }
+    return [];
+  }
+
+  /**
+   * Choose the categories nobody has chosen, and apply the ones that are not in doubt.
+   *
+   * Picking a category was the last compulsory human step before a product could be listed, asked
+   * once per channel per product, and usually obvious. It is applied here rather than suggested,
+   * because a suggestion somebody still has to accept is the same interruption with an extra click.
+   *
+   * The one case left alone is a real disagreement between the marketplace and our own history -
+   * see `category-choice.ts` for why that one is worth a person.
+   */
+  async ensureCategories(productId: string, companyIds: string[], actorId?: string) {
+    const decided: { channel: string; choice: CategoryChoice; applied: boolean }[] = [];
+
+    for (const channel of COVERED) {
+      const rules = contentRulesFor(channel)!;
+      if (!rules.needsCategory) continue;
+
+      const integrations = await this.prisma.channelIntegration.findMany({
+        where: { deletedAt: null, status: 'active', channelType: channel, targetCompanyId: { in: companyIds } },
+        select: { id: true, marketplace: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (!integrations.length) continue;
+
+      const existing = await this.prisma.productChannelPlan.findFirst({
+        where: { productId, deletedAt: null, categoryRef: { not: null }, integration: { channelType: channel, deletedAt: null } },
+        select: { categoryRef: true },
+      });
+      if ((existing?.categoryRef ?? '').trim()) continue; // Somebody has already decided.
+
+      const [suggestions, history] = await Promise.all([
+        this.marketplaceSuggestions(productId, channel, companyIds),
+        this.categoryHistory(productId, channel),
+      ]);
+      const choice = chooseCategory(suggestions, history);
+
+      let applied = false;
+      if (choice.confident && choice.id) {
+        for (const intg of integrations) {
+          await this.prisma.productChannelPlan.upsert({
+            where: { productId_integrationId_marketplace: { productId, integrationId: intg.id, marketplace: intg.marketplace ?? '' } },
+            create: {
+              productId, integrationId: intg.id, marketplace: intg.marketplace ?? '',
+              categoryRef: choice.id, categoryName: choice.name, createdById: actorId ?? null,
+            },
+            update: { categoryRef: choice.id, categoryName: choice.name, updatedById: actorId ?? null },
+          });
+        }
+        applied = true;
+        this.logger.log(`Category chosen for ${productId} on ${channel}: ${choice.name} (${choice.basis})`);
+      }
+      decided.push({ channel, choice, applied });
+    }
+    return decided;
   }
 
   /**
@@ -105,8 +219,16 @@ export class ProductContentService {
    * and whether anything is already known, so a researcher spends its trips on what is genuinely
    * missing rather than on re-finding what eBay's research settled last week.
    */
-  async brief(productId: string, companyIds: string[]) {
+  async brief(productId: string, companyIds: string[], actorId?: string) {
     const p = await this.product(productId);
+    /**
+     * Categories first, because a category decides which fields exist.
+     *
+     * Asking what a channel wants before it has one gets "no category chosen" - which was the answer
+     * the whole brief used to give for every channel nobody had got round to. Choosing here means
+     * the fields below are the real ones.
+     */
+    const categories = await this.ensureCategories(productId, companyIds, actorId);
     const [known, byChannel] = await Promise.all([
       this.facts.facts(productId),
       this.fieldsByChannel(productId, companyIds),
@@ -149,6 +271,12 @@ export class ProductContentService {
         [...knownByFact].map(([key, v]) => [key, { value: v.value.value, basis: classifyAspect(v.value), heldBackForAPerson: !isPayloadEligible(v.value) }]),
       ),
       channels: byChannel.map((c) => ({ channel: c.channel, label: c.label, fieldCount: c.fields.length, problem: c.problem })),
+      /** Categories chosen just now, and any left for a person because the evidence disagreed. */
+      categoriesChosen: categories.map((d) => ({
+        channel: d.channel, applied: d.applied, basis: d.choice.basis,
+        category: d.choice.name, because: d.choice.because,
+        alternatives: d.choice.alternatives.map((a) => ({ id: a.id, name: a.name })),
+      })),
       wanted: [...wanted.values()].sort((a, b) => b.askedBy.length - a.askedBy.length),
       copy: {
         current: hasCopy(copy) ? copy : null,
